@@ -1189,12 +1189,21 @@ def test_mutants_timings_do_not_change_the_recorded_bytes(tmp_path: Path) -> Non
     assert outputs[0] and outputs[0] == outputs[1]
 
 
-def test_mutants_passes_nextest_only_when_it_is_on_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(("configured", "on_path", "wanted"), [
+    (False, True, False),
+    (True, True, True),
+    (True, False, False),
+])
+def test_mutants_use_nextest_only_when_the_repository_configures_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    configured: bool, on_path: bool, wanted: bool,
 ) -> None:
+    """Issue 253: nextest on PATH alone made ripgrep's baseline fail; the repository decides."""
     real_which = shutil.which
-    seen: list[list[str]] = []
     repo, source = _mutants_repo(tmp_path)
+    if configured:
+        (repo / ".config").mkdir()
+        (repo / ".config" / "nextest.toml").write_text("[profile.default]\n", encoding="utf-8")
     base = _commit(repo, "base")
     source.write_text(
         source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
@@ -1202,37 +1211,95 @@ def test_mutants_passes_nextest_only_when_it_is_on_path(
     )
     head = _commit(repo, "head")
 
-    def run_with(which_result: str | None) -> Path:
-        def fake_which(name: str, *args: Any, **kwargs: Any) -> str | None:
-            if name == "cargo-nextest":
-                return which_result
-            return real_which(name, *args, **kwargs)
+    def fake_which(name: str, *args: Any, **kwargs: Any) -> str | None:
+        if name == "cargo-nextest":
+            return "/opt/cargo/bin/cargo-nextest" if on_path else None
+        return real_which(name, *args, **kwargs)
 
-        monkeypatch.setattr(A.shutil, "which", fake_which)
-        output = tmp_path / f"out-{which_result is not None}"
-        runner = _Calls(
-            base, "2 mutants missed.\n",
-            files={"mutants.out/outcomes.json": _fixture("mutants-outcomes.json")},
-        )
-        assert _run(
-            repo, base, head, _profile(tmp_path / "profile.json"), output,
-            tmp_path / "home", [_adapter("cargo-mutants")], runner,
-        ) == 0
-        runs = [
-            call for call in runner.calls
-            if Path(call[0]).name == "cargo-mutants" and "mutants" in call
-            and "--version" not in call
-        ]
-        assert len(runs) == 1
-        seen.append(runs[0])
-        return output
+    monkeypatch.setattr(A.shutil, "which", fake_which)
+    output = tmp_path / "out"
+    runner = _Calls(
+        base, "2 mutants missed.\n",
+        files={"mutants.out/outcomes.json": _fixture("mutants-outcomes.json")},
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("cargo-mutants")], runner,
+    ) == 0
+    runs = _mutant_runs(runner)
+    assert len(runs) == 1
+    assert "-C" in runs[0] and "--locked" in runs[0]
+    assert ("--test-tool" in runs[0] and "nextest" in runs[0]) is wanted
+    assert "nextest" not in json.dumps(_read(output, "degraded.json"))
 
-    present = run_with("/opt/cargo/bin/cargo-nextest")
-    assert "--test-tool" in seen[0] and "nextest" in seen[0]
-    assert "-C" in seen[0] and "--locked" in seen[0]
-    absent = run_with(None)
-    assert "--test-tool" not in seen[1]
-    assert "nextest" not in json.dumps(_read(absent, "degraded.json"))
+
+def _mutants_exit(tmp_path: Path, code: int, report: str) -> Path:
+    """One cargo-mutants run on a changed line 2 that exits ``code`` with ``report``."""
+    repo, source = _mutants_repo(tmp_path)
+    base = _commit(repo, "base")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, "", code=code, files={"mutants.out/outcomes.json": report})
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        tmp_path / "home", [_adapter("cargo-mutants")], runner,
+    ) == 0
+    _valid(output)
+    return output
+
+
+def test_mutants_exit_2_survivors_are_findings(tmp_path: Path) -> None:
+    """cargo-mutants 27.1.0 exits 2 when a mutant survives (real report, five missed)."""
+    output = _mutants_exit(tmp_path, 2, _fixture("mutants-27.1.0-exit-2.json"))
+    findings = _read(output, "findings.json")
+    assert len(findings) == 5
+    assert {finding["rule"]["ref"] for finding in findings} == {"surviving-mutant"}
+    assert _degraded(output, "cargo-mutants") == []
+
+
+def test_mutants_exit_3_timeout_is_a_degraded_row_not_a_clean_run(tmp_path: Path) -> None:
+    """Exit 3 (a mutant timed out) parses, but a timeout never reads as every mutant caught."""
+    output = _mutants_exit(tmp_path, 3, _fixture("mutants-27.1.0-exit-3.json"))
+    assert _read(output, "findings.json") == []
+    assert [(item["input"], item["reason"]) for item in _degraded(output, "cargo-mutants")] == [
+        ("testing.surviving-mutant", "mutant-timeout")
+    ]
+
+
+def test_mutants_timeout_still_reports_the_survivors(tmp_path: Path) -> None:
+    """A run with a timed-out mutant and missed ones keeps every survivor as a finding."""
+    report = json.loads(_fixture("mutants-27.1.0-exit-2.json"))
+    timeout = json.loads(_fixture("mutants-27.1.0-exit-3.json"))
+    report["outcomes"].extend(
+        item for item in timeout["outcomes"] if item["summary"] == "Timeout"
+    )
+    output = _mutants_exit(tmp_path, 3, json.dumps(report))
+    assert len(_read(output, "findings.json")) == 5
+    assert [item["reason"] for item in _degraded(output, "cargo-mutants")] == ["mutant-timeout"]
+
+
+def test_mutants_exit_4_records_a_failed_baseline_and_keeps_the_report(tmp_path: Path) -> None:
+    """Exit 4: the unmutated tree failed its tests. Its own reason, and the report is kept."""
+    report = _fixture("mutants-27.1.0-exit-4.json")
+    output = _mutants_exit(tmp_path, 4, report)
+    assert _read(output, "findings.json") == []
+    degraded = _degraded(output, "cargo-mutants")
+    assert [item["reason"] for item in degraded] == ["baseline-failed"]
+    stored = tmp_path / "home" / ".saga" / "review-output" / degraded[0]["raw_output"]
+    assert json.loads(stored.read_text(encoding="utf-8"))["outcomes"][0]["summary"] == "Failure"
+    assert stored.read_bytes() == A._stable_mutants(report).encode()
+
+
+def test_mutants_unparseable_report_keeps_the_raw_output(tmp_path: Path) -> None:
+    output = _mutants_exit(tmp_path, 1, "not json\n")
+    degraded = _degraded(output, "cargo-mutants")
+    assert [item["reason"] for item in degraded] == ["unparseable"]
+    stored = tmp_path / "home" / ".saga" / "review-output" / degraded[0]["raw_output"]
+    assert stored.read_text(encoding="utf-8") == "not json\n"
 
 
 def test_machete_unused_dependency_is_a_note(tmp_path: Path) -> None:

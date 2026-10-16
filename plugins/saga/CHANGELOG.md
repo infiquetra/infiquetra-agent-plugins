@@ -38,6 +38,24 @@
 
 ### Fixed
 
+- Issue #253: four review-tool faults no longer degrade every Rust review. cargo-mutants exits 2
+  and 3 are parsed like exit 0 (`Adapter.parsed_exits`), and exit 4, a failing unmutated baseline,
+  is its own reason, `baseline-failed` (`Adapter.exit_reasons`). A timed-out mutant records
+  `mutant-timeout` on `testing.surviving-mutant` while survivors are still reported, so a
+  timeout never reads as every mutant caught. A run that fails to parse stores
+  its output and names the digest as the degraded entry's `raw_output`. cargo-mutants gets
+  `--test-tool nextest` only when the reviewed tree has `.config/nextest.toml`. lizard runs with
+  `-V`, so lizard 1.24.1 writes its header, and its CSV is read by column name (a headerless row
+  must have 1.24.1's eleven columns). A version probe that exits non-zero is `missing`, never the
+  dotted number in its traceback. An adapter whose languages are absent from the head tree records
+  nothing. The runner classifies the files the adapters scan (`scan_files`, `.git` pruned only)
+  with the suffix rules `/saga:setup` uses (`saga_setup.detect_languages` and
+  `review_tools.detect_languages` share them), and a language's marker files also count, so a
+  lockfile alone keeps a dependency audit running. `.bash` and `.ksh` are shell. `cloudformation`
+  is present for `cdk.json` or a template-suffix file that mentions `AWS::` or a top-level
+  `Resources` key, or is a symlink (never read). The checkov and cfn-lint wrappers copy only
+  regular files or links that resolve inside the scanned root. No
+  version bump; that belongs to #147's saga release step.
 - Issue #252: the review checks read only the files git tracks at HEAD of the scan root. Earlier
   prepare tools leave build output in the copy (`target/` from clippy, `mutants.out/` from
   cargo-mutants), and `changed_names` walked it, so one change prepared twice gave packets that

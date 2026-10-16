@@ -55,6 +55,15 @@ _IN_DIFF = "in-diff.patch"
 #: What cargo-mutants 27 prints, exiting 0 without a report, when the diff
 #: leaves it nothing to test.
 _NOTHING_TO_MUTATE = ("Diff changes no Rust source files", "No mutants to filter")
+#: cargo-mutants 27 exits 2 when a mutant survives and 3 when one times out,
+#: with a complete outcomes.json either way.
+_MUTANTS_PARSED_EXITS = (2, 3)
+#: The degraded reason when any mutant timed out (exit 3).
+_MUTANT_TIMEOUT = "mutant-timeout"
+#: Exit 4: the unmutated tree failed its own tests, so no mutant was tested.
+_MUTANTS_EXIT_REASONS = ((4, "baseline-failed"),)
+#: nextest's own configuration. Its presence is the repository asking for nextest.
+_NEXTEST_CONFIG = ".config/nextest.toml"
 #: Timing values in outcomes.json; they differ on every run.
 _MUTANT_TIMES = frozenset({"start_time", "end_time", "duration"})
 
@@ -425,7 +434,12 @@ def _invoke_cargo_mutants(context: ScanContext) -> list[str]:
     argv = [
         "cargo-mutants", "mutants", "-C", "--locked", "--workspace", "--in-diff", str(diff),
     ]
-    if shutil.which("cargo-nextest") is not None:
+    # nextest runs each test in its own process, which breaks suites whose tests
+    # share temporary paths (issue 253 saw ripgrep's baseline fail). Use it only when
+    # the repository configures it (issue 253); a ``test_tool`` in
+    # .cargo/mutants.toml is read by cargo-mutants itself.
+    nextest = context.root / _NEXTEST_CONFIG
+    if nextest.is_file() and not nextest.is_symlink() and shutil.which("cargo-nextest"):
         argv.extend(["--test-tool", "nextest"])
     return argv
 
@@ -494,10 +508,15 @@ def _parse_cargo_mutants(text: str) -> ParseResult:
     if not isinstance(outcomes, list):
         raise ValueError("cargo-mutants outcomes must be a list")
     hits: list[Hit] = []
+    timed_out = False
     for outcome in outcomes:
         if not isinstance(outcome, dict):
             continue
-        if str(outcome.get("summary") or "") != "MissedMutant":
+        summary = str(outcome.get("summary") or "")
+        if summary == "Timeout":
+            timed_out = True
+            continue
+        if summary != "MissedMutant":
             continue
         scenario = outcome.get("scenario") or {}
         mutant = scenario.get("Mutant") if isinstance(scenario, dict) else None
@@ -527,7 +546,10 @@ def _parse_cargo_mutants(text: str) -> ParseResult:
             end=end or start,
             row="testing.surviving-mutant",
         ))
-    return ParseResult(tuple(hits))
+    # A timed-out mutant was neither caught nor missed, so the run cannot vouch for a
+    # clean surviving-mutant row; survivors are still reported (issue 253).
+    gaps = ((_MUTANT_TIMEOUT, _MUTANT_ROW),) if timed_out else ()
+    return ParseResult(tuple(hits), gaps=gaps)
 
 
 def _invoke_cargo_machete(context: ScanContext) -> list[str]:
@@ -674,6 +696,8 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             local_bins=tuple(str(item) for item in (row.get("local_bins") or ())),
             stable_raw=stable.get(tool_id),
             report_optional=bool(row.get("report_optional")),
+            parsed_exits=_MUTANTS_PARSED_EXITS if tool_id == "cargo-mutants" else (),
+            exit_reasons=_MUTANTS_EXIT_REASONS if tool_id == "cargo-mutants" else (),
         ))
     return built
 

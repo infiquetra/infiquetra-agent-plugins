@@ -782,7 +782,8 @@ def test_no_markers_means_silence(tmp_path: Path) -> None:
     ) == 0
     assert _read(output, "findings.json") == []
     assert _read(output, "degraded.json") == []
-    assert runner.calls, "expected version probes before the adapters declined"
+    # Issue 253: with no Swift in the tree no adapter runs, not even its version probe.
+    assert runner.calls == []
     assert all("--version" in call for call in runner.calls)
 
 
