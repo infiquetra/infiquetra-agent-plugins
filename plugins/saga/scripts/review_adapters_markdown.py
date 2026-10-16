@@ -63,13 +63,11 @@ def _rel(path: str) -> str:
 
 
 def _markdown_files(root: Path) -> list[str]:
-    found = []
-    for path in root.rglob("*"):
-        if not path.is_file() or ".git" in path.parts:
-            continue
-        if path.suffix.lower() == ".md":
-            found.append(path.relative_to(root).as_posix())
-    return sorted(found)
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in review_tools.scan_files(root)
+        if path.suffix.lower() == ".md" and path.is_file()
+    )
 
 
 def _invoke_markdownlint(context: ScanContext) -> list[str]:

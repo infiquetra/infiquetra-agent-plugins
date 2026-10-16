@@ -2,6 +2,46 @@
 
 ## 2026-10-16
 
+### A check that reads the copy must read only what git tracks, because earlier tools write into it
+
+**Evidence.** Issue #252. In the saga-review-corpus pilot (on befe132), two ripgrep versions gave
+different packets for two prepares of one change; the only differing field was `proof.raw_output`
+of tool `review-checks`, rule `correctness.unupdated-mention`. `_walk` in
+`plugins/saga/scripts/review_checks.py` skipped only `.git`, so `changed_names` read `target/`
+(clippy's build folder) and `mutants.out/` (cargo-mutants' output): 107 and 22 false mentions under
+one ripgrep version, 11 and 19 under the other. Fixed with `review_tools.scan_files` and its callers
+in `review_checks.py` and `review_adapters_*.py`. Tests: `test_review_scan_files.py`,
+`test_only_tracked_files_report_a_mention`,
+`test_prepare_twice_with_a_tool_writing_build_output_writes_identical_packets`.
+
+**Mechanism.** Prepare runs its scanners in the head worktree and then runs the checks in the same
+worktree, so everything an earlier tool wrote there is visible to a later walk. A walk that prunes
+only `.git` treats that output as repository content: the findings are false, and because the
+output changes between runs the packet is not stable. The same fault sat in every other walk over
+the scan root (language adapters pruned a hand-kept list of directory names, the Python, Markdown
+and lockfile listings pruned only `.git`, and the checkov, cfn-lint and shellcheck wrapper scripts
+copied every matching file out of the copy). A hand-kept prune list can never be complete; the
+tracked file list is the complete answer and also covers ignored files. Settings stripping
+(`_strip_settings`) is the one walk that must see untracked files, because it removes scanner
+configuration wherever it is. The wrapper scripts run as `python3 -c` and cannot import the
+module, so they carry a copy of the listing (`TRACKED_PRELUDE`) and a test checks that the copy
+and the function agree.
+
+Code review of abcc8b3 found four more holes in the first version of the listing. `is_file()`
+follows every ancestor, so a tracked directory replaced by a symlink still listed its files and the
+check read the file outside the copy; the listing now drops any path with a symlink above its leaf.
+`git ls-tree -z` was decoded as text, which rewrote a carriage return in a name and raised on a
+byte that is not UTF-8; it is now read as bytes, split on NUL and decoded per name with
+`os.fsdecode`. `ls-tree` records only a submodule's commit, so a checked-out submodule's files
+vanished; the listing recurses into a populated submodule. And the two workflow wrappers still
+read `.github/workflows` straight from disk, so they now take their files from the listing. A
+filter that replaces a walk has to reproduce each safety property the walk had (symlink refusal,
+submodule files), not just the pruning.
+
+**Generalizable rule.** Any check that reads a worktree other tools have already written into
+takes its file list from `git ls-tree`, not from a directory walk with a prune list; a walk that
+must see untracked files says why in a comment.
+
 ### A reviewer's stray guard test is a warning, never a reason to discard its findings
 
 **Evidence.** Issue #250. In the saga-review-corpus pilot (on 6b459e7) a Claude reviewer reported

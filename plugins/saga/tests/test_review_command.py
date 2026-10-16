@@ -1870,3 +1870,79 @@ def test_live_prepare_twice_with_clippy_writes_identical_packets(
     assert _packet_bytes(packets[0]) == _packet_bytes(packets[1])
     refs = {finding["rule"]["ref"] for finding in _read(packets[0] / "findings.json")}
     assert "clippy::needless_return" in refs
+
+
+def _rename_change(tmp: Path) -> tuple[Path, str, str]:
+    """A Python repository whose head renames a function but leaves a caller in src/caller.py."""
+    repo = tmp / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("def old_name():\n    return 1\n", encoding="utf-8")
+    (repo / "src" / "caller.py").write_text(
+        "import app\n\nvalue = app.old_name()\n", encoding="utf-8",
+    )
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("def new_name():\n    return 1\n", encoding="utf-8")
+    return repo, base, _commit(repo, "head")
+
+
+class _BuildOutputRunner(_Runner):
+    """A tool that writes different files into the copy on every run, as clippy and cargo-mutants do."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.runs = 0
+
+    def __call__(
+        self, argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        if Path(argv[0]).name == "stub" and "scan" in argv:
+            self.runs += 1
+            for folder in ("target/debug", "mutants.out"):
+                (Path(cwd) / folder).mkdir(parents=True, exist_ok=True)
+                (Path(cwd) / folder / f"build-{self.runs}-{os.getpid()}.rs").write_text(
+                    f"// run {self.runs}\nfn caller() {{ old_name(); }}\n", encoding="utf-8",
+                )
+            return T.ProcessResult(0, "scan\n")
+        if Path(argv[0]).name == "stub":
+            return super().__call__(argv, cwd=cwd, env=env, timeout=timeout, shell=shell)
+        proc = subprocess.run(
+            argv, cwd=cwd, env=env, capture_output=True, text=True, check=False, timeout=timeout,
+        )
+        return T.ProcessResult(proc.returncode, proc.stdout, proc.stderr)
+
+
+def test_prepare_twice_with_a_tool_writing_build_output_writes_identical_packets(
+    tmp_path: Path,
+) -> None:
+    """Issue 252: files a tool leaves in the copy never reach the checks, so the packets agree."""
+    import importlib  # noqa: PLC0415
+
+    checks = importlib.import_module("review_checks")
+    names = next(item for item in checks.ADAPTERS if item.id == "changed-names")
+    repo, base, head = _rename_change(tmp_path)
+    builder = _builder(tmp_path / "builder.json")
+    (tmp_path / "home").mkdir()
+    runner = _BuildOutputRunner()
+    packets = []
+    for number in (1, 2):
+        out = tmp_path / f"packet-{number}"
+        code, err = _main(
+            [
+                "prepare", "--repo", str(repo), "--base", base, "--head", head,
+                "--profile", str(_profile(tmp_path / "profile")), "--builder-record", str(builder),
+                "--out", str(out), "--home", str(tmp_path / "home"),
+                "--bank", str(tmp_path / "no-bank.json"),
+            ],
+            adapters=[_adapter(start=1, hit=False), names], runner=runner,
+        )
+        assert code == 0, err
+        packets.append(out)
+    assert runner.runs == 2
+    first, second = (_packet_bytes(packet) for packet in packets)
+    assert first == second
+    mentions = [
+        finding for finding in _read(packets[0] / "findings.json")
+        if finding["rule"]["ref"] == "old_name"
+    ]
+    assert [finding["location"]["file"] for finding in mentions] == ["src/caller.py"]

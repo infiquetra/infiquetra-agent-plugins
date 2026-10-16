@@ -1076,13 +1076,11 @@ def _row_for_mention(path: str) -> str:
 
 
 def _walk(root: Path) -> Iterator[Path]:
-    for directory, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = [name for name in dirnames if name != ".git"]
-        for filename in filenames:
-            path = Path(directory) / filename
-            if path.is_symlink() and not _inside(path, root):
-                continue
-            yield path
+    """Files the checks may read: those git tracks at HEAD, never build output in the copy."""
+    for path in review_tools.scan_files(root):
+        if path.is_symlink() and not _inside(path, root):
+            continue
+        yield path
 
 
 def changed_names(root: Path, base: str) -> dict[str, Any]:

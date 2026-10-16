@@ -7,7 +7,6 @@ Importing this module reads the yaml and builds adapter objects. It does not run
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -100,14 +99,8 @@ def _document() -> dict[str, object]:
 
 
 def _walk(root: Path) -> list[Path]:
-    """Files under ``root`` with caches and env trees pruned."""
-    found: list[Path] = []
-    for directory, dirnames, filenames in os.walk(root, followlinks=False):
-        for pruned in [name for name in dirnames if name in _PRUNE_DIRS or name == ".git"]:
-            dirnames.remove(pruned)
-        for name in filenames:
-            found.append(Path(directory) / name)
-    return found
+    """Tracked files under ``root`` with caches and env trees pruned."""
+    return review_tools.scan_files(root, _PRUNE_DIRS)
 
 
 def _has_markers(root: Path) -> bool:

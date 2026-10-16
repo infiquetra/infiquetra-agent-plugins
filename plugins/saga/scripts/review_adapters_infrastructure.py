@@ -167,7 +167,7 @@ print(json.dumps({
 }))
 """
 
-_CHECKOV_WRAPPER = r"""
+_CHECKOV_WRAPPER = review_tools.TRACKED_PRELUDE + r"""
 import json, shutil, subprocess, sys
 from pathlib import Path
 mode = sys.argv[1]
@@ -187,8 +187,8 @@ if mode == "cdk":
         raise SystemExit(synth.returncode)
     scan = dest
 else:
-    for path in root.rglob("*"):
-        if not path.is_file() or ".git" in path.parts:
+    for path in tracked_files(root):
+        if not path.is_file():
             continue
         if path.name.startswith(".checkov"):
             continue
@@ -235,14 +235,14 @@ sys.stdout.write(json.dumps(data))
 raise SystemExit(0)
 """
 
-_CFN_WRAPPER = r"""
+_CFN_WRAPPER = review_tools.TRACKED_PRELUDE + r"""
 import json, shutil, subprocess, sys
 from pathlib import Path
 root = Path(sys.argv[1])
 dest = Path(sys.argv[2])
 rels = []
-for path in root.rglob("*"):
-    if not path.is_file() or ".git" in path.parts:
+for path in tracked_files(root):
+    if not path.is_file():
         continue
     if path.name.startswith(".") and "cfnlint" in path.name:
         continue
