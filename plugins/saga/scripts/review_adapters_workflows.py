@@ -32,20 +32,24 @@ _ROWS = {
     ),
 }
 
-_ZIZMOR_WRAPPER = r"""
+_ZIZMOR_WRAPPER = review_tools.TRACKED_PRELUDE + r"""
 import json, subprocess, sys
 from pathlib import Path
 root = Path(sys.argv[1])
 dest = Path(sys.argv[2])
 workflows = root / ".github" / "workflows"
 copied = dest / ".github" / "workflows"
-if workflows.is_dir():
-    copied.mkdir(parents=True, exist_ok=True)
-    for path in workflows.iterdir():
-        if path.is_file() and path.suffix.lower() in {".yml", ".yaml"}:
-            (copied / path.name).write_text(
-                path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8"
-            )
+for path in tracked_files(root):
+    if (
+        path.parent == workflows
+        and path.suffix.lower() in {".yml", ".yaml"}
+        and path.is_file()
+        and root.resolve() in path.resolve().parents
+    ):
+        copied.mkdir(parents=True, exist_ok=True)
+        (copied / path.name).write_text(
+            path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8"
+        )
 if not copied.is_dir() or not any(copied.iterdir()):
     print("[]")
     raise SystemExit(0)
@@ -150,7 +154,7 @@ def _parse_zizmor(text: str) -> ParseResult:
 
 # Copies workflows only. actionlint 1.7.12 still parses .github/actionlint.yaml
 # in the scan directory when -config-file points at another file.
-_ACTIONLINT_WRAPPER = r"""
+_ACTIONLINT_WRAPPER = review_tools.TRACKED_PRELUDE + r"""
 import subprocess, sys
 from pathlib import Path
 root = Path(sys.argv[1])
@@ -159,15 +163,19 @@ config = Path(sys.argv[3])
 workflows = root / ".github" / "workflows"
 copied = dest / ".github" / "workflows"
 names = []
-if workflows.is_dir():
+for path in sorted(tracked_files(root)):
+    if (
+        path.parent != workflows
+        or path.suffix.lower() not in {".yml", ".yaml"}
+        or not path.is_file()
+        or root.resolve() not in path.resolve().parents
+    ):
+        continue
     copied.mkdir(parents=True, exist_ok=True)
-    for path in sorted(workflows.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in {".yml", ".yaml"}:
-            continue
-        (copied / path.name).write_text(
-            path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8"
-        )
-        names.append(".github/workflows/" + path.name)
+    (copied / path.name).write_text(
+        path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8"
+    )
+    names.append(".github/workflows/" + path.name)
 if not names:
     print("[]")
     raise SystemExit(0)
@@ -191,12 +199,10 @@ raise SystemExit(proc.returncode)
 
 def _invoke_actionlint(context: ScanContext) -> list[str]:
     workflows = context.root / ".github" / "workflows"
-    if not workflows.is_dir():
-        return []
     names = [
         path.name
-        for path in sorted(workflows.iterdir())
-        if path.is_file() and path.suffix.lower() in {".yml", ".yaml"}
+        for path in review_tools.scan_files(context.root)
+        if path.parent == workflows and path.suffix.lower() in {".yml", ".yaml"} and path.is_file()
     ]
     if not names:
         return []

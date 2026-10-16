@@ -674,43 +674,111 @@ def _tracked_files(root: str) -> tuple[str, ...]:
 
 
 #: Python source for the wrapper scripts that run as ``python3 -c``. It defines
-#: ``tracked_files(root)``, the same listing ``scan_files`` makes, because a wrapper cannot
-#: import this module. ``tests/test_review_tools.py`` runs both on one fixture.
+#: ``tracked_files(root, prune)``, the same listing ``scan_files`` makes, because a wrapper
+#: cannot import this module. ``plugins/saga/tests/test_review_scan_files.py`` runs both on
+#: the same trees and compares them. Change the two together.
 TRACKED_PRELUDE = r"""
 import os, subprocess
 from pathlib import Path
 
-def tracked_files(root, prune=(".git",)):
-    root = Path(root)
+def _tracked_names(directory):
     try:
         top = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, text=True,
+            ["git", "rev-parse", "--show-toplevel"], cwd=directory, capture_output=True,
         )
         listed = subprocess.run(
             ["git", "ls-tree", "-r", "-z", "--name-only", "HEAD"],
-            cwd=root, capture_output=True, text=True,
+            cwd=directory, capture_output=True,
         )
     except OSError:
-        top = listed = None
-    if (
-        top is not None and top.returncode == 0 and listed.returncode == 0
-        and Path(top.stdout.strip()).resolve() == root.resolve()
-    ):
-        found = []
-        for entry in sorted(listed.stdout.split("\0")):
-            path = root / entry
-            if not entry or set(Path(entry).parts[:-1]) & set(prune):
-                continue
-            if path.is_symlink() or path.is_file():
-                found.append(path)
+        return None
+    if top.returncode != 0 or listed.returncode != 0:
+        return None
+    if Path(os.fsdecode(top.stdout).rstrip("\n")).resolve() != directory.resolve():
+        return None
+    return [os.fsdecode(entry) for entry in listed.stdout.split(b"\0") if entry]
+
+def _tracked_under(root, directory, prune, depth=0):
+    names = _tracked_names(directory)
+    if names is None:
+        return None
+    found = []
+    linked = {}
+    for entry in sorted(names):
+        path = directory / entry
+        parts = path.relative_to(root).parts
+        if set(parts[:-1]) & set(prune):
+            continue
+        # A tracked path under a symlinked directory is read through the link, so skip it.
+        if any(
+            linked.setdefault(parts[:i], root.joinpath(*parts[:i]).is_symlink())
+            for i in range(1, len(parts))
+        ):
+            continue
+        if path.is_symlink() or path.is_file():
+            found.append(path)
+        elif path.is_dir() and parts[-1] not in prune and depth < 8 and (path / ".git").exists():
+            # A checked-out submodule: git records only its commit, so list its own files.
+            found.extend(_tracked_under(root, path, prune, depth + 1) or [])
+    return found
+
+def tracked_files(root, prune=(".git",)):
+    root = Path(root)
+    found = _tracked_under(root, root, prune)
+    if found is not None:
         return found
     # Not a git repository: read every file, skipping the pruned directories.
     found = []
     for directory, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = sorted(name for name in dirnames if name not in prune)
+        dirnames[:] = sorted(name for name in dirnames if name not in set(prune) | {".git"})
         found.extend(Path(directory) / name for name in sorted(filenames))
     return found
 """
+
+
+def _git_raw(repo: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
+    """Run git and keep stdout as bytes, so a ``-z`` listing is split on NUL, never decoded whole."""
+    return subprocess.run(  # nosec B603
+        ["git", *args], cwd=repo, capture_output=True, check=False,
+    )
+
+
+def _tracked_names(directory: Path) -> list[str] | None:
+    """Names ``git ls-tree`` lists at HEAD of ``directory``, or None when it is no repository top."""
+    top = _git_raw(directory, ["rev-parse", "--show-toplevel"])
+    listed = _git_raw(directory, ["ls-tree", "-r", "-z", "--name-only", "HEAD"])
+    if top.returncode != 0 or listed.returncode != 0:
+        return None
+    if Path(os.fsdecode(top.stdout).rstrip("\n")).resolve() != directory.resolve():
+        return None
+    return [os.fsdecode(entry) for entry in listed.stdout.split(b"\0") if entry]
+
+
+def _tracked_under(
+    root: Path, directory: Path, prune: frozenset[str] | set[str], depth: int = 0,
+) -> list[Path] | None:
+    names = _tracked_names(directory)
+    if names is None:
+        return None
+    found: list[Path] = []
+    linked: dict[tuple[str, ...], bool] = {}
+    for entry in sorted(names):
+        path = directory / entry
+        parts = path.relative_to(root).parts
+        if set(parts[:-1]) & set(prune):
+            continue
+        # A tracked path under a symlinked directory is read through the link, so skip it.
+        if any(
+            linked.setdefault(parts[:i], root.joinpath(*parts[:i]).is_symlink())
+            for i in range(1, len(parts))
+        ):
+            continue
+        if path.is_symlink() or path.is_file():
+            found.append(path)
+        elif path.is_dir() and parts[-1] not in prune and depth < 8 and (path / ".git").exists():
+            # A checked-out submodule: git records only its commit, so list its own files.
+            found.extend(_tracked_under(root, path, prune, depth + 1) or [])
+    return found
 
 
 def scan_files(root: Path, prune: frozenset[str] | set[str] = frozenset({".git"})) -> list[Path]:
@@ -723,7 +791,10 @@ def scan_files(root: Path, prune: frozenset[str] | set[str] = frozenset({".git"}
     listing is the same for a clean copy and for one a tool has written into.
 
     A directory name in ``prune`` drops every path under a directory of that name, even
-    when git tracks it. A symlink is returned as a path, never followed.
+    when git tracks it. A symlink leaf is returned as a path, never followed. A tracked
+    path with a symlink anywhere above its leaf is dropped, because reading it would go
+    through the link. A checked-out submodule contributes the files its own repository
+    tracks at its HEAD; its untracked files and its ``.git`` file are not listed.
 
     When the scan root is not the top of a git repository (or git cannot read it, for
     example a ``safe.directory`` refusal), there is no tracked set to read, so this falls
@@ -731,20 +802,8 @@ def scan_files(root: Path, prune: frozenset[str] | set[str] = frozenset({".git"}
     skipped and ``.git`` always skipped.
     """
     root = Path(root)
-    top = _git(root, ["rev-parse", "--show-toplevel"])
-    listed = _git(root, ["ls-tree", "-r", "-z", "--name-only", "HEAD"])
-    if (
-        top.returncode == 0
-        and listed.returncode == 0
-        and Path(top.stdout.strip()).resolve() == root.resolve()
-    ):
-        found: list[Path] = []
-        for entry in sorted(listed.stdout.split("\0")):
-            if not entry or set(Path(entry).parts[:-1]) & set(prune):
-                continue
-            path = root / entry
-            if path.is_symlink() or path.is_file():
-                found.append(path)
+    found = _tracked_under(root, root, prune)
+    if found is not None:
         return found
     found = []
     skipped = set(prune) | {".git"}

@@ -257,3 +257,209 @@ def test_the_checkov_wrapper_copies_only_tracked_templates(
     )
     assert "infra/stack.yaml" in copied
     assert not [name for name in copied if name.startswith(("target/", "mutants.out/"))]
+
+
+def _prelude_list(root: Path, *, env: dict[str, str] | None = None) -> list[str]:
+    code = T.TRACKED_PRELUDE + (
+        f"\nimport sys\nsys.stdout.write(chr(0).join(str(p) for p in tracked_files({str(root)!r})))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, check=True, env=env,
+    )
+    return [os.fsdecode(name) for name in proc.stdout.split(b"\0")] if proc.stdout else []
+
+
+def test_a_tracked_path_under_a_symlinked_directory_is_dropped(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The review's P1: ``is_file`` follows ancestors, so the link must be refused above the leaf."""
+    outside = tmp_path / "outside"
+    H.write(outside, {"secret.txt": "old_name\n", "leak.sh": "echo leaked\n"})
+    H.write(repo, {"linked/secret.txt": "x\n", "linked/leak.sh": "echo hi\n", "kept/ok.txt": "y\n"})
+    H.commit(repo, "tracked directory")
+    for name in ("secret.txt", "leak.sh"):
+        (repo / "linked" / name).unlink()
+    (repo / "linked").rmdir()
+    (repo / "linked").symlink_to(outside)
+    found = _rel(repo, T.scan_files(repo))
+    assert "kept/ok.txt" in found
+    assert not [name for name in found if name.startswith("linked/")]
+    assert _prelude_list(repo) == [str(path) for path in T.scan_files(repo)]
+    assert not [path for path in H.C._walk(repo) if "linked" in path.parts]
+    shell = _import("review_adapters_shell")
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    called = _run_wrapper(
+        shell._SHELLCHECK_WRAPPER, [str(repo), str(dest)], tmp_path, "shellcheck", monkeypatch,
+    )
+    assert "leak.sh" not in called
+    assert not (dest / "linked").exists()
+
+
+def test_changed_names_never_reads_through_a_symlinked_directory(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside"
+    H.write(outside, {"caller.py": "import a\n\nvalue = a.old_name()\n"})
+    base = {"a.py": "def old_name():\n    return 1\n", "linked/caller.py": "z = 1\n"}
+    head = {"a.py": "def new_name():\n    return 1\n", "linked/caller.py": "z = 1\n"}
+    repo, base_sha, _head_sha = H.make_repo(tmp_path, base, head)
+    (repo / "linked" / "caller.py").unlink()
+    (repo / "linked").rmdir()
+    (repo / "linked").symlink_to(outside)
+    assert H.C.changed_names(repo, base_sha)["hits"] == []
+
+
+def test_names_with_a_carriage_return_a_newline_or_a_quote_are_listed(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    H.init(root)
+    names = ["cr\rname.py", "new\nline.py", 'quo"te.py', "sp ace.py"]
+    H.write(root, {name: "x = 1\n" for name in names})
+    H.commit(root, "odd names")
+    assert _rel(root, T.scan_files(root)) == sorted(names)
+    assert _prelude_list(root) == [str(path) for path in T.scan_files(root)]
+
+
+def _git_stub(directory: Path, root: Path) -> dict[str, str]:
+    """A ``git`` whose ls-tree prints a name that is not UTF-8, then ``ok.py``."""
+    H.executable(directory / "git", (
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        f"  rev-parse) printf '%s\\n' '{root}' ;;\n"
+        "  ls-tree) printf 'caf\\351.py\\0ok.py\\0' ;;\n"
+        "esac\n"
+    ))
+    return {**os.environ, "PATH": f"{directory}{os.pathsep}{os.environ['PATH']}"}
+
+
+def test_a_name_that_is_not_utf8_does_not_break_the_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "plain"
+    H.write(root, {"ok.py": "x = 1\n"})
+    env = _git_stub(tmp_path / "bin", root.resolve())
+    monkeypatch.setenv("PATH", env["PATH"])
+    assert _rel(root, T.scan_files(root)) == ["ok.py"]
+    assert _prelude_list(root, env=env) == [str(root / "ok.py")]
+
+
+@pytest.fixture
+def with_submodule(tmp_path: Path) -> Path:
+    inner = tmp_path / "inner"
+    H.init(inner)
+    H.write(inner, {"lib.py": "a = 1\n", "docs/lib.md": "# lib\n"})
+    H.commit(inner, "inner")
+    outer = tmp_path / "outer"
+    H.init(outer)
+    H.write(outer, {"top.py": "t = 1\n"})
+    H.commit(outer, "outer")
+    H.git(outer, "-c", "protocol.file.allow=always", "submodule", "add", str(inner), "vendor/sub")
+    H.commit(outer, "submodule")
+    H.write(outer, {"vendor/sub/junk.py": "j = 1\n", "vendor/sub/target/gen.py": "g = 1\n"})
+    return outer
+
+
+def test_a_checked_out_submodule_contributes_its_tracked_files(with_submodule: Path) -> None:
+    found = _rel(with_submodule, T.scan_files(with_submodule))
+    assert found == [
+        ".gitmodules", "top.py", "vendor/sub/docs/lib.md", "vendor/sub/lib.py",
+    ]
+    assert _prelude_list(with_submodule) == [
+        str(path) for path in T.scan_files(with_submodule)
+    ]
+
+
+def test_a_submodule_path_in_the_prune_set_is_dropped(with_submodule: Path) -> None:
+    found = _rel(with_submodule, T.scan_files(with_submodule, frozenset({".git", "sub"})))
+    assert found == [".gitmodules", "top.py"]
+
+
+def test_a_submodule_that_is_not_checked_out_lists_nothing_under_it(tmp_path: Path) -> None:
+    outer = tmp_path / "outer"
+    H.init(outer)
+    H.write(outer, {"top.py": "t = 1\n"})
+    H.commit(outer, "outer")
+    (outer / "vendor" / "sub").mkdir(parents=True)
+    H.git(
+        outer, "update-index", "--add", "--cacheinfo",
+        "160000," + H.git(outer, "rev-parse", "HEAD") + ",vendor/sub",
+    )
+    H.git(outer, "commit", "-m", "gitlink only")
+    assert _rel(outer, T.scan_files(outer)) == ["top.py"]
+
+
+WORKFLOWS = {
+    ".github/workflows/ci.yml": "name: ci\non: push\njobs: {}\n",
+    ".github/workflows/notes.txt": "not a workflow\n",
+}
+
+
+@pytest.fixture
+def with_workflows(tmp_path: Path) -> Path:
+    root = tmp_path / "wf"
+    H.init(root)
+    H.write(root, WORKFLOWS)
+    H.commit(root, "workflows")
+    H.write(root, {".github/workflows/scratch.yml": "name: scratch\non: push\njobs: {}\n"})
+    return root
+
+
+def test_the_zizmor_wrapper_copies_only_tracked_workflows(
+    with_workflows: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflows = _import("review_adapters_workflows")
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    called = _run_wrapper(
+        workflows._ZIZMOR_WRAPPER, [str(with_workflows), str(dest)], tmp_path, "zizmor",
+        monkeypatch,
+    )
+    assert called
+    copied = sorted(path.name for path in (dest / ".github" / "workflows").iterdir())
+    assert copied == ["ci.yml"]
+
+
+def test_the_actionlint_wrapper_names_only_tracked_workflows(
+    with_workflows: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflows = _import("review_adapters_workflows")
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    config = tmp_path / "actionlint.yaml"
+    config.write_text("{}\n", encoding="utf-8")
+    called = _run_wrapper(
+        workflows._ACTIONLINT_WRAPPER, [str(with_workflows), str(dest), str(config)], tmp_path,
+        "actionlint", monkeypatch,
+    )
+    assert ".github/workflows/ci.yml" in called
+    assert "scratch.yml" not in called
+    assert sorted(path.name for path in (dest / ".github" / "workflows").iterdir()) == ["ci.yml"]
+
+
+def test_actionlint_is_not_invoked_for_a_workflow_that_is_not_tracked(tmp_path: Path) -> None:
+    root = tmp_path / "wf"
+    H.init(root)
+    H.write(root, {"README.md": "# x\n"})
+    H.commit(root, "readme")
+    H.write(root, {".github/workflows/scratch.yml": "name: scratch\n"})
+    workflows = _import("review_adapters_workflows")
+    context = T.ScanContext(repo=root, root=root, home=tmp_path / "home")
+    assert workflows._invoke_actionlint(context) == []
+
+
+def test_a_workflow_symlinked_outside_the_root_is_not_copied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "wf"
+    H.init(root)
+    H.write(root, {".github/workflows/ci.yml": "name: ci\n"})
+    H.commit(root, "ci")
+    outside = tmp_path / "outside.yml"
+    outside.write_text("name: secret\n", encoding="utf-8")
+    (root / ".github" / "workflows" / "ci.yml").unlink()
+    (root / ".github" / "workflows" / "ci.yml").symlink_to(outside)
+    workflows = _import("review_adapters_workflows")
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    _run_wrapper(workflows._ZIZMOR_WRAPPER, [str(root), str(dest)], tmp_path, "zizmor", monkeypatch)
+    assert not (dest / ".github" / "workflows" / "ci.yml").exists()

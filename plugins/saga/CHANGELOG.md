@@ -47,7 +47,12 @@
   listings, `pip-audit`'s requirements list, and the checkov, cfn-lint and shellcheck wrapper scripts
   (through `review_tools.TRACKED_PRELUDE`) all use it. A scan root that is not a git repository still
   reads every file with `.git` skipped. The settings strip in `review_tools._strip_settings` still
-  walks everything on purpose. No version bump; that belongs to #147's saga release step.
+  walks everything on purpose. A tracked path with a symlink above its leaf is dropped, so a
+  directory replaced by a link cannot lead a check to a file outside the copy. The listing is read
+  as bytes and split on NUL, so a name with a carriage return or a byte that is not UTF-8 no longer
+  loses a file or raises. A checked-out submodule contributes the files its own repository
+  tracks, and the zizmor and actionlint wrappers copy only tracked workflow files. No version bump;
+  that belongs to #147's saga release step.
 - Issue #250: an uncited test file in a reviewer's scratch copy no longer discards its answer.
   `reviewer_answer.check` takes an optional `warnings` list, and `_check_scratch` puts an added
   test file that no `reproduced` finding names there instead of refusing the answer. `review_command.py

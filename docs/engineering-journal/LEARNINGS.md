@@ -27,6 +27,17 @@ configuration wherever it is. The wrapper scripts run as `python3 -c` and cannot
 module, so they carry a copy of the listing (`TRACKED_PRELUDE`) and a test checks that the copy
 and the function agree.
 
+Code review of abcc8b3 found four more holes in the first version of the listing. `is_file()`
+follows every ancestor, so a tracked directory replaced by a symlink still listed its files and the
+check read the file outside the copy; the listing now drops any path with a symlink above its leaf.
+`git ls-tree -z` was decoded as text, which rewrote a carriage return in a name and raised on a
+byte that is not UTF-8; it is now read as bytes, split on NUL and decoded per name with
+`os.fsdecode`. `ls-tree` records only a submodule's commit, so a checked-out submodule's files
+vanished; the listing recurses into a populated submodule. And the two workflow wrappers still
+read `.github/workflows` straight from disk, so they now take their files from the listing. A
+filter that replaces a walk has to reproduce each safety property the walk had (symlink refusal,
+submodule files), not just the pruning.
+
 **Generalizable rule.** Any check that reads a worktree other tools have already written into
 takes its file list from `git ls-tree`, not from a directory walk with a prune list; a walk that
 must see untracked files says why in a comment.
