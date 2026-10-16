@@ -1053,6 +1053,18 @@ def _mutant_runs(runner: Any) -> list[list[str]]:
     ]
 
 
+class _DiffCalls(_Calls):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.diffs: list[tuple[Path, str, Path]] = []
+
+    def __call__(self, argv: list[str], *, cwd: Path, **kwargs: Any) -> Any:
+        if "--in-diff" in argv:
+            path = Path(argv[argv.index("--in-diff") + 1])
+            self.diffs.append((path, path.read_text(encoding="utf-8"), Path(cwd)))
+        return super().__call__(argv, cwd=cwd, **kwargs)
+
+
 def test_mutants_mutate_only_the_change_through_in_diff(tmp_path: Path) -> None:
     """Issue 244: cargo-mutants gets the change's diff instead of the whole workspace."""
     repo, source = _mutants_repo(tmp_path)
@@ -1063,9 +1075,8 @@ def test_mutants_mutate_only_the_change_through_in_diff(tmp_path: Path) -> None:
     )
     head = _commit(repo, "head")
     output = tmp_path / "out"
-    runner = _Calls(
-        base, "", watch=(str(A._IN_DIFF),),
-        files={"mutants.out/outcomes.json": _fixture("mutants-outcomes.json")},
+    runner = _DiffCalls(
+        base, "", files={"mutants.out/outcomes.json": _fixture("mutants-outcomes.json")},
     )
     assert _run(
         repo, base, head, _profile(tmp_path / "profile.json"), output,
@@ -1076,12 +1087,38 @@ def test_mutants_mutate_only_the_change_through_in_diff(tmp_path: Path) -> None:
     assert "--in-diff" in runs[0]
     # A change in a non-root workspace member must be mutated too.
     assert "--workspace" in runs[0]
-    diff_path = Path(runs[0][runs[0].index("--in-diff") + 1])
-    assert diff_path.as_posix().endswith("target/saga-review/in-diff.patch")
-    seen = [state for argv, _at_base, state in runner.snapshots if "--in-diff" in argv]
-    diff = seen[0][str(A._IN_DIFF)]
+    path, diff, root = runner.diffs[0]
     assert "+++ b/src/lib.rs" in diff and "+    a + b + 0" in diff
+    # The diff lives outside the untrusted scanned tree, and dies with the run.
+    assert root not in path.parents
+    assert not path.exists()
 
+
+def test_mutants_diff_is_not_written_through_a_planted_symlink(tmp_path: Path) -> None:
+    """The reviewed commit cannot redirect saga's diff write with a symlink in its tree."""
+    repo, source = _mutants_repo(tmp_path)
+    base = _commit(repo, "base")
+    victim = tmp_path / "victim.txt"
+    victim.write_text("untouched\n", encoding="utf-8")
+    (repo / "target" / "saga-review").mkdir(parents=True)
+    (repo / "target" / "saga-review" / "in-diff.patch").symlink_to(victim)
+    (repo / "in-diff.patch").symlink_to(victim)
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-f", "-A")
+    _git(repo, "commit", "-m", "head")
+    head = _git(repo, "rev-parse", "HEAD")
+    runner = _DiffCalls(
+        base, "", files={"mutants.out/outcomes.json": _fixture("mutants-outcomes.json")},
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), tmp_path / "out",
+        tmp_path / "home", [_adapter("cargo-mutants")], runner,
+    ) == 0
+    assert victim.read_text(encoding="utf-8") == "untouched\n"
+    assert runner.diffs and "+    a + b + 0" in runner.diffs[0][1]
 
 def test_mutants_change_without_rust_lines_records_nothing_to_mutate(tmp_path: Path) -> None:
     """A README-only change neither runs cargo-mutants nor reaches its timeout."""

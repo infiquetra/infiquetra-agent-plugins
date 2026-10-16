@@ -49,9 +49,9 @@ _YANKED_PACKAGE = re.compile(r"cargo update -p ([^`\s]+)")
 _MUTANT_NAME = re.compile(r"^(.+?):\d+:\d+:\s*(.*)$")
 _MACHETE_SECTION = re.compile(r"^(.*?)\s+--\s+(.*?):\s*$")
 _MUTANT_ROW = "testing.surviving-mutant"
-#: Where the change's diff is written for ``--in-diff``: inside the scan root's
-#: build folder, which cargo-mutants does not copy and which dies with the root.
-_IN_DIFF = Path("target") / "saga-review" / "in-diff.patch"
+#: The change's diff for ``--in-diff``, written in the runner's private scratch
+#: folder: the scanned tree is untrusted, and its build scripts run before this.
+_IN_DIFF = "in-diff.patch"
 #: What cargo-mutants 27 prints, exiting 0 without a report, when the diff
 #: leaves it nothing to test.
 _NOTHING_TO_MUTATE = ("Diff changes no Rust source files", "No mutants to filter")
@@ -442,7 +442,7 @@ def _write_in_diff(context: ScanContext) -> Path:
     Without it cargo-mutants tests every mutant in the workspace and the review
     keeps only those on changed lines; on a real workspace that never finishes.
     """
-    if not context.base:
+    if not context.base or context.scratch is None:
         raise ToolGap("diff-unavailable", _MUTANT_ROW)
     result = subprocess.run(  # nosec B603 B607
         [
@@ -453,9 +453,12 @@ def _write_in_diff(context: ScanContext) -> Path:
     )
     if result.returncode != 0:
         raise ToolGap("diff-unavailable", _MUTANT_ROW)
-    target = context.root / _IN_DIFF
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(result.stdout, encoding="utf-8")
+    target = context.scratch / _IN_DIFF
+    descriptor = os.open(
+        target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(result.stdout)
     return target
 
 

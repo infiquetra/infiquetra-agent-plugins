@@ -255,6 +255,10 @@ class ScanContext:
     change: review_diff.Change | None = None
     #: The reviewed head commit, for values that must be the same on every run.
     head: str = ""
+    #: A private folder outside the scanned tree, owned by the runner and removed
+    #: after this adapter runs. Inputs saga writes for a tool go here, never into
+    #: the reviewed tree, whose commit and build scripts could plant symlinks.
+    scratch: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -788,6 +792,16 @@ def _staged_base_files(
             shutil.rmtree(directory, ignore_errors=True)
 
 
+@contextmanager
+def _scratch() -> Iterator[Path]:
+    """A fresh owner-only folder outside every scan tree, removed afterwards."""
+    path = Path(tempfile.mkdtemp(prefix="saga-adapter-"))
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def _tool_env(home: Path) -> tuple[dict[str, str], list[str]]:
     """The environment adapter tools run under, plus temp dirs to clean.
 
@@ -889,7 +903,10 @@ def _run_adapter(
             timeout = max(1, min(timeout, int(deadline - time.monotonic())))
         ran = version or adapter.default_version
         comparison = "base-head" if adapter.type_checker else adapter.comparison
-        with _staged_base_files(repo, base_sha, adapter.base_files) as staged:
+        with (
+            _staged_base_files(repo, base_sha, adapter.base_files) as staged,
+            _scratch() as scratch,
+        ):
             context = ScanContext(
                 head_root,
                 head_root,
@@ -901,6 +918,7 @@ def _run_adapter(
                 base_files=staged,
                 change=change,
                 head=head_sha,
+                scratch=scratch,
             )
             if comparison == "base-head":
                 hits, digests = _base_and_head(
