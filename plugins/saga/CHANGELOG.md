@@ -38,6 +38,17 @@
 
 ### Fixed
 
+- Issue #253: four review-tool faults no longer degrade every Rust review. cargo-mutants exits 2
+  and 3 are parsed like exit 0 (`Adapter.parsed_exits`), and exit 4, a failing unmutated baseline,
+  is its own reason, `baseline-failed` (`Adapter.exit_reasons`). A run that fails to parse stores
+  its output and names the digest as the degraded entry's `raw_output`. cargo-mutants gets
+  `--test-tool nextest` only when the reviewed tree has `.config/nextest.toml`. lizard runs with
+  `-V`, so lizard 1.24.1 writes its header, and its CSV is read by column name (a headerless row
+  must have 1.24.1's eleven columns). A version probe that exits non-zero is `missing`, never the
+  dotted number in its traceback. An adapter whose languages are absent from the head tree records
+  nothing; the runner uses `/saga:setup`'s own detection (`review_tools.detect_languages`, which
+  `saga_setup.detect_languages` now names), plus `cloudformation` for `cdk.json` or a template. No
+  version bump; that belongs to #147's saga release step.
 - Issue #252: the review checks read only the files git tracks at HEAD of the scan root. Earlier
   prepare tools leave build output in the copy (`target/` from clippy, `mutants.out/` from
   cargo-mutants), and `changed_names` walked it, so one change prepared twice gave packets that

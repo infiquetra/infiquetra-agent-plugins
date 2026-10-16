@@ -384,31 +384,50 @@ def _parse_jscpd(min_lines: int, min_tokens: int):
     return parse
 
 
+#: lizard 1.24.1's CSV columns. It writes this header only with ``-V``.
+_LIZARD_COLUMNS = (
+    "nloc", "ccn", "token", "param", "length", "location", "file", "function",
+    "long_name", "start", "end",
+)
+_LIZARD_NEEDED = frozenset({"ccn", "file", "function", "start", "end"})
+
+
 def _invoke_lizard(cyclomatic: int):
     def invoke(context: ScanContext) -> list[str]:
-        return ["lizard", "-C", str(cyclomatic), "--csv", str(context.root)]
+        # -V makes lizard write its CSV header, so columns are read by name (issue 253).
+        return ["lizard", "-V", "-C", str(cyclomatic), "--csv", str(context.root)]
     return invoke
 
 
 def _parse_lizard(cyclomatic: int):
+    """Columns by header name; a headerless row must have lizard 1.24.1's eleven columns."""
     def parse(text: str) -> ParseResult:
         reader = csv.reader(io.StringIO(text))
         hits: list[Hit] = []
+        columns: dict[str, int] | None = None
         for cells in reader:
-            if not cells or cells[0] == "nloc":
+            if not cells:
                 continue
-            if len(cells) < 9:
+            if cells[0].strip().lower() == "nloc":
+                columns = {name.strip().lower(): index for index, name in enumerate(cells)}
+                if not _LIZARD_NEEDED <= columns.keys():
+                    raise ValueError("lizard csv header lacks file, function, start or end")
                 continue
+            if columns is None and len(cells) != len(_LIZARD_COLUMNS):
+                raise ValueError("lizard output is not the expected csv")
+            named = columns or {name: index for index, name in enumerate(_LIZARD_COLUMNS)}
+            if len(cells) <= max(named[name] for name in _LIZARD_NEEDED):
+                raise ValueError("lizard output is not the expected csv")
             try:
-                complexity = int(cells[1])
-                start = int(cells[7])
-                end = int(cells[8])
+                complexity = int(cells[named["ccn"]])
+                start = int(cells[named["start"]])
+                end = int(cells[named["end"]])
             except ValueError as exc:
                 raise ValueError("lizard output is not the expected csv") from exc
             if complexity < cyclomatic:
                 continue
-            path = cells[5]
-            function = cells[6] or None
+            path = cells[named["file"]]
+            function = cells[named["function"]] or None
             hits.append(Hit(
                 rule_id=function or path,
                 path=path,

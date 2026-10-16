@@ -551,19 +551,51 @@ def test_jscpd_maps_to_the_duplicate_row(tmp_path: Path) -> None:
 def test_lizard_above_the_threshold_maps_to_the_complexity_row(tmp_path: Path) -> None:
     repo, base, head = _changed_app(tmp_path)
     profile = _profile(tmp_path / "profile.json", {"lizard": {"version": "1.0.0"}})
-    payload = (FIXTURES / "lizard.csv").read_text(encoding="utf-8")
+    payload = (FIXTURES / "lizard-1.24.1.csv").read_text(encoding="utf-8")
     output = tmp_path / "out"
+    runner = _Calls(base, payload)
     code = _run(
         repo, base, head, profile, output, tmp_path / "home",
-        [_adapter("lizard")], _Calls(base, payload),
+        [_adapter("lizard")], runner,
     )
     assert code == 0
     findings = _read(output, "findings.json")
     assert len(findings) == 1
     assert findings[0]["rule"]["row"] == "architecture-maintainability.complexity-dead-code-naming"
     assert findings[0]["location"]["function"] == "heavy"
+    assert findings[0]["location"]["lines"] == {"start": 4, "end": 35}
     assert _severity(output, "heavy") == "note"
+    # -V is what makes lizard 1.24.1 write the header the parser reads by name.
+    assert any(call[0] == "lizard" and "-V" in call for call in runner.calls)
+    assert _read(output, "degraded.json") == []
     _valid(output)
+
+
+def test_lizard_1_24_1_csv_parses_by_header_name() -> None:
+    """Issue 253: lizard 1.24.1 writes eleven columns, so fixed positions read the signature."""
+    parse = _adapter("lizard").parse
+    hits = parse((FIXTURES / "lizard-1.24.1.csv").read_text(encoding="utf-8")).hits
+    assert [(hit.function, hit.path, hit.start, hit.end) for hit in hits] == [
+        ("heavy", "src/app.py", 4, 35)
+    ]
+
+
+def test_lizard_headerless_csv_uses_the_1_24_1_layout() -> None:
+    parse = _adapter("lizard").parse
+    text = (FIXTURES / "lizard-1.24.1-no-header.csv").read_text(encoding="utf-8")
+    assert [(hit.function, hit.start, hit.end) for hit in parse(text).hits] == [
+        ("heavy", 4, 35)
+    ]
+
+
+@pytest.mark.parametrize("text", [
+    # The nine-column layout saga's tests once invented, with no header.
+    "20,16,100,2,20,src/app.py,heavy,4,20\n",
+    "NLOC,CCN,token,PARAM,length,location,long_name\n32,16,113,1,32,heavy,heavy( value )\n",
+])
+def test_lizard_csv_of_another_shape_is_refused(text: str) -> None:
+    with pytest.raises(ValueError):
+        _adapter("lizard").parse(text)
 
 
 def _coverage_repo(tmp: Path) -> tuple[Path, str, str, Path]:
@@ -722,7 +754,7 @@ def test_scanner_settings_are_stripped_and_flags_are_pinned(tmp_path: Path) -> N
         if argv[0] == "gitleaks":
             return T.ProcessResult(0, "[]")
         if argv[0] == "lizard":
-            return T.ProcessResult(0, "nloc,ccn,tokens,params,length,file,function,start,end\n")
+            return T.ProcessResult(0, "NLOC,CCN,token,PARAM,length,location,file,function,long_name,start,end\n")
         return T.ProcessResult(0, "{}")
 
     output = tmp_path / "out"

@@ -204,6 +204,15 @@ _LANGUAGE_MARKERS = {
 _LANGUAGE_MARKER_PREFIXES = {
     "typescript": ("tsconfig.",),
 }
+SKIP_DIRS = frozenset(
+    {".git", "node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".saga"}
+)
+_SHEBANG = re.compile(r"^#!.*\b(?:sh|bash|zsh)\b")
+#: A CloudFormation template names its format version or an ``AWS::`` resource type.
+_CLOUDFORMATION = re.compile(rb"AWSTemplateFormatVersion|[\"']?Type[\"']?\s*:\s*[\"']?AWS::")
+_CLOUDFORMATION_SUFFIXES = frozenset({".yaml", ".yml", ".json", ".template"})
+#: Templates larger than this are not read for the CloudFormation check.
+_CLOUDFORMATION_READ_BYTES = 1_000_000
 
 Process = Callable[..., "ProcessResult"]
 
@@ -354,6 +363,12 @@ class Adapter:
     #: A run that exits 0 without writing ``report_file`` is parsed from its
     #: console output (stdout then stderr) instead of counting as unparseable.
     report_optional: bool = False
+    #: Non-zero exits that still wrote a complete report, parsed like exit 0.
+    #: cargo-mutants exits 2 when a mutant survives and 3 when one times out.
+    parsed_exits: tuple[int, ...] = ()
+    #: Exits that mean the run could not answer, each with its own degraded
+    #: reason instead of ``unparseable`` (cargo-mutants 4: the baseline failed).
+    exit_reasons: tuple[tuple[int, str], ...] = ()
 
     def __post_init__(self) -> None:
         if self.stream not in ("stdout", "stderr", "both"):
@@ -963,13 +978,14 @@ def _run(
             degraded.extend(_allow_comments(head_root, change))
             for adapter in adapters:
                 _link_env(adapter, repo, head_root, head_sha, head_sha)
+            head_languages = run_languages(head_root)
             for adapter in adapters:
                 if adapter.mode == "fix" or not adapter.tool:
                     continue
                 pending.extend(_run_adapter(
                     adapter, repo, base_sha, head_sha, head_root, change, home, profile,
                     process, tool_env, deadline, degraded, items, base_markers,
-                    head_markers,
+                    head_markers, head_languages,
                 ))
             measurements: list[dict[str, Any]] = []
             cov_findings: list[dict[str, Any]] = []
@@ -989,6 +1005,101 @@ def _run(
             shutil.rmtree(path, ignore_errors=True)
         for path in tool_temps:
             shutil.rmtree(path, ignore_errors=True)
+
+
+def _shebang_shell(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            line = handle.readline(200)
+    except OSError:
+        return False
+    text = line.decode("utf-8", errors="ignore")
+    return _SHEBANG.search(text) is not None
+
+
+def _walk_files(root: Path) -> Iterator[tuple[Path, str]]:
+    """``(path, posix path relative to root)`` for every file outside ``SKIP_DIRS``."""
+    base = Path(root)
+    for directory, dirnames, filenames in os.walk(base, followlinks=False):
+        dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS]
+        for name in filenames:
+            path = Path(directory) / name
+            yield path, path.relative_to(base).as_posix()
+
+
+def detect_languages(root: Path) -> list[str]:
+    """Formula languages present in *root*, in ``review_formula.LANGUAGES`` order.
+
+    ``cloudformation`` is not detected. ``cdk.json`` does not add Python. ``/saga:setup``
+    pins only the tools this selects, and the runner skips the rest (issue 253).
+    """
+    found: set[str] = set()
+    for path, relative in _walk_files(root):
+        name = path.name
+        suffix = path.suffix.lower()
+        if name == "Cargo.toml":
+            found.add("rust")
+        if suffix == ".py":
+            found.add("python")
+        elif suffix in {".ts", ".tsx", ".js", ".jsx"}:
+            found.add("typescript")
+        elif suffix == ".dart":
+            found.add("dart")
+        elif suffix == ".rs":
+            found.add("rust")
+        elif suffix == ".swift":
+            found.add("swift")
+        elif suffix == ".md":
+            found.add("markdown")
+        elif suffix == ".sh":
+            found.add("shell")
+        elif suffix == "" and _shebang_shell(path):
+            found.add("shell")
+        if suffix in {".yml", ".yaml"} and (
+            relative.startswith(".github/workflows/")
+            or "/.github/workflows/" in f"/{relative}"
+        ):
+            found.add("github-workflow")
+    return [language for language in review_formula.LANGUAGES if language in found]
+
+
+def _cloudformation_present(root: Path) -> bool:
+    """True when *root* holds ``cdk.json`` or a CloudFormation template."""
+    for path, _relative in _walk_files(root):
+        if path.name == "cdk.json":
+            return True
+        if path.suffix.lower() not in _CLOUDFORMATION_SUFFIXES or path.is_symlink():
+            continue
+        try:
+            if path.stat().st_size > _CLOUDFORMATION_READ_BYTES:
+                continue
+            if _CLOUDFORMATION.search(path.read_bytes()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def run_languages(root: Path) -> frozenset[str]:
+    """The languages an adapter may run for: setup's detection plus ``cloudformation``.
+
+    Setup does not detect ``cloudformation``, so its tools gate on ``cdk.json`` or a
+    template here, which is what their own invoke functions look for.
+    """
+    found = set(detect_languages(root))
+    if _cloudformation_present(root):
+        found.add("cloudformation")
+    return frozenset(found)
+
+
+def _language_absent(adapter: Adapter, languages: frozenset[str] | None) -> bool:
+    """True when none of the adapter's languages is in the reviewed tree.
+
+    A ``*`` adapter scans whatever the tree holds; ``None`` means the tree was not read.
+    """
+    if languages is None or "*" in adapter.languages:
+        return False
+    return not languages & set(adapter.languages)
 
 
 def _marker_hit(language: str, basenames: frozenset[str]) -> bool:
@@ -1137,11 +1248,16 @@ def _run_adapter(
     items: list[Mapping[str, Any]],
     base_markers: frozenset[str] | None,
     head_markers: frozenset[str] | None,
+    head_languages: frozenset[str] | None = None,
 ) -> list[Hit]:
     if _markers_removed(adapter, base_markers, head_markers):
         degraded.append(
             _degraded(adapter, _primary_row(adapter), "language-markers-removed")
         )
+    if _language_absent(adapter, head_languages):
+        # Setup never pins a tool for a language the repository lacks, so running
+        # it would only record a degraded row that no lens can use (issue 253).
+        return []
     if adapter.gap_first and head_markers is not None:
         rows = adapter.gap_rows or adapter.rows[:1]
         if _markers_present(adapter, head_markers):
@@ -1264,7 +1380,10 @@ def _once(
     if parsed is not None:
         _note_problems(adapter, parsed, degraded, context.root)
     if failure is not None:
-        degraded.append(_degraded(adapter, _primary_row(adapter), failure))
+        degraded.append(_with_raw(
+            _degraded(adapter, _primary_row(adapter), failure),
+            _failure_raw(adapter, result, context.home),
+        ))
         return (), {}
     assert parsed is not None
     if parsed.gap is not None:
@@ -1311,20 +1430,23 @@ def _base_and_head(
             with _worktree(repo, base_sha) as base_root:
                 _strip_settings(base_root, only=_C4C_SETTINGS_NAMES)
                 _link_env(adapter, repo, base_root, base_sha, head_sha)
-                base_hits, _base_digest, base_problem, base_ran = _scan_root(
+                base_hits, base_digest, base_problem, base_ran = _scan_root(
                     adapter, replace(context, repo=base_root, root=base_root), process, env,
                     timeout, "base", degraded, items,
                 )
         except ToolGap:
             # The base tree declined. Head is still compared against no earlier findings.
             base_hits = ()
+            base_digest = ""
             base_problem = None
             base_ran = False
         if base_problem == "empty-output":
             degraded.append(_degraded(adapter, _primary_row(adapter), base_problem))
             base_hits = ()
         elif base_problem is not None:
-            degraded.append(_degraded(adapter, _primary_row(adapter), base_problem))
+            degraded.append(_with_raw(
+                _degraded(adapter, _primary_row(adapter), base_problem), base_digest
+            ))
             return (), {}
         else:
             _write_base_cache(
@@ -1342,7 +1464,9 @@ def _base_and_head(
         degraded.append(_degraded(adapter, exc.row, exc.reason))
         return (), {}
     if head_problem is not None:
-        degraded.append(_degraded(adapter, _primary_row(adapter), head_problem))
+        degraded.append(_with_raw(
+            _degraded(adapter, _primary_row(adapter), head_problem), head_digest
+        ))
         return (), {}
     if base_ran and not head_ran and _reads_lockfiles(adapter):
         # The base audit read a lockfile the head scan does not read. Comparing
@@ -1373,7 +1497,7 @@ def _scan_root(
     if parsed is not None:
         _note_problems(adapter, parsed, degraded, context.root)
     if failure is not None:
-        return (), "", failure, True
+        return (), _failure_raw(adapter, result, context.home), failure, True
     assert parsed is not None
     if parsed.gap is not None:
         reason, row = parsed.gap
@@ -1515,10 +1639,15 @@ def _parsed(
     """Empty success is ``empty-output`` unless the adapter is silent on success.
 
     A non-zero run with no hits cannot be compared. A parse-time gap wins over both.
+    An exit in ``exit_reasons`` records its own reason; one in ``parsed_exits`` is success.
     """
+    reason = dict(adapter.exit_reasons).get(result.code)
+    if reason is not None:
+        return None, reason
+    succeeded = result.code == 0 or result.code in adapter.parsed_exits
     text = result.stdout or ""
     if not text.strip():
-        if result.code == 0:
+        if succeeded:
             if adapter.silent_ok:
                 return ParseResult(()), None
             return None, "empty-output"
@@ -1530,12 +1659,12 @@ def _parsed(
     except ToolGap:
         raise
     except (ValueError, json.JSONDecodeError):
-        if label == "base" and result.code != 0:
+        if label == "base" and not succeeded:
             return None, "base-deps-missing"
         return None, "unparseable"
     if produced.gap is not None:
         return produced, None
-    if result.code != 0 and not produced.hits and not produced.unfinished:
+    if not succeeded and not produced.hits and not produced.unfinished:
         if label == "base":
             return produced, "base-deps-missing"
         return produced, "unparseable"
@@ -1585,6 +1714,10 @@ def _read_version(
             return None, "timeout"
     finally:
         shutil.rmtree(probe, ignore_errors=True)
+    if result.code != 0:
+        # A probe that failed is not a version, whatever dotted number its
+        # traceback prints (``python@3.14`` read as 3.14, issue 253).
+        return None, "missing"
     version = _found_version(result.stdout or result.stderr or "")
     if version is None:
         return pinned, "version-unreadable"
@@ -1671,6 +1804,26 @@ def _degraded(adapter: Adapter, row: str, reason: str) -> dict[str, str]:
     if len(adapter.languages) == 1 and adapter.languages[0] in review_formula.LANGUAGES:
         language = adapter.languages[0]
     return _gap(lens, language, row, adapter.tool or adapter.id, reason)
+
+
+def _failure_raw(adapter: Adapter, result: ProcessResult, home: Path) -> str:
+    """The digest of a failed run's parsed output, or ``""`` when it printed nothing.
+
+    Only the stream the adapter parses is kept, made stable first, so two runs of
+    one change still record the same bytes (issue 244). Issue 253: a failed run
+    used to keep no evidence at all.
+    """
+    text = result.stdout or ""
+    if not text.strip():
+        return ""
+    return store_raw(_stable_raw(adapter, text).encode(), home)
+
+
+def _with_raw(entry: dict[str, str], digest: str) -> dict[str, str]:
+    """``entry`` naming the stored raw output under ``raw_output`` when there is one."""
+    if digest:
+        entry["raw_output"] = digest
+    return entry
 
 
 def _primary_row(adapter: Adapter) -> str:

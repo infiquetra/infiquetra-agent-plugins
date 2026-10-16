@@ -456,6 +456,103 @@ def test_an_unreadable_version_still_runs(tmp_path: Path) -> None:
     assert ("stub", "security.scanner-medium-low", "version-unreadable") in _reasons(output)
 
 
+def test_a_failed_version_probe_is_missing_not_a_version(tmp_path: Path) -> None:
+    """Issue 253: a probe's traceback path ``python@3.14`` was read as version 3.14."""
+    repo, base, head = _pair(tmp_path)
+    traceback = (
+        "Traceback (most recent call last):\n"
+        '  File "/opt/homebrew/Cellar/python@3.14/3.14.8_1/lib/python3.14/importlib/'
+        'metadata/__init__.py", line 397, in from_name\n'
+        "importlib.metadata.PackageNotFoundError: No package metadata was found for stub\n"
+    )
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(1, "", traceback)
+        return T.ProcessResult(0, "scan\n")
+
+    output = tmp_path / "out"
+    runner = _Calls(handler)
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub()], runner=runner,
+    )
+    assert code == 0
+    assert _reasons(output) == [("stub", "security.scanner-medium-low", "missing")]
+    assert [call["argv"] for call in runner.calls if not _version(call["argv"])] == []
+
+
+def _rust_only(tmp: Path) -> tuple[Path, str, str]:
+    repo = tmp / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "Cargo.toml").write_text(
+        '[package]\nname = "example"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (repo / "src" / "lib.rs").write_text("pub fn one() -> i32 {\n    1\n}\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "lib.rs").write_text("pub fn one() -> i32 {\n    2\n}\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    return repo, base, head
+
+
+def _python_and_cdk_adapters() -> list[Any]:
+    # Other test files load their own review_tools; the adapters must raise this one's ToolGap.
+    sys.modules["review_tools"] = T
+    python_adapters = _load("review_adapters_python")
+    infrastructure = _load("review_adapters_infrastructure")
+    return [*python_adapters.ADAPTERS, *infrastructure.ADAPTERS]
+
+
+def test_a_rust_only_tree_records_no_python_or_cdk_rows(tmp_path: Path) -> None:
+    """Issue 253: setup never pins these tools for a Rust repository, so none of them runs."""
+    repo, base, head = _rust_only(tmp_path)
+    adapters = _python_and_cdk_adapters()
+    assert {"bandit", "pytest-randomly", "cosmic-ray", "cdk-nag", "cfn-lint"} <= {
+        adapter.id for adapter in adapters
+    }
+    output = tmp_path / "out"
+    runner = _Calls(_ok())
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=adapters, runner=runner,
+    )
+    assert code == 0
+    assert _read(output, "degraded.json") == []
+    assert runner.calls == []
+    for lens in _read(output, "outcomes.json")["lens_grades"]:
+        assert lens["degraded_inputs"] == []
+
+
+def test_a_python_file_brings_the_python_tools_back(tmp_path: Path) -> None:
+    repo, base, head = _rust_only(tmp_path)
+    (repo / "tool.py").write_text("print(1)\n", encoding="utf-8")
+    head = _commit(repo, "python")
+    runner = _Calls(_ok())
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=_python_and_cdk_adapters(), runner=runner,
+    ) == 0
+    probed = {call["argv"][0] for call in runner.calls if _version(call["argv"])}
+    assert "bandit" in probed
+    assert "cfn-lint" not in probed
+
+
+def test_run_languages_adds_cloudformation_for_cdk_json_or_a_template(tmp_path: Path) -> None:
+    (tmp_path / "plain").mkdir()
+    (tmp_path / "plain" / "config.yaml").write_text("key: value\n", encoding="utf-8")
+    assert "cloudformation" not in T.run_languages(tmp_path / "plain")
+    (tmp_path / "cdk").mkdir()
+    (tmp_path / "cdk" / "cdk.json").write_text("{}\n", encoding="utf-8")
+    assert "cloudformation" in T.run_languages(tmp_path / "cdk")
+    (tmp_path / "cfn").mkdir()
+    (tmp_path / "cfn" / "stack.yaml").write_text(
+        "Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n", encoding="utf-8"
+    )
+    assert "cloudformation" in T.run_languages(tmp_path / "cfn")
+
+
 def test_a_profile_version_overrides_the_yaml_default(tmp_path: Path) -> None:
     repo, base, head = _pair(tmp_path)
     profile = _profile(tmp_path / "profile.json", {
@@ -1126,7 +1223,7 @@ def _flagged_body(tool_id: str, flagged: bool) -> str:
         if tool_id == "gitleaks":
             return "[]"
         if tool_id == "lizard":
-            return "nloc,ccn,tokens,params,length,file,function,start,end\n"
+            return "NLOC,CCN,token,PARAM,length,location,file,function,long_name,start,end\n"
         if tool_id == "jscpd":
             return '{"duplicates":[]}'
         return "{}"
@@ -1172,8 +1269,8 @@ def _flagged_body(tool_id: str, flagged: bool) -> str:
             "secondFile": {"name": "src/other.py", "start": 2},
         }]})
     return (
-        "nloc,ccn,tokens,params,length,file,function,start,end\n"
-        "20,16,100,2,2,src/app.py,heavy,2,2\n"
+        "NLOC,CCN,token,PARAM,length,location,file,function,long_name,start,end\n"
+        '20,16,100,2,1,"heavy@2-2@src/app.py",src/app.py,heavy,"heavy( a , b )",2,2\n'
     )
 
 

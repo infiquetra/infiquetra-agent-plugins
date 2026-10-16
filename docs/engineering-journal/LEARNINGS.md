@@ -41,6 +41,29 @@ submodule files), not just the pruning.
 **Generalizable rule.** Any check that reads a worktree other tools have already written into
 takes its file list from `git ls-tree`, not from a directory walk with a prune list; a walk that
 must see untracked files says why in a comment.
+### Fixtures for a tool's output must come from the tool, and a tool runs only where setup would pin it
+
+**Evidence.** Issue #253, found by the saga-review-corpus harness audit on ripgrep cases at befe132.
+On a fresh ripgrep clone with a two-commit change of my own and a profile carrying the pins
+`saga_setup.pins_for` computes, the befe132 runner recorded 12 degraded rows: lizard `unparseable`,
+cdk-nag `version-mismatch`, pytest-randomly and pytest-socket each `known-gap` and
+`version-mismatch`, cosmic-ray `known-gap`, plus five that are real. The fixed runner records only
+those five. Real tool output: lizard 1.24.1 writes 11 CSV columns (header only with `-V`), and
+cargo-mutants 27.1.0 exits 2, 3 and 4 with a complete `outcomes.json` each time
+(`plugins/saga/tests/fixtures/review_tools/lizard-1.24.1.csv`, `mutants-27.1.0-exit-*.json`).
+
+**Mechanism.** Four faults, one shape: code written against an imagined tool. saga's lizard test
+used an invented 9-column header, so `int(cells[7])` read the function signature on every real
+run. `_parsed` treated any non-zero exit with no survivor as `unparseable`, but cargo-mutants'
+non-zero exits are answers. `_read_version` took any dotted number, and a failed probe's traceback
+path `python@3.14` read as version 3.14. And the runner ran every adapter on every tree, while
+`/saga:setup` pins only the tools its language detection selects, so on a Rust repository every
+Python and CDK tool showed up unpinned and degraded. The runner now uses setup's own detection
+(`review_tools.detect_languages`, which `saga_setup` names), so the two cannot disagree.
+
+**Generalizable rule.** Capture a parser's fixture from the real tool at the pinned version, and
+let one function decide which tools apply, shared by the step that pins them and the step that
+runs them.
 
 ### A reviewer's stray guard test is a warning, never a reason to discard its findings
 

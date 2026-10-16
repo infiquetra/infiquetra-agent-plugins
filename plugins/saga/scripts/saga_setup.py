@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import subprocess  # nosec B404
 import sys
 import tempfile
@@ -34,7 +33,6 @@ if str(_SCRIPTS) not in sys.path:
 
 import functional_environment  # noqa: E402
 import qa_strategies  # noqa: E402
-import review_formula  # noqa: E402
 import review_tools  # noqa: E402
 
 SURVEY_SCHEMA = "setup_survey.v1"
@@ -58,9 +56,7 @@ CREDENTIAL_NAMES = (
     "SAGA_LANGFUSE_SECRET_KEY",
     "SAGA_LANGFUSE_HOST",
 )
-SKIP_DIRS = frozenset(
-    {".git", "node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".saga"}
-)
+SKIP_DIRS = review_tools.SKIP_DIRS
 RESERVED_PROFILE_KEYS = frozenset(
     {
         "schema",
@@ -80,7 +76,6 @@ RESERVED_PROFILE_KEYS = frozenset(
         "branch_preview_command",
     }
 )
-_SHEBANG = re.compile(r"^#!.*\b(?:sh|bash|zsh)\b")
 Runner = Callable[..., Any]
 
 
@@ -127,53 +122,9 @@ def _at_least(found: str, minimum: str) -> bool:
     return tuple(left) >= tuple(right)
 
 
-def _shebang_shell(path: Path) -> bool:
-    try:
-        with path.open("rb") as handle:
-            line = handle.readline(200)
-    except OSError:
-        return False
-    text = line.decode("utf-8", errors="ignore")
-    return _SHEBANG.search(text) is not None
-
-
-def detect_languages(root: Path) -> list[str]:
-    """Formula languages present in *root*, in ``review_formula.LANGUAGES`` order.
-
-    ``cloudformation`` is not detected. ``cdk.json`` does not add Python.
-    """
-    found: set[str] = set()
-    base = Path(root)
-    for directory, dirnames, filenames in os.walk(base, followlinks=False):
-        dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS]
-        for name in filenames:
-            path = Path(directory) / name
-            relative = path.relative_to(base).as_posix()
-            suffix = path.suffix.lower()
-            if name == "Cargo.toml":
-                found.add("rust")
-            if suffix == ".py":
-                found.add("python")
-            elif suffix in {".ts", ".tsx", ".js", ".jsx"}:
-                found.add("typescript")
-            elif suffix == ".dart":
-                found.add("dart")
-            elif suffix == ".rs":
-                found.add("rust")
-            elif suffix == ".swift":
-                found.add("swift")
-            elif suffix == ".md":
-                found.add("markdown")
-            elif suffix == ".sh":
-                found.add("shell")
-            elif suffix == "" and _shebang_shell(path):
-                found.add("shell")
-            if suffix in {".yml", ".yaml"} and (
-                relative.startswith(".github/workflows/")
-                or "/.github/workflows/" in f"/{relative}"
-            ):
-                found.add("github-workflow")
-    return [language for language in review_formula.LANGUAGES if language in found]
+#: One detection for setup and the review runner, so a tool setup never pinned
+#: never runs (issue 253).
+detect_languages = review_tools.detect_languages
 
 
 def load_extensions(path: Path | None = None) -> dict[str, Any]:

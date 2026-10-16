@@ -233,7 +233,7 @@ c4c_gaps:
 
 ## Rust
 
-`cargo-check` is the type checker: base against head over the whole project, `correctness.type-error`, blocks. `clippy` takes its outcome from its own level on changed lines: `error` blocks, `warning` fixes later. `cargo-deny` compares advisories base against head over `Cargo.lock`; the CVSS bands map per the fence (unscored blocks, 7.0 and above blocks, below fixes later). `cargo-mutants` keeps missed mutants on changed lines, `testing.surviving-mutant`, blocks, sharing the 900 second mutation cap; its JSON report is read after the run. `cargo-machete` compares unused dependencies base against head, `architecture-maintainability.complexity-dead-code-naming`, note. `rustfmt` is fix mode: it reformats and writes no record. `rust-shuffle` and `rust-no-network` are known gaps (see below). `rust-coverage` is a data row; C3 writes its fenced invocation into the profile test command, with `--branch` on nightly only. A stable-toolchain report carries no branch data, so the line fallback applies and the findings are degraded.
+`cargo-check` is the type checker: base against head over the whole project, `correctness.type-error`, blocks. `clippy` takes its outcome from its own level on changed lines: `error` blocks, `warning` fixes later. `cargo-deny` compares advisories base against head over `Cargo.lock`; the CVSS bands map per the fence (unscored blocks, 7.0 and above blocks, below fixes later). `cargo-mutants` keeps missed mutants on changed lines, `testing.surviving-mutant`, blocks, sharing the 900 second mutation cap; its JSON report is read after the run. Exit 2 (a mutant survived) and exit 3 (a mutant timed out) are parsed like exit 0; exit 4, where the unmutated tree fails its own tests, is reason `baseline-failed`. It runs `cargo test` unless the reviewed tree has `.config/nextest.toml` and cargo-nextest is installed, then `--test-tool nextest`; a `test_tool` in `.cargo/mutants.toml` is read by cargo-mutants itself. `cargo-machete` compares unused dependencies base against head, `architecture-maintainability.complexity-dead-code-naming`, note. `rustfmt` is fix mode: it reformats and writes no record. `rust-shuffle` and `rust-no-network` are known gaps (see below). `rust-coverage` is a data row; C3 writes its fenced invocation into the profile test command, with `--branch` on nightly only. A stable-toolchain report carries no branch data, so the line fallback applies and the findings are degraded.
 
 ## Swift
 
@@ -262,7 +262,9 @@ The relocated run does not copy the checkout. It rewrites repository-relative to
 
 ## Raw output
 
-Raw tool output is `~/.saga/review-output/<sha256>`, mode 0600. `~/.saga` is created mode 0700 when this runner creates it. `--home` overrides the parent for tests. The finding's `proof.raw_output` is that sha256.
+Raw tool output is `~/.saga/review-output/<sha256>`, mode 0600. `~/.saga` is created mode 0700 when this runner creates it. `--home` overrides the parent for tests. The finding's `proof.raw_output` is that sha256. A run that fails to parse keeps its output too: its degraded entry's `raw_output` is that sha256.
+
+A tool runs only when the head tree holds one of its languages, read with `/saga:setup`'s own detection (plus `cloudformation` for `cdk.json` or a CloudFormation template), so a tool setup never pinned records nothing. A version probe that exits non-zero is `missing`, never a version.
 
 ## Fingerprint
 
