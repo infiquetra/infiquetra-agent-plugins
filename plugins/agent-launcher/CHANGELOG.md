@@ -93,8 +93,8 @@ for C8 to extend.
   `claude -p` as `--json-schema` and reads the answer from the `structured_output` field of
   `--output-format json`; the result records `answer_source` (`structured_output` or
   `final_message`). Without structured output it falls back to the final message: a bare object or
-  one whole-message fence as before, and now also the last fenced block or bare object inside
-  prose, accepted only when it carries every key the schema requires. When no answer can be read
+  one whole-message fence as before. A message that only contains an object is never read, because
+  the reviewer prompt quotes example objects and a quoted one must not pass for the answer. When no answer can be read
   the final message is kept, cut at 64 KiB, as `final-message.txt` beside `result.json` (never in
   the scratch copy), and the result's `final_message` gives its path, size and whether it was cut.
   Claude Code 2.1.301 refuses a schema that declares the 2020-12 `$schema` URI (`--json-schema is

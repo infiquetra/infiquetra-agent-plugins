@@ -5088,32 +5088,32 @@ def test_reviewer_a_missing_structured_output_key_falls_back_to_the_final_messag
     assert launcher.reviewer_read_answer(parsed) == (ANSWER, "final_message", None)
 
 
-def test_reviewer_prose_around_a_fenced_or_bare_answer_is_read(launcher: ModuleType) -> None:
-    required = ["schema", "items", "findings"]
-    fenced = "Here is my review.\n\n```json\n" + json.dumps(ANSWER) + "\n```\n\nThat is all."
-    bare = "Here is my review: " + json.dumps(ANSWER) + " That is all."
-    for final in (fenced, bare):
+def test_reviewer_a_whole_message_bare_or_fenced_object_is_still_read(launcher: ModuleType) -> None:
+    for final in (json.dumps(ANSWER), "```json\n" + json.dumps(ANSWER) + "\n```"):
         parsed = {"final": final, "structured": None}
-        assert launcher.reviewer_read_answer(parsed, required) == (ANSWER, "final_message", None)
+        assert launcher.reviewer_read_answer(parsed) == (ANSWER, "final_message", None)
 
 
-def test_reviewer_an_example_object_in_prose_is_not_taken_for_the_answer(
-    launcher: ModuleType,
+def test_reviewer_an_example_object_quoted_before_the_answer_is_refused_and_kept(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, home: Path
 ) -> None:
-    final = 'I would normally write {"verdict": "ok"} but could not finish.'
-    answer, source, why = launcher.reviewer_read_answer(
-        {"final": final, "structured": None}, ["schema", "items", "findings"]
+    repo, head = reviewed_repo
+    example = {"schema": "targeted_reviewer_answer.v1", "items": [], "findings": []}
+    # The prompt's own example object, then the real answer after it, all inside prose.
+    final = ("The prompt shows this shape:\n\n```json\n" + json.dumps(example) + "\n```\n\n"
+             "My answer: " + json.dumps(ANSWER))
+    assert launcher.reviewer_read_answer({"final": final, "structured": None}) == (
+        None, None, "the final message is not JSON"
     )
-    assert (answer, source, why) == (None, None, "the final message is not JSON")
-
-
-def test_reviewer_the_last_matching_object_in_prose_is_the_answer(launcher: ModuleType) -> None:
-    final = ('First draft {"schema": "x", "items": [], "findings": []} was wrong; '
-             "final: " + json.dumps(ANSWER))
-    answer, source, _ = launcher.reviewer_read_answer(
-        {"final": final, "structured": None}, ["schema", "items", "findings"]
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path), env=_env(home),
+        session=FakeSession(_claude_result(final)),
     )
-    assert answer == ANSWER and source == "final_message"
+    kept = result["final_message"]
+    assert code == 3 and result["answer_path"] is None and result["answer_source"] is None
+    assert result["error"] == "the final message is not JSON"
+    assert Path(kept["path"]).read_text() == final
+    assert not (tmp_path / "out" / "answer.json").exists()
 
 
 def test_reviewer_an_unreadable_answer_keeps_the_final_message_beside_result_json(

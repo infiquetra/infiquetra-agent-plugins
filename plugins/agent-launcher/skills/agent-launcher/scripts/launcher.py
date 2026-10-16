@@ -3506,60 +3506,19 @@ def reviewer_extract_answer(final: str | None) -> tuple[Any, str | None]:
     return answer, None
 
 
-def reviewer_embedded_answer(final: str, required: Sequence[str]) -> Any:
-    """The last JSON object inside prose that carries every *required* key, else ``None``.
-
-    Issue #248: a model sometimes writes a sentence around its answer. The last fenced block is
-    tried first, then the last bare object. Requiring the schema's own required keys keeps an
-    example object quoted in the prose from being taken for the answer.
-    """
-    decoder = json.JSONDecoder()
-    candidates: list[str] = [
-        match.group(1) for match in re.finditer(r"```(?:json)?\s*\n(.*?)\n```", final, re.DOTALL)
-    ]
-    candidates.reverse()
-    bare: list[Any] = []
-    index = final.find("{")
-    while index != -1:
-        try:
-            value, end = decoder.raw_decode(final, index)
-        except ValueError:
-            index = final.find("{", index + 1)
-            continue
-        bare.append(value)
-        index = final.find("{", end)
-    for block in candidates:
-        try:
-            value = json.loads(block)
-        except ValueError:
-            continue
-        if isinstance(value, dict) and all(key in value for key in required):
-            return value
-    for value in reversed(bare):
-        if isinstance(value, dict) and all(key in value for key in required):
-            return value
-    return None
-
-
-def reviewer_read_answer(
-    parsed: Mapping[str, Any], required: Sequence[str] = ()
-) -> tuple[Any, str | None, str | None]:
+def reviewer_read_answer(parsed: Mapping[str, Any]) -> tuple[Any, str | None, str | None]:
     """The answer, where it came from and why there is none: structured output first (issue #248).
 
-    The order is Claude's validated ``structured_output``, then the final message as a whole (a
-    bare object or one fence), then the last object embedded in prose.
+    The order is Claude's validated ``structured_output``, then a final message that is entirely
+    one JSON object (bare or in one fence). A message that merely contains an object is never read:
+    the prompt quotes example objects, so a quoted one must not pass for the answer.
     """
     structured = parsed.get("structured")
     if isinstance(structured, dict):
         return structured, "structured_output", None
-    final = parsed.get("final")
-    answer, missing = reviewer_extract_answer(final)
+    answer, missing = reviewer_extract_answer(parsed.get("final"))
     if answer is not None:
         return answer, "final_message", None
-    if final and final.strip():
-        embedded = reviewer_embedded_answer(final, required)
-        if embedded is not None:
-            return embedded, "final_message", None
     return None, None, missing
 
 
@@ -3785,7 +3744,6 @@ def reviewer_launch(
     if not isinstance(schema_object, dict):
         raise ReviewerRefused(f"the answer schema {request.schema} is not a JSON object")
     answer_schema = json.dumps(schema_object, separators=(",", ":"), ensure_ascii=False)
-    required_keys = [key for key in schema_object.get("required", []) if isinstance(key, str)]
     if not request.packet.is_dir():
         raise ReviewerRefused(f"the review packet {request.packet} is not a directory")
     wrapper = reviewer_wrapper_path()
@@ -3844,7 +3802,7 @@ def reviewer_launch(
         argv, stdin=stdin, cwd=copy, env={**session_env, **extra_env}, timeout=request.timeout
     )
     parsed = recipe.parse(proc.stdout)
-    answer, answer_source, missing = reviewer_read_answer(parsed, required_keys)
+    answer, answer_source, missing = reviewer_read_answer(parsed)
 
     shell_reads = [
         {"path": str(Path(extra_env[REVIEWER_SHELL_PREFIX]).parent),

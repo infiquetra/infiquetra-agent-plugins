@@ -25,7 +25,7 @@ looks successful.
 **Generalizable rule.** Run the real CLI once with the real schema before trusting a fake-session test. When a headless CLI offers schema-validated output, use it and read the
 structured field first; treat its absence, not `is_error`, as the failure signal; and when no
 answer can be read, write the raw final message (bounded) beside the result so the failure can be
-diagnosed.
+diagnosed. Never rescue an answer by searching prose for a JSON object that merely has the right keys: the prompt itself quotes example objects, so accept only structured output or a message that is entirely one object, and keep the message otherwise.
 
 ### A determinism audit proves nothing about a tool that reported no finding, and an argv test proves nothing the tool's parser has not accepted
 
