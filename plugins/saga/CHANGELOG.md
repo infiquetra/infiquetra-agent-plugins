@@ -46,8 +46,11 @@
   `-V`, so lizard 1.24.1 writes its header, and its CSV is read by column name (a headerless row
   must have 1.24.1's eleven columns). A version probe that exits non-zero is `missing`, never the
   dotted number in its traceback. An adapter whose languages are absent from the head tree records
-  nothing; the runner uses `/saga:setup`'s own detection (`review_tools.detect_languages`, which
-  `saga_setup.detect_languages` now names), plus `cloudformation` for `cdk.json` or a template. No
+  nothing; a language is present when `/saga:setup`'s own detection finds it
+  (`review_tools.detect_languages`, which `saga_setup.detect_languages` now names) or the tree
+  commits one of its marker files, so a lockfile alone keeps a dependency audit running.
+  `cloudformation` is present for `cdk.json` or any file the CloudFormation wrappers would scan
+  that mentions `AWS::` or a top-level `Resources` key. No
   version bump; that belongs to #147's saga release step.
 - Issue #252: the review checks read only the files git tracks at HEAD of the scan root. Earlier
   prepare tools leave build output in the copy (`target/` from clippy, `mutants.out/` from

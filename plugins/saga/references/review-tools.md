@@ -264,7 +264,7 @@ The relocated run does not copy the checkout. It rewrites repository-relative to
 
 Raw tool output is `~/.saga/review-output/<sha256>`, mode 0600. `~/.saga` is created mode 0700 when this runner creates it. `--home` overrides the parent for tests. The finding's `proof.raw_output` is that sha256. A run that fails to parse keeps its output too: its degraded entry's `raw_output` is that sha256.
 
-A tool runs only when the head tree holds one of its languages, read with `/saga:setup`'s own detection (plus `cloudformation` for `cdk.json` or a CloudFormation template), so a tool setup never pinned records nothing. A version probe that exits non-zero is `missing`, never a version.
+A tool runs only when the head tree holds one of its languages: `/saga:setup`'s own detection finds it, or the tree commits one of its marker files (`Cargo.toml`, `package.json`, `pyproject.toml`, `requirements*.txt`, lockfiles), so a lockfile alone keeps a dependency audit running. `cloudformation` is present for `cdk.json` or any YAML, JSON or `.template` file outside `.git` that mentions `AWS::`, `AWSTemplateFormatVersion` or a top-level `Resources` key. A tool whose languages are absent records nothing. A version probe that exits non-zero is `missing`, never a version.
 
 ## Fingerprint
 
