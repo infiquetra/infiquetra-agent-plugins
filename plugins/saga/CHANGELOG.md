@@ -54,6 +54,21 @@
   `O_DIRECTORY | O_NOFOLLOW`, so a folder the first run replaced with a symlink is refused
   (`diff-unavailable`). No version
   bump; that belongs to #147's saga release step.
+- Issue #262: a targeted reviewer and finish's confined re-run can build a Rust change offline, so
+  a reproduced finding is possible. `prepare` vendors the head's crates.io dependencies with
+  `cargo vendor --locked` into `<packet>/dependencies/rust` and records the outcome in the new
+  packet file `dependencies.json` (`saga.review_dependencies.v1`: `fetched` with the crate count,
+  `no-dependencies`, or `not-fetched` with the reason). The fetch compiles nothing, so no build
+  script runs; it works on an export of the head with the commit's `.cargo/` and
+  `rust-toolchain(.toml)` removed, refuses a git, alternate-registry or outside-the-head path
+  source before cargo runs and any non-crates.io source in `Cargo.lock` (generated first when the
+  head has none), refuses cargo or rustup configuration in a folder above the fetch, and runs with
+  a fresh `HOME`, `TMPDIR` and `CARGO_HOME` and only the locale and `PATH` variables. `finish`
+  re-runs a reproduction with `CARGO_HOME` pointing at a read-only `config.toml` that replaces
+  crates.io with the vendored tree, `CARGO_NET_OFFLINE=true`, and the tree allowed for reading
+  only (seatbelt `file-read*` after the home deny; bwrap `--ro-bind`). Only Rust is fetched; the
+  language audit in the pull request lists why Python, TypeScript, Dart, Swift and CDK are not.
+  No version bump; that belongs to #147's saga release step.
 - Issue #253: four review-tool faults no longer degrade every Rust review. cargo-mutants exits 2
   and 3 are parsed like exit 0 (`Adapter.parsed_exits`), and exit 4, a failing unmutated baseline,
   is its own reason, `baseline-failed` (`Adapter.exit_reasons`). A timed-out mutant records

@@ -40,6 +40,47 @@ it by running the code in subprocesses with different `PYTHONHASHSEED` values an
 Give a tool anything that scales with the machine (timeouts, thread counts) as a fixed value, and
 let the repository's own config win. A text fallback needs a reason for every token it admits:
 filter language keywords and very short tokens before searching the repository for them.
+### Cargo takes source replacement from a config file, not from CARGO_SOURCE_* variables
+
+**Evidence.** Issue #262, measured on cargo 1.98.1 (Homebrew) on 2026-10-16. A crate with one
+crates.io dependency (`itoa`), vendored with `cargo vendor --locked`, then built offline:
+`CARGO_SOURCE_CRATES_IO_REPLACE_WITH=saga-vendored` with
+`CARGO_SOURCE_SAGA_VENDORED_DIRECTORY=<vendor>` failed with "no matching package named `itoa`
+found"; the same two keys in `$CARGO_HOME/config.toml` built and tested, with and without a
+`Cargo.lock`, and with both that home and the vendored tree `chmod a-w`. A `build.rs` that writes
+a marker left none after `generate-lockfile` and `vendor`, and wrote it on the first build
+(`test_live_cargo_resolves_and_vendors_without_running_a_build_script`). Live, ripgrep 3fce3b5
+vendored 52 crates (70 MB) in prepare; a Haiku reviewer through `launcher.py review` wrote a test
+and ran `cargo test --offline -p ignore --test hidden_single_dot_test` in its sandbox, and finish's
+seatbelt re-run built the same test offline in 4.2 s. Code: `plugins/saga/scripts/review_dependencies.py`,
+`reviewer_cargo_home` in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`.
+
+**Mechanism.** Cargo reads environment variables for keys it already knows to look up, but it
+discovers the tables under `[source]` only by reading config files, so a source named only in the
+environment does not exist. An offline build from a directory source writes nothing to
+`CARGO_HOME` (no registry cache, no lock), which is why a read-only home works.
+
+**Generalizable rule.** To point a sandboxed cargo at vendored sources, write a `config.toml` into
+a cargo home you own and set `CARGO_HOME`; never rely on `CARGO_SOURCE_*` variables.
+
+### A reproduced Rust finding still fails finish's match on the test id and the panic line
+
+**Evidence.** Issue #262's live check (above). The reviewer's finding was `reproduced` with
+`proof.test` `crates/ignore/tests/hidden_single_dot_test.rs::single_dot_file_is_skipped_as_hidden`,
+and finish graded it `traced`, although its confined re-run exited 101 with the same assertion.
+`_matches` in `plugins/saga/scripts/review_command.py` requires a test id containing `::` to appear
+verbatim in the output; cargo prints `test single_dot_file_is_skipped_as_hidden ... FAILED`, never
+the file path form. The recorded output also carried the reviewer's `<pid>` in place of the
+temporary directory's process id, and Rust's panic line now includes a per-run thread id
+(`thread 'single_dot_file_is_skipped_as_hidden' (130502963) panicked at ...`).
+
+**Mechanism.** The match rule was written against pytest, whose node ids are `path::name` and
+appear in its output. Cargo's test ids are module paths without the file, and its panic header
+changes on every run, so a Rust reproduction can only match when the reviewer happens to record a
+stable assertion line and a bare test name.
+
+**Generalizable rule.** A re-run matcher must be checked against each test runner's real output
+before a language's reproductions are counted; one live run per language finds it.
 
 ### A check that reads the copy must read only what git tracks, because earlier tools write into it
 

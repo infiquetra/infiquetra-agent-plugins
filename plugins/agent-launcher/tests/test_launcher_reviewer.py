@@ -1112,3 +1112,156 @@ def test_muse_executable_is_the_versioned_binary_behind_the_launcher_script(
     (bindir / ".muse-version").write_text("../../etc/passwd\n")
     with pytest.raises(launcher.ReviewerRefused, match="no native muse"):
         launcher.reviewer_muse_executable(env)
+
+
+# --------------------------------------------------------------------------- offline dependencies
+
+
+def _vendored_packet(launcher: ModuleType, tmp_path: Path, entry: Any = None) -> Path:
+    """A packet whose ``dependencies.json`` names vendored Rust sources (issue #262)."""
+    packet = tmp_path / "packet"
+    (packet / "dependencies" / "rust" / "itoa").mkdir(parents=True)
+    record = {
+        "schema": launcher.REVIEWER_DEPENDENCIES_SCHEMA,
+        "rust": entry if entry is not None
+        else {"state": "fetched", "directory": "dependencies/rust", "crates": 1},
+    }
+    (packet / "dependencies.json").write_text(json.dumps(record), "utf-8")
+    return packet
+
+
+def _launch_with(
+    launcher: ModuleType, repo: Path, head: str, tmp_path: Path, packet: Path, **env: str
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+    session = FakeSession(CLAUDE_ANSWER)
+    result, code = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path, packet=packet, max_budget_usd="1"),
+        env=_env(tmp_path, **env), session=session,
+    )
+    assert code == 0, result
+    argv = session.calls[0]["argv"]
+    settings = json.loads(Path(argv[argv.index("--settings") + 1]).read_text("utf-8"))
+    return result, settings, session.calls[0]["env"]
+
+
+def test_offline_the_reviewer_reads_the_vendored_crates_read_only_through_its_cargo_home(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    import tomllib  # noqa: PLC0415
+
+    repo, head = reviewed_repo
+    packet = _vendored_packet(launcher, tmp_path)
+    vendor = str((packet / "dependencies" / "rust").resolve())
+    result, settings, env = _launch_with(
+        launcher, repo, head, tmp_path, packet,
+        CARGO_HOME=str(tmp_path / "home" / ".cargo"), CARGO_REGISTRY_TOKEN="inert-example",
+        SSH_AUTH_SOCK="/tmp/example-agent.sock",
+    )
+    cargo_home = Path(env["CARGO_HOME"])
+    copy = Path(result["scratch"]["path"])
+    assert cargo_home == copy.parent / "cargo-home" and not cargo_home.is_relative_to(copy)
+    assert env["CARGO_NET_OFFLINE"] == "true"
+    config = cargo_home / "config.toml"
+    parsed = tomllib.loads(config.read_text("utf-8"))
+    assert parsed["source"]["crates-io"] == {"replace-with": "saga-vendored"}
+    assert parsed["source"]["saga-vendored"] == {"directory": vendor}
+    assert parsed["net"] == {"offline": True}
+    assert not os.access(config, os.W_OK)
+    filesystem = settings["sandbox"]["filesystem"]
+    for path in (str(cargo_home.resolve()), vendor):
+        assert path in filesystem["allowRead"]
+        assert path in filesystem["denyWrite"], "read-only is stated, not implied"
+    assert filesystem["denyRead"][0] == "~"
+    # Network and credentials stay denied exactly as before.
+    assert settings["sandbox"]["network"] == {"strictAllowlist": True, "allowedDomains": []}
+    denied = {item["name"] for item in settings["sandbox"]["credentials"]["envVars"]}
+    assert {"CARGO_REGISTRY_TOKEN", "SSH_AUTH_SOCK"} <= denied
+    assert not {"CARGO_HOME", "CARGO_NET_OFFLINE"} & denied
+    assert "Read(~/.cargo/credentials.toml)" in settings["permissions"]["deny"]
+    assert {"WebFetch", "WebSearch", "mcp__*"} <= set(settings["permissions"]["deny"])
+    reads = {item["path"]: item["reason"] for item in result["sandbox_reads"]["allowed"]}
+    assert "issue #262" in reads[vendor] and "issue #262" in reads[str(cargo_home.resolve())]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"state": "not-fetched", "reason": "x"},
+        {"state": "fetched", "directory": "/etc"},
+        {"state": "fetched", "directory": "../elsewhere"},
+        {"state": "fetched", "directory": "dependencies/missing"},
+    ],
+)
+def test_offline_an_untrustworthy_entry_is_ignored_and_cargo_stays_offline(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path, entry: Any
+) -> None:
+    repo, head = reviewed_repo
+    packet = _vendored_packet(launcher, tmp_path, entry)
+    _result, settings, env = _launch_with(launcher, repo, head, tmp_path, packet)
+    assert launcher.reviewer_packet_vendor(packet) is None
+    config = (Path(env["CARGO_HOME"]) / "config.toml").read_text("utf-8")
+    assert "[source" not in config and "offline = true" in config
+    assert env["CARGO_NET_OFFLINE"] == "true"
+    root = str(packet.resolve())
+    reads = settings["sandbox"]["filesystem"]["allowRead"]
+    assert [path for path in reads if path != root and path.startswith(root + "/")] == []
+
+
+def test_offline_a_symlinked_dependency_folder_is_ignored(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    packet = tmp_path / "packet"
+    (packet / "dependencies").mkdir(parents=True)
+    (packet / "dependencies" / "rust").symlink_to(tmp_path)
+    (packet / "dependencies.json").write_text(json.dumps({
+        "schema": launcher.REVIEWER_DEPENDENCIES_SCHEMA,
+        "rust": {"state": "fetched", "directory": "dependencies/rust"},
+    }), "utf-8")
+    assert launcher.reviewer_packet_vendor(packet) is None
+    (packet / "dependencies.json").write_text(json.dumps({
+        "schema": "something-else", "rust": {"state": "fetched", "directory": "dependencies/rust"},
+    }), "utf-8")
+    assert launcher.reviewer_packet_vendor(packet) is None
+
+
+def test_offline_the_shell_prefix_passes_the_cargo_variables_to_sandboxed_commands(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    script = launcher.reviewer_claude_shell_script(tmp_path / "sentinel", "token")
+    for name in ("CARGO_HOME", "CARGO_NET_OFFLINE"):
+        assert f'${{{name}+"{name}=${name}"}}' in script
+        assert not launcher.REVIEWER_CREDENTIAL_NAME.search(name)
+
+
+def test_offline_grok_grants_the_dependency_paths_read_only(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, packet = tmp_path / "copy", tmp_path / "packet"
+    copy.mkdir()
+    packet.mkdir()
+    extra = [str(tmp_path / "cargo-home"), str(packet / "dependencies" / "rust")]
+    settings = launcher.reviewer_grok_settings(
+        copy, packet, {"HOME": str(tmp_path / "home")}, toolchain=[], read_only=extra
+    )
+    assert settings["profile"]["read_only"][-2:] == extra
+    assert settings["profile"]["restrict_network"] is True
+
+
+def test_offline_a_build_s_target_and_new_lock_are_clutter_but_a_tracked_lock_is_not(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy = tmp_path / "copy"
+    (copy / "src").mkdir(parents=True)
+    (copy / "src" / "lib.rs").write_text("pub fn a() {}\n")
+    (copy / "crate").mkdir()
+    (copy / "crate" / "Cargo.lock").write_text("version = 4\n")
+    manifest = launcher._reviewer_manifest(copy)
+    (copy / "target" / "debug").mkdir(parents=True)
+    (copy / "target" / "debug" / "example").write_text("binary\n")
+    (copy / "Cargo.lock").write_text("version = 4\n")
+    (copy / "crate" / "Cargo.lock").write_text("version = 4\n# changed\n")
+    (copy / "tests").mkdir()
+    (copy / "tests" / "repro.rs").write_text("#[test]\nfn t() {}\n")
+    changes = launcher.reviewer_scratch_changes(copy, manifest)
+    assert changes["added"] == ["tests/repro.rs"]
+    assert changes["modified"] == ["crate/Cargo.lock"]

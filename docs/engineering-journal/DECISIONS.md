@@ -1,5 +1,36 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-16
+
+### A review packet carries the head's vendored Rust dependencies; only crates.io is fetched
+
+**Decision.** saga's `prepare` vendors the head's crates.io dependencies with `cargo vendor
+--locked` into `<packet>/dependencies/rust` and records the outcome in `dependencies.json`.
+agent-launcher's reviewer and finish's confined re-run read that folder read-only through a cargo
+home whose `config.toml` replaces crates.io with it and sets `net.offline`, plus
+`CARGO_NET_OFFLINE=true`. The fetch refuses git and alternate-registry sources, paths outside the
+head, and cargo or rustup configuration above the fetch, removes the commit's own `.cargo/` and
+`rust-toolchain(.toml)` before cargo runs, and uses a fresh `HOME`, `TMPDIR` and `CARGO_HOME`.
+Only Rust is fetched (issue #262).
+
+**Rationale.** A reviewer's sandbox and finish's re-run have no network, so without the sources no
+Rust finding can be reproduced, and only a reproduced finding may block. `cargo vendor` writes plain
+sources into a folder we name and compiles nothing; `cargo fetch` fills cargo's private registry
+cache, which cargo wants to lock and extract into at build time. Inside the packet the folder has
+one owner and one lifetime, is already outside the copy, and is already readable by the reviewer.
+Git sources are refused because fetching them brings ssh-agent and git credential helpers into
+play and a `file://` URL could copy a private local repository into the packet.
+
+**Rejected alternatives.** `CARGO_SOURCE_*` variables with no config file (cargo ignores them for
+source tables; measured). A shared cache keyed by the lockfile (smaller on disk, but a store shared
+across reviews needs its own poisoning argument). Fetching Python, Node, Dart or Swift dependencies
+now (each needs its own safe fetch: wheel-only resolution with requirement options refused,
+`npm ci --ignore-scripts` with lockfile URL audits, a read-only pub cache, and SwiftPM's git-only
+dependencies with `Package.swift` evaluated at resolve time).
+
+**Revisit when.** Packet disk use matters (ripgrep's packet holds 70 MB of sources), a repository
+under review needs git dependencies, or a second language's reviewer needs offline dependencies.
+
 ## 2026-10-14
 
 ### Omit skill-duplicating command wrappers from staged Muse manifests

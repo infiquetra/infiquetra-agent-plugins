@@ -88,6 +88,18 @@ for C8 to extend.
 
 ### Fixed
 
+- **A Rust reviewer builds offline from the packet's vendored crates (issue #262).** When the
+  packet's `dependencies.json` says saga vendored the head's Rust dependencies, and names a plain
+  folder inside the packet, `launcher.py review` writes `cargo-home/config.toml` beside the copy
+  (read-only; crates.io replaced by the vendored tree; `net.offline = true`) and sets
+  `CARGO_HOME` and `CARGO_NET_OFFLINE=true` in place of any operator value. Both names join the
+  sandboxed commands' allow-list. Claude's sandbox and Grok's profile read the cargo home and the
+  vendored tree, and Claude's `denyWrite` names both. Without vendored crates the cargo home is
+  still written, offline and without a replacement, so the reviewer's cargo never looks for
+  `~/.cargo`. A new `target/` and a new `Cargo.lock` in the copy are tool clutter, like
+  `__pycache__/`; a tracked lock the session changes still counts. `cargo` and `rustc` join the
+  toolchain commands; a rustup proxy under `~/.cargo` is still dropped, because that prefix holds
+  cargo's credentials file. Network and credential denials are unchanged.
 - **A Claude reviewer's answer comes from structured output, and an unreadable answer leaves
   evidence (issue #248).** `launcher.py review` now passes the request's answer schema to
   `claude -p` as `--json-schema` and reads the answer from the `structured_output` field of

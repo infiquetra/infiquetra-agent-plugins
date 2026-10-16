@@ -21,7 +21,9 @@ import subprocess  # nosec B404
 import sys
 import tarfile
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import review_calibration  # noqa: E402
+import review_dependencies  # noqa: E402
 import review_diff  # noqa: E402
 import review_formula  # noqa: E402
 import review_records  # noqa: E402
@@ -69,6 +72,7 @@ _PACKET_FILES = (
     "may-block.json",
     "open-search-cap.json",
     "grades.json",
+    review_dependencies.FILE,
 )
 _ZERO_USAGE = {"tokens_in": 0, "tokens_out": 0, "cost_usd": 0, "seconds": 0}
 
@@ -155,6 +159,32 @@ def child_environment(scratch: Path) -> dict[str, str]:
     return env
 
 
+@dataclass(frozen=True)
+class Offline:
+    """What a re-run adds to build offline from the packet's dependencies (issue 262)."""
+
+    env: Mapping[str, str]
+    reads: tuple[Path, ...]
+
+
+@contextmanager
+def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
+    """A cargo home pointing at the packet's vendored crates, for the re-runs; ``None`` without."""
+    vendor = review_dependencies.rust_vendor(packet)
+    if vendor is None:
+        yield None
+        return
+    home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
+    try:
+        review_dependencies.write_cargo_home(home, vendor)
+        yield Offline(
+            env={"CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true"},
+            reads=(vendor, home),
+        )
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
 def run_confined(
     argv: Sequence[str],
     cwd: Path,
@@ -163,17 +193,22 @@ def run_confined(
     *,
     runner: Process,
     timeout: int = RERUN_TIMEOUT,
+    reads: Sequence[Path] = (),
 ) -> review_tools.ProcessResult:
-    """Run ``argv`` inside the platform helper. The caller has already decided one exists."""
+    """Run ``argv`` inside the platform helper. The caller has already decided one exists.
+
+    *reads* are extra paths the command may read and not write: the packet's vendored
+    dependencies and the cargo home that points at them (issue 262).
+    """
     helper = platform_helper()
     if helper is None:
         raise CommandFailure(2, "no reproduction helper")
     if helper == "sandbox-exec":
         wrapped: list[str] = [
-            "/usr/bin/sandbox-exec", "-p", _seatbelt(scratch, argv), *list(argv),
+            "/usr/bin/sandbox-exec", "-p", _seatbelt(scratch, argv, reads), *list(argv),
         ]
     else:
-        wrapped = _bwrap(scratch, argv)
+        wrapped = _bwrap(scratch, argv, reads)
     return runner(wrapped, cwd=cwd, env=dict(env), timeout=timeout, shell=False)
 
 
@@ -271,6 +306,11 @@ def _prepare(
         except review_formula.FormulaError as exc:
             raise CommandFailure(2, str(exc)) from exc
         files = [{"path": item.path, "status": item.status} for item in change.files]
+        # Issue 262: fetched once here, read-only and offline for the reviewer and the re-run.
+        _write_json(staging / review_dependencies.FILE, review_dependencies.fetch(
+            runner, repo, head, staging,
+            lambda dest: _export_head(runner, repo, head, dest),
+        ))
         _write_json(staging / "change.json", {
             "repo": str(repo.resolve()), "base": base, "head": head, "files": files,
         })
@@ -580,19 +620,22 @@ def _finish(
     # The answers name their reproduction tests; a re-run downgrade later replaces a finding's
     # proof, so the cited files are read here, before any re-run.
     cited = [reviewer_answer.cited_keys(answer) for answer in answers]
-    for position, (produced, result) in enumerate(zip(converted, results, strict=True)):
-        degraded.extend(_rerun_findings(
-            produced["findings"], result, repo, str(change.get("head") or ""),
-            home, runner, confine, available, cited[position],
-        ))
-    findings, owners = _merge_findings(converted, _read_json(packet / "findings.json", "findings"))
-    where = _merge_where([produced["where_to_look"] for produced in converted])
-    _mark_missing_tool(findings, where)
-    if args.final:
-        degraded.extend(_final_round(
-            findings, owners, results, repo, str(change.get("head") or ""), home, runner, confine,
-            available, cited,
-        ))
+    with _offline_dependencies(packet) as offline:
+        for position, (produced, result) in enumerate(zip(converted, results, strict=True)):
+            degraded.extend(_rerun_findings(
+                produced["findings"], result, repo, str(change.get("head") or ""),
+                home, runner, confine, available, cited[position], offline,
+            ))
+        findings, owners = _merge_findings(
+            converted, _read_json(packet / "findings.json", "findings"),
+        )
+        where = _merge_where([produced["where_to_look"] for produced in converted])
+        _mark_missing_tool(findings, where)
+        if args.final:
+            degraded.extend(_final_round(
+                findings, owners, results, repo, str(change.get("head") or ""), home, runner,
+                confine, available, cited, offline,
+            ))
     may_block = _bools_from_packet(packet)
     reviewers, usage_specs, usage_totals = _reviewers_and_usage(
         results, calibration=_calibration_path(args),
@@ -703,6 +746,7 @@ def _rerun_findings(
     confine: Confine | None,
     available: bool,
     cited: set[str],
+    offline: Offline | None = None,
 ) -> list[dict[str, str]]:
     reproduced = [finding for finding in findings if finding.get("evidence") == "reproduced"]
     if not reproduced:
@@ -736,7 +780,7 @@ def _rerun_findings(
         _copy_shared_tests(source, scratch, result, cited)
         for finding in reproduced:
             degraded.extend(_rerun_one(
-                finding, source, scratch, home, runner, confine,
+                finding, source, scratch, home, runner, confine, offline,
             ))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -750,6 +794,7 @@ def _rerun_one(
     home: Path,
     runner: Process,
     confine: Confine | None,
+    offline: Offline | None = None,
 ) -> list[dict[str, str]]:
     proof = finding.get("proof") if isinstance(finding.get("proof"), Mapping) else {}
     test = proof.get("test") if isinstance(proof, Mapping) else None
@@ -781,11 +826,17 @@ def _rerun_one(
             "re-run-not-argv",
         )]
     env = child_environment(scratch)
+    reads: tuple[Path, ...] = ()
+    if offline is not None:
+        env.update(offline.env)
+        reads = offline.reads
     try:
         if confine is not None:
             ran = confine(argv, scratch, env, scratch)
         else:
-            ran = run_confined(argv, scratch, env, scratch, runner=runner, timeout=RERUN_TIMEOUT)
+            ran = run_confined(
+                argv, scratch, env, scratch, runner=runner, timeout=RERUN_TIMEOUT, reads=reads,
+            )
     except subprocess.TimeoutExpired:
         _downgrade(finding)
         return [_degraded(
@@ -821,6 +872,7 @@ def _final_round(
     confine: Confine | None,
     available: bool,
     cited: Sequence[set[str]],
+    offline: Offline | None = None,
 ) -> list[dict[str, str]]:
     try:
         graded = review_formula.compute({"findings": findings})
@@ -861,7 +913,7 @@ def _final_round(
                 ))
                 continue
             _copy_shared_tests(source, path, result, cited[owner])
-            degraded.extend(_rerun_one(finding, source, path, home, runner, confine))
+            degraded.extend(_rerun_one(finding, source, path, home, runner, confine, offline))
     finally:
         _remove_worktree(runner, repo, path, hooks)
     return degraded
@@ -1465,7 +1517,7 @@ def _degraded(lens: str, language: str, name: str, tool: str, reason: str) -> di
     }
 
 
-def _seatbelt(scratch: Path, argv: Sequence[str]) -> str:
+def _seatbelt(scratch: Path, argv: Sequence[str], reads: Sequence[Path] = ()) -> str:
     home = str(Path.home().resolve())
     root = str(scratch.resolve())
     lines = [
@@ -1497,17 +1549,23 @@ def _seatbelt(scratch: Path, argv: Sequence[str]) -> str:
     lines.append(f'(deny file-write* (subpath "{home}"))')
     lines.append(f'(allow file-read* (subpath "{root}"))')
     lines.append(f'(allow file-write* (subpath "{root}"))')
+    # After the home deny, so a packet under home is readable; never writable.
+    for path in reads:
+        lines.append(f'(allow file-read* (subpath "{Path(path).resolve()}"))')
     # No mach-lookup allow. The pasteboard and other named services stay unreachable.
     lines.append("(deny mach-lookup)")
     lines.append("(deny network*)")
     return "\n".join(lines) + "\n"
 
 
-def _bwrap(scratch: Path, argv: Sequence[str]) -> list[str]:
+def _bwrap(scratch: Path, argv: Sequence[str], reads: Sequence[Path] = ()) -> list[str]:
     command = ["bwrap", "--unshare-net"]
     for prefix in ("/usr", "/bin", "/lib", "/lib64", "/opt", "/etc"):
         if Path(prefix).exists():
             command.extend(["--ro-bind", prefix, prefix])
+    for path in reads:
+        resolved = str(Path(path).resolve())
+        command.extend(["--ro-bind", resolved, resolved])
     root = str(scratch.resolve())
     # A fresh dev mount has null, zero and urandom, and not the host disks.
     command.extend(["--dev", "/dev", "--bind", root, root, "--chdir", root, "--", *list(argv)])

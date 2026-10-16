@@ -33,6 +33,9 @@ The commit under review does not choose the calibration file or the profile that
 | `may-block.json` | each lens and language, with the bool and the reason line |
 | `open-search-cap.json` | `{"cap": 5}` unless a later caller changes the file before `finish` |
 | `grades.json` | the formula over the tool findings, measurements, builder record, degraded inputs and may-block bools |
+| `dependencies.json` | issue 262: the head's dependencies for an offline reviewer. `{"schema": "saga.review_dependencies.v1"}`, plus a `rust` entry when the head has a root `Cargo.toml`: `fetched` with `directory` (`dependencies/rust`, relative to the packet) and `crates`, `no-dependencies`, or `not-fetched` with `reason` |
+
+A fetched Rust entry's sources sit in `<packet>/dependencies/rust`, written by `cargo vendor --locked`, which compiles nothing. The fetch works on an export of the head without its `.cargo/` and `rust-toolchain(.toml)`, with a fresh `HOME`, `TMPDIR` and `CARGO_HOME`, and refuses any source other than crates.io and any path outside the head; `plugins/saga/scripts/review_dependencies.py` holds the rules. agent-launcher's reviewer and `finish`'s re-run read the folder, never write it, through a cargo home whose `config.toml` replaces crates.io with it and turns cargo offline.
 
 `review_tools.run` may also write `outcomes.json` in the same directory. The stored deterministic run, when `--issue` is set, passes `where_to_look` as `[]` because an unanswered item does not validate. Without `--issue` the run record is not opened.
 

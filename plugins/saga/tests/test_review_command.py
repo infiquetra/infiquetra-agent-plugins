@@ -1946,3 +1946,233 @@ def test_prepare_twice_with_a_tool_writing_build_output_writes_identical_packets
         if finding["rule"]["ref"] == "old_name"
     ]
     assert [finding["location"]["file"] for finding in mentions] == ["src/caller.py"]
+
+
+# --- issue 262: dependencies for an offline reviewer and re-run ---------------------------------
+
+
+_DEPS = C.review_dependencies
+_CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index"
+
+
+class _VendorRunner(_Runner):
+    """git for real; ``cargo vendor`` records what it saw and writes one crate."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.vendor: list[dict[str, Any]] = []
+
+    def __call__(
+        self, argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        if argv[:2] != ["cargo", "vendor"]:
+            return super().__call__(argv, cwd=cwd, env=env, timeout=timeout, shell=shell)
+        self.calls.append(list(argv))
+        self.vendor.append({"cwd": Path(cwd), "env": dict(env),
+                            "names": {p.name for p in Path(cwd).iterdir()}})
+        crate = Path(argv[-1]) / "itoa"
+        crate.mkdir(parents=True)
+        (crate / "Cargo.toml").write_text('[package]\nname = "itoa"\n', encoding="utf-8")
+        return T.ProcessResult(0, "")
+
+
+def _rust_dependency_change(tmp: Path) -> tuple[Path, str, str]:
+    """A crate with one crates.io dependency, a build script and its own cargo configuration."""
+    repo = tmp / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / ".cargo").mkdir()
+    (repo / "Cargo.toml").write_text(
+        '[package]\nname = "example"\nversion = "0.1.0"\nedition = "2021"\n'
+        '\n[dependencies]\nitoa = "1"\n', encoding="utf-8",
+    )
+    (repo / "Cargo.lock").write_text(
+        'version = 4\n\n[[package]]\nname = "example"\nversion = "0.1.0"\ndependencies = ["itoa"]\n'
+        f'\n[[package]]\nname = "itoa"\nversion = "1.0.15"\nsource = "{_CRATES_IO}"\n'
+        f'checksum = "{"ab" * 32}"\n', encoding="utf-8",
+    )
+    (repo / ".cargo" / "config.toml").write_text(
+        '[source.crates-io]\nreplace-with = "elsewhere"\n', encoding="utf-8",
+    )
+    (repo / "rust-toolchain.toml").write_text('[toolchain]\npath = "./tool"\n', encoding="utf-8")
+    (repo / "build.rs").write_text("fn main() {}\n", encoding="utf-8")
+    (repo / "src" / "lib.rs").write_text("pub fn two() -> i32 { 2 }\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "lib.rs").write_text("pub fn two() -> i32 { 3 }\n", encoding="utf-8")
+    return repo, base, _commit(repo, "head")
+
+
+def test_prepare_vendors_a_rust_head_into_the_packet_outside_the_repository(
+    tmp_path: Path,
+) -> None:
+    repo, base, head = _rust_dependency_change(tmp_path)
+    (tmp_path / "home").mkdir()
+    runner = _VendorRunner()
+    out = tmp_path / "packet"
+    code, err = _prepare(
+        repo, base, head, _profile(tmp_path / "outside"), _builder(tmp_path / "builder.json"),
+        out, tmp_path / "home", runner, start=1,
+    )
+    assert code == 0, err
+    record = _read(out / "dependencies.json")
+    assert record == {
+        "schema": _DEPS.SCHEMA,
+        "rust": {"state": "fetched", "directory": "dependencies/rust", "crates": 1},
+    }
+    vendor = _DEPS.rust_vendor(out)
+    assert vendor == (out / "dependencies" / "rust").resolve()
+    assert not vendor.is_relative_to(repo.resolve())
+    seen = runner.vendor[0]
+    assert ".cargo" not in seen["names"] and "rust-toolchain.toml" not in seen["names"]
+    assert {"Cargo.toml", "Cargo.lock", "build.rs", "src"} <= seen["names"]
+    assert Path(seen["env"]["CARGO_HOME"]).name == "cargo-home"
+    assert not Path(seen["env"]["CARGO_HOME"]).exists()
+    assert not (out / "dependencies" / "rust" / "target").exists()
+
+
+def test_prepare_on_a_change_without_cargo_writes_only_the_schema(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _line_packet(tmp_path)
+    assert _read(packet / "dependencies.json") == {"schema": _DEPS.SCHEMA}
+    assert not (packet / "dependencies").exists()
+    assert not any(call[:2] == ["cargo", "vendor"] for call in runner.calls)
+
+
+class _OfflineConfine(_Confine):
+    """Records the re-run environment and the cargo configuration it points at."""
+
+    def __init__(self) -> None:
+        super().__init__(1, _CAPTURED)
+        self.envs: list[dict[str, str]] = []
+        self.configs: list[str] = []
+
+    def __call__(self, argv: list[str], _cwd: Path, env: dict[str, str], _scratch: Path) -> Any:
+        self.envs.append(dict(env))
+        home = env.get("CARGO_HOME")
+        if home:
+            self.configs.append((Path(home) / "config.toml").read_text(encoding="utf-8"))
+        return super().__call__(argv, _cwd, env, _scratch)
+
+
+def _with_vendor(packet: Path) -> Path:
+    vendor = packet / "dependencies" / "rust"
+    vendor.mkdir(parents=True)
+    _dump(packet / "dependencies.json", {
+        "schema": _DEPS.SCHEMA,
+        "rust": {"state": "fetched", "directory": "dependencies/rust", "crates": 0},
+    })
+    return vendor.resolve()
+
+
+def test_finish_reruns_offline_against_the_packet_s_vendored_crates(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    vendor = _with_vendor(packet)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    confine = _OfflineConfine()
+    code, err = _finish(
+        packet, [(_answer([_finding("A retry returns the new number.")]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    env = confine.envs[0]
+    assert env["CARGO_NET_OFFLINE"] == "true"
+    assert Path(env["CARGO_HOME"]).name.startswith("saga-review-cargo-home-")
+    assert not Path(env["CARGO_HOME"]).exists(), "the re-run's cargo home is removed afterwards"
+    assert f'directory = {json.dumps(str(vendor))}' in confine.configs[0]
+    assert 'replace-with = "saga-vendored"' in confine.configs[0]
+
+
+def test_finish_without_vendored_crates_leaves_the_rerun_environment_alone(
+    tmp_path: Path,
+) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    confine = _OfflineConfine()
+    code, err = _finish(
+        packet, [(_answer([_finding("A retry returns the new number.")]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    assert "CARGO_HOME" not in confine.envs[0] and "CARGO_NET_OFFLINE" not in confine.envs[0]
+
+
+def test_the_confined_rerun_reads_the_extra_paths_and_never_writes_them(tmp_path: Path) -> None:
+    scratch, extra = tmp_path / "scratch", tmp_path / "vendor"
+    scratch.mkdir()
+    extra.mkdir()
+    profile = C._seatbelt(scratch, ["cargo"], [extra])
+    lines = profile.splitlines()
+    allow = f'(allow file-read* (subpath "{extra.resolve()}"))'
+    assert allow in lines
+    assert lines.index(allow) > lines.index(f'(deny file-read* (subpath "{Path.home().resolve()}"))')
+    assert not any("file-write" in line and str(extra.resolve()) in line for line in lines)
+    assert "(deny network*)" in lines
+    command = C._bwrap(scratch, ["cargo"], [extra])
+    index = command.index(str(extra.resolve()))
+    assert command[index - 1] == "--ro-bind" and command[index + 1] == str(extra.resolve())
+    assert "--unshare-net" in command
+    assert not any(part == "--bind" and command[i + 1] == str(extra.resolve())
+                   for i, part in enumerate(command[:-1]))
+
+
+def _inert_vendored_packet(tmp: Path) -> Path:
+    """A packet holding one vendored crate written by hand, so no network is needed."""
+    packet = tmp / "packet"
+    crate = packet / "dependencies" / "rust" / "inertdep"
+    (crate / "src").mkdir(parents=True)
+    (crate / "Cargo.toml").write_text(
+        '[package]\nname = "inertdep"\nversion = "0.1.0"\nedition = "2021"\n', encoding="utf-8",
+    )
+    (crate / "src" / "lib.rs").write_text("pub fn two() -> i32 { 2 }\n", encoding="utf-8")
+    (crate / ".cargo-checksum.json").write_text(
+        json.dumps({"files": {}, "package": "ab" * 32}), encoding="utf-8",
+    )
+    _dump(packet / "dependencies.json", {
+        "schema": _DEPS.SCHEMA,
+        "rust": {"state": "fetched", "directory": "dependencies/rust", "crates": 1},
+    })
+    return packet
+
+
+@pytest.mark.skipif(
+    shutil.which("cargo") is None or C.platform_helper() is None,
+    reason="needs cargo and the platform's confinement helper",
+)
+def test_live_the_confined_rerun_builds_offline_from_the_vendored_crates(tmp_path: Path) -> None:
+    packet = _inert_vendored_packet(tmp_path)
+    scratch = tmp_path / "scratch"
+    (scratch / "src").mkdir(parents=True)
+    (scratch / "tmp").mkdir()
+    (scratch / "Cargo.toml").write_text(
+        '[package]\nname = "example"\nversion = "0.1.0"\nedition = "2021"\n'
+        '\n[dependencies]\ninertdep = "0.1"\n', encoding="utf-8",
+    )
+    (scratch / "Cargo.lock").write_text(
+        'version = 4\n\n[[package]]\nname = "example"\nversion = "0.1.0"\n'
+        'dependencies = ["inertdep"]\n'
+        f'\n[[package]]\nname = "inertdep"\nversion = "0.1.0"\nsource = "{_CRATES_IO}"\n'
+        f'checksum = "{"ab" * 32}"\n', encoding="utf-8",
+    )
+    (scratch / "src" / "lib.rs").write_text(
+        "#[test]\nfn uses_the_dependency() { assert_eq!(inertdep::two(), 3, \"returned 2\"); }\n",
+        encoding="utf-8",
+    )
+    vendor = packet / "dependencies" / "rust"
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None
+        env = {**C.child_environment(scratch), **offline.env}
+        ran = C.run_confined(
+            ["cargo", "test", "--offline"], scratch, env, scratch,
+            runner=T.subprocess_runner, timeout=300, reads=offline.reads,
+        )
+        wrote = C.run_confined(
+            ["/usr/bin/touch", str(vendor / "planted")], scratch, env, scratch,
+            runner=T.subprocess_runner, timeout=30, reads=offline.reads,
+        )
+    output = ran.stdout + ran.stderr
+    assert ran.code == 101, output
+    assert "returned 2" in output, "the test compiled against the vendored crate and failed"
+    assert wrote.code != 0 and not (vendor / "planted").exists()

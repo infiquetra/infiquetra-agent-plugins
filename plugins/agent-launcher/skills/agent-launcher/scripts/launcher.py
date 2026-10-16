@@ -2118,6 +2118,8 @@ REVIEWER_ENVIRONMENT_ALLOWED = (
     "TZ",  # time zone
     "TMPDIR",  # where temp files go; the sandbox sets its own
     "GIT_CONFIG_GLOBAL",  # points git at /dev/null, because home is unreadable
+    "CARGO_HOME",  # issue #262: the launcher's read-only cargo home beside the copy
+    "CARGO_NET_OFFLINE",  # issue #262: cargo never tries the network it is denied
 )
 #: Credential files and directories. The sandbox blocks the whole home directory, so this list no
 #: longer feeds ``denyRead``. It feeds the permission layer's ``Read`` deny rules, and the check
@@ -2152,6 +2154,10 @@ REVIEWER_SHARED_ROOTS = ("~/.config", "~/.local", "~/.local/share", "~/.cache", 
 REVIEWER_TOOLCHAIN_COMMANDS = (
     ("python3", "python3 on the session PATH resolves here; its standard library and packages"),
     ("node", "node on the session PATH resolves here; its bundled libraries"),
+    # Issue #262. A rustup proxy under ``~/.cargo`` is still dropped: that prefix holds cargo's
+    # credentials file. A Homebrew or system cargo sits outside home and needs nothing.
+    ("cargo", "cargo on the session PATH resolves here; its executables and libraries"),
+    ("rustc", "rustc on the session PATH resolves here; its executables and libraries"),
 )
 #: The parts of a toolchain install allowed back, never the whole install.
 REVIEWER_TOOLCHAIN_PARTS = (
@@ -2161,12 +2167,19 @@ REVIEWER_TOOLCHAIN_PARTS = (
 )
 #: Paths in the scratch copy that tools write and nobody edits: Python's temp-directory fallback
 #: (the sandbox denies the system temp roots, so ``tempfile`` falls back to the working directory),
-#: pytest's caches and compiled bytecode. They never count as a change. ``.claude/`` is not among
+#: pytest's caches and compiled bytecode; since issue #262 cargo's ``target/`` and a ``Cargo.lock``
+#: that a build writes where the head has none. They never count as a change. ``.claude/`` is not among
 #: them: Claude leaves only an empty ``.claude/.cc-writes/`` there (measured on 2.1.292), so a file
 #: under it is one the session wrote, and saga's check refuses it.
 REVIEWER_SCRATCH_IGNORED = re.compile(
-    r"^(pytest-of-[^/]+/|\.pytest_cache/|tmp[a-z0-9_]{8}/)|(^|/)__pycache__/|\.pyc$"
+    r"^(pytest-of-[^/]+/|\.pytest_cache/|tmp[a-z0-9_]{8}/|target/)|(^|/)__pycache__/|\.pyc$"
+    r"|(^|/)Cargo\.lock$"
 )
+#: Issue #262: saga's prepare vendors the head's crates.io dependencies into the packet and
+#: names them in this file. The schema and directory rules match saga's ``review_dependencies``.
+REVIEWER_DEPENDENCIES_FILE = "dependencies.json"
+REVIEWER_DEPENDENCIES_SCHEMA = "saga.review_dependencies.v1"
+REVIEWER_VENDORED_SOURCE = "saga-vendored"
 
 
 #: The change under review is untrusted. Claude acts on a project's ``.claude/`` directory (settings
@@ -2445,6 +2458,72 @@ def reviewer_claude_materialize(
     return path, {REVIEWER_SHELL_PREFIX: str(prefix)}
 
 
+def reviewer_packet_vendor(packet: Path) -> Path | None:
+    """The packet's vendored Rust sources (issue #262), or ``None`` when there are none to trust.
+
+    The entry counts only when it says ``fetched`` and names a relative directory inside the
+    packet that exists, with no symlink anywhere along the way. Anything else is ignored and the
+    reviewer runs without it.
+    """
+    try:
+        data = json.loads((packet / REVIEWER_DEPENDENCIES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("schema") != REVIEWER_DEPENDENCIES_SCHEMA:
+        return None
+    entry = data.get("rust")
+    if not isinstance(entry, dict) or entry.get("state") != "fetched":
+        return None
+    relative = entry.get("directory")
+    if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
+        return None
+    parts = Path(relative).parts
+    if any(part in ("", ".", "..") for part in parts) or packet.is_symlink():
+        return None
+    cursor = packet
+    for part in parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return None
+    if not cursor.is_dir() or not _reviewer_inside(cursor, packet):
+        return None
+    return cursor.resolve()
+
+
+def reviewer_cargo_config(vendor: Path | None) -> str:
+    """The reviewer's cargo ``config.toml``: offline, and crates.io replaced by *vendor* if given.
+
+    Measured on cargo 1.98.1 (issue #262): ``CARGO_SOURCE_*`` variables alone do not replace a
+    source, a ``config.toml`` in ``CARGO_HOME`` does, and cargo builds offline from a directory
+    source with that home and the vendored tree both read-only.
+    """
+    lines = ["# Written by agent-launcher for an offline review (issue #262).", ""]
+    if vendor is not None:
+        lines += [
+            "[source.crates-io]",
+            f"replace-with = {json.dumps(REVIEWER_VENDORED_SOURCE)}",
+            "",
+            f"[source.{REVIEWER_VENDORED_SOURCE}]",
+            f"directory = {json.dumps(str(vendor))}",
+            "",
+        ]
+    return "\n".join(lines + ["[net]", "offline = true", ""])
+
+
+def reviewer_cargo_home(root: Path, vendor: Path | None) -> Path:
+    """Write the reviewer's cargo home beside the copy, never in it, with a read-only config.
+
+    It is made even without vendored sources, so the reviewer's cargo never looks for the
+    operator's ``~/.cargo``.
+    """
+    home = root / "cargo-home"
+    home.mkdir(parents=True, exist_ok=True)
+    config = home / "config.toml"
+    config.write_text(reviewer_cargo_config(vendor), "utf-8")
+    config.chmod(0o444)
+    return home
+
+
 def reviewer_claude_settings(
     copy: Path,
     packet: Path,
@@ -2453,6 +2532,7 @@ def reviewer_claude_settings(
     toolchain: Sequence[Mapping[str, str]] | None = None,
     extra_deny_read: Sequence[str] = (),
     platform: str | None = None,
+    read_only: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The per-launch settings that turn on Claude's command sandbox and confine the session.
 
@@ -2468,12 +2548,16 @@ def reviewer_claude_settings(
     Issue #225: commands run through the reviewer's shell prefix, whose directory is readable and
     whose sentinel is denied by name, so the prefix filters even when the launch root is outside
     the home directory. The prefix is named in ``env`` as well, which outranks the user's settings.
+
+    Issue #262: *read_only* (the cargo home and the vendored dependencies) is allowed back for
+    reading and named in ``denyWrite``, so read-only is stated rather than implied.
     """
     if toolchain is None:
         toolchain = reviewer_toolchain_paths(env)[0]
     prefix, sentinel = reviewer_claude_shell_paths(copy)
     allow_read = [str(copy.resolve()), str(packet.resolve()), str(prefix.parent)]
     allow_read += [item["path"] for item in toolchain if item["path"] not in allow_read]
+    allow_read += [path for path in read_only if path not in allow_read]
     return {
         "env": {REVIEWER_SHELL_PREFIX: str(prefix)},
         "sandbox": {
@@ -2482,7 +2566,7 @@ def reviewer_claude_settings(
             "autoAllowBashIfSandboxed": True,
             "allowUnsandboxedCommands": False,
             "filesystem": {
-                "denyWrite": list(reviewer_temp_roots(platform)),
+                "denyWrite": list(reviewer_temp_roots(platform)) + list(read_only),
                 "denyRead": ["~"] + list(extra_deny_read) + [str(sentinel)],
                 "allowRead": allow_read,
             },
@@ -2911,6 +2995,7 @@ def reviewer_grok_settings(
     toolchain: Sequence[Mapping[str, str]] | None = None,
     extra_deny_read: Sequence[str] = (),
     platform: str | None = None,
+    read_only: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Grok's per-launch sandbox profile and the environment overlay for its commands.
 
@@ -2923,8 +3008,9 @@ def reviewer_grok_settings(
     if toolchain is None:
         toolchain = reviewer_toolchain_paths(env)[0]
     home = _reviewer_home(env)
-    read_only = [str(packet.resolve()), str((copy.parent / "prompt").resolve())]
-    read_only += [item["path"] for item in toolchain if item["path"] not in read_only]
+    granted = [str(packet.resolve()), str((copy.parent / "prompt").resolve())]
+    granted += [item["path"] for item in toolchain if item["path"] not in granted]
+    granted += [path for path in read_only if path not in granted]
     deny = list(reviewer_temp_roots(platform)) + [
         str(_reviewer_expand(path, home)) for path in REVIEWER_GROK_CREDENTIAL_FILES
     ] + list(extra_deny_read)
@@ -2932,7 +3018,7 @@ def reviewer_grok_settings(
         "profile": {
             "extends": "strict",
             "restrict_network": True,
-            "read_only": read_only,
+            "read_only": granted,
             "deny": deny,
         },
         "overlay": {
@@ -3080,6 +3166,7 @@ def reviewer_muse_settings(
     toolchain: Sequence[Mapping[str, str]] | None = None,
     extra_deny_read: Sequence[str] = (),
     platform: str | None = None,
+    read_only: Sequence[str] = (),
 ) -> dict[str, Any]:
     """What the Muse launch asks of its sandbox, for the record: Muse takes it as flags."""
     return {"sandbox": "default (on)", "sandbox_network": "restricted", "web_tools": "disabled"}
@@ -3773,8 +3860,24 @@ def reviewer_launch(
     withheld = reviewer_withhold_untrusted(
         copy, recipe.untrusted_dirs, recipe.untrusted_files, recipe.instruction_names
     )
+    # Issue #262: cargo builds offline from the packet's vendored crates, through a read-only
+    # cargo home beside the copy. Both values replace the operator's, whatever they were.
+    vendor = reviewer_packet_vendor(request.packet)
+    cargo_home = reviewer_cargo_home(root, vendor)
+    session_env["CARGO_HOME"] = str(cargo_home)
+    session_env["CARGO_NET_OFFLINE"] = "true"
+    dependency_reads = [
+        {"path": str(cargo_home.resolve()),
+         "reason": "the reviewer's read-only cargo home, offline (issue #262)"},
+    ] + ([{"path": str(vendor),
+           "reason": "the packet's vendored Rust dependencies, read-only (issue #262)"}]
+         if vendor is not None else [])
     settings_path, extra_env = recipe.materialize(
-        recipe.settings(copy, request.packet, session_env, toolchain=toolchain), root, copy
+        recipe.settings(
+            copy, request.packet, session_env, toolchain=toolchain,
+            read_only=[item["path"] for item in dependency_reads],
+        ),
+        root, copy,
     )
     manifest = _reviewer_manifest(copy)
     configuration = reviewer_configuration_fingerprint(recipe.config_sources(copy, session_env))
@@ -3845,7 +3948,7 @@ def reviewer_launch(
             "allowed": [
                 {"path": str(copy.resolve()), "reason": "the scratch copy the review works in"},
                 {"path": str(request.packet.resolve()), "reason": "the review packet"},
-            ] + shell_reads + list(toolchain),
+            ] + shell_reads + dependency_reads + list(toolchain),
             "dropped": dropped,
         },
         "answer_path": str(answer_path) if answer is not None else None,
@@ -4125,7 +4228,17 @@ def reviewer_probe(
         session_env = reviewer_session_environment(
             environ, recipe.api_key_variables, recipe.api_key_prefixes
         )
-        settings = recipe.settings(copy, packet, session_env, extra_deny_read=[str(outside)])
+        # Issue #262: the same offline cargo home and read-only vendored folder a review gets, so
+        # every denial is checked with them in place.
+        vendored = packet / "dependencies" / "rust"
+        vendored.mkdir(parents=True)
+        cargo_home = reviewer_cargo_home(root, vendored.resolve())
+        session_env["CARGO_HOME"] = str(cargo_home)
+        session_env["CARGO_NET_OFFLINE"] = "true"
+        settings = recipe.settings(
+            copy, packet, session_env, extra_deny_read=[str(outside)],
+            read_only=[str(cargo_home.resolve()), str(vendored.resolve())],
+        )
         settings_path, extra_env = recipe.materialize(settings, root, copy)
         prompt_path, stdin = reviewer_deliver_prompt(recipe, root, REVIEWER_PROBE_MESSAGE)
         if executable is not None:
