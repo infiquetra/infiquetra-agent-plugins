@@ -998,3 +998,28 @@ def test_live_mutate4dart_reports_a_survivor(tmp_path: Path) -> None:
     _valid(output)
     assert _severity(output, "surviving-mutant") == "blocks"
     assert _finding(output, "surviving-mutant")["location"]["file"] == "lib/add.dart"
+
+
+def test_dart_shuffle_runs_differing_in_interleaving_record_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    """Issue 244: Dart runs test files concurrently, so two runs interleave differently.
+
+    The fixtures are two real runs of Dart 3.13 with the same seed and two
+    failing files: the progress lines, their running counts and the order of
+    the failures differ, and so did the stored transcript's hash.
+    """
+    repo, base, head = _shuffle_repo(tmp_path)
+    outputs = []
+    for run in (1, 2):
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, _profile(tmp_path / "profile.json"), output,
+            tmp_path / "home", [_adapter("dart-shuffle")],
+            _Calls(base, _fixture(f"dart-shuffle-run-{run}.txt"), code=1),
+        ) == 0
+        outputs.append(output)
+    files = {item["location"]["file"] for item in _read(outputs[0], "findings.json")}
+    assert files == {"test/a_test.dart", "test/b_test.dart"}
+    for name in ("findings.json", "degraded.json", "outcomes.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name

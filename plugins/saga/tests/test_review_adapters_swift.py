@@ -553,8 +553,15 @@ def test_muter_survivors_map_into_repo_and_block(
     assert argv[0] == "muter" and argv[1] == "run"
     assert state["muter.conf.yml"] == _MUTER_CONFIG
     # Muter scopes by file; only the changed files are mutated (issue 244).
-    files = argv[argv.index("--files-to-mutate") + 1:]
-    assert files == ["Sources/example.swift", "Sources/other.swift"]
+    # Muter 16 takes one path per --files-to-mutate and refuses a second path
+    # after one flag ("Unexpected argument"), so each file carries its own flag.
+    # Muter 16 has no --configuration option ("Unknown option"); it reads the
+    # config staged in its working directory.
+    assert argv == [
+        "muter", "run", "--format", "json", "--skip-update-check",
+        "--files-to-mutate", "Sources/example.swift",
+        "--files-to-mutate", "Sources/other.swift",
+    ]
 
 
 def test_muter_ambiguous_suffix_is_dropped(
@@ -993,3 +1000,31 @@ def test_muter_change_without_swift_lines_records_nothing_to_mutate(
     ) == 0
     assert all(call[:2] != ["muter", "run"] for call in runner.calls)
     assert [item["reason"] for item in _degraded(output, "muter")] == ["nothing-to-mutate"]
+
+
+def test_muter_yaml_config_is_staged_where_muter_reads_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Muter reads muter.conf.yml or muter.conf.json from its working directory, not .yaml."""
+    monkeypatch.setattr(A, "_platform", lambda: "darwin")
+    repo = _muter_repo(tmp_path, muter=None)
+    (repo / "muter.conf.yaml").write_text(_MUTER_CONFIG, encoding="utf-8")
+    base = _commit(repo, "base")
+    example = repo / "Sources" / "example.swift"
+    text = example.read_text(encoding="utf-8").splitlines(keepends=True)
+    text[1] = "    return a &+ b\n"
+    example.write_text("".join(text), encoding="utf-8")
+    head = _commit(repo, "head")
+    snapshots: list[tuple[list[str], bool | None, dict[str, str | None]]] = []
+    runner = _Calls(
+        base, _fixture("muter.json"), watch=("muter.conf.yml",), snapshots=snapshots,
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), tmp_path / "out",
+        tmp_path / "home", [_adapter("muter")], runner,
+    ) == 0
+    runs = [
+        state for argv, at_base, state in snapshots
+        if argv[:1] == ["muter"] and at_base is not None
+    ]
+    assert runs == [{"muter.conf.yml": _MUTER_CONFIG}]

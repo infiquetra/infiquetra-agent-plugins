@@ -1,5 +1,36 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-16
+
+### A determinism audit proves nothing about a tool that reported no finding, and an argv test proves nothing the tool's parser has not accepted
+
+**Evidence.** Issue #244, code review of 9e3bdee. The first fix found bandit's `generated_at` by
+preparing a polyglot fixture twice with every installed tool, yet missed four more per-run values,
+because a raw-output hash reaches the packet only through a kept finding and in that fixture
+semgrep had no rule cache, jscpd hit a version mismatch and pytest had no test command. Two live
+runs each, same input: semgrep 1.179.0 `--json` differs only in its top-level `time` object;
+jscpd only in `statistics.detectionDate`; coverage.py only in `meta.timestamp` (JSON) and
+`timestamp` (Cobertura); pytest in its summary duration. Jest 30.5.2 and Vitest 4.1.11 also print
+each failing file in the order their workers finished (Jest put `e.test.js` before `f.test.js` in
+one of four runs), and Dart 3.13 interleaves concurrent files so that even which test name a
+progress line carries changes. Fixed by `review_tools.stable_transcript`,
+`review_tools.stable_coverage_report` and the semgrep and jscpd `stable_raw` rewrites in
+`review_adapters_all_languages.py`. Separately, the Muter test asserted
+`--files-to-mutate a.swift b.swift`, which Muter 16 refuses (`Unexpected argument
+'Sources/b.swift'`), and `--configuration`, an option Muter 16 does not have (`Unknown option
+'--configuration'`): Muter had refused every run since it was added (fcf1dfe) while its tests
+stayed green.
+
+**Mechanism.** Determinism is only observable where the varying bytes are recorded, so an audit
+inherits the coverage of its fixture: a tool that degrades or reports nothing contributes no hash
+and looks stable. A test that compares argv with an expected list checks the adapter against the
+author's belief about the CLI, not against the CLI.
+
+**Generalizable rule.** Audit reproducibility with a fixture that makes every tool keep at least
+one finding, and diff two real runs of each tool's raw output rather than reading its docs; pin
+every argv shape a test asserts with one live run of the pinned tool (`<tool> --help` or a run
+past argument parsing) before trusting the test.
+
 ## 2026-10-15
 
 ### A review packet must hash only what the change decides, and mutation must be told where the change is

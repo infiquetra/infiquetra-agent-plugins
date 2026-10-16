@@ -733,6 +733,14 @@ def _from_row(
     )
 
 
+# A pytest transcript ends "1 failed in 0.01s", which differs between runs.
+_STABLE_RAW: dict[str, Callable[[str], str]] = {
+    "bandit": _stable_bandit,
+    "pytest-randomly": review_tools.stable_transcript,
+    "pytest-socket": review_tools.stable_transcript,
+}
+
+
 def _build(document: Mapping[str, object]) -> list[Adapter]:
     tools = document.get("tools")
     if not isinstance(tools, list):
@@ -783,7 +791,7 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             invoke[tool_id],
             parse[tool_id],
             version_argv=version_argvs.get(tool_id, ()),
-            stable_raw=_stable_bandit if tool_id == "bandit" else None,
+            stable_raw=_STABLE_RAW.get(tool_id),
         )
         for tool_id in _OWNED
         if tool_id in by_id

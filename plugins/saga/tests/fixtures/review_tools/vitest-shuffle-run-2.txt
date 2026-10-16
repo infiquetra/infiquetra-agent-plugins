@@ -1,0 +1,52 @@
+
+ RUN  v4.1.11 @ROOT@
+      Running tests with seed "7"
+
+ ❯ f.test.js (2 tests | 1 failed) 6ms
+   × f fails 5ms
+ ❯ e.test.js (1 test | 1 failed) 4ms
+   × e fails 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  e.test.js > e fails
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ e.test.js:2:35
+      1| import { test, expect } from 'vitest';
+      2| test('e fails', () => { expect(1).toBe(2); });
+       |                                   ^
+      3|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  f.test.js > f fails
+AssertionError: expected 3 to be 4 // Object.is equality
+
+- Expected
++ Received
+
+- 4
++ 3
+
+ ❯ f.test.js:2:60
+      1| import { test, expect } from 'vitest';
+      2| test('f fails', () => { for (let i=0;i<1e6;i++); expect(3).toBe(4); });
+       |                                                            ^
+      3| test('f ok', () => {});
+      4|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 4 passed (6)
+      Tests  2 failed | 9 passed (11)
+   Start at  01:58:29
+   Duration  229ms (transform 114ms, setup 0ms, import 207ms, tests 30ms, environment 0ms)
+

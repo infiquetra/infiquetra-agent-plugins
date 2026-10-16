@@ -1761,3 +1761,39 @@ def test_shuffle_seed_is_fixed_by_the_change(tmp_path: Path) -> None:
         argv = next(call for call in runner.calls if call[:2] == ["vitest", "run"])
         seeds.append(argv[argv.index("--sequence.seed") + 1])
     assert seeds[0] == seeds[1]
+
+
+@pytest.mark.parametrize(("tool_id", "stream"), [
+    ("vitest-shuffle", "stdout"), ("jest-shuffle", "stderr"),
+])
+def test_shuffle_runs_differing_in_timing_and_finish_order_record_identical_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool_id: str, stream: str,
+) -> None:
+    """Issue 244: two live runs of one suite print other durations and finish order.
+
+    The fixtures are two real runs each of Vitest 4.1.11 and Jest 30.5.2 with
+    the same seed, two failing files and four passing ones.
+    """
+    monkeypatch.setattr(A, "_shuffle_seed", lambda _context: 7)
+    runner_name = tool_id.split("-")[0]
+    repo, _source = _runner_repo(tmp_path, runner_name)
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    outputs = []
+    for run in (1, 2):
+        text = _fixture(f"{tool_id}-run-{run}.txt")
+        runner = (
+            _Calls(base, text, code=1) if stream == "stdout"
+            else _Calls(base, "", stderr=text, code=1)
+        )
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, _profile(tmp_path / "profile.json"), output,
+            tmp_path / "home", [_adapter(tool_id)], runner,
+        ) == 0
+        outputs.append(output)
+    files = {item["location"]["file"] for item in _read(outputs[0], "findings.json")}
+    assert files == {"e.test.js", "f.test.js"}
+    for name in ("findings.json", "degraded.json", "outcomes.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name

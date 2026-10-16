@@ -493,6 +493,144 @@ def _stable_raw(adapter: Adapter, text: str) -> str:
     return text
 
 
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_NUMBER = r"\d+(?:\.\d+)?"
+# One rewrite per per-run value a test runner prints. Each pattern is anchored to
+# the runner's own line shape, so test names and assertion text are left alone.
+_TRANSCRIPT_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
+    # pytest: "==== 1 failed, 3 passed in 0.05s ====" (the = padding follows the width).
+    (re.compile(rf"^=+ (.+?) in {_NUMBER}s(?: \([\d:]+\))? =+$"), r"= \1 ="),
+    # pytest -q: "1 failed, 3 passed in 0.05s", "no tests ran in 0.01s", no padding.
+    (re.compile(
+        rf"^((?:no tests ran|\d+ [a-z]+)(?:, \d+ [a-z]+)*) in {_NUMBER}s(?: \([\d:]+\))?$"
+    ), r"\1"),
+    (re.compile(rf"^{_NUMBER}s (setup|call|teardown) "), r"\1 "),
+    # Vitest: "   Start at  01:47:55", "   Duration  289ms (transform ...)".
+    (re.compile(r"^(\s+)Start at\s+\S.*$"), r"\1Start at"),
+    (re.compile(rf"^(\s+)Duration\s+{_NUMBER}m?s.*$"), r"\1Duration"),
+    (re.compile(rf"^(\s*[✓×❯↓✗√·] .*?) {_NUMBER}m?s$"), r"\1"),
+    # Jest: "Time:        0.623 s, estimated 1 s", "PASS ./a.test.js (5.1 s)", "✓ adds (2 ms)".
+    (re.compile(r"^Time:\s+\S.*$"), "Time:"),
+    (re.compile(rf"^(\s*(?:PASS|FAIL|[✓✕○√×]) .*?) \({_NUMBER} m?s\)$"), r"\1"),
+    # cargo test and cargo: "finished in 0.00s", "target(s) in 0.52s".
+    (re.compile(rf"\b(finished|target\(s\)) in {_NUMBER}s\b"), r"\1"),
+    # go test: "--- FAIL: TestX (0.00s)", "ok  \tpkg\t0.012s", "ok  \tpkg\t(cached)".
+    (re.compile(rf"^(\s*--- (?:PASS|FAIL|SKIP): .+?) \({_NUMBER}s\)$"), r"\1"),
+    (re.compile(rf"^(ok|FAIL)(\s+\S+)\s+(?:{_NUMBER}s|\(cached\))$"), r"\1\2"),
+    # XCTest: "Test Case '...' passed (0.001 seconds).", "Executed 3 tests, ... in 0.004
+    # (0.005) seconds", "Test Suite 'All tests' started at 2026-10-16 01:00:00.123".
+    (re.compile(rf"^(Test Case .+ (?:passed|failed|skipped)) \({_NUMBER} seconds\)\.$"), r"\1."),
+    (re.compile(rf"^(\s*Executed \d+ tests?, with .+?) in {_NUMBER} \({_NUMBER}\) seconds$"), r"\1"),
+    (re.compile(r"^(Test Suite .+ (?:started|passed|failed) at) .+$"), r"\1"),
+)
+# Dart's expanded reporter: "00:01 +3 ~1 -2: label". Elapsed time and running counts.
+_DART_PROGRESS = re.compile(r"^\d+:\d\d(?::\d\d)? \+\d+(?: ~\d+)?(?: -\d+)?: (.*)$")
+_DART_KEPT = ("Some tests failed.", "All tests passed!", "No tests ran.")
+_JEST_SUITE = re.compile(r"^(?:PASS|FAIL) ")
+_JEST_SUMMARY = re.compile(r"^(?:Seed|Test Suites|Tests|Snapshots|Time|Ran all test suites)\b")
+_VITEST_FILE = re.compile(r"^ [✓×❯↓] ")
+_LIBTEST_RESULT = re.compile(r"^test .+ \.\.\. \S+$")
+
+
+def stable_transcript(text: str) -> str:
+    """A test runner's console text without the values that change between two runs.
+
+    Two runs of the same tests print different durations and clock times, and the
+    runners that run files in parallel workers (Jest, Vitest, Dart, cargo test)
+    print each file's result in the order the workers finished. This drops the
+    durations and times, sorts what parallel workers print, and keeps Dart's
+    failures and summary, since its progress lines name whichever test happened
+    to be running. Only the stored, hashed copy is rewritten; parsing reads the
+    runner's own text (issue 244).
+    """
+    lines = [line.rstrip() for line in _ANSI_ESCAPE.sub("", text).splitlines()]
+    lines = _dart_failures(lines)
+    rewritten = []
+    for line in lines:
+        for pattern, replacement in _TRANSCRIPT_REWRITES:
+            line = pattern.sub(replacement, line)
+        rewritten.append(line)
+    rewritten = _sorted_blocks(rewritten, _JEST_SUITE.match, lambda line: not (
+        _JEST_SUITE.match(line) or _JEST_SUMMARY.match(line)
+    ))
+    rewritten = _sorted_blocks(rewritten, _VITEST_FILE.match, lambda line: line.startswith("   "))
+    rewritten = _sorted_blocks(rewritten, _LIBTEST_RESULT.match, lambda _line: False)
+    # Jest moves a blank line with a block's position; blank lines carry nothing.
+    kept = [line for line in rewritten if line]
+    return "\n".join(kept) + ("\n" if kept else "")
+
+
+def _dart_failures(lines: list[str]) -> list[str]:
+    """Dart's progress blocks reduced to its ``[E]`` failures and summary, unprefixed and sorted."""
+    if not any(_DART_PROGRESS.match(line) for line in lines):
+        return lines
+    preamble: list[str] = []
+    blocks: list[list[str]] = []
+    keep = True
+    for line in lines:
+        progress = _DART_PROGRESS.match(line)
+        if progress is None:
+            if not blocks:
+                preamble.append(line)
+            elif keep:
+                blocks[-1].append(line)
+            continue
+        label = progress.group(1)
+        keep = label.endswith(" [E]") or label in _DART_KEPT
+        if keep:
+            blocks.append([label])
+    failures = sorted(block for block in blocks if block[0] not in _DART_KEPT)
+    summary = [block for block in blocks if block[0] in _DART_KEPT]
+    return preamble + [line for block in failures + summary for line in block]
+
+
+def _sorted_blocks(
+    lines: list[str],
+    starts: Callable[[str], object],
+    continues: Callable[[str], object],
+) -> list[str]:
+    """Each run of adjacent blocks sorted. A block is a start line and the lines that continue it."""
+    out: list[str] = []
+    run: list[list[str]] = []
+
+    def flush() -> None:
+        for block in sorted(run):
+            out.extend(block)
+        run.clear()
+
+    for line in lines:
+        if starts(line):
+            run.append([line])
+        elif run and continues(line):
+            run[-1].append(line)
+        else:
+            flush()
+            out.append(line)
+    flush()
+    return out
+
+
+def stable_coverage_report(data: bytes) -> bytes:
+    """A coverage report as stored and hashed: no generation timestamp, scratch folders named stably.
+
+    coverage.py writes ``meta.timestamp`` in its JSON and Cobertura XML carries a
+    ``timestamp`` attribute; both change on every run (issue 244).
+    """
+    text = data.decode("utf-8", errors="replace")
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError:
+        document = None
+    if isinstance(document, dict):
+        meta = document.get("meta")
+        if isinstance(meta, dict):
+            meta.pop("timestamp", None)
+        text = json.dumps(document, sort_keys=True)
+    else:
+        text = re.sub(r'\btimestamp="[^"]*"', 'timestamp=""', text)
+    return _scrub(text).encode()
+
+
 def _stable_hit(hit: Hit, root: Path) -> Hit:
     """A hit whose rule, anchor and statement carry no scan root or scratch folder."""
     return replace(
@@ -2090,7 +2228,7 @@ def _one_relocated(
         whole_project=True,
         row=_RELOCATED_ROW,
         language=language,
-        raw_output=store_raw((result.stdout or "").encode(), home),
+        raw_output=store_raw(stable_transcript(_scrub(result.stdout or "")).encode(), home),
         tool="relocated-test",
         version="not-recorded",
     )
@@ -2203,7 +2341,7 @@ def records_for_coverage(
     version: str = "not-recorded",
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, str]]]:
     """Findings and one measurement. Line fallback is degraded, so it cannot block."""
-    digest = store_raw(report, home)
+    digest = store_raw(stable_coverage_report(report), home)
     extra: list[dict[str, str]] = []
     if numbers.degraded:
         extra.append(_gap("testing", language, _COVERAGE_ROW, "coverage", "no-branch-data"))

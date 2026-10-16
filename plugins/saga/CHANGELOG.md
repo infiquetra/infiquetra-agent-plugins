@@ -50,8 +50,15 @@
   only the last, which had also dropped four of the five `--ignorePatterns`), Muter the changed
   files, mutate4dart `--diff-base`, and cosmic-ray runs `cr-filter-git`; a change with nothing
   to mutate records `nothing-to-mutate` instead of running. bandit's stored report drops
-  `generated_at`. Network-dependent tools are left for
-  #245. No version bump; that belongs to #147's saga release step.
+  `generated_at`, semgrep's its `time` object, jscpd's its `detectionDate`, and coverage
+  reports their timestamp. Test runner transcripts (pytest, Vitest, Jest, Dart, and the
+  relocated test command) are stored without durations or clock times and with what parallel
+  workers print sorted; Dart keeps its failures and summary, since its progress lines name
+  whichever test happened to be running. Muter gets one `--files-to-mutate` per changed file
+  (one flag followed by two paths is refused) and no `--configuration`, an option Muter 16
+  does not have and refused on every run; it reads the base config staged in its working
+  directory, a `muter.conf.yaml` staged as `muter.conf.yml`. Network-dependent tools are left
+  for #245. No version bump; that belongs to #147's saga release step.
 - Issue #226: the setup survey no longer reports run-time-loaded tools as missing. The
   pytest-randomly, pytest-socket, ruff-lint, and ruff-format rows probe the uv loader
   instead of PATH executables (installed at the pin on a clean versioned answer,

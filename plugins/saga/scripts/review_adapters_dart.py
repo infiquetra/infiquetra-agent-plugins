@@ -365,6 +365,10 @@ def _level_map(row: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
     return tuple((str(key), str(value)) for key, value in mapping.items())
 
 
+# Test runner transcripts carry durations and finish order (issue 244).
+_TRANSCRIPTS = ("dart-shuffle",)
+
+
 def _build(document: Mapping[str, object]) -> list[Adapter]:
     tools = document.get("tools")
     if not isinstance(tools, list):
@@ -422,6 +426,7 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             gap_first=bool(row.get("gap_first")),
             base_files=tuple(str(item) for item in (row.get("base_files") or ())),
             local_bins=tuple(str(item) for item in (row.get("local_bins") or ())),
+            stable_raw=review_tools.stable_transcript if tool_id in _TRANSCRIPTS else None,
         ))
     return built
 

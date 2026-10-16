@@ -260,20 +260,27 @@ def _invoke_muter(context: ScanContext) -> list[str]:
         return []
     if _platform() != "darwin":
         raise ToolGap("unsupported-platform", "testing.surviving-mutant")
-    staged = _stage_first_base(context, _MUTER_CONFIGS)
+    # Muter reads muter.conf.yml or muter.conf.json from its working directory
+    # and has no --configuration option (Muter 16 refuses one), so the base
+    # config is staged there; a .yaml spelling is staged as .yml.
+    staged = None
+    for name in _MUTER_CONFIGS:
+        dest = "muter.conf.yml" if name == "muter.conf.yaml" else None
+        staged = _stage_base(context, name, dest)
+        if staged is not None:
+            break
     if staged is None:
         raise ToolGap("not-configured", "testing.surviving-mutant")
-    argv = [
-        "muter", "run", "--format", "json", "--skip-update-check",
-        "--configuration", str(staged),
-    ]
+    argv = ["muter", "run", "--format", "json", "--skip-update-check"]
     if context.change is not None:
         # Muter scopes by file, not line; the changed files are the narrowest
         # scope it supports (issue 244).
         files = [path for path, _lines in review_tools.changed_lines(context, (".swift",))]
         if not files:
             raise ToolGap("nothing-to-mutate", "testing.surviving-mutant")
-        argv.extend(["--files-to-mutate", *files])
+        # Muter takes one path per flag; a second path after one flag is refused.
+        for path in files:
+            argv.extend(["--files-to-mutate", path])
     return argv
 
 

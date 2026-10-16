@@ -1,0 +1,28 @@
+Shuffling test order with --test-randomize-ordering-seed=7
+00:00 +0: loading test/b_test.dart
+00:00 +0: test/b_test.dart: b ok
+00:00 +1: test/a_test.dart: a bad
+00:00 +1 -1: test/a_test.dart: a bad
+00:00 +1 -2: test/b_test.dart: b bad [E]
+  Expected: <4>
+    Actual: <3>
+  
+  package:matcher        expect
+  test/b_test.dart 3:23  main.<fn>
+  
+00:00 +1 -2: test/a_test.dart: a bad [E]
+  Expected: <2>
+    Actual: <1>
+  
+  package:matcher        expect
+  test/a_test.dart 4:23  main.<fn>
+  
+00:00 +1 -2: test/a_test.dart: a ok
+00:00 +2 -2: Some tests failed.
+
+Failing tests:
+  test/a_test.dart: a bad
+  test/b_test.dart: b bad
+
+Consider enabling the flag chain-stack-traces to receive more detailed exceptions.
+For example, 'dart test --chain-stack-traces'.

@@ -1742,3 +1742,41 @@ def test_bandit_stored_report_drops_its_timestamp() -> None:
     adapter = _adapter("bandit")
     assert T._stable_raw(adapter, one) == T._stable_raw(adapter, two)
     assert "generated_at" not in T._stable_raw(adapter, one)
+
+
+def _pytest_transcript(root: Path, seconds: str) -> str:
+    """A pytest run as it prints: the scan root in the header, the duration in the summary."""
+    return (
+        "============================= test session starts ==============================\n"
+        f"rootdir: {root}\n"
+        "plugins: randomly-5.0.0\n"
+        "collected 4 items\n\n"
+        "tests/test_app.py .F                                                    [100%]\n\n"
+        "=========================== short test summary info ============================\n"
+        "FAILED tests/test_app.py::test_one - AssertionError\n"
+        f"========================= 1 failed, 3 passed in {seconds} ==========================\n"
+    )
+
+
+@pytest.mark.parametrize("tool_id", ["pytest-randomly", "pytest-socket"])
+def test_pytest_runs_differing_only_in_duration_record_identical_bytes(
+    tmp_path: Path, tool_id: str,
+) -> None:
+    """Issue 244: pytest ends "1 failed in 0.01s", so the stored transcript's hash moved."""
+    repo, base, head = _changed(tmp_path)
+    outputs = []
+    for run, seconds in enumerate(("0.05s", "12.31s (0:00:12)")):
+        def choose(argv: list[str], cwd: Path, seconds: str = seconds) -> Any:
+            if "--with" not in argv:
+                return None
+            return T.ProcessResult(1, _pytest_transcript(cwd, seconds))
+
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
+            output, tmp_path / "home", [_adapter(tool_id)], _Calls(base, "", choose=choose),
+        ) == 0
+        outputs.append(output)
+    assert _read(outputs[0], "findings.json")
+    for name in ("findings.json", "degraded.json", "outcomes.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
