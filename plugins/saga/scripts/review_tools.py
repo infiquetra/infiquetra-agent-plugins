@@ -208,11 +208,10 @@ SKIP_DIRS = frozenset(
     {".git", "node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".saga"}
 )
 _SHEBANG = re.compile(r"^#!.*\b(?:sh|bash|zsh)\b")
-#: A CloudFormation template names its format version or an ``AWS::`` resource type.
-_CLOUDFORMATION = re.compile(rb"AWSTemplateFormatVersion|[\"']?Type[\"']?\s*:\s*[\"']?AWS::")
+#: Any ``AWS::`` text counts: the check errs toward running the CloudFormation tools.
+_CLOUDFORMATION = re.compile(rb"AWSTemplateFormatVersion|AWS::")
+#: The suffixes the checkov and cfn-lint wrappers copy for scanning.
 _CLOUDFORMATION_SUFFIXES = frozenset({".yaml", ".yml", ".json", ".template"})
-#: Templates larger than this are not read for the CloudFormation check.
-_CLOUDFORMATION_READ_BYTES = 1_000_000
 
 Process = Callable[..., "ProcessResult"]
 
@@ -1008,6 +1007,9 @@ def _run(
 
 
 def _shebang_shell(path: Path) -> bool:
+    # The reviewed tree is untrusted: a symlink to a FIFO or device must not be read.
+    if path.is_symlink() or not path.is_file():
+        return False
     try:
         with path.open("rb") as handle:
             line = handle.readline(200)
@@ -1064,19 +1066,26 @@ def detect_languages(root: Path) -> list[str]:
 
 
 def _cloudformation_present(root: Path) -> bool:
-    """True when *root* holds ``cdk.json`` or a CloudFormation template."""
-    for path, _relative in _walk_files(root):
-        if path.name == "cdk.json":
-            return True
-        if path.suffix.lower() not in _CLOUDFORMATION_SUFFIXES or path.is_symlink():
-            continue
-        try:
-            if path.stat().st_size > _CLOUDFORMATION_READ_BYTES:
-                continue
-            if _CLOUDFORMATION.search(path.read_bytes()):
+    """True when *root* holds ``cdk.json`` or a CloudFormation template.
+
+    It reads every file the checkov and cfn-lint wrappers would scan (every directory
+    but ``.git``, no size limit), so it never skips a template they would have read.
+    """
+    for directory, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [name for name in dirnames if name != ".git"]
+        for name in filenames:
+            path = Path(directory) / name
+            if name == "cdk.json":
                 return True
-        except OSError:
-            continue
+            if path.suffix.lower() not in _CLOUDFORMATION_SUFFIXES:
+                continue
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                if _CLOUDFORMATION.search(path.read_bytes()):
+                    return True
+            except OSError:
+                continue
     return False
 
 

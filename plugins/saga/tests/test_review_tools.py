@@ -551,6 +551,21 @@ def test_run_languages_adds_cloudformation_for_cdk_json_or_a_template(tmp_path: 
         "Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n", encoding="utf-8"
     )
     assert "cloudformation" in T.run_languages(tmp_path / "cfn")
+    # The CloudFormation wrappers scan build/ too, so the check must not skip it.
+    (tmp_path / "built" / "build").mkdir(parents=True)
+    (tmp_path / "built" / "build" / "stack.template").write_text(
+        '{"Resources": {"Bucket": {"Type": "AWS::S3::Bucket"}}}\n', encoding="utf-8"
+    )
+    assert "cloudformation" in T.run_languages(tmp_path / "built")
+
+
+def test_language_detection_does_not_read_through_a_symlink(tmp_path: Path) -> None:
+    """The reviewed tree is untrusted: a suffixless symlink to a FIFO must not block."""
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    (tmp_path / "tree").mkdir()
+    (tmp_path / "tree" / "run").symlink_to(fifo)
+    assert T.detect_languages(tmp_path / "tree") == []
 
 
 def test_a_profile_version_overrides_the_yaml_default(tmp_path: Path) -> None:
