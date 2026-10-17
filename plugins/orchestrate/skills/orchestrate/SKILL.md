@@ -331,7 +331,6 @@ with `ORCHESTRATE_AGENT_LAUNCHER`. Model and effort flags are per vendor:
 | grok | `-m` | `--reasoning-effort` |
 | muse | `--model` | `--reasoning-effort` |
 | agy | `--model` | `--effort` |
-| qwen | `-m` | via `setup` |
 | opencode | `-m` (as `provider/model`) | via `/variants` picker |
 
 **Model authority boundary: live catalog, never stale tables.** External worker and reviewer
@@ -383,9 +382,9 @@ and `interactive_ready` per session and **publishes no model at all**, so a mode
 working directory or workspace that disagrees with the plan closes that run-owned tab and fails the
 unit before its task is submitted.
 
-An agent not listed launches with no model flags. **qwen does not report interactive readiness**, so
-`herdr agent prompt` refuses it; the script falls back to typing into its pane, which is what an
-operator would do by hand.
+An agent not listed launches with no model flags. One that does not report interactive readiness
+has `herdr agent prompt` refuse it; the script falls back to typing into its pane, which is what
+an operator would do by hand.
 
 ## Writing, and saga commands
 

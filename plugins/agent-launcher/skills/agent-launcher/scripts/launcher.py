@@ -198,7 +198,6 @@ VENDOR_FLAGS: dict[str, dict[str, str]] = {
     "grok": {"model": "-m {value}", "effort": "--reasoning-effort {value}"},
     "muse": {"model": "--model {value}", "effort": "--reasoning-effort {value}"},
     "agy": {"model": "--model {value}", "effort": "--effort {value}"},
-    "qwen": {"model": "-m {value}"},
     # opencode wants the model as `provider/model`, e.g. `deepseek/deepseek-v4-pro`; a bare name is
     # rejected at startup with "Invalid model format".
     "opencode": {"model": "-m {value}"},
@@ -232,12 +231,6 @@ def accepted_herdr_kinds(vendor: str) -> frozenset[str]:
 
 
 VENDOR_NOTES: dict[str, str] = {
-    "qwen": (
-        "never reports interactive readiness, so its task is typed into the pane rather than "
-        "prompted, and a task over the typing limit is handed over as a file. `--yolo` is real and "
-        "absent from `--help`. NEVER pass `--safe-mode`: it reads like the opposite of `--yolo` and "
-        "disables every customization, including the extensions saga loads."
-    ),
     "muse": (
         "approval and the sandbox are ON by default. `--yolo` disables BOTH and is bypass, not "
         "auto; the ladder is `--approval-mode untrusted|on-request|never`."
@@ -315,14 +308,6 @@ VENDOR_PERMISSION: dict[str, dict[str, list[str]]] = {
     # unit full bypass -- a safety claim backwards. `never` is the honest `auto`: it stops asking
     # without dropping the sandbox.
     "muse": {"auto": ["--approval-mode", "never"], "bypass": ["--yolo"]},
-    # `--yolo` is absent from `qwen --help` and works anyway -- verified by running it, against a
-    # control showing qwen rejects an unknown flag with "Unknown arguments". Its own warning names
-    # the equivalent: "running headless with --yolo / approval-mode=yolo and no sandbox".
-    #
-    # Do NOT reach for `--safe-mode` here. It reads like the opposite of `--yolo` and is not a
-    # permission flag at all: it disables all customizations -- context files, hooks, extensions --
-    # which is exactly what saga needs loaded.
-    "qwen": {"auto": [], "bypass": ["--yolo"]},
 }
 
 if set(VENDOR_PERMISSION) != SUPPORTED_VENDORS:
@@ -674,7 +659,7 @@ def agent_row(unit: Any, agents: list[dict] | None = None) -> dict | None:
 def await_ready(unit: Any, seconds: float = LAUNCH_SETTLE_SECONDS) -> bool:
     """Wait until this session will actually take a prompt. True if it said so.
 
-    Some agents never report readiness at all -- qwen is one, and it is why the writer has a pane
+    Some agents never report readiness at all, and that is why the writer has a pane
     fallback. There is nothing to wait for there, so the window is spent and the send goes ahead,
     which is still later than sending the instant the tab appears.
     """
@@ -1661,11 +1646,11 @@ def redeliver(unit: Any, backend: str = "inline", *, review_elsewhere: bool = Fa
 
 # How long a line may be before typing it into a pane stops delivering it as an instruction.
 #
-# Measured against qwen 0.21.13 through `herdr pane run`: 859 characters arrive as typed text, 1660
-# arrive as `[Pasted Content N chars]`. The paste is submitted and the agent knows its size -- it
-# simply does not treat it as the instruction. Its own words, verbatim, to a 6402-character task:
-# "I can see you've pasted some content (6402 characters), but I'm not sure what you'd like me to do
-# with it."
+# Measured 2026-10 against the since-retired Qwen Code CLI (0.21.13) through `herdr pane run`:
+# 859 characters arrive as typed text, 1660 arrive as `[Pasted Content N chars]`. The paste is
+# submitted and the agent knows its size -- it simply does not treat it as the instruction. Its own
+# words, verbatim, to a 6402-character task: "I can see you've pasted some content (6402
+# characters), but I'm not sure what you'd like me to do with it."
 #
 # That is the whole failure: the unit launches, the keystrokes are delivered, orchestrate records
 # success, and the session sits waiting for an instruction it thinks it has not been given. It goes
@@ -1714,7 +1699,7 @@ class PaneWriter:
     redelivery and for Orchestrate's later senders, where a person may have typed since.
 
     Doors. ``door="prompt"`` is ``herdr agent prompt``, the right door for an agent that reports
-    interactive readiness; one that never does -- qwen today -- refuses it, and the line is typed
+    interactive readiness; one that never does refuses it, and the line is typed
     into the pane instead, as the operator would by hand, up to the length a pane still carries
     as an instruction (``pane_text``). ``door="pane"`` types verbatim: the OpenCode picker is
     driven with keystrokes, not prompts. Both are bounded by ``PANE_WRITE_SECONDS``; a write
@@ -2082,7 +2067,6 @@ REVIEWER_FORBIDDEN_FLAGS: dict[str, tuple[str, ...]] = {
         "never", "--disable-approval", "--trust-workspace",
     ),
     "agy": ("--dangerously-skip-permissions", "--disable-slash-commands"),
-    "qwen": ("--bare", "--safe-mode", "--yolo"),
     "opencode": ("--auto",),
 }
 

@@ -145,7 +145,7 @@ def test_composer_module_name_is_a_stable_digest_of_the_resolved_path() -> None:
 
 
 @pytest.mark.usefixtures("launcher_on_path")
-@pytest.mark.parametrize("vendor", ["claude", "codex", "grok", "muse", "agy", "qwen", "opencode"])
+@pytest.mark.parametrize("vendor", ["claude", "codex", "grok", "muse", "agy", "opencode"])
 def test_argv_locks_background_flags_before_vendor(launcher: ModuleType, vendor: str) -> None:
     unit = launcher.LaunchRequest(name="reviewer", vendor=vendor, worktree="/tmp/wt")
     argv = launcher.agent_argv(unit)
@@ -532,7 +532,6 @@ def test_composer_glyph_table_covers_the_launcher_vendor_roster(launcher: Module
         "codex": "›",
         "grok": "❯",
         "agy": ">",
-        "qwen": ">",
         "muse": None,
         "opencode": None,
     }
@@ -625,7 +624,7 @@ def test_documented_opencode_permission_flag_matches_the_runtime_table(
 
 @pytest.mark.parametrize(
     ("vendor", "glyph"),
-    [("claude", "❯"), ("codex", "›"), ("grok", "❯"), ("agy", ">"), ("qwen", ">")],
+    [("claude", "❯"), ("codex", "›"), ("grok", "❯"), ("agy", ">")],
 )
 def test_every_characterised_vendor_stops_on_its_own_draft(
     launcher: ModuleType, vendor: str, glyph: str
@@ -1458,7 +1457,7 @@ def test_no_argv_leaves_permission_unconfirmed(
     assert "permission" in receipt["requested_only"]
 
 
-@pytest.mark.parametrize("vendor", ["agy", "qwen"])
+@pytest.mark.parametrize("vendor", ["agy"])
 def test_empty_permission_token_list_never_claims_an_argv_confirmation(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, vendor: str
 ) -> None:
@@ -2392,7 +2391,7 @@ def test_pane_writes_carry_a_timeout_and_a_timed_out_prompt_never_falls_through(
 
     monkeypatch.setattr(launcher, "run", fake_run)
     unit = launcher.LaunchRequest(
-        name="worker", vendor="qwen", worktree="/tmp/wt", launch_receipt={"owned": True}
+        name="worker", vendor="codex", worktree="/tmp/wt", launch_receipt={"owned": True}
     )
     launcher.PaneWriter(unit, "w1:p1", wrote_before=False).write("hello")
     assert timeouts == [
@@ -2435,7 +2434,7 @@ def test_a_pane_typing_timeout_names_the_ambiguity_like_the_prompt_door(
 
     monkeypatch.setattr(launcher, "run", timed_out_typing)
     unit = launcher.LaunchRequest(
-        name="worker", vendor="qwen", worktree="/tmp/wt", launch_receipt={"owned": True}
+        name="worker", vendor="codex", worktree="/tmp/wt", launch_receipt={"owned": True}
     )
     with pytest.raises(SystemExit, match="pane run into w1:p1 did not return within"):
         launcher.PaneWriter(unit, "w1:p1", wrote_before=False).write("hello")
@@ -4069,7 +4068,7 @@ def test_release_and_journal_record_the_composer_contract() -> None:
     assert "`unclassifiable`, `not_found`, `unsupported_vendor`, `read_failed`" in changelog
     normalized_changelog = " ".join(changelog.split())
     assert "distinguishes a client's own placeholder from staged text" not in normalized_changelog
-    assert "Claude, Codex, Grok, Agy, and Qwen" in skill
+    assert "Claude, Codex, Grok, and Agy" in skill
     assert "#907-composer-structural-continuations" in composer
     assert "#907-input-box-visible-length" in composer
 
@@ -4327,7 +4326,7 @@ def test_pane_writer_nonzero_typing_is_a_named_stop(
         return subprocess.CompletedProcess(cmd, 1, "", "not ready")
 
     monkeypatch.setattr(launcher, "run", fake_run)
-    unit = launcher.LaunchRequest(name="worker", vendor="qwen", launch_receipt={"owned": True})
+    unit = launcher.LaunchRequest(name="worker", vendor="codex", launch_receipt={"owned": True})
     with pytest.raises(SystemExit, match="command failed \\(1\\) while typing"):
         launcher.PaneWriter(unit, "w1:p1", wrote_before=False).write("hello")
 
@@ -4879,7 +4878,7 @@ def test_reviewer_the_session_never_signs_in_with_an_api_key(launcher: ModuleTyp
 @pytest.mark.parametrize(
     "vendor",
     # Issue #223: Grok and Muse stay refused unless a committed probe record admits them.
-    [v for v in ["codex", "grok", "muse", "agy", "qwen", "opencode"]
+    [v for v in ["codex", "grok", "muse", "agy", "opencode"]
      if v not in _contract_launcher().REVIEWER_RECIPES],
 )
 def test_reviewer_every_other_vendor_is_refused_by_name(

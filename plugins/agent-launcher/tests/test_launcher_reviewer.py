@@ -465,7 +465,7 @@ def test_candidate_the_probe_may_run_it_but_review_refuses_it(
             launcher.reviewer_recipe(vendor)
 
 
-@pytest.mark.parametrize("vendor", ["codex", "agy", "qwen", "opencode"])
+@pytest.mark.parametrize("vendor", ["codex", "agy", "opencode"])
 def test_candidate_a_vendor_with_neither_is_refused_by_the_probe(
     launcher: ModuleType, vendor: str
 ) -> None:

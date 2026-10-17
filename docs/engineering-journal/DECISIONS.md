@@ -1,5 +1,17 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-17
+
+### The qwen vendor and the claude-muse provider leave the fleet vocabulary; claude-qwen is the Qwen route
+
+**Decision.** agent-launcher drops the `qwen` vendor from `launcher.py` (`VENDOR_FLAGS`, `VENDOR_NOTES`, `VENDOR_PERMISSION`, `REVIEWER_FORBIDDEN_FLAGS`) and from `composer.py`'s glyph table; fleet-core's `staffing.json` drops `vendors.qwen` and `tier_resolver.py` drops its qwen argv branch; orchestrate's SKILL.md drops the qwen model-flag row and rewords its readiness note vendor-neutrally. The `claude-muse` provider alias leaves the agent-launcher SKILL.md provider list, and `claude-qwen` is documented in its place: the same Claude CLI pointed at QwenCloud's token-plan Anthropic-compatible endpoint, bare runs on the `auto` router with `qwen3.8-flash` in the haiku and sonnet slots and `qwen3.8-max` in opus. The standalone Muse CLI vendor `muse` stays everywhere (launch tables, permission ladders, reviewer candidates, staffing rows, glyph entries). Install-into-qwen paths stay untouched — orchestrate's `SAGA_INSTALL` and `_INSTALL_PATTERNS` qwen entries and `install_client.py`'s qwen client support — with a comment on the `SAGA_INSTALL` row saying it serves a directly-invoked qwen CLI only.
+
+**Rationale.** The home-lab `agents` wrapper (deployed from infiquetra/home-lab) retired the `qwen` agent type on 2026-10-17 and the claude launcher there removed `claude-muse`, so every launch argv, glyph, and staffing row this catalog still carried for qwen described a tool the wrapper can no longer start. Qwen models remain reachable through the `claude-qwen` provider, so the capability moves rather than disappears. Only Claude Code against Muse's API is gone; the standalone Muse CLI never left.
+
+**Rejected alternatives.** Deleting the install-into-qwen paths together with the launch vocabulary (the Qwen Code CLI binary is still installed on hosts and directly invokable, so install support is a separate operator decision). Keeping a qwen tier row pointed at the new provider (`claude-qwen` is a Claude Code launch against QwenCloud, tiered through the claude vendor row, not a qwen CLI launch).
+
+**Revisit when.** The operator decides the fate of the installed Qwen Code CLI, which moves its install and saga paths with it; a Qwen-hosted model needs tier rows of its own again; or the claude launcher adds or removes another provider alias.
+
 ## 2026-10-16
 
 ### A review packet carries the head's vendored Rust dependencies; only crates.io is fetched

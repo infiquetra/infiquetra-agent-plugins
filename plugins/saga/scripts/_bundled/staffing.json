@@ -182,24 +182,6 @@
       "effort_collapse": {},
       "effort_application": "argv"
     },
-    "qwen": {
-      "runtime_supported": true,
-      "models": {
-        "gpt-5.6-sol": "qwen3.8-max-preview",
-        "gpt-5.6-terra": "qwen3.7-plus",
-        "gpt-5.5": "qwen3.6-plus"
-      },
-      "accepted_efforts": [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ],
-      "effort_collapse": {},
-      "effort_application": "in_session",
-      "effort_command": "/effort {effort}"
-    },
     "agy": {
       "runtime_supported": true,
       "models": {

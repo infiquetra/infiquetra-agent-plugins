@@ -55,7 +55,7 @@ choosing between options you have already thought about, not doing the thinking.
 picture in the `preview` field — a table, a before-and-after, an arrow chain. Labels alone lose.
 
 **A note attached to an answer is an instruction, not a comment.** The operator can press `n` and
-write "use grok for the second plan instead of codex", or "qwen not opencode", or "drop the third
+write "use grok for the second plan instead of codex", or "agy not opencode", or "drop the third
 reviewer". Apply it, say in one line what you changed, and carry it into the table. A note that
 contradicts the option they picked wins — they wrote it after seeing the options.
 
@@ -184,9 +184,9 @@ and its `units` (Phase 4 shows them), the plan then carries:
 
 ```json
 {
-  "vendors_allowed": ["claude", "codex", "grok", "qwen"],
+  "vendors_allowed": ["claude", "codex", "grok", "agy"],
   "later_phases": [
-    {"phase": "build", "what": "build it", "cap": "/work", "after": ["docreview-grok", "docreview-qwen"]},
+    {"phase": "build", "what": "build it", "cap": "/work", "after": ["docreview-grok", "docreview-agy"]},
     {"phase": "review", "what": "review the build", "cap": "/code-review", "after": ["build"]}
   ]
 }
@@ -201,19 +201,19 @@ It prints, in one fixed format:
 ```
 run orch-2026-08-16-a   <- #48 deploy-guard remediation
 plan .orchestrate/plan.json   sha256 47c2736ec164
-vendors allowed: claude, codex, grok, qwen   workspace: issue-48   account: -
+vendors allowed: claude, codex, grok, agy   workspace: issue-48   account: -
 
-unit           cap         agent  model       effort perm   after                  serialize role task
-----------------------------------------------------------------------------------------------------------------------------------------------
-plan-claude    /plan       claude opus        high   bypass -                      -         -    /saga:plan #48 — write the plan to docs/pla…
-plan-codex     /plan       codex  gpt-5.6-sol xhigh  auto   -                      -         -    $saga:plan #48, independently
-docreview-grok /doc-review grok   grok-4.6    xhigh  auto   plan-claude plan-codex -         -    /doc-review docs/plans/....md
-docreview-qwen /doc-review qwen   qwen3-max   high*  auto   plan-claude plan-codex -         -    /doc-review docs/plans/....md
+unit           cap         agent  model               effort perm   after                  serialize role task
+------------------------------------------------------------------------------------------------------------------------------------------------------
+plan-claude    /plan       claude opus                high   bypass -                      -         -    /saga:plan #48 — write the plan to docs/pla…
+plan-codex     /plan       codex  gpt-5.6-sol         xhigh  auto   -                      -         -    $saga:plan #48, independently
+docreview-grok /doc-review grok   grok-4.6            xhigh  auto   plan-claude plan-codex -         -    /doc-review docs/plans/....md
+docreview-agy  /doc-review agy    gemini-3.1-pro-high high*  auto   plan-claude plan-codex -         -    /doc-review docs/plans/....md
 
 later phases (no units yet):
 phase  what             cap          after
-------------------------------------------------------------------
-build  build it         /work        docreview-grok docreview-qwen
+-----------------------------------------------------------------
+build  build it         /work        docreview-grok docreview-agy
 review review the build /code-review build
 ```
 
@@ -266,7 +266,7 @@ Then ask to approve, edit, or cancel. **Nothing launches before the operator say
 - **Otherwise**, print `launch-table`'s output verbatim in a fenced block and ask in plain text.
 
 **Editing is plain language, not a form.** "Make plan-codex grok", "swap the two document
-reviewers", "drop docreview-qwen", "opus on the builder", "add a third plan from qwen" — take it,
+reviewers", "drop docreview-agy", "opus on the builder", "add a third plan from agy" — take it,
 change the plan file, re-run `launch-table`, and show the new table. Any cell is fair game,
 including which vendor sits in a competing-plan row. Re-run rather than describing the change, so
 what they approve is what runs.
@@ -315,7 +315,7 @@ the session.
      "after": []},
     {"name": "p2a", "vendor": "grok", "model": "grok-4.6", "effort": "xhigh",
      "task": "/doc-review docs/plans/....md", "after": ["p1a"]},
-    {"name": "p2b", "vendor": "qwen", "model": "qwen3-max", "setup": ["/effort high"],
+    {"name": "p2b", "vendor": "agy", "model": "gemini-3.1-pro-high", "setup": ["/effort high"],
      "task": "/doc-review docs/plans/....md", "after": ["p1a"]},
     {"name": "runbook-claude", "vendor": "claude", "model": "opus", "effort": "high",
      "task": "write the detection-rules section of docs/deploy-guard-runbook.md and commit it",

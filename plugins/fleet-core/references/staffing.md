@@ -214,18 +214,17 @@ being reachable.
    how effort is applied. Two keys carry that last part: `effort_application` is `argv` or
    `in_session`, and an `in_session` vendor **must** also carry `effort_command`, the template to
    send. Omitting `effort_command` does not fail — `tier_resolver` falls back to `/effort {effort}`,
-   so a vendor that names its command differently silently inherits qwen's. The qwen row is the
-   worked example:
+   so a vendor that names its command differently silently inherits the default. The grok row is
+   the worked example:
 
    ```json
-   "qwen": {
+   "grok": {
      "runtime_supported": true,
-     "models": {"gpt-5.6-sol": "qwen3.8-max-preview", "gpt-5.6-terra": "qwen3.7-plus",
-                "gpt-5.5": "qwen3.6-plus"},
-     "accepted_efforts": ["low", "medium", "high", "xhigh", "max"],
-     "effort_collapse": {},
-     "effort_application": "in_session",
-     "effort_command": "/effort {effort}"
+     "models": {"gpt-5.6-sol": "grok-4.6", "gpt-5.6-terra": "grok-4.5",
+                "gpt-5.5": "grok-4.5"},
+     "accepted_efforts": ["low", "medium", "high", "xhigh"],
+     "effort_collapse": {"max": "xhigh"},
+     "effort_application": "argv"
    }
    ```
 

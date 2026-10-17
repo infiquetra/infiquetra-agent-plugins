@@ -167,9 +167,11 @@ _EFFORT_COLLAPSE: dict[str, dict[str, str]] = {
 # How the collapsed effort is applied. Verified 2026-08-13 from each runtime's
 # own surface, not inferred. Four runtimes support both a launch flag and an
 # in-session /effort; this resolver chooses argv so the first turn already uses
-# the requested rung. Qwen has no launch flag (qwen --effort is "Unknown
-# argument"), so it is the only in_session runtime. Confirming the directive
-# took is U4 (session lifecycle, pane.output_matched), not this unit.
+# the requested rung. Qwen had no launch flag (qwen --effort was "Unknown
+# argument"), so it was the only in_session runtime until the wrapper retired
+# the qwen agent type on 2026-10-17; every current runtime applies argv.
+# Confirming the directive took is U4 (session lifecycle, pane.output_matched),
+# not this unit.
 # See DECISIONS {#effort-collapse-max}.
 _EFFORT_APPLICATION_MODE: dict[str, str] = {
     name: str(row["effort_application"])
@@ -456,7 +458,8 @@ def adapt_runtime_argv(runtime: str, model: str, effort: str) -> list[str]:
     The ``agent`` wrapper passes tool arguments through unchanged, so this adapter
     is the only thing standing between a resolved tier and a malformed command line.
     Flags were verified on this host 2026-08-13 from each binary's own ``--help``.
-    Qwen effort is not a launch flag; the caller executes
+    Every current runtime takes its effort as a launch flag; an ``in_session``
+    row in staffing.json would instead have the caller execute
     ``RuntimeResolution.effort_application`` after launch. Confirming either
     path took is U4, not this unit.
     """
@@ -473,8 +476,6 @@ def adapt_runtime_argv(runtime: str, model: str, effort: str) -> list[str]:
         return ["--model", model, "--reasoning-effort", safe_effort]
     if runtime == "agy":
         return ["--model", model, "--effort", safe_effort]
-    if runtime == "qwen":
-        return ["--model", model]
     return ["--model", model, "-c", f"model_reasoning_effort={safe_effort}"]
 
 

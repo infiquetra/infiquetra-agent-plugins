@@ -83,6 +83,8 @@ SAGA_INSTALL: dict[str, list[str]] = {
     "claude": ["~/.claude/plugins/cache/*/saga/*/commands"],
     "codex": ["~/.codex/plugins/cache/*/saga/*/skills"],
     "grok": ["~/.grok/marketplace-cache/*/plugins/saga/commands"],
+    # qwen sessions no longer launch through the wrapper (retired 2026-10-17); this install path
+    # serves a directly-invoked qwen CLI only.
     "qwen": ["~/.qwen/extensions/saga/commands"],
     "opencode": ["~/.config/opencode/commands"],
     # agy is Antigravity, and its home is the Gemini config directory. The plugin there is a
