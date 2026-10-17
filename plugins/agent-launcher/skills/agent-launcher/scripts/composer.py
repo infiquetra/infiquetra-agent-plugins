@@ -24,14 +24,13 @@ SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
 # characterised is present with ``None`` and receives an explicit unsupported-vendor result.
 # The launcher asserts these keys against its own vendor roster at import time.  Checked-in
 # pane captures exist only for Claude and Codex (tests/fixtures/composer-panes.json, which
-# also carries two live idle Claude captures); Grok, Agy and Qwen have characterised markers
+# also carries two live idle Claude captures); Grok and Agy have characterised markers
 # but no checked-in capture.
 COMPOSER_GLYPH_BY_VENDOR: dict[str, str | None] = {
     "claude": "❯",
     "codex": "›",
     "grok": "❯",
     "agy": ">",
-    "qwen": ">",
     # No stable composer marker was present in the 2026-08-30 live captures.  Muse could not be
     # launched through the wrapper on that host, and OpenCode presented no composer marker.
     "muse": None,

@@ -107,11 +107,23 @@ def launcher_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "Usage: agents [options] <tool>\n"
         "\n"
         "Tools:\n"
-        "  claude    Claude Code\n"
-        "  codex     Codex CLI\n"
-        "  grok      Grok CLI\n"
-        "  opencode  OpenCode\n"
-        "  qwen      Qwen CLI\n"
+        "  codex               Codex CLI\n"
+        "  claude              Claude Code\n"
+        "  claude-qwen         Claude Code on QwenCloud\n"
+        "  claude-ollama       Claude Code on Ollama\n"
+        "  claude-ollama-local Claude Code on the local Ollama daemon\n"
+        "  claude-ollama-cloud Claude Code on Ollama Cloud\n"
+        "  claude-deepseek     Claude Code on DeepSeek\n"
+        "  claude-agents       Claude Code agent harness\n"
+        "  cursor              Cursor CLI\n"
+        "  grok                Grok CLI\n"
+        "  muse                Muse CLI\n"
+        "  opencode            OpenCode\n"
+        "  agy                 Antigravity CLI\n"
+        "  mimir               Hermes profile\n"
+        "  brokkr              Hermes profile\n"
+        "  eitri               Hermes profile\n"
+        "  sons                Hermes profile\n"
         "HELP\n"
     )
     launcher.chmod(0o755)
@@ -240,7 +252,7 @@ class TestAccountArgvEmission:
         assert "--company-account" not in argv
 
     def test_non_claude_vendor_does_not_emit_company_account(self, orchestrate: ModuleType) -> None:
-        for vendor in ("grok", "codex", "qwen", "opencode"):
+        for vendor in ("grok", "codex", "opencode"):
             unit = orchestrate.Unit(
                 name="worker", vendor=vendor, task="/plan #1", account="company"
             )
