@@ -1,5 +1,27 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-18
+
+### A tool's temporary resources must outlive its ordinary descendants
+
+**Evidence.** A local Python parent/child fixture reproduced a subprocess timeout
+leaving the child alive after the direct parent was reaped. The review runner then
+removed the invocation's temporary Cargo home. Real-process regression tests in
+`plugins/saga/tests/test_review_tool_lifetime.py` exercise timeout escalation,
+normal parent exit with a background child, cancellation, output and exit status,
+resource availability during child shutdown, and concurrent invocation isolation.
+
+**Mechanism.** A direct parent's exit is not the end of the process tree that may
+still use its resources. POSIX invocations now own a separate session/process
+group, terminate that group with bounded escalation, and reap the parent before
+returning to temporary-directory cleanup. Captured output and timeout results keep
+their existing meaning. The guarantee excludes descendants that deliberately
+detach, externally killed runners, and descendant control on non-POSIX platforms.
+
+**Generalizable rule.** Tie temporary-resource cleanup to the supported process
+lifetime boundary, including normal exits that leave background work. Test with
+real children and explicit handshakes; a mocked timeout cannot prove cleanup order.
+
 ## 2026-10-16
 
 ### Anything a packet hashes must come out in a fixed order, and a text fallback must not treat language words as names

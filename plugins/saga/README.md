@@ -96,6 +96,15 @@ installs, and the optional steps with no agent turn. Every other harness uses
 
 ## Tests
 
+The review-tool runner gives each POSIX invocation its own session/process group.
+Before returning or releasing temporary tool directories, it sends the group TERM,
+allows up to half a second for shutdown, then sends KILL and reaps the direct
+process. This also covers background children left by a normally exiting parent
+and Python cancellation such as `KeyboardInterrupt`. Deliberately detached
+descendants and an externally killed runner are outside this boundary. On other
+platforms, cleanup controls only the direct subprocess. This is a process lifetime
+boundary, not a sandbox.
+
 ```bash
 python3 -m pytest plugins/saga/tests -q
 ```

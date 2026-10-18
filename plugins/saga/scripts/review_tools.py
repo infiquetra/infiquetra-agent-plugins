@@ -16,6 +16,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess  # nosec B404
 import sys
 import tempfile
@@ -879,20 +880,67 @@ def subprocess_runner(
     timeout: int,
     shell: bool,
 ) -> ProcessResult:
-    """Run one tool. A string command, or a shell, is a programming error."""
+    """Run one tool, shutting down its POSIX process group before returning.
+
+    Descendants that deliberately start another session escape this lifetime boundary;
+    it is not a sandbox. Other platforms retain subprocess.run's direct-process cleanup.
+    A string command, or a shell, is a programming error.
+    """
     if shell or isinstance(argv, str):
         raise RuntimeError("a review tool receives an argument vector and shell=False")
-    proc = subprocess.run(  # nosec B603
+    if os.name != "posix":
+        result = subprocess.run(  # nosec B603
+            list(argv), cwd=cwd, env=dict(env), timeout=timeout, shell=False,
+            capture_output=True, text=True, check=False,
+        )
+        return ProcessResult(result.returncode, result.stdout, result.stderr)
+    proc = subprocess.Popen(  # nosec B603
         list(argv),
         cwd=cwd,
         env=dict(env),
-        timeout=timeout,
         shell=False,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
+        start_new_session=True,
     )
-    return ProcessResult(proc.returncode, proc.stdout, proc.stderr)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return ProcessResult(proc.returncode, stdout, stderr)
+    finally:
+        # communicate() may have reaped a successful parent whose background
+        # children still use our temporary directories. Always stop its group.
+        try:
+            _stop_tool_group(proc)
+        finally:
+            if proc.stdout is not None:
+                proc.stdout.close()
+            if proc.stderr is not None:
+                proc.stderr.close()
+
+
+def _stop_tool_group(proc: subprocess.Popen[str]) -> None:
+    """Give this invocation a bounded TERM grace, then KILL and reap its parent."""
+    deadline = time.monotonic() + 0.5
+    try:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        while time.monotonic() < deadline:
+            proc.poll()
+            try:
+                os.killpg(proc.pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.01)
+    finally:
+        # This also runs if cancellation interrupts the graceful shutdown.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
 
 
 def store_raw(data: bytes, home: Path) -> str:
