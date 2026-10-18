@@ -2,6 +2,25 @@
 
 ## 2026-10-18
 
+### A bounded diagnostic prefix can discard the terminal failure
+
+**Evidence.** A self-authored subprocess fixture emits large build chatter before
+a terminal failure on stdout, stderr, and a referenced baseline log. Prefix-only
+retention loses those final lines. Regression tests now preserve both ends inside
+the existing byte/file bounds and compare packets with diagnostics disabled and
+enabled in different directories.
+
+**Mechanism.** Console and baseline text use byte-oriented head/tail samples with
+an explicit separator and metadata describing omitted byte offsets. Tight budgets
+prioritize the tail. Baseline logs use no-follow descriptor traversal, regular-file
+checks, a size snapshot, and bounded prefix/tail reads. A changing file is marked
+incomplete. JSON report capture and every deterministic record remain unchanged.
+
+**Generalizable rule.** A byte cap needs a sampling policy suited to the evidence:
+terminal text often carries the failure. Preserve useful ends, count the omission
+marker inside the cap, and disclose missing or unstable evidence without changing
+the measured outcome.
+
 ### A tool's temporary resources must outlive its ordinary descendants
 
 **Evidence.** A local Python parent/child fixture reproduced a subprocess timeout

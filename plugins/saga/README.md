@@ -117,6 +117,14 @@ status, reason, exit code, elapsed time, starting remaining budget, and artifact
 references. Failed and budget-skipped retries remain visible without replacing the
 original review outcome. Console text, the outcomes report, and referenced baseline
 logs are bounded to eight files and 256 KiB total per attempt (64 KiB per artifact).
+Small text stays byte-exact. Larger console and baseline text retains its beginning
+and ending around an explicit omission separator, counted within the same cap.
+Artifact metadata records the sample mode, observed/original byte size and omitted
+byte span. A small remaining budget retains only the tail, or no text when exhausted.
+Baseline sampling uses bounded reads and seeks on the same safely opened descriptor;
+if the source changes during capture, metadata marks it incomplete and leaves the
+original size and omitted offsets unknown. The outcomes JSON keeps prefix capture
+and its existing parsing behavior.
 Directories are mode 0700 and files 0600. Log reads refuse symlinks, paths outside
 the scan root, nonregular files, and platforms without safe descriptor traversal.
 Capture failures are noted locally and preserve the scan outcome. Diagnostics can
