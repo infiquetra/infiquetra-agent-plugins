@@ -1332,11 +1332,13 @@ def test_optional_diagnostics_never_changes_packet_bytes_or_raw_digests(tmp_path
                 return super().__call__(argv, **kwargs)
             folder = kwargs["cwd"] / "mutants.out"
             (folder / "log").mkdir(parents=True, exist_ok=True)
-            (folder / "log" / "baseline.log").write_text(f"volatile diagnostic {len(self.calls)}")
+            (folder / "log" / "baseline.log").write_text(
+                "build chatter\n" * 10000 + f"volatile terminal diagnostic {len(self.calls)}"
+            )
             (folder / "outcomes.json").write_text(json.dumps({"outcomes": [{
                 "scenario": "Baseline", "summary": "Failure", "log_path": "log/baseline.log",
             }]}))
-            return T.ProcessResult(4, f"volatile console {len(self.calls)}", "test error")
+            return T.ProcessResult(4, "build chatter\n" * 10000 + f"volatile console {len(self.calls)}", "test error")
 
     packets: list[dict[str, bytes]] = []
     hashes: list[str] = []

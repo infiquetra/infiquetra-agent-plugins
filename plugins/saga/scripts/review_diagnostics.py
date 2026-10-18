@@ -10,15 +10,74 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import BinaryIO, Literal
 
 MAX_BYTES = 256 * 1024
 MAX_FILES = 8
 _METADATA_RESERVE = 8192
+_OMISSION = b"\n\n[... middle bytes omitted; see attempt.json ...]\n\n"
+ArtifactValue = int | bool | str | None
 
 
-def _read_owned(root: Path, relative: str, limit: int) -> bytes | None:
-    """Read a regular file through no-follow directory descriptors, or decline."""
+@dataclass(frozen=True)
+class TextSample:
+    data: bytes
+    observed_bytes: int
+    head_bytes: int
+    tail_bytes: int
+    mode: Literal["full", "head-tail", "tail-only", "no-text"]
+    source_changed: bool = False
+
+    def metadata(self) -> dict[str, ArtifactValue]:
+        omitted = self.head_bytes + self.tail_bytes < self.observed_bytes
+        return {
+            "sample_mode": self.mode,
+            "observed_bytes": self.observed_bytes,
+            "original_bytes": None if self.source_changed else self.observed_bytes,
+            "omitted_start": None if self.source_changed else self.head_bytes,
+            "omitted_end": None if self.source_changed else self.observed_bytes - self.tail_bytes,
+            "source_changed": self.source_changed,
+            "complete": not omitted and not self.source_changed,
+            "truncated": omitted or self.source_changed,
+        }
+
+
+def _text_layout(size: int, limit: int) -> tuple[int, int, bytes]:
+    if size <= limit:
+        return size, 0, b""
+    if limit < len(_OMISSION) + 2:
+        return 0, limit, b""
+    payload = limit - len(_OMISSION)
+    return payload // 2, payload - payload // 2, _OMISSION
+
+
+def _text_sample(prefix: bytes, suffix: bytes, size: int, limit: int) -> TextSample:
+    head, tail, separator = _text_layout(size, limit)
+    mode: Literal["full", "head-tail", "tail-only", "no-text"]
+    mode = "full" if size <= limit else "head-tail" if separator else "tail-only" if tail else "no-text"
+    data = prefix[:head] + separator + (suffix[-tail:] if tail else b"")
+    return TextSample(data, size, head, tail, mode)
+
+
+def _console_sample(data: str | bytes, limit: int) -> TextSample:
+    if isinstance(data, bytes):
+        return _text_sample(data, data, len(data), limit)
+    # Encoding a large captured string must not allocate another full-size copy.
+    prefix = bytearray()
+    suffix = bytearray()
+    size = 0
+    for offset in range(0, len(data), 4096):
+        chunk = data[offset:offset + 4096].encode("utf-8", errors="replace")
+        size += len(chunk)
+        prefix.extend(chunk[:max(0, limit - len(prefix))])
+        suffix.extend(chunk)
+        if len(suffix) > limit:
+            del suffix[:len(suffix) - limit]
+    return _text_sample(bytes(prefix), bytes(suffix), size, limit)
+
+
+def _open_owned(root: Path, relative: str) -> BinaryIO | None:
+    """Open a regular file through no-follow directory descriptors, or decline."""
     if "\0" in relative:
         return None
     try:
@@ -45,9 +104,9 @@ def _read_owned(root: Path, relative: str, limit: int) -> bytes | None:
         )
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             return None
-        with os.fdopen(descriptor, "rb") as handle:
-            descriptor = None
-            return handle.read(limit)
+        handle = os.fdopen(descriptor, "rb")
+        descriptor = None
+        return handle
     except OSError:
         return None
     finally:
@@ -55,6 +114,41 @@ def _read_owned(root: Path, relative: str, limit: int) -> bytes | None:
             os.close(descriptor)
         if directory is not None:
             os.close(directory)
+
+
+def _read_owned(root: Path, relative: str, limit: int) -> bytes | None:
+    handle = _open_owned(root, relative)
+    if handle is None:
+        return None
+    try:
+        with handle:
+            return handle.read(limit)
+    except OSError:
+        return None
+
+
+def _read_owned_text(root: Path, relative: str, limit: int) -> TextSample | None:
+    handle = _open_owned(root, relative)
+    if handle is None:
+        return None
+    try:
+        with handle:
+            before = os.fstat(handle.fileno())
+            head, tail, _separator = _text_layout(before.st_size, limit)
+            prefix = handle.read(head)
+            if tail:
+                handle.seek(before.st_size - tail)
+                suffix = handle.read(tail)
+            else:
+                suffix = b""
+            after = os.fstat(handle.fileno())
+        sample = _text_sample(prefix, suffix, before.st_size, limit)
+        changed = (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+            after.st_size, after.st_mtime_ns, after.st_ctime_ns,
+        ) or len(prefix) != head or len(suffix) != tail
+        return TextSample(sample.data, before.st_size, head, tail, sample.mode, changed)
+    except OSError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -68,7 +162,7 @@ class AttemptRecord:
     exit_code: int | None
     elapsed_seconds: float
     remaining_budget_seconds: float | None
-    artifacts: dict[str, dict[str, int | bool]]
+    artifacts: dict[str, dict[str, ArtifactValue]]
     rejected_logs: int
     errors: tuple[str, ...]
 
@@ -81,7 +175,7 @@ class Attempt:
     attempt: Literal["initial", "retry"]
     remaining_budget_seconds: float | None
     started: float = field(default_factory=time.monotonic)
-    artifacts: dict[str, dict[str, int | bool]] = field(default_factory=dict)
+    artifacts: dict[str, dict[str, ArtifactValue]] = field(default_factory=dict)
     rejected_logs: int = 0
     retained: int = 0
     errors: list[str] = field(default_factory=list)
@@ -124,10 +218,19 @@ class Attempt:
             return
         self.artifacts[name]["bytes"] = len(kept)
 
+    def _text_limit(self) -> int:
+        return min(65536, max(0, MAX_BYTES - _METADATA_RESERVE - self.retained))
+
+    def _keep_text(self, name: str, sample: TextSample) -> None:
+        self.keep(name, sample.data)
+        if name in self.artifacts:
+            self.artifacts[name].update(sample.metadata())
+            if self.artifacts[name].get("capture_failed"):
+                self.artifacts[name]["complete"] = False
+
     def console(self, stdout: str | bytes | None, stderr: str | bytes | None) -> None:
         for name, data in (("stdout.txt", stdout), ("stderr.txt", stderr)):
-            value = data.encode("utf-8", errors="replace") if isinstance(data, str) else data
-            self.keep(name, value or b"")
+            self._keep_text(name, _console_sample(data or b"", self._text_limit()))
 
     def logs(self, root: Path) -> None:
         # The tool report is untrusted, including every path it supplies.
@@ -156,12 +259,12 @@ class Attempt:
                 continue
             if len(self.artifacts) >= MAX_FILES - 1:
                 break
-            data = _read_owned(root, "mutants.out/" + relative, 65537)
-            if data is None:
+            sample = _read_owned_text(root, "mutants.out/" + relative, self._text_limit())
+            if sample is None:
                 self.rejected_logs += 1
                 self.note("baseline-log-unavailable-or-refused")
             else:
-                self.keep(f"baseline-{len(self.artifacts)}.log", data[:65536], truncated=len(data) > 65536)
+                self._keep_text(f"baseline-{len(self.artifacts)}.log", sample)
 
     def finish(
         self, status: Literal["succeeded", "failed", "skipped"], reason: str | None,
