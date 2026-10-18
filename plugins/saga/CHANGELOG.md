@@ -38,6 +38,20 @@
 
 ### Fixed
 
+- Issue #264: `finish` recognises a reproduction test's failure in each supported runner's own
+  output, so a reproduced Rust (and Vitest, Jest, Go, Dart, Swift or unittest) finding counts as
+  reproduced and can block. The match rule is in the new `scripts/reproduction_match.py`: the
+  cited test has to be among the tests that failed in the re-run (cargo and nextest, pytest,
+  unittest, Vitest, Jest, go test, dart test, swift test with XCTest or Swift Testing), by name
+  and, where the runner prints one, compatible file paths; and the complete substantive failure
+  message has to agree. A reviewer may record that message on one line. Runner metadata, colour,
+  thread ids and identified PID filename suffixes are ignored; assertion numbers, durations,
+  placeholders and paths are preserved. Pytest summaries retain their own causes, and duplicate
+  test names are associated with their file locations or refused when ambiguous. Parser work
+  and retained bodies are bounded, including repeated unittest headers and nonverbose Go
+  failures. Which findings block is unchanged: a pass, a different test's failure and the same
+  test failing for another reason still do not match. Output from no known runner keeps the
+  earlier rule. No version bump; that belongs to #147's saga release step.
 - Issue #260: preparing one change twice gives one packet for the mention check and for
   cargo-mutants. The mention check built its removed names from sets, so the order of hits (and
   the hash of `proof.raw_output`) followed each process's `PYTHONHASHSEED`; every set-derived

@@ -1,0 +1,22 @@
+   Compiling hidden v0.1.0 (/work/cg3)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running tests/single_dot_hidden_test.rs (target/debug/deps/single_dot_hidden_test-3f1efcd051ca0614)
+
+running 1 test
+test single_dot_file_is_hidden_by_default ... FAILED
+
+failures:
+
+---- single_dot_file_is_hidden_by_default stdout ----
+
+thread 'single_dot_file_is_hidden_by_default' (133037733) panicked at tests/single_dot_hidden_test.rs:6:5:
+single-dot file was not hidden; names: ["single-dot-test-47811", ".hidden", "visible"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    single_dot_file_is_hidden_by_default
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test single_dot_hidden_test`

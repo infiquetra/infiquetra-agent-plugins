@@ -1,0 +1,1 @@
+thread 'single_dot_file_is_hidden_by_default' panicked at crates/ignore/tests/single_dot_hidden_test.rs:23:5: single-dot file was not hidden; names: ["single-dot-test-36207", ".hidden", "visible"]. test result: FAILED. 0 passed; 1 failed

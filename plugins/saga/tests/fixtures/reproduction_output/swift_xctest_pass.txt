@@ -1,0 +1,14 @@
+Building for debugging...
+Build complete! (0.24 sec)
+Test Suite 'Selected tests' started at 2026-10-16 14:07:44.147.
+Test Suite 'DemoTests.xctest' started at 2026-10-16 14:07:44.148.
+Test Suite 'DemoTests' started at 2026-10-16 14:07:44.148.
+Test Case '-[DemoTests.DemoTests testOk]' started.
+Test Case '-[DemoTests.DemoTests testOk]' passed (0.001 seconds).
+Test Suite 'DemoTests' passed at 2026-10-16 14:07:44.149.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'DemoTests.xctest' passed at 2026-10-16 14:07:44.149.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'Selected tests' passed at 2026-10-16 14:07:44.149.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+exit 0

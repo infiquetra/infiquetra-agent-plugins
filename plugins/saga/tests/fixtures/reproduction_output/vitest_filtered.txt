@@ -1,0 +1,32 @@
+
+ RUN  v4.1.11 /work/vt
+
+ ❯ add.test.js (3 tests | 1 failed | 2 skipped) 3ms
+     × adds 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  add.test.js > math > adds
+AssertionError: expected -1 to be 5 // Object.is equality
+
+- Expected
++ Received
+
+- 5
++ -1
+
+ ❯ add.test.js:4:39
+      2| const add = (a,b)=>a-b;
+      3| describe("math", () => {
+      4|   it("adds", () => { expect(add(2,3)).toBe(5); });
+       |                                       ^
+      5|   it("ok", () => { expect(add(0,0)).toBe(0); });
+      6|   it("other", () => { throw new Error("other broke"); });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 skipped (3)
+   Start at  14:09:48
+   Duration  98ms (transform 8ms, setup 0ms, import 14ms, tests 3ms, environment 0ms)

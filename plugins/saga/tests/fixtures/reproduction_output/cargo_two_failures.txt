@@ -1,0 +1,32 @@
+   Compiling demo v0.1.0 (/work/cg)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.70s
+     Running tests/repro_test.rs (target/debug/deps/repro_test-c471bf351c7c4ff4)
+
+running 3 tests
+test passes ... ok
+test other_failure ... FAILED
+test adds_two_numbers ... FAILED
+
+failures:
+
+---- other_failure stdout ----
+
+thread 'other_failure' (131825354) panicked at tests/repro_test.rs:5:22:
+other broke
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- adds_two_numbers stdout ----
+
+thread 'adds_two_numbers' (131825353) panicked at tests/repro_test.rs:3:25:
+assertion `left == right` failed
+  left: -1
+ right: 5
+
+
+failures:
+    adds_two_numbers
+    other_failure
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test repro_test`
