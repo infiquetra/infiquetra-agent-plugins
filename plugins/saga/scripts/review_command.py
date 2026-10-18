@@ -17,6 +17,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess  # nosec B404
 import sys
 import tarfile
@@ -104,6 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--profile", type=Path, required=True)
     prepare.add_argument("--builder-record", type=Path, required=True)
     prepare.add_argument("--out", type=Path, required=True)
+    prepare.add_argument("--diagnostics-directory", type=Path)
     finish = commands.add_parser("finish", help="Check answers and write the review run.")
     finish.add_argument("--packet", type=Path, required=True)
     finish.add_argument("--answer", type=Path, action="append", default=[])
@@ -288,6 +290,7 @@ def _prepare(
             adapters=list(adapters) if adapters is not None else None,
             runner=runner,
             framework=False,
+            diagnostics_directory=args.diagnostics_directory,
         )
         if code != 0:
             raise CommandFailure(code, "")
@@ -1595,5 +1598,30 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+@contextmanager
+def _prepare_termination() -> Iterator[None]:
+    """The synchronous prepare CLI unwinds owned resources on an outer TERM."""
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def terminate(signum: int, _frame: object) -> None:
+        # A repeated TERM must not interrupt the nested tool/group cleanup.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, terminate)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _cli(argv: Sequence[str] | None = None) -> int:
+    arguments = list(argv) if argv is not None else sys.argv[1:]
+    if arguments[:1] == ["prepare"]:
+        with _prepare_termination():
+            return main(arguments)
+    return main(arguments)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_cli())

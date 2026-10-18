@@ -1312,6 +1312,62 @@ def test_prepare_diff_error_writes_nothing(tmp_path: Path, monkeypatch: pytest.M
     assert calls["n"] >= 2
 
 
+def test_optional_diagnostics_never_changes_packet_bytes_or_raw_digests(tmp_path: Path) -> None:
+    repo, base, head = _repo(tmp_path, function=False)
+    profile = _profile(tmp_path / "outside")
+    builder = _builder(tmp_path / "builder.json")
+    home = tmp_path / "home"
+    home.mkdir()
+    adapter = T.Adapter(
+        id="cargo-mutants", tool="stub", invoke=lambda _context: ["stub", "scan"],
+        parse=lambda _text: T.ParseResult(), default_version="1.0.0",
+        rows=("testing.surviving-mutant",), lens="testing", comparison="lines",
+        mutation=True, report_file="mutants.out/outcomes.json",
+        exit_reasons=((4, "baseline-failed"),), retry_failures=("baseline-failed",),
+    )
+
+    class Runner(_Runner):
+        def __call__(self, argv: list[str], **kwargs: Any) -> Any:
+            if argv != ["stub", "scan"]:
+                return super().__call__(argv, **kwargs)
+            folder = kwargs["cwd"] / "mutants.out"
+            (folder / "log").mkdir(parents=True, exist_ok=True)
+            (folder / "log" / "baseline.log").write_text(f"volatile diagnostic {len(self.calls)}")
+            (folder / "outcomes.json").write_text(json.dumps({"outcomes": [{
+                "scenario": "Baseline", "summary": "Failure", "log_path": "log/baseline.log",
+            }]}))
+            return T.ProcessResult(4, f"volatile console {len(self.calls)}", "test error")
+
+    packets: list[dict[str, bytes]] = []
+    hashes: list[str] = []
+    for index, diagnostics in enumerate([None, tmp_path / "private-first", tmp_path / "private-second"]):
+        out = tmp_path / f"packet-{index}"
+        argv = [
+            "prepare", "--repo", str(repo), "--base", base, "--head", head,
+            "--profile", str(profile), "--builder-record", str(builder),
+            "--out", str(out), "--home", str(home),
+        ]
+        if diagnostics is not None:
+            argv.extend(["--diagnostics-directory", str(diagnostics)])
+        code, err = _main(argv, adapters=[adapter], runner=Runner())
+        assert code == 0, err
+        packet = {path.relative_to(out).as_posix(): path.read_bytes()
+                  for path in out.rglob("*") if path.is_file()}
+        packets.append(packet)
+        hasher = hashlib.sha256()
+        for name, data in sorted(packet.items()):
+            hasher.update(name.encode() + b"\0" + data + b"\0")
+        hashes.append(hasher.hexdigest())
+        degraded = json.loads(packet["degraded.json"])
+        failure = next(item for item in degraded if item["reason"] == "baseline-failed")
+        assert failure["raw_output"]
+        if diagnostics is not None:
+            assert len(list(diagnostics.glob("*/attempt.json"))) == 2
+            assert str(diagnostics).encode() not in b"".join(packet.values())
+    assert packets[0] == packets[1] == packets[2]
+    assert len(set(hashes)) == 1
+
+
 def test_no_reviewer_session_covers_every_argument_vector(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1,5 +1,46 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-18
+
+### A tool's temporary resources must outlive its ordinary descendants
+
+**Evidence.** A local Python parent/child fixture reproduced a subprocess timeout
+leaving the child alive after the direct parent was reaped. The review runner then
+removed the invocation's temporary Cargo home. Real-process regression tests in
+`plugins/saga/tests/test_review_tool_lifetime.py` exercise timeout escalation,
+normal parent exit with a background child, cancellation, output and exit status,
+resource availability during child shutdown, and concurrent invocation isolation.
+
+**Mechanism.** A direct parent's exit is not the end of the process tree that may
+still use its resources. POSIX invocations now own a separate session/process
+group, terminate that group with bounded escalation, and reap the parent before
+returning to temporary-directory cleanup. Captured output and timeout results keep
+their existing meaning. The guarantee excludes descendants that deliberately
+detach, externally killed runners, and descendant control on non-POSIX platforms.
+
+**Generalizable rule.** Tie temporary-resource cleanup to the supported process
+lifetime boundary, including normal exits that leave background work. Test with
+real children and explicit handshakes; a mocked timeout cannot prove cleanup order.
+
+### Failure diagnostics and deterministic review records need separate custody
+
+**Evidence.** Synthetic cargo-mutants reports reference external baseline logs.
+The original raw record retained the report, while cleanup deleted the referenced
+log. An unsuccessful or skipped retry was discarded. Tests now retain both attempts
+and prove that enabling diagnostics in different directories preserves every byte
+of the same-input review packet, including failure raw-output digests.
+
+**Mechanism.** An optional private diagnostics directory holds bounded console,
+report, and safely opened baseline-log copies alongside typed attempt status,
+elapsed time, and starting remaining budget. Initial evidence is captured before
+retry can replace it. These artifacts never feed emitted records or hashes.
+Read or write refusals are local telemetry and preserve the primary tool outcome.
+
+**Generalizable rule.** Preserve enough bounded evidence to investigate a failure
+before releasing its owner directory. Keep variable timing and diagnostic text
+outside a deterministic measurement, and record failed and skipped retries without
+erasing the original failure.
+
 ## 2026-10-16
 
 ### Anything a packet hashes must come out in a fixed order, and a text fallback must not treat language words as names

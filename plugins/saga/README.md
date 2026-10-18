@@ -94,6 +94,35 @@ In Claude Code, `/setup-view` opens the setup pane directly — the survey, the
 installs, and the optional steps with no agent turn. Every other harness uses
 `/saga:setup`.
 
+## Review tool execution
+
+The review-tool runner gives each POSIX invocation its own session/process group.
+Before returning or releasing temporary tool directories, it sends the group TERM,
+allows up to half a second for shutdown, then sends KILL and reaps the direct
+process. This also covers background children left by a normally exiting parent
+and Python cancellation such as `KeyboardInterrupt`. The synchronous `prepare`
+CLI unwinds cleanup on SIGTERM and exits 143; callers must allow the nested
+half-second group grace plus temporary-directory cleanup before escalating.
+Imported API callers own their cancellation policy. Deliberately detached
+descendants and a runner killed with SIGKILL remain outside this boundary. On
+other platforms, cleanup controls only the direct subprocess. This is a process
+lifetime boundary, not a sandbox.
+
+`review_command.py prepare --diagnostics-directory <private-directory>` and
+`review_tools.py run --diagnostics-directory <private-directory>` optionally retain
+local cargo-mutants attempt diagnostics. The Python runner accepts the same
+`diagnostics_directory` keyword, defaulting to `None`. Each initial/retry attempt
+gets a separate directory and typed `attempt.json` (`review_diagnostics.v1`) with
+status, reason, exit code, elapsed time, starting remaining budget, and artifact
+references. Failed and budget-skipped retries remain visible without replacing the
+original review outcome. Console text, the outcomes report, and referenced baseline
+logs are bounded to eight files and 256 KiB total per attempt (64 KiB per artifact).
+Directories are mode 0700 and files 0600. Log reads refuse symlinks, paths outside
+the scan root, nonregular files, and platforms without safe descriptor traversal.
+Capture failures are noted locally and preserve the scan outcome. Diagnostics can
+contain reviewed source or test output: keep them private, outside the packet
+directory. They never enter packet records, raw-output digests, grades, or hashes.
+
 ## Tests
 
 ```bash
