@@ -159,17 +159,21 @@ and result files, `reproduced` and `blocks`. Code: `plugins/saga/scripts/reprodu
 
 **Mechanism.** The old rule asked for two things only pytest provides: the cited id word for word,
 and the recorded last line unchanged. A runner-aware reading asks instead whether the cited test
-is among the tests that failed in the re-run (name and file, with every runner's separators read
-as one), and then whether the recorded failure line is in that test's own failure lines. Colour
-codes, thread ids, timings, addresses, time stamps, the directory in front of a path, and runs of
-five or more digits (process ids, ports) are removed from both sides first. A reviewer who wrote
-the failure on one line still matches when the re-run test's own message lines appear in what it
-recorded, so the check reads the failure both ways round.
+is among the tests that failed in the re-run (name and compatible file paths, with every runner's
+separators read as one), and then compares the complete substantive message attributed to that
+test. A reviewer who wrote the failure on one line still matches when the re-run test's own
+message lines appear in what it recorded. Runner metadata and identified PID suffixes in temporary
+test filenames are ignored; numbers, durations, placeholders and paths inside assertions remain
+semantic values. The 2026-10-18 repair regressions exposed shared trailing lines, unrelated terse
+pytest summary causes, duplicate pytest names and contradictory directories as false matches.
+Repeated unittest headers and verbose Go ranges also showed why an input byte limit needs a
+shared retained-body budget and indexed runner markers, rather than repeated suffix scans.
 
 **Generalizable rule.** Match a re-run against the runner's own list of failed tests, not against
-a string the runner may never print, and compare failure text only after removing what differs
-between two runs of the same failure. Capture each runner's transcript for a passing test, the
-cited failing test and an unrelated failing test before writing the rule.
+a string the runner may never print. Compare the complete cause, normalize only identified
+metadata, and fail conservatively when a cause cannot be attributed. Capture each runner's
+transcript for a passing test, the cited failing test and an unrelated failing test before
+writing the rule; include changed operands and repeated-header inputs in regression coverage.
 
 ### A check that reads the copy must read only what git tracks, because earlier tools write into it
 

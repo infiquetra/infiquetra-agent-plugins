@@ -3,10 +3,10 @@
 00:00 +0 -1: test/add_test.dart: math adds [E]
   Expected: <5>
     Actual: <-1>
-  
+
   package:matcher          expect
   test/add_test.dart 5:23  main.<fn>.<fn>
-  
+
 00:00 +0 -1: Some tests failed.
 
 Failing tests:

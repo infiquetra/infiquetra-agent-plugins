@@ -259,3 +259,123 @@ def test_hostile_output_is_bounded_before_it_is_parsed() -> None:
     assert not M.matches(1, hostile, _text("cargo_one_failure"), CARGO)
     assert not M.matches(1, _text("cargo_one_failure"), hostile, CARGO)
     assert time.monotonic() - start < 5
+
+
+@pytest.mark.parametrize(
+    ("fixture", "test", "before", "after"),
+    [
+        ("cargo_one_failure", CARGO, "left: -1", "left: -2"),
+        ("cargo_one_failure", CARGO, "right: 5", "right: 6"),
+        ("pytest_quiet", "test_demo.py::test_add", "== 5", "== 6"),
+        ("pytest_quiet", "test_demo.py::test_add", "assert -1", "assert -2"),
+    ],
+)
+def test_every_assertion_operand_must_agree(
+    fixture: str, test: str, before: str, after: str,
+) -> None:
+    recorded = _text(fixture)
+    changed = recorded.replace(before, after)
+    assert changed != recorded
+    assert not M.matches(1, changed, recorded, test)
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("10000", "20000"), ("<expected>", "<actual>"), ("100ms", "900ms"),
+        ("0x12345", "0x67890"), ("/expected/value", "/actual/value"),
+        ("2030-01-01 00:00:00", "2031-01-01 00:00:00"),
+    ],
+)
+def test_assertion_values_are_not_volatile_metadata(before: str, after: str) -> None:
+    recorded = f"---- repro stdout ----\nassertion failed: actual {before}\n"
+    assert M.matches(1, recorded, recorded, "test.rs::repro")
+    assert not M.matches(1, recorded.replace(before, after), recorded, "test.rs::repro")
+
+
+def test_terse_pytest_summary_keeps_each_tests_own_cause() -> None:
+    captured = (
+        "FAILED test_alpha.py::test_a - AssertionError: original cause\n"
+        "FAILED test_beta.py::test_b - AssertionError: different cause\n"
+    )
+    assert not M.matches(1, captured, "different cause", "test_alpha.py::test_a")
+    assert M.matches(1, captured, "AssertionError: original cause", "test_alpha.py::test_a")
+    assert M.matches(1, captured, "AssertionError: different cause", "test_beta.py::test_b")
+    missing = "FAILED test_alpha.py::test_a\n" + captured.splitlines()[1]
+    assert not M.matches(1, missing, "different cause", "test_alpha.py::test_a")
+
+
+def test_explicit_relative_directories_must_be_compatible() -> None:
+    captured = _text("cargo_one_failure")
+    assert not M.matches(1, captured, captured, "unrelated/repro_test.rs::adds_two_numbers")
+    assert M.matches(1, captured, captured, "repro_test.rs::adds_two_numbers")
+    assert M.matches(1, captured, captured, "./tests/repro_test.rs::adds_two_numbers")
+
+
+def test_pytest_duplicate_names_keep_their_file_and_message() -> None:
+    captured = (
+        "________________ test_same ________________\n"
+        "E       assert 1 == 9\n"
+        "test_alpha.py:1: AssertionError\n"
+        "________________ test_same ________________\n"
+        "E       assert 2 == 9\n"
+        "test_beta.py:1: AssertionError\n"
+        "================ short test summary info ================\n"
+        "FAILED test_alpha.py::test_same - assert 1 == 9\n"
+        "FAILED test_beta.py::test_same - assert 2 == 9\n"
+    )
+    assert M.matches(1, captured, "E       assert 1 == 9", "test_alpha.py::test_same")
+    assert M.matches(1, captured, "E       assert 2 == 9", "test_beta.py::test_same")
+    assert not M.matches(1, captured, "E       assert 2 == 9", "test_alpha.py::test_same")
+    assert not M.matches(1, captured, "E       assert 1 == 9", "test_beta.py::test_same")
+    # Without a location, duplicate section headings do not identify either node.
+    ambiguous = re.sub(r"test_(?:alpha|beta).py:1: AssertionError\n", "", captured)
+    assert not M.matches(1, ambiguous, "E       assert 2 == 9", "test_alpha.py::test_same")
+
+
+def test_repeated_unittest_headers_do_not_retain_overlapping_bodies() -> None:
+    failures = M.failed_tests("FAIL: t (K.t)\n" * 2_000)
+    assert len(failures) == 2_000
+    assert sum(len(item.body) for item in failures) == 0
+
+
+def test_nonverbose_go_failure_parsing_does_linear_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Count inspected regex inputs instead of depending on machine timing. Old parsing scans
+    # every preceding line again looking for a verbose-only RUN marker.
+    real_match = M.re.match
+    inspected = 0
+
+    def counted_match(pattern: str, string: str, *args: object, **kwargs: object) -> object:
+        nonlocal inspected
+        inspected += 1
+        if inspected > 40_000:
+            pytest.fail("Go parser repeatedly rescanned earlier output")
+        return real_match(pattern, string, *args, **kwargs)
+
+    monkeypatch.setattr(M.re, "match", counted_match)
+    lines = [f"--- FAIL: Test{number} (0.00s)" for number in range(8_000)]
+    assert len(M._go(lines)) == len(lines)
+    assert inspected <= len(lines) * 5
+
+
+def test_overlapping_go_blocks_stop_at_the_shared_body_budget() -> None:
+    # Nested/repeated verbose RUN ranges can overlap even with a one-pass RUN index.
+    captured = "\n".join(
+        [f"=== RUN Test{number}" for number in range(300)]
+        + [f"--- FAIL: Test{number} (0.00s)" for number in range(300)]
+    )
+    with pytest.raises(M._ParseLimit, match="retained failure lines"):
+        M.failed_tests(captured)
+    assert not M.matches(1, captured, "assertion failed: original", "test.go::Test299")
+
+
+def test_excess_failure_count_fails_closed() -> None:
+    captured = "".join(f"FAILED test.py::test_{number}\n" for number in range(10_001))
+    with pytest.raises(M._ParseLimit, match="too many failed tests"):
+        M.failed_tests(captured)
+    assert not M.matches(1, captured, "assertion failed: original", "test.py::test_0")
+
+
+def test_assertion_values_after_long_common_prefix_must_agree() -> None:
+    recorded = "---- repro stdout ----\nassertion failed: " + "x" * 250 + " expected 10000\n"
+    assert not M.matches(1, recorded.replace("10000", "20000"), recorded, "test.rs::repro")

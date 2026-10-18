@@ -8,8 +8,8 @@ FAILED`` and a ``---- name stdout ----`` block, Vitest prints ``FAIL file > suit
 prints ``--- FAIL: TestName``. So the test is looked for in each runner's own failure lines, and
 the recorded failure line is looked for in that test's own failure block.
 
-Both sides are compared after ignoring what changes between two runs of the same failure: colour
-codes, thread ids, timings, memory addresses, time stamps and the directory a path sits in.
+Both sides are compared after ignoring runner metadata that changes between runs. Assertion
+values, including numbers, durations and placeholders, remain part of the failure cause.
 
 The matcher recognises these runners, each from output captured from the real runner: cargo test
 and cargo nextest, pytest, unittest, Vitest, Jest, go test, dart test, and swift test (XCTest and
@@ -26,19 +26,16 @@ from dataclasses import dataclass
 
 _ANSI = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\([A-Za-z0-9]|\][^\x07\x1b]{0,256}(?:\x07|\x1b\\))")
 _THREAD_ID = re.compile(r"(thread '[^']*') \(\d+\)")
-_ADDRESS = re.compile(r"0x[0-9a-fA-F]{4,}")
-_STAMP = re.compile(r"\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:\.\d+)?")
 _DART_CLOCK = re.compile(r"^\d+:\d\d(?::\d\d)? [+~-]\d+(?: [+~-]\d+)*: ")
-_DURATION = re.compile(r"(?<![\w.])\d+(?:\.\d+)?\s?(?:ms|µs|us|ns|seconds?|secs?|s)\b")
-_ABSOLUTE_DIRECTORY = re.compile(r"(?<![\w./~-])(?:/[\w.+@~-]+)+/(?=[\w.+@~-])")
-_PLACEHOLDER = re.compile(r"<[A-Za-z][\w -]{0,15}>")
-_LONG_NUMBER = re.compile(r"\d{5,}")
+_ABSOLUTE_LOCATION = re.compile(r"^(?:/[\w.+@~-]+)+/([\w.+@~-]+:\d+(?::\d+)?:)")
+_PID_FILENAME = re.compile(r"(\b[\w.-]+-test-)(?:\d{5,}|<pid>)(?=[\"'/\s])")
 _BLANKS = re.compile(r"\s+")
 _DOTTED = re.compile(r"\w+(?:\.\w+)+")
 _SEPARATORS = re.compile(r"::|/| > |›|>")
 _CAPTURE_LIMIT = 400_000
 _LINE_COUNT_LIMIT = 20_000
-_LINE_LIMIT = 200
+_FAILURE_LIMIT = 10_000
+_BODY_LINE_LIMIT = 40_000
 
 _GENERIC_PREFIXES = (
     "Traceback (most recent call last):",
@@ -57,7 +54,7 @@ _GENERIC_PREFIXES = (
     "Test Files", "Tests ", "Tests:", "Test Suites:", "Snapshots:", "Time:", "Duration",
     "Start at", "RUN ", "Ran all test suites",
     # go test
-    "FAIL\t", "ok  \t",
+    "FAIL\t", "ok  \t", "=== ",
     # dart test
     "Failing tests:", "Some tests failed", "Consider enabling", "For example, 'dart",
     # swift test
@@ -90,15 +87,13 @@ def strip_ansi(text: str) -> str:
 
 
 def normalise(line: str) -> str:
-    """One output line with what changes between two runs of the same failure taken out."""
+    """Remove identified metadata, preserving values in the assertion itself."""
     line = _THREAD_ID.sub(r"\1", line)
-    line = _PLACEHOLDER.sub("#", line)
-    line = _ADDRESS.sub("0xADDR", line)
-    line = _STAMP.sub("<time>", line)
+    # Temporary test filenames with a PID suffix occur in reviewer summaries as <pid> too.
+    line = _PID_FILENAME.sub(r"\1<pid>", line)
+    line = re.sub(r"(object at )0x[0-9a-fA-F]+", r"\g<1>0xADDR", line)
     line = _DART_CLOCK.sub("", line.strip())
-    line = _DURATION.sub("<time>", line)
-    line = _ABSOLUTE_DIRECTORY.sub("", line)
-    line = _LONG_NUMBER.sub("#", line)
+    line = _ABSOLUTE_LOCATION.sub(r"\1", line)
     return _BLANKS.sub(" ", line).strip()
 
 
@@ -124,12 +119,19 @@ def _split_cited(test: str) -> tuple[str, str]:
     return file.strip(), canonical(name)
 
 
-def _base(path: str) -> str:
-    return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+def _path_parts(path: str) -> tuple[str, ...]:
+    return tuple(part for part in path.replace("\\", "/").split("/") if part not in {"", "."})
+
+
+def _paths_fit(first: str, second: str) -> bool:
+    """Accept an omitted leading root, but keep every explicit directory component."""
+    left, right = _path_parts(first), _path_parts(second)
+    width = min(len(left), len(right))
+    return bool(width and left[-width:] == right[-width:])
 
 
 def _fits(failure: Failure, file: str, name: str) -> bool:
-    if failure.file and file and _base(failure.file) != _base(file):
+    if failure.file and file and not _paths_fit(failure.file, file):
         return False
     if not name:
         return bool(file and failure.file)
@@ -142,19 +144,39 @@ def _fits(failure: Failure, file: str, name: str) -> bool:
 
 
 def _lines(text: str) -> list[str]:
-    return text.splitlines()[:_LINE_COUNT_LIMIT]
+    return text[:_CAPTURE_LIMIT].splitlines()[:_LINE_COUNT_LIMIT]
 
 
-def _until(lines: list[str], start: int, stop: Callable[[str], bool]) -> tuple[str, ...]:
+class _ParseLimit(ValueError):
+    """The output cannot be attributed within the parser's storage/work budget."""
+
+
+@dataclass
+class _Budget:
+    body_lines: int = _BODY_LINE_LIMIT
+
+    def retain(self, count: int) -> None:
+        self.body_lines -= count
+        if self.body_lines < 0:
+            raise _ParseLimit("too many retained failure lines")
+
+
+def _until(
+    lines: list[str], start: int, stop: Callable[[str], bool], budget: _Budget,
+    *, end: int | None = None,
+) -> tuple[str, ...]:
     body = []
-    for line in lines[start:]:
+    # Do not slice the entire remaining transcript for every header, even for an empty block.
+    for index in range(start, len(lines) if end is None else end):
+        line = lines[index]
         if stop(line):
             break
+        budget.retain(1)
         body.append(line)
     return tuple(body)
 
 
-def _cargo(lines: list[str]) -> list[Failure]:
+def _cargo(lines: list[str], budget: _Budget) -> list[Failure]:
     found: dict[str, Failure] = {}
     target: str | None = None
     recap = False
@@ -173,6 +195,7 @@ def _cargo(lines: list[str]) -> list[Failure]:
             body = _until(
                 lines, index + 1,
                 lambda line: line.startswith(("---- ", "failures:", "test result:")),
+                budget,
             )
             previous = found.get(block.group(1))
             found[block.group(1)] = Failure(
@@ -186,37 +209,79 @@ def _cargo(lines: list[str]) -> list[Failure]:
                 lambda line: bool(re.match(
                     r"\s*(?:FAIL|PASS|SLOW|SKIP|Summary|Cancelling|─{3,})", line,
                 )),
+                budget,
             )
             if not recap:
                 found[nextest.group(2)] = Failure(None, nextest.group(2), body, loose=True)
     return list(found.values())
 
 
-def _pytest(lines: list[str]) -> list[Failure]:
-    entries: dict[str, str] = {}
+def _pytest(lines: list[str], budget: _Budget) -> list[Failure]:
+    entries: dict[str, Failure] = {}
     for raw in lines:
-        match = re.match(r"(?:FAILED|ERROR) (\S+?::.+?)(?: - .*)?$", raw) or re.match(
+        match = re.match(r"(?:FAILED|ERROR) (\S+?::.+?)(?: - (.*))?$", raw) or re.match(
             r"(\S+?::.+?) (?:FAILED|ERROR)\b", raw,
         )
         if match:
-            entries.setdefault(canonical(match.group(1).partition("::")[2]), match.group(1))
-    sections: dict[str, tuple[str, ...]] = {}
+            file, _, name = match.group(1).partition("::")
+            summary = match.group(2) if match.lastindex == 2 else None
+            body: tuple[str, ...] = (summary,) if summary else ()
+            budget.retain(len(body))
+            previous = entries.get(match.group(1))
+            if previous is None or body:
+                entries[match.group(1)] = Failure(file, name, body)
+    sections: list[Failure] = []
     for index, raw in enumerate(lines):
         header = re.match(r"_{2,} (.+?) _{2,}$", raw)
         if header:
-            sections[canonical(header.group(1))] = _until(
+            body = _until(
                 lines, index + 1, lambda line: bool(re.match(r"(?:_{2,} .+ _{2,}|={2,}.*)$", line)),
+                budget,
             )
-    failures = []
-    for key, full in entries.items():
-        file, _, name = full.partition("::")
-        failures.append(Failure(file, name, sections.pop(key, ())))
-    for key, body in sections.items():
-        failures.append(Failure(None, key, body))
+            locations = [
+                match.group(1) for line in body
+                if (match := re.match(r"(\S+\.py):\d+: (?:\w*Error|\w*Exception)\b", line))
+            ]
+            sections.append(Failure(locations[-1] if locations else None, header.group(1), body))
+    failures: list[Failure] = []
+    by_name: dict[str, list[Failure]] = {}
+    by_location: dict[tuple[str, tuple[str, ...]], list[Failure]] = {}
+    entry_counts: dict[str, int] = {}
+    for entry in entries.values():
+        key = canonical(entry.name)
+        entry_counts[key] = entry_counts.get(key, 0) + 1
+    for section in sections:
+        key = canonical(section.name)
+        by_name.setdefault(key, []).append(section)
+        if section.file:
+            by_location.setdefault((key, _path_parts(section.file)), []).append(section)
+    for entry in entries.values():
+        key = canonical(entry.name)
+        candidates = by_name.get(key, [])
+        located = by_location.get((key, _path_parts(entry.file or "")), [])
+        selected = located[0] if len(located) == 1 else None
+        if selected is None and len(candidates) == 1:
+            part = candidates[0]
+            if part.file and _paths_fit(part.file, entry.file or ""):
+                selected = part
+            elif part.file is None and entry_counts[key] == 1:
+                selected = candidates[0]
+        if selected:
+            failures.append(Failure(entry.file, entry.name, selected.body))
+        elif candidates:
+            # A duplicate name with no unique location must not borrow a section or summary.
+            failures.append(Failure(entry.file, entry.name))
+        else:
+            failures.append(entry)
+    if not entries:
+        failures.extend(
+            part if part.file or len(by_name[canonical(part.name)]) == 1 else Failure(None, part.name)
+            for part in sections
+        )
     return failures
 
 
-def _unittest(lines: list[str]) -> list[Failure]:
+def _unittest(lines: list[str], budget: _Budget) -> list[Failure]:
     failures = []
     for index, raw in enumerate(lines):
         match = re.match(r"(?:FAIL|ERROR): (\w+) \(([\w.]+)\)", raw)
@@ -224,12 +289,15 @@ def _unittest(lines: list[str]) -> list[Failure]:
             dotted = match.group(2)
             if not dotted.endswith("." + match.group(1)):
                 dotted = f"{dotted}.{match.group(1)}"
-            body = _until(lines, index + 1, lambda line: line.startswith("====="))
+            body = _until(
+                lines, index + 1,
+                lambda line: line.startswith(("=====", "FAIL: ", "ERROR: ")), budget,
+            )
             failures.append(Failure(None, dotted, body))
     return failures
 
 
-def _vitest(lines: list[str]) -> list[Failure]:
+def _vitest(lines: list[str], budget: _Budget) -> list[Failure]:
     failures = []
     for index, raw in enumerate(lines):
         header = re.match(r"\s*FAIL\s+(\S+\.\w+) > (.+?)\s*$", raw)
@@ -237,17 +305,18 @@ def _vitest(lines: list[str]) -> list[Failure]:
             body = _until(
                 lines, index + 1,
                 lambda line: bool(re.match(r"\s*FAIL\s", line)) or line.lstrip().startswith("⎯"),
+                budget,
             )
             failures.append(Failure(header.group(1), header.group(2), body))
             continue
         verbose = re.match(r"\s*[×✗✕] (\S+\.\w+) > (.+?)(?:\s+\d+(?:\.\d+)?ms)?\s*$", raw)
         if verbose:
-            body = _until(lines, index + 1, lambda line: not line.lstrip().startswith("→"))
+            body = _until(lines, index + 1, lambda line: not line.lstrip().startswith("→"), budget)
             failures.append(Failure(verbose.group(1), verbose.group(2), body))
     return failures
 
 
-def _jest(lines: list[str]) -> list[Failure]:
+def _jest(lines: list[str], budget: _Budget) -> list[Failure]:
     failures = []
     file: str | None = None
     for index, raw in enumerate(lines):
@@ -260,75 +329,86 @@ def _jest(lines: list[str]) -> list[Failure]:
             body = _until(
                 lines, index + 1,
                 lambda line: bool(re.match(r"\s+● ", line)) or line.startswith("Test Suites:"),
+                budget,
             )
             failures.append(Failure(file, case.group(1), body))
     return failures
 
 
-def _go(lines: list[str]) -> list[Failure]:
+def _go(lines: list[str], budget: _Budget | None = None) -> list[Failure]:
+    budget = budget or _Budget()
     failures = []
+    runs: dict[str, int] = {}
     for index, raw in enumerate(lines):
+        running = re.match(r"\s*=== RUN\s+(\S+)\s*$", raw)
+        if running:
+            runs[running.group(1)] = index
+            continue
         match = re.match(r"\s*--- FAIL: (\S+) \(", raw)
         if not match:
             continue
         name = match.group(1)
-        before = []
-        for earlier in range(index - 1, -1, -1):
-            if re.match(rf"\s*=== RUN\s+{re.escape(name)}\s*$", lines[earlier]):
-                before = [
-                    line for line in lines[earlier + 1:index] if not line.startswith("=== ")
-                ]
-                break
-        after = _until(lines, index + 1, lambda line: not line[:1].isspace())
-        failures.append(Failure(None, name, tuple(before) + after))
+        earlier = runs.pop(name, None)
+        before = () if earlier is None else _until(
+            lines, earlier + 1, lambda line: False, budget, end=index,
+        )
+        after = _until(lines, index + 1, lambda line: not line[:1].isspace(), budget)
+        failures.append(Failure(None, name, before + after))
     return failures
 
 
-def _dart(lines: list[str]) -> list[Failure]:
+def _dart(lines: list[str], budget: _Budget) -> list[Failure]:
     failures = []
     for index, raw in enumerate(lines):
         match = re.match(r"\d+:\d\d(?::\d\d)? [+~-]\d+(?: [+~-]\d+)*: (.+?) \[E\]\s*$", raw)
         if not match:
             continue
         file, _, name = match.group(1).partition(": ")
-        body = _until(lines, index + 1, lambda line: bool(_DART_CLOCK.match(line)))
+        body = _until(lines, index + 1, lambda line: bool(_DART_CLOCK.match(line)), budget)
         failures.append(Failure(file, name, body))
     return failures
 
 
-def _swift(lines: list[str]) -> list[Failure]:
+def _swift(lines: list[str], budget: _Budget) -> list[Failure]:
     failures = []
-    for raw in lines:
+    issues: dict[str, tuple[str | None, list[str]]] = {}
+    failed: list[str] = []
+    for index, raw in enumerate(lines):
         xctest = re.match(r"(.*?):\d+: error: -\[([\w.]+) (\w+)\] : ", raw)
         if xctest:
             name = " ".join([*xctest.group(2).split("."), xctest.group(3)])
+            budget.retain(1)
             failures.append(Failure(xctest.group(1), name, (raw,)))
             continue
+        issue = re.match(r"✘ Test (.+?) recorded an issue at (\S+?):\d+:\d+", raw)
+        if issue:
+            budget.retain(1)
+            where, body = issues.setdefault(issue.group(1), (issue.group(2), []))
+            body.append(raw)
+            body.extend(_until(lines, index + 1, lambda text: not text.startswith("↳"), budget))
         testing = re.match(r"✘ Test (.+?) failed after ", raw)
         if testing and not testing.group(1).startswith(("run with", "Suite ")):
-            name = testing.group(1)
-            body: list[str] = []
-            where = None
-            for position, line in enumerate(lines):
-                if line.startswith(f"✘ Test {name} recorded an issue"):
-                    body.append(line)
-                    body.extend(_until(lines, position + 1, lambda text: not text.startswith("↳")))
-                    where = where or re.search(r"recorded an issue at (\S+?):\d+:\d+", line)
-            failures.append(Failure(where.group(1) if where else None, name, tuple(body)))
+            failed.append(testing.group(1))
+    for name in dict.fromkeys(failed):
+        where, body = issues.pop(name, (None, []))
+        failures.append(Failure(where, name, tuple(body)))
     return failures
 
 
-_RUNNERS: tuple[Callable[[list[str]], list[Failure]], ...] = (
+_RUNNERS: tuple[Callable[[list[str], _Budget], list[Failure]], ...] = (
     _cargo, _pytest, _unittest, _vitest, _jest, _go, _dart, _swift,
 )
 
 
 def failed_tests(text: str) -> list[Failure]:
-    """Every test the runners' output says failed, from output already stripped of colour."""
+    """Read runner failures, raising _ParseLimit when attribution exceeds the shared budget."""
     lines = _lines(text)
     found: list[Failure] = []
+    budget = _Budget()
     for runner in _RUNNERS:
-        found.extend(runner(lines))
+        found.extend(runner(lines, budget))
+        if len(found) > _FAILURE_LIMIT:
+            raise _ParseLimit("too many failed tests")
     return found
 
 
@@ -340,19 +420,14 @@ def _specific_line(lines: list[str], test: str) -> str | None:
     # where the location line after it only names the exception class.
     messages = [raw for raw in lines if re.match(r"E {2,}\S", raw)]
     for raw in messages[-1:] or lines:
-        line = normalise(raw)[:_LINE_LIMIT]
+        line = normalise(raw)
         if not line or _generic(line) or (test and line == test) or (file and line == file):
             continue
         chosen = line
     return chosen or None
 
 
-def _own(failure: Failure) -> str | None:
-    body = "\n".join(normalise(line) for line in failure.body)
-    return body if body.strip() else None
-
-
-_FRAME = re.compile(r"^(?:[>❯]\s|\d+\s*[|:]|[|^~\s-]+$|at |thread '.*' panicked at \S+:\d+:\d+:$)")
+_FRAME = re.compile(r"^(?:[>❯]\s|\d+\s*[|:]|[|^~\s-]+$|at |File \"|thread '.*' panicked at \S+:\d+:\d+:$)")
 _MESSAGE_FLOOR = 12
 
 
@@ -361,20 +436,21 @@ def _message_lines(failure: Failure) -> list[str]:
     pytest_messages = [line for line in failure.body if re.match(r"E {2,}\S", line)]
     chosen = []
     for raw in pytest_messages or failure.body:
-        line = normalise(raw)[:_LINE_LIMIT]
+        line = normalise(raw)
+        line = re.sub(r"^E\s+", "", line)
+        line = re.sub(r"^thread '[^']*' panicked(?: at \S+:\d+:\d+)?:?\s*", "", line)
+        if line == failure.name:
+            continue
         if line and not _generic(line) and not _FRAME.match(line):
             chosen.append(line)
     return chosen
 
 
-def matches(code: int, captured: str, recorded: str, test: str = "") -> bool:
+def _matches(code: int, captured: str, recorded: str, test: str = "") -> bool:
     """True when a re-run that exited *code* failed with the recorded failure of *test*.
 
-    A cited test matches only when that test failed in the re-run, never because it passed or
-    because a different test failed. The failure then has to be the recorded one, read either way
-    round: the recorded failure line appears in the failing test's own failure lines, or the
-    failing test's own message appears in the recorded output. The second reading is for a
-    reviewer who recorded a failure on one line instead of pasting the runner's block.
+    A cited test must fail with the complete recorded substantive message. A reviewer summary
+    on one line must contain that test's complete message, rather than one shared trailing line.
     """
     if code == 0:
         return False
@@ -389,18 +465,36 @@ def matches(code: int, captured: str, recorded: str, test: str = "") -> bool:
             return False
         return not ("::" in test and test not in text)
     hits = [item for item in failures if _fits(item, file, name)]
+    recorded_failures = failed_tests(recorded_text)
     recorded_hits = [
-        item for item in failed_tests(recorded_text) if _fits(item, file, name) and item.body
+        item for item in recorded_failures if _fits(item, file, name) and item.body
     ]
-    source = recorded_hits[-1].body if recorded_hits else tuple(_lines(recorded_text))
-    line = _specific_line(list(source), test) or _specific_line(_lines(recorded_text), test)
-    flat = " ".join(filter(None, (normalise(raw) for raw in _lines(recorded_text))))
+    if recorded_failures and not recorded_hits:
+        return False
+    flat = " ".join(_message_lines(Failure(None, "", tuple(_lines(recorded_text)))))
     for item in hits:
-        if line is not None and line in (_own(item) or whole):
-            return True
         message = _message_lines(item)
-        if message and sum(map(len, message)) >= _MESSAGE_FLOOR and all(
-            part in flat for part in message
-        ):
+        if not message:
+            continue
+        if recorded_hits:
+            for source in recorded_hits:
+                if not _fits(source, file, canonical(item.name)):
+                    continue
+                recorded_message = _message_lines(source)
+                own = " ".join(message)
+                expected = " ".join(recorded_message)
+                if recorded_message and all(part in own for part in recorded_message) and all(
+                    part in expected for part in message
+                ):
+                    return True
+        elif sum(map(len, message)) >= _MESSAGE_FLOOR and all(part in flat for part in message):
             return True
     return False
+
+
+def matches(code: int, captured: str, recorded: str, test: str = "") -> bool:
+    """Match within bounded parser work/storage; oversized ambiguous output fails closed."""
+    try:
+        return _matches(code, captured, recorded, test)
+    except _ParseLimit:
+        return False
