@@ -19,6 +19,12 @@ _METADATA_RESERVE = 8192
 
 def _read_owned(root: Path, relative: str, limit: int) -> bytes | None:
     """Read a regular file through no-follow directory descriptors, or decline."""
+    if "\0" in relative:
+        return None
+    try:
+        os.fsencode(relative)
+    except UnicodeEncodeError:
+        return None
     parts = relative.split("/")
     if not parts or any(part in {"", ".", ".."} for part in parts) or "\\" in relative:
         return None

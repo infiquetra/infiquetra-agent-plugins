@@ -175,3 +175,40 @@ def test_pathological_report_is_bounded_and_not_allowed_to_abort_capture(tmp_pat
     attempt.finish("failed", "baseline-failed", 4)
     record = json.loads((attempt.directory / "attempt.json").read_text())
     assert record["errors"] == ["report-unparseable"]
+
+
+@pytest.mark.parametrize("log_path", ["log/baseline\0.log", "log/\ud800.log"], ids=["nul", "surrogate"])
+def test_invalid_log_representation_preserves_the_production_scan_result(
+    tmp_path: Path, log_path: str,
+) -> None:
+    scan = tmp_path / "scan"
+    folder = scan / "mutants.out"
+    (folder / "log").mkdir(parents=True)
+    home = tmp_path / "home"
+    home.mkdir()
+    diagnostics = tmp_path / "diagnostics"
+    report = json.dumps({"outcomes": [{
+        "scenario": "Baseline", "summary": "Failure", "log_path": log_path,
+    }]})
+
+    def process(_argv: list[str], **_kwargs: Any) -> Any:
+        (folder / "outcomes.json").write_text(report)
+        return T.ProcessResult(4, "baseline failed", "test failed")
+
+    observations = []
+    for directory in (None, diagnostics):
+        context = T.ScanContext(scan, scan, home, diagnostics_directory=directory)
+        degraded: list[Any] = []
+        result = T._once(_adapter(), context, process, {}, 5, "head", degraded, [])
+        assert [item["reason"] for item in degraded] == ["baseline-failed"]
+        assert degraded[0]["raw_output"]
+        observations.append((result, degraded))
+    assert observations[0] == observations[1]
+    records = list(diagnostics.glob("*/attempt.json"))
+    assert len(records) == 2
+    for path in records:
+        record = json.loads(path.read_text())
+        assert record["status"] == "failed" and record["reason"] == "baseline-failed"
+        assert record["rejected_logs"] == 1
+        assert record["errors"] == ["baseline-log-unavailable-or-refused"]
+        assert not list(path.parent.glob("baseline-*.log"))
