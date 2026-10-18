@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -68,6 +69,16 @@ def test_timeout_escalates_and_preserves_partial_output(tmp_path: Path) -> None:
     _assert_no_late_write(tmp_path)
 
 
+@pytest.mark.parametrize("child", ["verbose", "invalid"])
+def test_timeout_drains_cleanup_output_without_replacing_timeout_bytes(tmp_path: Path, child: str) -> None:
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        _run(tmp_path, "parent", child, timeout=1)
+    assert caught.value.output == b"partial stdout\n"
+    assert caught.value.stderr == b"partial stderr\n"
+    assert (tmp_path / "terminated.json").exists()
+    _assert_no_late_write(tmp_path)
+
+
 @pytest.mark.parametrize("mode", ["parent", "background"])
 def test_cargo_home_exists_until_descendant_termination(tmp_path: Path, mode: str) -> None:
     adapter = SimpleNamespace(id="fixture", local_bins=(), narrow_env=False,
@@ -93,9 +104,15 @@ def test_cargo_home_exists_until_descendant_termination(tmp_path: Path, mode: st
 def test_cancellation_cleans_real_descendant(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     communicate = T.subprocess.Popen.communicate
 
+    first = True
+
     def interrupted(proc: Any, *args: Any, **kwargs: Any) -> Any:
-        _wait_for(tmp_path / "parent-ready")
-        raise KeyboardInterrupt
+        nonlocal first
+        if first:
+            first = False
+            _wait_for(tmp_path / "parent-ready")
+            raise KeyboardInterrupt
+        return communicate(proc, *args, **kwargs)
 
     monkeypatch.setattr(T.subprocess.Popen, "communicate", interrupted)
     with pytest.raises(KeyboardInterrupt):
@@ -122,3 +139,43 @@ def test_timeout_does_not_stop_another_invocation(tmp_path: Path) -> None:
         result = other.result(timeout=5)
     assert result.code == 0 and result.stdout == "independent completed\n"
     _assert_no_late_write(timed_out)
+
+
+def test_prepare_cli_term_unwinds_nested_tool_before_resource_cleanup(tmp_path: Path) -> None:
+    proc = subprocess.Popen(
+        [sys.executable, str(FIXTURE), "prepare", str(tmp_path), str(SCRIPTS)],
+        cwd=tmp_path, env=dict(os.environ), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, start_new_session=True,
+    )
+    try:
+        _wait_for(tmp_path / "parent-ready")
+        os.killpg(proc.pid, signal.SIGTERM)
+        time.sleep(0.1)
+        os.killpg(proc.pid, signal.SIGTERM)
+        stdout, stderr = proc.communicate(timeout=5)
+        assert proc.returncode == 143, (stdout, stderr)
+        assert (tmp_path / "prepare-cleaned").exists()
+        assert not (tmp_path / "prepare-home").exists()
+        cargo_home = Path((tmp_path / "cargo-home-path").read_text())
+        assert not cargo_home.exists()
+        _assert_no_late_write(tmp_path)
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+
+
+def test_prepare_cli_restores_prior_term_handler(monkeypatch: pytest.MonkeyPatch) -> None:
+    import review_command as command
+
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def interrupted(_argv: Any) -> int:
+        os.kill(os.getpid(), signal.SIGTERM)
+        return 0
+
+    monkeypatch.setattr(command, "main", interrupted)
+    with pytest.raises(SystemExit) as caught:
+        command._cli(["prepare"])
+    assert caught.value.code == 143
+    assert signal.getsignal(signal.SIGTERM) is previous

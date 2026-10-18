@@ -26,12 +26,13 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, Literal
 
 import yaml
 
 import coverage_lines
 import review_diff
+import review_diagnostics
 import review_formula
 import review_records
 
@@ -280,6 +281,8 @@ class ScanContext:
     #: after this adapter runs. Inputs saga writes for a tool go here, never into
     #: the reviewed tree, whose commit and build scripts could plant symlinks.
     scratch: Path | None = None
+    #: Private local telemetry, deliberately outside emitted records and hashes.
+    diagnostics_directory: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -906,7 +909,7 @@ def subprocess_runner(
     )
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
-        return ProcessResult(proc.returncode, stdout, stderr)
+        return ProcessResult(proc.wait(), stdout, stderr)
     finally:
         # communicate() may have reaped a successful parent whose background
         # children still use our temporary directories. Always stop its group.
@@ -927,6 +930,15 @@ def _stop_tool_group(proc: subprocess.Popen[str]) -> None:
             os.killpg(proc.pid, signal.SIGTERM)
         except ProcessLookupError:
             return
+        try:
+            # A cooperating tool may flush diagnostics while unwinding. Draining
+            # both pipes prevents that cleanup from blocking on a full pipe.
+            # The original TimeoutExpired keeps its original partial bytes.
+            proc.communicate(timeout=max(0.0, deadline - time.monotonic()))
+        except (subprocess.TimeoutExpired, UnicodeError):
+            # Cleanup bytes are discarded, so decoding them must not replace
+            # the original timeout or cancellation.
+            pass
         while time.monotonic() < deadline:
             proc.poll()
             try:
@@ -994,6 +1006,7 @@ def run(
     runner: Process | None = None,
     *,
     framework: bool = True,
+    diagnostics_directory: Path | str | None = None,
 ) -> int:
     """Write the record files, including where-to-look items.
 
@@ -1007,6 +1020,7 @@ def run(
             default_adapters() if adapters is None else list(adapters),
             runner or subprocess_runner,
             framework,
+            Path(diagnostics_directory) if diagnostics_directory is not None else None,
         )
     except RunnerFailure as exc:
         print(str(exc), file=sys.stderr)
@@ -1024,6 +1038,7 @@ def _run(
     adapters: list[Adapter],
     process: Process,
     framework: bool,
+    diagnostics_directory: Path | None = None,
 ) -> int:
     base_sha = _require_sha(repo, base)
     head_sha = _require_sha(repo, head)
@@ -1059,6 +1074,7 @@ def _run(
                     adapter, repo, base_sha, head_sha, head_root, change, home, profile,
                     process, tool_env, deadline, degraded, items, base_markers,
                     head_markers, head_languages,
+                    diagnostics_directory,
                 ))
             measurements: list[dict[str, Any]] = []
             cov_findings: list[dict[str, Any]] = []
@@ -1358,6 +1374,7 @@ def _run_adapter(
     base_markers: frozenset[str] | None,
     head_markers: frozenset[str] | None,
     head_languages: frozenset[str] | None = None,
+    diagnostics_directory: Path | None = None,
 ) -> list[Hit]:
     if _markers_removed(adapter, base_markers, head_markers):
         degraded.append(
@@ -1423,6 +1440,7 @@ def _run_adapter(
                 change=change,
                 head=head_sha,
                 scratch=scratch,
+                diagnostics_directory=diagnostics_directory,
             )
             if comparison == "base-head":
                 hits, digests = _base_and_head(
@@ -1472,19 +1490,40 @@ def _once(
     items: list[Mapping[str, Any]],
     deadline: float | None = None,
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
+    diagnostic = _attempt_diagnostic(adapter, context, label, "initial", deadline)
     try:
-        result, problem, ran = _capture(adapter, context, process, env, timeout)
+        result, problem, ran = _capture(adapter, context, process, env, timeout, diagnostic)
     except ToolGap as exc:
+        if diagnostic is not None:
+            diagnostic.finish("skipped", exc.reason)
         degraded.append(_degraded(adapter, exc.row, exc.reason))
         return (), {}
+    except BaseException as exc:
+        if diagnostic is not None:
+            reason = "cancelled" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "execution-error"
+            diagnostic.finish("failed", reason)
+        raise
     if not ran:
+        if diagnostic is not None:
+            diagnostic.finish("skipped", "not-invoked")
         return (), {}
     if problem is not None:
+        if diagnostic is not None:
+            diagnostic.finish("failed", problem)
         degraded.append(_degraded(adapter, _primary_row(adapter), problem))
         return (), {}
     assert result is not None
     try:
         parsed, failure = _parsed(adapter, result, label)
+    except ToolGap as exc:
+        if diagnostic is not None:
+            diagnostic.finish("skipped", exc.reason, result.code)
+        degraded.append(_degraded(adapter, exc.row, exc.reason))
+        return (), {}
+    if diagnostic is not None:
+        reason = failure or (parsed.gap[0] if parsed is not None and parsed.gap else None)
+        diagnostic.finish("failed" if reason else "succeeded", reason, result.code)
+    try:
         if failure in adapter.retry_failures:
             retried = _retry(adapter, context, process, env, timeout, label, deadline)
             if retried is not None:
@@ -1540,21 +1579,56 @@ def _retry(
     A mutation tool's retry stays inside the mutation cap: its timeout is clamped to the time
     left before ``deadline``, and with under a second left there is no retry.
     """
+    diagnostic = _attempt_diagnostic(adapter, context, label, "retry", deadline)
     if adapter.mutation and deadline is not None:
         left = int(deadline - time.monotonic())
         if left < 1:
+            if diagnostic is not None:
+                diagnostic.finish("skipped", "budget-exhausted")
             return None
         timeout = min(timeout, left)
     try:
-        result, problem, ran = _capture(adapter, context, process, env, timeout)
-    except ToolGap:
+        result, problem, ran = _capture(adapter, context, process, env, timeout, diagnostic)
+    except ToolGap as exc:
+        if diagnostic is not None:
+            diagnostic.finish("skipped", exc.reason)
         return None
+    except BaseException as exc:
+        if diagnostic is not None:
+            reason = "cancelled" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "execution-error"
+            diagnostic.finish("failed", reason)
+        raise
     if not ran or problem is not None or result is None:
+        if diagnostic is not None:
+            diagnostic.finish("failed" if ran else "skipped", problem or "not-invoked")
         return None
-    parsed, failure = _parsed(adapter, result, label)
+    try:
+        parsed, failure = _parsed(adapter, result, label)
+    except ToolGap as exc:
+        if diagnostic is not None:
+            diagnostic.finish("skipped", exc.reason, result.code)
+        raise
+    if diagnostic is not None:
+        reason = failure or (parsed.gap[0] if parsed is not None and parsed.gap else None)
+        diagnostic.finish("failed" if reason else "succeeded", reason, result.code)
     if failure is not None or parsed is None or parsed.gap is not None:
         return None
     return result, parsed
+
+
+def _attempt_diagnostic(
+    adapter: Adapter, context: ScanContext, label: str,
+    attempt: Literal["initial", "retry"], deadline: float | None,
+) -> review_diagnostics.Attempt | None:
+    if context.diagnostics_directory is None or adapter.id != "cargo-mutants":
+        return None
+    try:
+        return review_diagnostics.Attempt.create(
+            context.diagnostics_directory, adapter.id, label, attempt, deadline,
+        )
+    except (OSError, ValueError):
+        print("review diagnostics: private directory unavailable or refused", file=sys.stderr)
+        return None
 
 
 def _base_and_head(
@@ -1670,6 +1744,7 @@ def _capture(
     process: Process,
     env: Mapping[str, str],
     timeout: int,
+    diagnostic: review_diagnostics.Attempt | None = None,
 ) -> tuple[ProcessResult | None, str | None, bool]:
     """Run ``invoke``. jscpd is parsed from a report outside either worktree.
 
@@ -1679,6 +1754,7 @@ def _capture(
     """
     report_dir: Path | None = None
     scan = context
+    executed = False
     if adapter.id == "jscpd":
         report_dir = Path(tempfile.mkdtemp(prefix="saga-jscpd-"))
         scan = replace(context, report_dir=report_dir)
@@ -1694,7 +1770,8 @@ def _capture(
             if not _within_root(scan.root, report.parent):
                 return None, "unparseable", True
             _remove_tree(report)
-        result, problem = _execute(adapter, argv, scan.root, process, env, timeout)
+        executed = True
+        result, problem = _execute(adapter, argv, scan.root, process, env, timeout, diagnostic)
         if result is not None and problem is None:
             if adapter.report_file is not None:
                 report = scan.root / adapter.report_file
@@ -1723,6 +1800,8 @@ def _capture(
             result = ProcessResult(result.code, text, result.stderr)
         return result, problem, True
     finally:
+        if diagnostic is not None and executed:
+            diagnostic.logs(scan.root)
         if report_dir is not None:
             shutil.rmtree(report_dir, ignore_errors=True)
 
@@ -1734,6 +1813,7 @@ def _execute(
     process: Process,
     env: Mapping[str, str],
     timeout: int,
+    diagnostic: review_diagnostics.Attempt | None = None,
 ) -> tuple[ProcessResult | None, str | None]:
     if isinstance(argv, str) or not isinstance(argv, list):
         raise RunnerFailure(1, f"{adapter.id}: invoke returned a string command")
@@ -1762,8 +1842,12 @@ def _execute(
             result = process(argv, cwd=cwd, env=run_env, timeout=timeout, shell=False)
         except FileNotFoundError:
             return None, "missing"
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            if diagnostic is not None:
+                diagnostic.console(exc.output, exc.stderr)
             return None, "timeout"
+        if diagnostic is not None:
+            diagnostic.console(result.stdout, result.stderr)
         return result, None
     finally:
         for path in temps:
@@ -3176,6 +3260,7 @@ def _parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--output", required=True, type=Path)
     run_parser.add_argument("--home", type=Path)
     run_parser.add_argument("--builder", type=Path)
+    run_parser.add_argument("--diagnostics-directory", type=Path)
     return parser
 
 
@@ -3185,6 +3270,7 @@ def main(argv: list[str] | None = None) -> int:
         return run(
             args.repo, args.base, args.head, args.profile, args.output,
             home=args.home, builder=args.builder,
+            diagnostics_directory=args.diagnostics_directory,
         )
     except Exception as exc:
         print(f"review tools: {exc}", file=sys.stderr)
