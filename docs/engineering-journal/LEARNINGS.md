@@ -2,6 +2,19 @@
 
 ## 2026-10-18
 
+### Reviewer scratch instructions must distinguish additions from modifications
+
+**Evidence.** Saga's `_check_scratch` in `reviewer_answer.py` warns about an added
+regular test file that no reproduced finding cites, but refuses an uncited
+modification to an existing test, an original-file deletion, or a new or changed
+symlink. The targeted reviewer prompt previously described the warning without
+limiting it to new files. The prompt now states those existing distinctions and
+tells reviewers to restore uncited modifications to original test contents.
+
+**Generalizable rule.** Explain scratch permissions using the same change kinds
+the validator checks. A warning for a new regular file does not permit modifying
+an original file or creating a symlink through a tool environment.
+
 ### A bounded diagnostic prefix can discard the terminal failure
 
 **Evidence.** A self-authored subprocess fixture emits large build chatter before
