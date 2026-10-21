@@ -306,14 +306,22 @@ def test_refused_default_bank_allows_no_partial_jev_items(
         sys.path.insert(0, str(SCRIPTS))
     import question_banks as QB
 
+    refusal_reason = "security: simulated refusal for the no-partial test"
     real_load_bank = QB.load_bank
 
     def _refuse_security(lens: str, root: Any = None) -> Any:
         if lens == "security":
-            raise QB.BankRefusal("security: simulated refusal for the no-partial test")
+            raise QB.BankRefusal(refusal_reason)
         return real_load_bank(lens, root)
 
     monkeypatch.setattr(QB, "load_bank", _refuse_security)
+    calls: list[Any] = []
+    inner_ask = _ask()
+
+    def _counting_ask(state: Any, questions: Any, **kwargs: Any) -> Any:
+        calls.append(questions)
+        return inner_ask(state, questions, **kwargs)
+
     repo, base, head = _repo(tmp_path)
     profile = _profile(tmp_path / "outside")
     builder = _builder(tmp_path / "builder.json")
@@ -321,7 +329,7 @@ def test_refused_default_bank_allows_no_partial_jev_items(
     home.mkdir()
     out = tmp_path / "packet"
     code, err = _prepare(
-        repo, base, head, profile, builder, out, home, _Runner(), ask=_ask(),
+        repo, base, head, profile, builder, out, home, _Runner(), ask=_counting_ask,
     )
     assert code == 0, err
     where = _read(out / "where-to-look.json")
@@ -329,7 +337,14 @@ def test_refused_default_bank_allows_no_partial_jev_items(
         item for item in where if item.get("classifier", {}).get("name") == "jev"
     ]
     assert jev_items == [], f"a refused bank must not allow partial inference: {jev_items}"
-    assert _read(out / "degraded.json") != []
+    degraded = _read(out / "degraded.json")
+    assert any(refusal_reason in str(entry.get("reason")) for entry in degraded), (
+        "a refused bank must surface its refusal instead of the old no-bank branch: "
+        f"{degraded}"
+    )
+    assert calls == [], (
+        f"a refused bank must prevent inference, but ask ran {len(calls)} time(s)"
+    )
 
 
 def test_prepare_executable_without_key_degrades_as_no_key(tmp_path: Path) -> None:
