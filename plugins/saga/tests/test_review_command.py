@@ -2479,17 +2479,12 @@ _BUNDLE_MODULES: tuple[str, ...] = (
     "reviewer_answer.py", "review_formula.py", "review_records.py", "run_record.py",
 )
 _ANSWER_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "reviewer_answer"
-_BUNDLE_ENV_PREFIXES = (
-    "TYPESAFE_", "GH_", "GITHUB_", "INFIQUETRA_", "SAGA_LANGFUSE_", "LANGFUSE_",
-)
-
-
 def _bundle_env(tmp: Path) -> dict[str, str]:
     """A child environment with provider keys and PYTHONPATH removed (preflight rule)."""
     env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith(_BUNDLE_ENV_PREFIXES)
+        if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SYSTEMROOT", "WINDIR"}
     }
     env.pop("PYTHONPATH", None)
     env["HOME"] = str(tmp / "home")

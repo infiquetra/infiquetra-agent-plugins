@@ -709,17 +709,12 @@ def _cli(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-_CLEAN_ENV_PREFIXES = (
-    "TYPESAFE_", "GH_", "GITHUB_", "INFIQUETRA_", "SAGA_LANGFUSE_", "LANGFUSE_",
-)
-
-
 def _cli_clean(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """The CLI with provider keys removed and a temporary HOME (preflight rule)."""
     env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith(_CLEAN_ENV_PREFIXES)
+        if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SYSTEMROOT", "WINDIR"}
     }
     env["HOME"] = str(tmp_path / "home")
     env["XDG_CACHE_HOME"] = str(tmp_path / "cache")
