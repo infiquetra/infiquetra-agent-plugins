@@ -384,15 +384,26 @@ def _sweep(
     home: Path,
     ask: Ask | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    bank_path = Path(args.bank) if args.bank is not None else (
-        _SCRIPTS_DIR.parent / "references" / "question-bank.json"
-    )
-    if not bank_path.is_file():
-        return [], [_degraded("correctness", "none", "question-bank", "jev", "no-bank")]
-    try:
-        bank = json.loads(bank_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return [], [_degraded("correctness", "none", "question-bank", "jev", _one_line(exc))]
+    if args.bank is None:
+        # The four approved shipped banks, merged, as the build-loop path merges them (issue 254).
+        import question_banks  # noqa: PLC0415
+
+        try:
+            merged: list[Any] = []
+            for lens in question_banks.LENSES:
+                shipped = question_banks.load_bank(lens, _SCRIPTS_DIR.parent)
+                merged.extend(shipped["questions"])
+            bank: Any = {"schema": question_banks.BANK_SCHEMA, "questions": merged}
+        except question_banks.BankRefusal as exc:
+            return [], [_degraded("correctness", "none", "question-bank", "jev", _one_line(exc))]
+    else:
+        bank_path = Path(args.bank)
+        if not bank_path.is_file():
+            return [], [_degraded("correctness", "none", "question-bank", "jev", "no-bank")]
+        try:
+            bank = json.loads(bank_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return [], [_degraded("correctness", "none", "question-bank", "jev", _one_line(exc))]
     rate = _jev_rate()
     if rate is None:
         return [], [_degraded("correctness", "none", "model-prices", "jev", "no-rate")]

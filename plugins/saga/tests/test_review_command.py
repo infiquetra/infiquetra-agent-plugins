@@ -482,6 +482,7 @@ def test_prepare_records_writes_validated_findings_and_identical_grades(tmp_path
     runner = _Runner()
     code, err = _prepare(
         repo, base, head, profile, builder, first, home, runner, start=4, store=store, issue=160,
+        bank=tmp_path / "no-bank.json",
     )
     assert code == 0, err
     findings = _read(first / "findings.json")
@@ -515,6 +516,7 @@ def test_prepare_records_writes_validated_findings_and_identical_grades(tmp_path
     second = tmp_path / "again"
     code, err = _prepare(
         repo, base, head, profile, builder, second, home, _Runner(), start=4,
+        bank=tmp_path / "no-bank.json",
     )
     assert code == 0, err
     assert (second / "grades.json").read_bytes() == (first / "grades.json").read_bytes()
@@ -651,6 +653,7 @@ def test_missing_tool_remains_when_the_bank_is_absent(tmp_path: Path) -> None:
     out = tmp_path / "packet"
     code, err = _prepare(
         repo, base, head, profile, builder, out, home, _Runner(), start=4, gap=True,
+        bank=tmp_path / "no-bank.json",
     )
     assert code == 0, err
     degraded = _read(out / "degraded.json")
@@ -1242,6 +1245,7 @@ def test_reproduced_rerun_real_helper_confirms_an_imported_failure(tmp_path: Pat
     packet = tmp_path / "packet"
     code, err = _prepare(
         repo, base, head, profile, builder, packet, home, _Runner(), start=2, ask=_ask(),
+        bank=tmp_path / "no-bank.json",
     )
     assert code == 0, err
     scratch = tmp_path / "scratch"

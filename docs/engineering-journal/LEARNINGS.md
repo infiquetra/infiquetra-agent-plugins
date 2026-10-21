@@ -1,5 +1,28 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-20
+
+### Default entrypoints must exercise their shipped configuration
+
+**Evidence.** Issue #254 identified that `review_command.py prepare` defaulted
+to a question-bank file that did not ship. The four approved per-lens banks
+existed, and tests supplying their own bank exercised the sweep successfully,
+while a default-path test expected the missing-bank degradation. The command
+now merges the approved shipped banks through the same loader as the build loop.
+Independent regressions exercise the normal default, explicit override, approval
+refusal, retained-answer replay, and missing-key behavior.
+
+**Mechanism.** Component tests with injected configuration did not establish
+that the ordinary entrypoint connected the shipped components. Existing answer
+caching remains in place: complete warm-cache replay can reuse answers without
+a key; a cold miss without a key degrades without a provider request. Reusing
+answers does not make uncached inference deterministic. Spend-capped or unpriced
+cold sweeps can cover more pieces on replay because cached calls add no spend.
+
+**Generalizable rule.** Test the ordinary entrypoint with its real default
+configuration as well as injected components. Tie reproducibility claims to
+the exact inputs and retained evidence that support them.
+
 ## 2026-10-18
 
 ### Reviewer scratch instructions must distinguish additions from modifications

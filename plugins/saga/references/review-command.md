@@ -12,7 +12,7 @@ The script is `plugins/saga/scripts/review_command.py`. Saga's version in `plugi
 
 Both calls accept `--issue`, `--card`, `--round` (default 1), `--unit`, `--bank`, `--calibration`, `--store-root` and `--home`. `finish` also accepts `--final`.
 
-`--builder-record` is the builder record for this run. The command does not look one up on a unit row. With `--issue`, the run record must already exist and the unit row must resolve. `--unit` names that row when the record has more than one. The question bank defaults to `plugins/saga/references/question-bank.json`. This card does not author that file. `--calibration` defaults to the installed saga's calibration file. `--home` is where the sweep cache is written, and where the machine record is read.
+`--builder-record` is the builder record for this run. The command does not look one up on a unit row. With `--issue`, the run record must already exist and the unit row must resolve. `--unit` names that row when the record has more than one. `--bank` names a question bank file; without it, `prepare` uses the four approved shipped banks merged into one, the same merge the `/saga:work` path uses. A shipped bank that refuses, because its content no longer matches its approval, degrades the sweep the same way an unreadable `--bank` file does. `--calibration` defaults to the installed saga's calibration file. `--home` is where the sweep cache is written, and where the machine record is read.
 
 The commit under review does not choose the calibration file or the profile that decides whether a lens may block. Those come from the installed saga and from the base commit's `.saga-profile.json`.
 
@@ -46,6 +46,17 @@ One scratch change is a warning, not a refusal: an added test file that no `repr
 A reproduced finding stays reproduced only when this command's own re-run exits non-zero, the cited test is one of the tests that failed in the re-run's output, and the recorded failure is that test's failure. `plugins/saga/scripts/reproduction_match.py` reads the failed tests from cargo test and nextest, pytest, unittest, Vitest, Jest, go test, dart test and swift test (XCTest and Swift Testing) output, matching the test by name and, where the runner prints one, file, so a pass or another test's failure never counts. The recorded failure is the last specific line of the cited test's recorded failure lines (a generic header or a total is not that line), and it has to appear in that test's failure lines in the re-run; a failure the reviewer wrote on one line also matches when the re-run test's own message lines all appear in the recorded output. Colour codes, thread ids, timings, addresses, time stamps, the directory in front of a path and runs of five or more digits are ignored on both sides. Output from no known runner keeps the earlier rule: the recorded line appears in the captured output, and a test id written `file::name` appears word for word. The re-run tree is the packet's head commit with the reviewer's test files laid over it. The re-run is this process, confined. It is not a reviewer session. `--final` runs that check again for blocking findings that still have a command, on a detached worktree of the packet's head, with the same test files.
 
 `prepare` publishes `--out` only after every step has succeeded. A failure leaves that directory uncreated.
+
+## Reproducibility
+
+`prepare` runs the Jev sweep against the merged shipped banks, so it asks the model for answers. The sweep's answers are cached under `--home` at `.saga/review-sweep/<head sha>/`, keyed on the state, the questions and the requested model. The reproducibility boundary is that cache.
+
+- A run whose cache is fully warm, replayed with the same frozen inputs, reuses the cached answers and can repeat its results.
+- A run whose cache is cold makes independent model calls. Those calls are not deterministic, so two cold runs over the same change can differ. Cache reuse stabilizes Jev's answers; identical packets also require unchanged tool outputs and complete cache coverage for the same inputs.
+
+The cache is consulted before the API key is resolved, so a warm cache stays usable without `TYPESAFE_API_KEY` set, and a cold run without that key makes no request and degrades the sweep with a `no-key` reason.
+
+The cache transport is charged as no spend. A run that stopped on the spend cap or on unpriced usage can therefore cover more questions on a later replay, when those answers come from the cache instead of the model. That expansion is a property of the spend accounting, not a change in the provider's behaviour, and it is not suppressed.
 
 ## Posting to Langfuse
 
