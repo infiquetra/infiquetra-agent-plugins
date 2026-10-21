@@ -19,6 +19,18 @@ submission; only cited reproduction tests may remain changed.
 **Generalizable rule.** Make deterministic contracts available before an
 expensive submission, while preserving the authoritative validation boundary.
 
+### Validate a reproduction command with the parser that will replay it
+
+**Evidence.** A leading shell-style environment assignment can pass a nonempty
+command check while becoming the executable name during direct subprocess
+replay. The answer checker and replay now share the direct-argument parser.
+Independent CLI and replay regressions refuse the assignment and preserve
+quoted arguments and equals signs in arguments after the executable.
+
+**Generalizable rule.** Validate commands against their execution semantics
+before submission. Accepting their syntax does not establish that a test ran
+or reproduced a defect; authoritative replay still determines that outcome.
+
 ### Retain the inputs to a configuration fingerprint in a diagnosable form
 
 **Evidence.** An aggregate configuration digest and unchanged source labels
