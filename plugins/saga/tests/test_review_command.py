@@ -2470,3 +2470,120 @@ def test_live_a_commit_s_own_source_replacement_cannot_outrank_the_rerun_s(
         )
     assert "returned 2" in ran.stdout + ran.stderr, ran.stdout + ran.stderr
     assert "returned 99" in plain.stdout + plain.stderr, plain.stdout + plain.stderr
+
+
+# --- prepare bundles the reviewer self-check (preflight contract) -------------------------------
+
+
+_BUNDLE_MODULES: tuple[str, ...] = (
+    "reviewer_answer.py", "review_formula.py", "review_records.py", "run_record.py",
+)
+_ANSWER_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "reviewer_answer"
+_BUNDLE_ENV_PREFIXES = (
+    "TYPESAFE_", "GH_", "GITHUB_", "INFIQUETRA_", "SAGA_LANGFUSE_", "LANGFUSE_",
+)
+
+
+def _bundle_env(tmp: Path) -> dict[str, str]:
+    """A child environment with provider keys and PYTHONPATH removed (preflight rule)."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(_BUNDLE_ENV_PREFIXES)
+    }
+    env.pop("PYTHONPATH", None)
+    env["HOME"] = str(tmp / "home")
+    env["XDG_CACHE_HOME"] = str(tmp / "cache")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    assert "TYPESAFE_API_KEY" not in env
+    return env
+
+
+def _bundle_packet(tmp: Path) -> Path:
+    """A normally prepared packet; asserts only the pre-existing prepare behavior."""
+    repo, base, head = _repo(tmp, function=False)
+    profile = _profile(tmp / "outside")
+    builder = _builder(tmp / "builder.json")
+    home = tmp / "home"
+    home.mkdir()
+    out = tmp / "packet"
+    code, err = _prepare(
+        repo, base, head, profile, builder, out, home, _Runner(), start=4,
+    )
+    assert code == 0, err
+    assert (out / "where-to-look.json").is_file()
+    return out
+
+
+def _bundled_checker(packet: Path) -> Path:
+    """The packet's copied checker, or a RED gate naming the absent helper."""
+    checker = packet / "check" / "reviewer_answer.py"
+    assert checker.is_file(), (
+        "prepare wrote no bundled checker (preflight helper absent on this base)"
+    )
+    return checker
+
+
+def test_prepare_bundles_the_reviewer_self_check_modules(tmp_path: Path) -> None:
+    """Normal prepare copies the four checker modules byte-for-byte into packet/check/."""
+    out = _bundle_packet(tmp_path)
+    bundled = out / "check"
+    assert bundled.is_dir(), "prepare wrote no packet/check/ bundle (preflight helper absent)"
+    assert {path.name for path in bundled.iterdir()} == set(_BUNDLE_MODULES)
+    for name in _BUNDLE_MODULES:
+        assert (bundled / name).read_bytes() == (SCRIPTS / name).read_bytes(), (
+            f"packet/check/{name} differs from the shipped module"
+        )
+
+
+def test_copied_checker_accepts_a_valid_draft_from_an_isolated_cwd(tmp_path: Path) -> None:
+    """The bundled checker self-validates a draft with no source, repo, or provider access."""
+    checker = _bundled_checker(_bundle_packet(tmp_path))
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    completed = subprocess.run(
+        [sys.executable, str(checker), "check",
+         "--answer", str(_ANSWER_FIXTURES / "answer.json"),
+         "--items", str(_ANSWER_FIXTURES / "where-to-look.json")],
+        capture_output=True, text=True, check=False,
+        env=_bundle_env(tmp_path), timeout=120, cwd=isolated,
+    )
+    assert completed.returncode == 0, (
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    assert completed.stderr == ""
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("origin", "is not item 0's finding"),
+        ("proof", "is not a test file"),
+    ],
+)
+def test_copied_checker_refuses_known_bad_drafts(
+    tmp_path: Path, mutation: str, expected: str,
+) -> None:
+    """The bundled checker refuses bad links and proof paths without network or Jev."""
+    checker = _bundled_checker(_bundle_packet(tmp_path))
+    draft = json.loads((_ANSWER_FIXTURES / "answer.json").read_text(encoding="utf-8"))
+    target = next(f for f in draft["findings"] if f["key"] == "double-charge")
+    if mutation == "origin":
+        target["origin"] = {"item": 1}
+    else:
+        target["proof"]["test"] = "src/billing/charge.py::check"
+    draft_path = tmp_path / "draft.json"
+    draft_path.write_text(json.dumps(draft), encoding="utf-8")
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    completed = subprocess.run(
+        [sys.executable, str(checker), "check",
+         "--answer", str(draft_path),
+         "--items", str(_ANSWER_FIXTURES / "where-to-look.json")],
+        capture_output=True, text=True, check=False,
+        env=_bundle_env(tmp_path), timeout=120, cwd=isolated,
+    )
+    assert completed.returncode == 1, (
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    assert expected in completed.stderr
