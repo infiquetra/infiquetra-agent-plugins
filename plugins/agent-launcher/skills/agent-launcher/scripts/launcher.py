@@ -2926,13 +2926,24 @@ def reviewer_claude_config_sources(
 def reviewer_configuration_fingerprint(
     sources: Sequence[tuple[str, bytes | None]],
 ) -> dict[str, Any]:
-    """SHA-256 over the sorted ``(label, content digest)`` pairs, and the labels that went in."""
+    """SHA-256 over the sorted ``(label, content digest)`` pairs, and the labels that went in.
+
+    ``source_digests`` names the digest that went into each label, so two runs whose
+    fingerprint differs can be told apart by the source that changed. It reuses the
+    sorted pairs the fingerprint itself is computed from, so it carries the same order
+    and the same tie-breaking as ``sources``. A source that was absent contributes the
+    literal ``absent``. Only digests are kept, never the content they came from.
+    """
     pairs = sorted(
         (label, hashlib.sha256(content).hexdigest() if content is not None else "absent")
         for label, content in sources
     )
     digest = hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode("utf-8"))
-    return {"fingerprint": digest.hexdigest(), "sources": [label for label, _ in pairs]}
+    return {
+        "fingerprint": digest.hexdigest(),
+        "sources": [label for label, _ in pairs],
+        "source_digests": [{"label": label, "sha256": sha256} for label, sha256 in pairs],
+    }
 
 
 #: The first bytes of a native executable (Mach-O, thin or fat, either byte order; ELF). A

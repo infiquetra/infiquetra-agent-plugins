@@ -6,6 +6,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import socket
 import subprocess
@@ -708,6 +709,23 @@ def _cli(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _cli_clean(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """The CLI with provider keys removed and a temporary HOME (preflight rule)."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SYSTEMROOT", "WINDIR"}
+    }
+    env["HOME"] = str(tmp_path / "home")
+    env["XDG_CACHE_HOME"] = str(tmp_path / "cache")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    assert "TYPESAFE_API_KEY" not in env
+    return subprocess.run(
+        [sys.executable, str(CLI), *args], capture_output=True, text=True, check=False,
+        env=env, timeout=120, cwd=tmp_path,
+    )
+
+
 def test_help_names_every_subcommand() -> None:
     proc = _cli("--help")
     assert proc.returncode == 0
@@ -733,6 +751,98 @@ def test_check_cli_exits_1_naming_the_skipped_item_and_2_on_an_unreadable_file()
     missing = _cli("check", "--answer", str(FIXTURES / "nope.json"),
                    "--items", str(FIXTURES / "where-to-look.json"))
     assert missing.returncode == 2
+
+
+def test_check_cli_accepts_a_valid_answer_with_traced_findings(tmp_path: Path) -> None:
+    proc = _cli_clean(
+        tmp_path, "check", "--answer", str(FIXTURES / "answer.json"),
+        "--items", str(FIXTURES / "where-to-look.json"),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == ""
+    assert proc.stderr == ""
+
+
+def test_check_cli_refuses_a_finding_whose_origin_is_not_its_item(tmp_path: Path) -> None:
+    borrowed = answer()
+    finding(borrowed, "double-charge")["origin"] = {"item": 1}
+    claimed = tmp_path / "answer.json"
+    claimed.write_text(json.dumps(borrowed), encoding="utf-8")
+    proc = _cli_clean(
+        tmp_path, "check", "--answer", str(claimed),
+        "--items", str(FIXTURES / "where-to-look.json"),
+    )
+    assert proc.returncode == 1, proc.stdout
+    assert "items.0.answer.finding: 'double-charge' is not item 0's finding" in proc.stderr
+    assert "its origin is {'item': 1}" in proc.stderr
+
+
+def test_check_cli_refuses_a_reproduction_outside_a_test_file(tmp_path: Path) -> None:
+    bad = answer()
+    finding(bad, "double-charge")["proof"]["test"] = "src/billing/charge.py::check"
+    claimed = tmp_path / "answer.json"
+    claimed.write_text(json.dumps(bad), encoding="utf-8")
+    proc = _cli_clean(
+        tmp_path, "check", "--answer", str(claimed),
+        "--items", str(FIXTURES / "where-to-look.json"),
+    )
+    assert proc.returncode == 1, proc.stdout
+    assert (
+        "findings.double-charge.proof.test: src/billing/charge.py is not a test file"
+        in proc.stderr
+    )
+
+
+def test_check_cli_refuses_a_leading_environment_assignment(tmp_path: Path) -> None:
+    """A leading ``NAME=value`` is not an executable; replay starts no shell."""
+    assigned = answer()
+    finding(assigned, "double-charge")["proof"]["command"] = (
+        "RUST_BACKTRACE=1 cargo test --offline"
+    )
+    claimed = tmp_path / "answer.json"
+    claimed.write_text(json.dumps(assigned), encoding="utf-8")
+    proc = _cli_clean(
+        tmp_path, "check", "--answer", str(claimed),
+        "--items", str(FIXTURES / "where-to-look.json"),
+    )
+    assert proc.returncode == 1, proc.stdout
+    assert "findings.double-charge.proof.command: " in proc.stderr
+
+
+def test_check_cli_accepts_direct_command_with_quoted_and_equals_args(
+    tmp_path: Path,
+) -> None:
+    direct = answer()
+    finding(direct, "double-charge")["proof"]["command"] = (
+        "python3 -m pytest tests/test_charge_retry.py -q -o log_cli=true -k \"retry\""
+    )
+    claimed = tmp_path / "answer.json"
+    claimed.write_text(json.dumps(direct), encoding="utf-8")
+    proc = _cli_clean(
+        tmp_path, "check", "--answer", str(claimed),
+        "--items", str(FIXTURES / "where-to-look.json"),
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_check_cli_validates_the_scratch_copy_only_with_a_result(tmp_path: Path) -> None:
+    dirty = copy.deepcopy(RESULT)
+    dirty["scratch"]["changes"]["modified"] = ["src/billing/charge.py"]
+    result = tmp_path / "result.json"
+    result.write_text(json.dumps(dirty), encoding="utf-8")
+    refused = _cli_clean(
+        tmp_path, "check", "--answer", str(FIXTURES / "answer.json"),
+        "--items", str(FIXTURES / "where-to-look.json"), "--result", str(result),
+    )
+    assert refused.returncode == 1, refused.stdout
+    assert "scratch.changes" in refused.stderr
+    assert "src/billing/charge.py (modified) is not a reproduction test" in refused.stderr
+    skipped = _cli_clean(
+        tmp_path, "check", "--answer", str(FIXTURES / "answer.json"),
+        "--items", str(FIXTURES / "where-to-look.json"),
+    )
+    assert skipped.returncode == 0, skipped.stderr
+    assert skipped.stderr == ""
 
 
 def test_records_cli_without_jev_prints_valid_records() -> None:

@@ -15,7 +15,6 @@ import argparse
 import copy
 import json
 import os
-import shlex
 import shutil
 import signal
 import subprocess  # nosec B404
@@ -44,7 +43,6 @@ import run_record  # noqa: E402
 import saga_setup  # noqa: E402
 
 RERUN_TIMEOUT = 120
-_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "env"})
 _ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 _READ_PREFIXES = ("/usr", "/bin", "/opt", "/opt/homebrew", "/Library", "/System", "/dev")
 # /etc and the zoneinfo tree. Not /private/tmp and not the per-user temporary folder.
@@ -71,6 +69,15 @@ _PACKET_FILES = (
     "open-search-cap.json",
     "grades.json",
     review_dependencies.FILE,
+)
+#: The trusted modules the reviewer may run from the packet to check its own answer before it
+#: gives one. They are copied byte for byte, so the reviewer runs the same checker saga runs.
+#: ``reviewer_answer.py`` imports its siblings by name, so all four travel together.
+_CHECK_MODULES = (
+    "reviewer_answer.py",
+    "review_formula.py",
+    "review_records.py",
+    "run_record.py",
 )
 _ZERO_USAGE = {"tokens_in": 0, "tokens_out": 0, "cost_usd": 0, "seconds": 0}
 
@@ -345,6 +352,7 @@ def _prepare(
         _write_json(staging / "may-block.json", reasons)
         _write_json(staging / "open-search-cap.json", {"cap": reviewer_answer.OPEN_SEARCH_CAP})
         _write_json(staging / "grades.json", grades)
+        _copy_check_modules(staging)
         if store is not None:
             try:
                 review_records.record_run(store, int(args.issue), {
@@ -1371,20 +1379,30 @@ def _publish(staging: Path, out: Path) -> None:
         shutil.copytree(staging, out)
 
 
+def _copy_check_modules(staging: Path) -> None:
+    """Copy the trusted check modules into ``<packet>/check/``, byte for byte.
+
+    The reviewer runs the same checker saga runs, so an answer it refuses locally is one saga
+    would refuse. The copy is advice for the reviewer; saga's own check at ``finish`` stays
+    authoritative. The modules are the ones this package ships, not the ones the reviewed
+    change carries.
+    """
+    target = staging / "check"
+    target.mkdir(parents=True, exist_ok=True)
+    for name in _CHECK_MODULES:
+        source = _SCRIPTS_DIR / name
+        if not source.is_file():
+            raise CommandFailure(2, f"the check module {name} is missing from this saga")
+        (target / name).write_bytes(source.read_bytes())
+
+
 def _argv(command: Any) -> list[str] | None:
-    if not isinstance(command, str) or not command.strip():
-        return None
-    try:
-        parts = shlex.split(command)
-    except ValueError:
-        return None
-    if not parts:
-        return None
-    token = parts[0]
-    name = Path(token).name if "/" in token or "\\" in token else token
-    if name in _SHELLS:
-        return None
-    return parts
+    """The direct argv a reproduction command runs as, or None.
+
+    The reviewer answer's checker and this re-run share one parser, so the check
+    and the replay agree on what a command is.
+    """
+    return reviewer_answer.reproduction_argv(command)
 
 
 def _matches(result: review_tools.ProcessResult, output: str, test: str = "") -> bool:

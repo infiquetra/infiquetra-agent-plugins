@@ -37,6 +37,7 @@ import hashlib
 import json
 import math
 import re
+import shlex
 import sys
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
@@ -101,6 +102,41 @@ _TEST_DIR = re.compile(r"(^|/)(tests?|spec|__tests__)/")
 _TEST_NAME = re.compile(r"(^test_[^/]*$)|(_test\.[^/]+$)|(\.test\.[^/]+$)|(\.spec\.[^/]+$)")
 #: What Claude acts on outside its command sandbox; never a reproduction test, whatever its name.
 _CLAUDE_CONFIG = (".claude", ".mcp.json")
+
+#: A command that would need a shell to run: the shell itself, or ``env``.
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "env"})
+#: A leading POSIX environment assignment, ``NAME=value``. It is not an executable, and the
+#: replay starts no shell that would read it as one.
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def reproduction_argv(command: Any) -> list[str] | None:
+    """The direct argv a reproduction command runs as, or None when it is not one.
+
+    The command is split as arguments, never run through a shell: a shell would expand
+    what this must not. A command that is empty, not a string, malformed, names a shell
+    or ``env``, or starts with a ``NAME=value`` environment assignment has no direct argv
+    and is refused. The assignment is refused because the replay starts the program
+    directly, so the assignment would be taken for the program's name.
+
+    Everything else is returned exactly as it was written, quoted arguments and
+    ``=`` inside an argument included.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return None
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    if not parts:
+        return None
+    token = parts[0]
+    name = Path(token).name if "/" in token or "\\" in token else token
+    if name in _SHELLS:
+        return None
+    if _ENV_ASSIGNMENT.match(token):
+        return None
+    return parts
 
 
 def is_claude_configuration(path: str) -> bool:
@@ -376,6 +412,19 @@ def _check_proof(check: records._Check, finding: Mapping[str, Any], path: str) -
         test = proof.get("test")
         if isinstance(test, str) and test.strip() and not looks_like_a_test(test_file_of(test)):
             check.add(f"{path}.proof.test", f"{test_file_of(test)} is not a test file")
+        command = proof.get("command")
+        if (
+            isinstance(command, str)
+            and command.strip()
+            and reproduction_argv(command) is None
+        ):
+            check.add(
+                f"{path}.proof.command",
+                "must be a directly executable command with its arguments, without a shell, "
+                "an environment assignment or a variable expansion: the re-run starts the "
+                "program itself, so 'NAME=value command' and 'sh -c ...' are not commands it "
+                "can run",
+            )
     elif evidence == "traced":
         steps = proof.get("steps")
         if not isinstance(steps, list) or not steps or not all(

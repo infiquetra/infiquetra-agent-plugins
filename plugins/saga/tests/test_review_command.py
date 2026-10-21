@@ -2291,6 +2291,24 @@ def test_a_cargo_rerun_goes_through_the_cargo_home_s_shim(tmp_path: Path) -> Non
     assert C.Offline(env={}, reads=()).argv(["cargo", "test"]) == ["cargo", "test"]
 
 
+def test_replay_refuses_a_leading_environment_assignment() -> None:
+    """The replay wrapper agrees with the check: an assignment is not an executable."""
+    assert C._argv("RUST_BACKTRACE=1 cargo test --offline") is None
+
+
+def test_replay_keeps_direct_commands_quotes_and_equals_arguments() -> None:
+    assert C._argv("cargo test --offline") == ["cargo", "test", "--offline"]
+    assert C._argv("cargo test -- --exact 'my test'") == [
+        "cargo", "test", "--", "--exact", "my test",
+    ]
+    assert C._argv("python3 -m pytest tests/x.py -o log_cli=true") == [
+        "python3", "-m", "pytest", "tests/x.py", "-o", "log_cli=true",
+    ]
+    assert C._argv("") is None
+    assert C._argv("sh -c 'cargo test'") is None
+    assert C._argv("env FOO=1 cargo test") is None
+
+
 def test_finish_without_vendored_crates_leaves_the_rerun_environment_alone(
     tmp_path: Path,
 ) -> None:
@@ -2470,3 +2488,140 @@ def test_live_a_commit_s_own_source_replacement_cannot_outrank_the_rerun_s(
         )
     assert "returned 2" in ran.stdout + ran.stderr, ran.stdout + ran.stderr
     assert "returned 99" in plain.stdout + plain.stderr, plain.stdout + plain.stderr
+
+
+# --- prepare bundles the reviewer self-check (preflight contract) -------------------------------
+
+
+_BUNDLE_MODULES: tuple[str, ...] = (
+    "reviewer_answer.py", "review_formula.py", "review_records.py", "run_record.py",
+)
+_ANSWER_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "reviewer_answer"
+def _bundle_env(tmp: Path) -> dict[str, str]:
+    """A child environment with provider keys and PYTHONPATH removed (preflight rule)."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SYSTEMROOT", "WINDIR"}
+    }
+    env.pop("PYTHONPATH", None)
+    env["HOME"] = str(tmp / "home")
+    env["XDG_CACHE_HOME"] = str(tmp / "cache")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    assert "TYPESAFE_API_KEY" not in env
+    return env
+
+
+def _bundle_packet(tmp: Path) -> Path:
+    """A normally prepared packet; asserts only the pre-existing prepare behavior."""
+    repo, base, head = _repo(tmp, function=False)
+    profile = _profile(tmp / "outside")
+    builder = _builder(tmp / "builder.json")
+    home = tmp / "home"
+    home.mkdir()
+    out = tmp / "packet"
+    code, err = _prepare(
+        repo, base, head, profile, builder, out, home, _Runner(), start=4,
+    )
+    assert code == 0, err
+    assert (out / "where-to-look.json").is_file()
+    return out
+
+
+def _bundled_checker(packet: Path) -> Path:
+    """The packet's copied checker, or a RED gate naming the absent helper."""
+    checker = packet / "check" / "reviewer_answer.py"
+    assert checker.is_file(), (
+        "prepare wrote no bundled checker (preflight helper absent on this base)"
+    )
+    return checker
+
+
+def test_prepare_bundles_the_reviewer_self_check_modules(tmp_path: Path) -> None:
+    """Normal prepare copies the four checker modules byte-for-byte into packet/check/."""
+    out = _bundle_packet(tmp_path)
+    bundled = out / "check"
+    assert bundled.is_dir(), "prepare wrote no packet/check/ bundle (preflight helper absent)"
+    assert {path.name for path in bundled.iterdir()} == set(_BUNDLE_MODULES)
+    for name in _BUNDLE_MODULES:
+        assert (bundled / name).read_bytes() == (SCRIPTS / name).read_bytes(), (
+            f"packet/check/{name} differs from the shipped module"
+        )
+
+
+def test_finish_refuses_an_invalid_answer_even_if_packet_checker_accepts_it(tmp_path: Path) -> None:
+    """Advisory checker bytes cannot replace finish's authoritative validator."""
+    _repo_path, packet, runner = _line_packet(tmp_path)
+    checker = _bundled_checker(packet)
+    checker.write_text("raise SystemExit(0)\n", encoding="utf-8")
+    scratch, changes = _scratch(tmp_path, with_test=False)
+    bad = _answer([])
+    bad["severity"] = "blocks"
+    draft = scratch / "answer-draft.json"
+    _dump(draft, bad)
+    advised = subprocess.run(
+        [sys.executable, str(checker), "check", "--answer", str(draft),
+         "--items", str(packet / "where-to-look.json")],
+        cwd=scratch, env=_bundle_env(tmp_path), capture_output=True, text=True, timeout=30,
+    )
+    assert advised.returncode == 0
+    draft.unlink()
+    code, err = _finish(
+        packet, [(bad, _result(scratch, changes))], tmp_path / "home", runner, ask=_ask(),
+    )
+    assert code == 1
+    assert "severity" in err
+    assert not (packet / "review-run.json").exists()
+
+
+def test_copied_checker_accepts_a_valid_draft_from_an_isolated_cwd(tmp_path: Path) -> None:
+    """The bundled checker self-validates a draft with no source, repo, or provider access."""
+    checker = _bundled_checker(_bundle_packet(tmp_path))
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    completed = subprocess.run(
+        [sys.executable, str(checker), "check",
+         "--answer", str(_ANSWER_FIXTURES / "answer.json"),
+         "--items", str(_ANSWER_FIXTURES / "where-to-look.json")],
+        capture_output=True, text=True, check=False,
+        env=_bundle_env(tmp_path), timeout=120, cwd=isolated,
+    )
+    assert completed.returncode == 0, (
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    assert completed.stderr == ""
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("origin", "is not item 0's finding"),
+        ("proof", "is not a test file"),
+    ],
+)
+def test_copied_checker_refuses_known_bad_drafts(
+    tmp_path: Path, mutation: str, expected: str,
+) -> None:
+    """The bundled checker refuses bad links and proof paths without network or Jev."""
+    checker = _bundled_checker(_bundle_packet(tmp_path))
+    draft = json.loads((_ANSWER_FIXTURES / "answer.json").read_text(encoding="utf-8"))
+    target = next(f for f in draft["findings"] if f["key"] == "double-charge")
+    if mutation == "origin":
+        target["origin"] = {"item": 1}
+    else:
+        target["proof"]["test"] = "src/billing/charge.py::check"
+    draft_path = tmp_path / "draft.json"
+    draft_path.write_text(json.dumps(draft), encoding="utf-8")
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    completed = subprocess.run(
+        [sys.executable, str(checker), "check",
+         "--answer", str(draft_path),
+         "--items", str(_ANSWER_FIXTURES / "where-to-look.json")],
+        capture_output=True, text=True, check=False,
+        env=_bundle_env(tmp_path), timeout=120, cwd=isolated,
+    )
+    assert completed.returncode == 1, (
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    assert expected in completed.stderr

@@ -56,6 +56,11 @@ Echo the item's `location.file` in your answer, so a misnumbered answer is caugh
 item, answering one twice, or answering an index the list does not have gets the whole answer
 refused, naming the item. If the list is empty, answer nothing here and go on to the open search.
 
+A finding and the item it answers are two halves of one link, and the link is checked in both
+directions. If item *i*'s answer names a finding, that finding's `origin` must be `{"item": i}`.
+If a finding's `origin` is `{"item": i}`, then item *i*'s answer must name that finding. A finding
+whose `origin` names a different index is refused, even when the finding itself is sound.
+
 ## Reproduce what you believe
 
 When you believe a finding, try to show it with a test:
@@ -63,14 +68,33 @@ When you believe a finding, try to show it with a test:
 1. Write a regular test file in the scratch copy: under a `test`, `tests`, `spec` or `__tests__`
    directory, or named `test_*`, `*_test.*`, `*.test.*` or `*.spec.*`. Only test files may change.
    Editing the code under test, even to add a print, gets the answer refused.
+   `proof.test` must name one of those qualifying test paths, such as
+   `tests/test_charge_retry.py::test_timeout_then_retry_charges_once`. A test written inline in a
+   source file does not qualify: a Rust `#[cfg(test)] mod tests` inside `src/charge.rs` is
+   `src/charge.rs`, which is not a test path, and naming it refuses the answer. Put the test in
+   its own qualifying file instead.
    Any new test must be named by a `reproduced` finding's `proof.test`, or deleted before you
    answer. An uncited new regular test file left behind is ignored as evidence and recorded as a
    warning. For an existing test file you modified, restore its original contents unless a
    `reproduced` finding names it in `proof.test`; leaving it modified or deleting an original file
    gets the answer refused. Non-test and configuration changes also get the answer refused.
+   Never change a source file to add an inline test or fix something you noticed: a changed
+   source file refuses the whole answer. Restore every
+   modification you made except the qualifying reproduction tests your findings name.
    A passing guard test is never a finding: report the problem as a `traced` finding instead.
 2. Run it there, from the scratch copy.
 3. Record the test (its file and test name), the exact command you ran, and its failing output.
+
+`proof.command` is the command as its program and its arguments, ready to run: the program
+first, then its arguments. Write it the way you would run it, with no shell around it. There
+is no shell, so no variable expansion, no redirection, no pipe and no `&&`; the program is
+started directly with the arguments you give. A leading environment assignment such as
+`RUST_LOG=debug cargo test` is not a program and is refused: put the setting in the program's
+own options, or leave it out. A command that runs another command through a shell, such as
+`sh -c "cargo test"`, is refused for the same reason. Use a path relative to the scratch copy
+for the test, so the command replays wherever the scratch copy is; the re-run gives the command
+its own fresh copy with `HOME` and `TMPDIR` set, so do not hard-code the path of the scratch
+copy you are in now.
 
 Your commands run in a sandbox. It denies writes outside the scratch copy, every network
 connection, and access to credentials. A denied operation is a fact to report, never something to
@@ -155,6 +179,44 @@ reasons. When you believe a "doesn't apply" or an "unaffected" is wrong, report 
 `<lens>.dispute` and `disputes` naming the finding identity or policy question it disputes. A
 dispute is shown to the operator at merge confirmation. You check recorded reasons; you cannot block
 on them.
+
+## Check your answer before you give it
+
+When the packet holds a `check` directory, saga's own checker is in it, byte for byte the one
+saga will run on your answer. Before your final message, write your answer to a temporary draft
+inside the scratch copy and run the checker on it, so a mistake is caught by you rather than by
+the run.
+
+Write the draft to a path inside the scratch copy, run the checker, fix what it names, and run it
+again. The cap is the packet's own `open-search-cap.json`, or 5 when the packet names none. Your
+launch message names the packet directory and the scratch copy, so the paths are concrete. For a
+packet at `/Users/operator/review-packet` and a scratch copy at `/Users/operator/scratch-copy`:
+
+```bash
+python3 "/Users/operator/review-packet/check/reviewer_answer.py" check \
+  --answer "/Users/operator/scratch-copy/answer-draft.json" \
+  --items "/Users/operator/review-packet/where-to-look.json" \
+  --open-search-cap 5
+```
+
+A draft that passes exits 0 and prints nothing. A draft that fails exits 1 and prints one
+`<field>: <why>` line per problem; fix each one and run it again.
+
+Before your final message, delete the draft and every other temporary file you created that is
+not one of the qualifying reproduction tests your findings name. A leftover temporary file is a
+changed file in the scratch copy and refuses the answer.
+
+**What this check does and does not do.** Without `--result` it validates the answer's structure,
+the links between items and findings, and the proof paths, and nothing else. It does not look at
+your scratch copy, so it cannot see or excuse a file you changed. It does not run your test, so it
+does not establish that your finding is true, and it cannot make your answer acceptable. Saga
+decides acceptance, on the original checker, with the launcher's own record of your scratch
+changes and its own re-run of your reproduction tests. A clean check is a well-formed answer, not
+a correct one, and it is not a pass.
+
+The checker needs no network, no key and no model, so run it in the sandbox like any other
+command. If the packet has no `check` directory, that is expected for an older packet: answer as
+the sections above describe, and saga still checks your answer the same way.
 
 ## Your answer
 
