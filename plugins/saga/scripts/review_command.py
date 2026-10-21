@@ -72,6 +72,15 @@ _PACKET_FILES = (
     "grades.json",
     review_dependencies.FILE,
 )
+#: The trusted modules the reviewer may run from the packet to check its own answer before it
+#: gives one. They are copied byte for byte, so the reviewer runs the same checker saga runs.
+#: ``reviewer_answer.py`` imports its siblings by name, so all four travel together.
+_CHECK_MODULES = (
+    "reviewer_answer.py",
+    "review_formula.py",
+    "review_records.py",
+    "run_record.py",
+)
 _ZERO_USAGE = {"tokens_in": 0, "tokens_out": 0, "cost_usd": 0, "seconds": 0}
 
 Process = Callable[..., review_tools.ProcessResult]
@@ -345,6 +354,7 @@ def _prepare(
         _write_json(staging / "may-block.json", reasons)
         _write_json(staging / "open-search-cap.json", {"cap": reviewer_answer.OPEN_SEARCH_CAP})
         _write_json(staging / "grades.json", grades)
+        _copy_check_modules(staging)
         if store is not None:
             try:
                 review_records.record_run(store, int(args.issue), {
@@ -1369,6 +1379,23 @@ def _publish(staging: Path, out: Path) -> None:
         staging.rename(out)
     except OSError:
         shutil.copytree(staging, out)
+
+
+def _copy_check_modules(staging: Path) -> None:
+    """Copy the trusted check modules into ``<packet>/check/``, byte for byte.
+
+    The reviewer runs the same checker saga runs, so an answer it refuses locally is one saga
+    would refuse. The copy is advice for the reviewer; saga's own check at ``finish`` stays
+    authoritative. The modules are the ones this package ships, not the ones the reviewed
+    change carries.
+    """
+    target = staging / "check"
+    target.mkdir(parents=True, exist_ok=True)
+    for name in _CHECK_MODULES:
+        source = _SCRIPTS_DIR / name
+        if not source.is_file():
+            raise CommandFailure(2, f"the check module {name} is missing from this saga")
+        (target / name).write_bytes(source.read_bytes())
 
 
 def _argv(command: Any) -> list[str] | None:
