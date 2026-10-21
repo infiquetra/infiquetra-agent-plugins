@@ -2291,6 +2291,24 @@ def test_a_cargo_rerun_goes_through_the_cargo_home_s_shim(tmp_path: Path) -> Non
     assert C.Offline(env={}, reads=()).argv(["cargo", "test"]) == ["cargo", "test"]
 
 
+def test_replay_refuses_a_leading_environment_assignment() -> None:
+    """The replay wrapper agrees with the check: an assignment is not an executable."""
+    assert C._argv("RUST_BACKTRACE=1 cargo test --offline") is None
+
+
+def test_replay_keeps_direct_commands_quotes_and_equals_arguments() -> None:
+    assert C._argv("cargo test --offline") == ["cargo", "test", "--offline"]
+    assert C._argv("cargo test -- --exact 'my test'") == [
+        "cargo", "test", "--", "--exact", "my test",
+    ]
+    assert C._argv("python3 -m pytest tests/x.py -o log_cli=true") == [
+        "python3", "-m", "pytest", "tests/x.py", "-o", "log_cli=true",
+    ]
+    assert C._argv("") is None
+    assert C._argv("sh -c 'cargo test'") is None
+    assert C._argv("env FOO=1 cargo test") is None
+
+
 def test_finish_without_vendored_crates_leaves_the_rerun_environment_alone(
     tmp_path: Path,
 ) -> None:

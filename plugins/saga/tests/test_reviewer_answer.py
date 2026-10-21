@@ -793,6 +793,38 @@ def test_check_cli_refuses_a_reproduction_outside_a_test_file(tmp_path: Path) ->
     )
 
 
+def test_check_cli_refuses_a_leading_environment_assignment(tmp_path: Path) -> None:
+    """A leading ``NAME=value`` is not an executable; replay starts no shell."""
+    assigned = answer()
+    finding(assigned, "double-charge")["proof"]["command"] = (
+        "RUST_BACKTRACE=1 cargo test --offline"
+    )
+    claimed = tmp_path / "answer.json"
+    claimed.write_text(json.dumps(assigned), encoding="utf-8")
+    proc = _cli_clean(
+        tmp_path, "check", "--answer", str(claimed),
+        "--items", str(FIXTURES / "where-to-look.json"),
+    )
+    assert proc.returncode == 1, proc.stdout
+    assert "findings.double-charge.proof.command: " in proc.stderr
+
+
+def test_check_cli_accepts_direct_command_with_quoted_and_equals_args(
+    tmp_path: Path,
+) -> None:
+    direct = answer()
+    finding(direct, "double-charge")["proof"]["command"] = (
+        "python3 -m pytest tests/test_charge_retry.py -q -o log_cli=true -k \"retry\""
+    )
+    claimed = tmp_path / "answer.json"
+    claimed.write_text(json.dumps(direct), encoding="utf-8")
+    proc = _cli_clean(
+        tmp_path, "check", "--answer", str(claimed),
+        "--items", str(FIXTURES / "where-to-look.json"),
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
 def test_check_cli_validates_the_scratch_copy_only_with_a_result(tmp_path: Path) -> None:
     dirty = copy.deepcopy(RESULT)
     dirty["scratch"]["changes"]["modified"] = ["src/billing/charge.py"]
