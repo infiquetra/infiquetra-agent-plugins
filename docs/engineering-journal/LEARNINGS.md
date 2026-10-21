@@ -1,5 +1,35 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-21
+
+### Give a reviewer access to the contract before it submits its answer
+
+**Evidence.** Schema-valid reviewer answers can still fail item-to-finding
+links, test-path requirements or scratch-change validation. The packet now
+carries the package's standard-library answer checker so the reviewer can
+check its draft within the existing session. Independent subprocess tests
+exercise both the ordinary CLI and the checker copied by normal preparation.
+
+**Mechanism.** The draft check validates structure, links and proof paths.
+It does not establish correctness, run reproductions or inspect scratch changes
+without the launcher's manifest. Final acceptance still uses the original
+checker and authoritative manifest. Temporary drafts must be removed before
+submission; only cited reproduction tests may remain changed.
+
+**Generalizable rule.** Make deterministic contracts available before an
+expensive submission, while preserving the authoritative validation boundary.
+
+### Retain the inputs to a configuration fingerprint in a diagnosable form
+
+**Evidence.** An aggregate configuration digest and unchanged source labels
+cannot identify which historical source content changed. The launcher already
+computes the per-source digests, and now retains those sorted digests without
+retaining contents or changing the existing fingerprint and source labels.
+Regression tests pin the legacy fingerprint and exercise the result writer.
+
+**Generalizable rule.** Preserve a digest manifest when a fingerprint must
+support explanations of drift as well as equality checks.
+
 ## 2026-10-20
 
 ### Default entrypoints must exercise their shipped configuration

@@ -2531,6 +2531,31 @@ def test_prepare_bundles_the_reviewer_self_check_modules(tmp_path: Path) -> None
         )
 
 
+def test_finish_refuses_an_invalid_answer_even_if_packet_checker_accepts_it(tmp_path: Path) -> None:
+    """Advisory checker bytes cannot replace finish's authoritative validator."""
+    _repo_path, packet, runner = _line_packet(tmp_path)
+    checker = _bundled_checker(packet)
+    checker.write_text("raise SystemExit(0)\n", encoding="utf-8")
+    scratch, changes = _scratch(tmp_path, with_test=False)
+    bad = _answer([])
+    bad["severity"] = "blocks"
+    draft = scratch / "answer-draft.json"
+    _dump(draft, bad)
+    advised = subprocess.run(
+        [sys.executable, str(checker), "check", "--answer", str(draft),
+         "--items", str(packet / "where-to-look.json")],
+        cwd=scratch, env=_bundle_env(tmp_path), capture_output=True, text=True, timeout=30,
+    )
+    assert advised.returncode == 0
+    draft.unlink()
+    code, err = _finish(
+        packet, [(bad, _result(scratch, changes))], tmp_path / "home", runner, ask=_ask(),
+    )
+    assert code == 1
+    assert "severity" in err
+    assert not (packet / "review-run.json").exists()
+
+
 def test_copied_checker_accepts_a_valid_draft_from_an_isolated_cwd(tmp_path: Path) -> None:
     """The bundled checker self-validates a draft with no source, repo, or provider access."""
     checker = _bundled_checker(_bundle_packet(tmp_path))

@@ -78,8 +78,8 @@ When you believe a finding, try to show it with a test:
    warning. For an existing test file you modified, restore its original contents unless a
    `reproduced` finding names it in `proof.test`; leaving it modified or deleting an original file
    gets the answer refused. Non-test and configuration changes also get the answer refused.
-   Never change a source file, even to add an inline test, even to add a print, even to fix
-   something you noticed: a changed source file refuses the whole answer. Restore every
+   Never change a source file to add an inline test or fix something you noticed: a changed
+   source file refuses the whole answer. Restore every
    modification you made except the qualifying reproduction tests your findings name.
    A passing guard test is never a finding: report the problem as a `traced` finding instead.
 2. Run it there, from the scratch copy.
@@ -179,12 +179,12 @@ the run.
 Write the draft to a path inside the scratch copy, run the checker, fix what it names, and run it
 again. The cap is the packet's own `open-search-cap.json`, or 5 when the packet names none. Your
 launch message names the packet directory and the scratch copy, so the paths are concrete. For a
-packet at `/Users/you/review-packet` and a scratch copy at `/Users/you/scratch-copy`:
+packet at `/Users/operator/review-packet` and a scratch copy at `/Users/operator/scratch-copy`:
 
 ```bash
-python3 /Users/you/review-packet/check/reviewer_answer.py check \
-  --answer /Users/you/scratch-copy/answer-draft.json \
-  --items /Users/you/review-packet/where-to-look.json \
+python3 "/Users/operator/review-packet/check/reviewer_answer.py" check \
+  --answer "/Users/operator/scratch-copy/answer-draft.json" \
+  --items "/Users/operator/review-packet/where-to-look.json" \
   --open-search-cap 5
 ```
 
