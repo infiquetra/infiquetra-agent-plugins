@@ -15,7 +15,6 @@ import argparse
 import copy
 import json
 import os
-import shlex
 import shutil
 import signal
 import subprocess  # nosec B404
@@ -44,7 +43,6 @@ import run_record  # noqa: E402
 import saga_setup  # noqa: E402
 
 RERUN_TIMEOUT = 120
-_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "env"})
 _ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 _READ_PREFIXES = ("/usr", "/bin", "/opt", "/opt/homebrew", "/Library", "/System", "/dev")
 # /etc and the zoneinfo tree. Not /private/tmp and not the per-user temporary folder.
@@ -1399,19 +1397,12 @@ def _copy_check_modules(staging: Path) -> None:
 
 
 def _argv(command: Any) -> list[str] | None:
-    if not isinstance(command, str) or not command.strip():
-        return None
-    try:
-        parts = shlex.split(command)
-    except ValueError:
-        return None
-    if not parts:
-        return None
-    token = parts[0]
-    name = Path(token).name if "/" in token or "\\" in token else token
-    if name in _SHELLS:
-        return None
-    return parts
+    """The direct argv a reproduction command runs as, or None.
+
+    The reviewer answer's checker and this re-run share one parser, so the check
+    and the replay agree on what a command is.
+    """
+    return reviewer_answer.reproduction_argv(command)
 
 
 def _matches(result: review_tools.ProcessResult, output: str, test: str = "") -> bool:

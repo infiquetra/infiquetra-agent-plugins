@@ -85,6 +85,17 @@ When you believe a finding, try to show it with a test:
 2. Run it there, from the scratch copy.
 3. Record the test (its file and test name), the exact command you ran, and its failing output.
 
+`proof.command` is the command as its program and its arguments, ready to run: the program
+first, then its arguments. Write it the way you would run it, with no shell around it. There
+is no shell, so no variable expansion, no redirection, no pipe and no `&&`; the program is
+started directly with the arguments you give. A leading environment assignment such as
+`RUST_LOG=debug cargo test` is not a program and is refused: put the setting in the program's
+own options, or leave it out. A command that runs another command through a shell, such as
+`sh -c "cargo test"`, is refused for the same reason. Use a path relative to the scratch copy
+for the test, so the command replays wherever the scratch copy is; the re-run gives the command
+its own fresh copy with `HOME` and `TMPDIR` set, so do not hard-code the path of the scratch
+copy you are in now.
+
 Your commands run in a sandbox. It denies writes outside the scratch copy, every network
 connection, and access to credentials. A denied operation is a fact to report, never something to
 work around. Use the provided interpreter and dependencies directly; nothing can be installed.
