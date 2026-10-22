@@ -161,6 +161,7 @@ class _Runner:
 
     def __call__(
         self, argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+        umask: int | None = None,
     ) -> Any:
         assert shell is False
         assert isinstance(argv, list)
@@ -2924,7 +2925,7 @@ def test_run_confined_gives_the_runner_umask_022_with_either_helper(
 
 @pytest.mark.skipif(os.name != "posix", reason="umask is a POSIX setting")
 def test_a_real_rerun_child_gets_022_under_a_parent_umask_of_077(tmp_path: Path) -> None:
-    """End to end through run_confined with the real runner, minus the sandbox helper."""
+    """The real runner gives the child the re-run's mask under a stricter parent mask."""
     made = tmp_path / "made.txt"
     code = f"open({str(made)!r}, 'w').close()"
     previous = os.umask(0o077)
@@ -2938,3 +2939,32 @@ def test_a_real_rerun_child_gets_022_under_a_parent_umask_of_077(tmp_path: Path)
         os.umask(previous)
     assert result.code == 0
     assert made.stat().st_mode & 0o777 == 0o644
+
+
+@pytest.mark.skipif(os.name != "posix", reason="umask is a POSIX setting")
+def test_a_copied_test_file_gets_022_modes_under_a_stricter_parent_mask(tmp_path: Path) -> None:
+    source, dest = tmp_path / "source", tmp_path / "dest"
+    (source / "tests").mkdir(parents=True)
+    (source / "tests" / "test_x.py").write_text("def test_x():\n    pass\n", encoding="utf-8")
+    (source / "tests" / "run.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (source / "tests" / "run.sh").chmod(0o700)
+    dest.mkdir()
+    previous = os.umask(0o077)
+    try:
+        assert C._copy_one(source, dest, "tests/test_x.py")
+        assert C._copy_one(source, dest, "tests/run.sh")
+    finally:
+        os.umask(previous)
+    assert (dest / "tests" / "test_x.py").stat().st_mode & 0o777 == 0o644
+    assert (dest / "tests" / "run.sh").stat().st_mode & 0o777 == 0o755
+
+
+def test_the_final_worktree_is_checked_out_under_the_rerun_mask(tmp_path: Path) -> None:
+    seen: list[dict[str, Any]] = []
+
+    def runner(argv: list[str], **kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return T.ProcessResult(1, "", "no")
+
+    assert C._worktree(runner, tmp_path, "HEAD") == (None, None)
+    assert seen[0]["umask"] == C.RERUN_UMASK

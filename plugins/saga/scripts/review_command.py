@@ -1051,9 +1051,10 @@ def _worktree(runner: Process, repo: Path, head: str) -> tuple[Path | None, Path
     hooks = Path(tempfile.mkdtemp(prefix="saga-hooks-"))
     env = dict(os.environ)
     env["GIT_LFS_SKIP_SMUDGE"] = "1"
+    # The checkout's file modes come from the mask, so it uses the re-run's, not this process's.
     added = runner(
         ["git", "-c", f"core.hooksPath={hooks}", "worktree", "add", "--detach", str(path), head],
-        cwd=repo, env=env, timeout=RERUN_TIMEOUT, shell=False,
+        cwd=repo, env=env, timeout=RERUN_TIMEOUT, shell=False, umask=RERUN_UMASK,
     )
     if added.code != 0:
         shutil.rmtree(path, ignore_errors=True)
@@ -1392,6 +1393,8 @@ def _copy_one(source: Path, dest: Path, relative: str) -> bool:
             return False
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(resolved, target)
+    # copyfile creates the file under this process's mask; give it the mode a 022 checkout would.
+    target.chmod(0o755 if resolved.stat().st_mode & 0o111 else 0o644)
     return True
 
 

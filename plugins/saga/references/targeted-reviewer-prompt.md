@@ -117,8 +117,7 @@ Record the reproduction so it replays the same way:
   meets in normal use, such as a common default, never a deliberately permissive one chosen only to
   make the test fail: the same test must pass on correct code. Name the condition in the finding's
   `trigger` or `statement`, so a reader can judge it.
-  The re-run creates files with umask 022, the common default; a test that depends on the mask
-  should still set it itself.
+  The re-run uses umask 022.
 - Put the test where the project's runner already collects it, in an existing test file or a
   location the runner discovers on its own, so the answer changes exactly one test file. If a new
   file would need registering in another file, add the test to an existing file instead.

@@ -1575,7 +1575,7 @@ def _run_prefix(
     prefix.chmod(0o755)
     return subprocess.run(
         [str(prefix), command], cwd=tmp_path, capture_output=True, text=True, check=False,
-        preexec_fn=lambda: os.umask(parent_umask),
+        umask=parent_umask,
     )
 
 
@@ -1606,3 +1606,16 @@ def test_umask_a_command_outside_the_sandbox_keeps_the_parent_mask(
     assert made.returncode == 0, made.stderr
     assert (tmp_path / "made").stat().st_mode & 0o777 == 0o600
     assert made.stdout.strip() == "0077"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="umask is a POSIX setting")
+def test_umask_the_exported_copy_has_022_modes_under_a_stricter_launcher_mask(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    previous = os.umask(0o077)
+    try:
+        launcher.reviewer_export_head(repo, head, tmp_path / "copy")
+    finally:
+        os.umask(previous)
+    assert (tmp_path / "copy" / "src" / "app.py").stat().st_mode & 0o777 == 0o644

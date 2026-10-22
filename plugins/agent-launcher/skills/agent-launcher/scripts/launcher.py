@@ -3620,8 +3620,8 @@ def reviewer_export_head(repo: Path, head: str, copy: Path) -> dict[str, str]:
         target.parent.mkdir(parents=True, exist_ok=True)
         _reviewer_writable_at(copy, target, relative)
         target.write_bytes(data)
-        if mode == "100755":
-            target.chmod(0o755)
+        # Explicit modes, so the copy matches saga's 022 re-run whatever mask the launcher has.
+        target.chmod(0o755 if mode == "100755" else 0o644)
     for target, data in links:
         target.parent.mkdir(parents=True, exist_ok=True)
         _reviewer_writable_at(copy, target, target.relative_to(copy).as_posix())
