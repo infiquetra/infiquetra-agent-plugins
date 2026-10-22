@@ -708,14 +708,14 @@ def to_records(
     ask: Asker | None = None,
     use_jev: bool = True,
     open_search_cap: int = OPEN_SEARCH_CAP,
-    raw_proofs: dict[str, list[dict[str, str]]] | None = None,
+    raw_proofs: dict[int, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """An accepted answer as review_records.v1 findings and answered where-to-look records.
 
     Everything returned is scrubbed. A caller that must replay a reproduction as the reviewer wrote
     it passes an empty *raw_proofs*, and gets each reproduced finding's unscrubbed ``command``,
-    ``test`` and ``output`` appended under its identity, in answer order. Two reproduced findings
-    can share an identity, so each keeps its own entry. That dict is for the caller's memory
+    ``test`` and ``output`` filled in under its position in the returned findings; two findings can
+    share an identity, so the position is the key. That dict is for the caller's memory
     only: it is never part of the returned records, so nothing here writes a raw value.
     """
     problems = check(answer, items, open_search_cap=open_search_cap, result=result)
@@ -753,10 +753,10 @@ def to_records(
         if finding["evidence"] == "reproduced":
             if raw_proofs is not None:
                 given = original.get("proof") or {}
-                raw_proofs.setdefault(record["id"], []).append({
+                raw_proofs[len(built)] = {
                     name: given[name] for name in ("command", "test", "output")
                     if isinstance(given.get(name), str)
-                })
+                }
             jev, note = jev_pick(finding, ask) if use_jev else (None, "Jev was not asked")
             record["consequence_jev"] = jev
             record["unconfirmed"] = jev is None
@@ -906,7 +906,7 @@ def output_match(
         return True, None
     try:
         return False, _output_mismatch(code, captured, recorded, test)
-    except ValueError as exc:
+    except reproduction_match._ParseLimit as exc:
         # The matcher's parse limit: saga's replay gives up on output this large too.
         return False, f"the output is too large for saga's matcher to read ({exc})"
 

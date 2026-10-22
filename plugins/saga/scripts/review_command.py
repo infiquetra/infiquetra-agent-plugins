@@ -662,9 +662,9 @@ def _finish(
     converted = []
     # The reviewer's own command, test and output, held in memory only so the replay runs what was
     # written; every record, the run record and the state documents keep the scrubbed copy.
-    replay: list[dict[str, list[dict[str, str]]]] = []
+    replay: list[dict[int, dict[str, str]]] = []
     for answer, result in zip(answers, results, strict=True):
-        held: dict[str, list[dict[str, str]]] = {}
+        held: dict[int, dict[str, str]] = {}
         try:
             converted.append(reviewer_answer.to_records(
                 answer, items, result, ask=ask, use_jev=True, open_search_cap=cap,
@@ -685,7 +685,7 @@ def _finish(
                 produced["findings"], result, repo, str(change.get("head") or ""),
                 home, runner, confine, available, cited[position], offline, replay[position],
             ))
-        findings, owners = _merge_findings(
+        findings, owners, positions = _merge_findings(
             converted, _read_json(packet / "findings.json", "findings"),
         )
         where = _merge_where([produced["where_to_look"] for produced in converted])
@@ -693,7 +693,7 @@ def _finish(
         if args.final:
             degraded.extend(_final_round(
                 findings, owners, results, repo, str(change.get("head") or ""), home, runner,
-                confine, available, cited, offline, replay,
+                confine, available, cited, offline, replay, positions,
             ))
     may_block = _bools_from_packet(packet)
     reviewers, usage_specs, usage_totals = _reviewers_and_usage(
@@ -806,7 +806,7 @@ def _rerun_findings(
     available: bool,
     cited: set[str],
     offline: Offline | None = None,
-    replay: Mapping[str, Sequence[Mapping[str, str]]] | None = None,
+    replay: Mapping[int, Mapping[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     reproduced = [finding for finding in findings if finding.get("evidence") == "reproduced"]
     if not reproduced:
@@ -838,27 +838,18 @@ def _rerun_findings(
                 "head-export",
             )]
         _copy_shared_tests(source, scratch, result, cited)
-        # Findings that share an identity each replay their own proof, matched by answer order.
-        seen: dict[str, int] = {}
-        for finding in reproduced:
-            ident = str(finding.get("id"))
-            occurrence = seen.get(ident, 0)
-            seen[ident] = occurrence + 1
+        # Each finding replays its own proof, found by its position in the answer, because two
+        # findings can share an identity.
+        for position, finding in enumerate(findings):
+            if finding.get("evidence") != "reproduced":
+                continue
             degraded.extend(_rerun_one(
                 finding, source, scratch, home, runner, confine, offline,
-                _raw_proof(replay, ident, occurrence),
+                (replay or {}).get(position),
             ))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return degraded
-
-
-def _raw_proof(
-    replay: Mapping[str, Sequence[Mapping[str, str]]] | None, ident: str, occurrence: int,
-) -> Mapping[str, str] | None:
-    """The reviewer's unscrubbed proof for the *occurrence*-th reproduced finding with *ident*."""
-    held = (replay or {}).get(ident) or ()
-    return held[occurrence] if occurrence < len(held) else None
 
 
 def _rerun_one(
@@ -997,7 +988,8 @@ def _final_round(
     available: bool,
     cited: Sequence[set[str]],
     offline: Offline | None = None,
-    replay: Sequence[Mapping[str, Mapping[str, str]]] = (),
+    replay: Sequence[Mapping[int, Mapping[str, str]]] = (),
+    positions: Mapping[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     try:
         graded = review_formula.compute({"findings": findings})
@@ -1040,8 +1032,9 @@ def _final_round(
             _copy_shared_tests(source, path, result, cited[owner])
             degraded.extend(_rerun_one(
                 finding, source, path, home, runner, confine, offline,
-                # The merge keeps a shared identity's first reproduced finding.
-                _raw_proof(replay[owner], str(ident), 0) if owner < len(replay) else None,
+                # The merged finding replays the proof of the answer finding the merge kept.
+                replay[owner].get((positions or {}).get(str(ident), -1))
+                if owner < len(replay) else None,
             ))
     finally:
         _remove_worktree(runner, repo, path, hooks)
@@ -1078,25 +1071,27 @@ def _remove_worktree(runner: Process, repo: Path, path: Path, hooks: Path | None
 
 def _merge_findings(
     converted: Sequence[Mapping[str, Any]], tool_findings: Any,
-) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    grouped: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, int]]:
+    """The merged findings, each kept finding's answer index, and its position in that answer."""
+    grouped: dict[str, list[tuple[int, int, dict[str, Any]]]] = {}
     order: list[str] = []
     for index, produced in enumerate(converted):
-        for finding in produced.get("findings") or []:
+        for position, finding in enumerate(produced.get("findings") or []):
             if not isinstance(finding, Mapping):
                 continue
             ident = str(finding.get("id"))
-            grouped.setdefault(ident, []).append((index, dict(finding)))
+            grouped.setdefault(ident, []).append((index, position, dict(finding)))
             if ident not in order:
                 order.append(ident)
     merged: list[dict[str, Any]] = []
     owners: dict[str, int] = {}
+    positions: dict[str, int] = {}
     for ident in order:
         sides = grouped[ident]
-        reproduced = [pair for pair in sides if pair[1].get("evidence") == "reproduced"]
-        kept_index, kept = reproduced[0] if len(reproduced) == 1 else sides[0]
+        reproduced = [side for side in sides if side[2].get("evidence") == "reproduced"]
+        kept_index, kept_position, kept = reproduced[0] if len(reproduced) == 1 else sides[0]
         record = copy.deepcopy(kept)
-        record["degraded"] = any(item.get("degraded") for _, item in sides)
+        record["degraded"] = any(item.get("degraded") for _, _, item in sides)
         if record.get("evidence") != "reproduced":
             record["unconfirmed"] = False
         elif record.get("consequence_jev") is None and (record.get("source") or {}).get("kind") == "llm":
@@ -1105,6 +1100,7 @@ def _merge_findings(
             record["unconfirmed"] = False
         merged.append(record)
         owners[ident] = kept_index
+        positions[ident] = kept_position
     tools = tool_findings if isinstance(tool_findings, list) else []
     by_id = {str(finding.get("id")): finding for finding in merged}
     for tool in tools:
@@ -1121,7 +1117,8 @@ def _merge_findings(
         by_id[ident] = replacement
         merged = [replacement if str(item.get("id")) == ident else item for item in merged]
         owners.pop(ident, None)
-    return merged, owners
+        positions.pop(ident, None)
+    return merged, owners, positions
 
 
 def _merge_where(lists: Sequence[Sequence[Any]]) -> list[Any]:

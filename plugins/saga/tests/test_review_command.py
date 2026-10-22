@@ -992,7 +992,10 @@ def test_a_failure_that_prints_a_secret_shaped_value_still_reproduces(tmp_path: 
     assert _files_holding(tmp_path, _TOKEN) == []
 
 
-def test_findings_sharing_an_identity_each_replay_their_own_proof(tmp_path: Path) -> None:
+@pytest.mark.parametrize("final", [False, True])
+def test_findings_sharing_an_identity_each_replay_their_own_proof(
+    tmp_path: Path, final: bool,
+) -> None:
     _repo_path, packet, runner = _repro_packet(tmp_path)
     home = tmp_path / "home"
     _machine(home, "available")
@@ -1004,10 +1007,11 @@ def test_findings_sharing_an_identity_each_replay_their_own_proof(tmp_path: Path
     confine = _Confine(1, _CAPTURED)
     code, err = _finish(
         packet, [(_answer([unproved, proved]), _result(scratch, changes))],
-        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+        home, runner, ask=_ask(consequence_status="error"), confine=confine, final=final,
     )
     assert code == 0, err
-    assert len(confine.calls) == 2
+    # Both replay in the first round; the merge-gate round replays the kept finding's own proof.
+    assert len(confine.calls) == (3 if final else 2)
     found = _llm_finding(_read(packet / "review-run.json"))
     # The claim whose own output never replayed is not the one kept as reproduced.
     assert found["evidence"] == "reproduced"

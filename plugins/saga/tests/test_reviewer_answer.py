@@ -678,14 +678,16 @@ def test_raw_proofs_hold_the_unscrubbed_proof_and_the_records_stay_scrubbed() ->
     answer = copy.deepcopy(ANSWER)
     reproduced = next(f for f in answer["findings"] if f["evidence"] == "reproduced")
     reproduced["proof"]["output"] = f"AssertionError: leaked {token}"
-    held: dict[str, list[dict[str, str]]] = {}
+    held: dict[int, dict[str, str]] = {}
     out = A.to_records(answer, ITEMS, RESULT, use_jev=False, raw_proofs=held)
-    record = next(f for f in out["findings"] if f["evidence"] == "reproduced")
-    assert held[record["id"]][0]["output"] == f"AssertionError: leaked {token}"
-    assert held[record["id"]][0]["command"] == reproduced["proof"]["command"]
-    assert sum(len(v) for v in held.values()) == sum(
-        f["evidence"] == "reproduced" for f in out["findings"]
+    position, record = next(
+        (n, f) for n, f in enumerate(out["findings"]) if f["evidence"] == "reproduced"
     )
+    assert held[position]["output"] == f"AssertionError: leaked {token}"
+    assert held[position]["command"] == reproduced["proof"]["command"]
+    assert sorted(held) == [
+        n for n, f in enumerate(out["findings"]) if f["evidence"] == "reproduced"
+    ]
     assert token not in json.dumps(out)
     assert record["proof"]["output"] == "AssertionError: leaked [scrubbed:github-token]"
 
