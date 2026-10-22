@@ -132,6 +132,12 @@ platform. Every other vendor is refused by name.
 - **A Claude review needs a dollar ceiling.** Pass `--max-budget-usd <amount>`, a positive figure
   with at most two decimal places. A Claude launch without one is refused (exit 2) before anything
   is created. A vendor with no dollar ceiling refuses the flag rather than ignore it.
+- **A Claude reviewer gets its own temp folder.** The sandbox denies writes to every system temp
+  root, so a test that writes a temp file would fail in the review and pass in saga's re-run, which
+  gives each test its own `HOME` and `TMPDIR`. The launch makes `tmp/` beside the copy (never inside
+  it, so the scratch-change comparison does not see it), allows writes there, and the shell prefix
+  sets `TMPDIR` to it for sandboxed commands. `/tmp`, `/private/tmp` and `/var/folders` stay
+  denied, and the folder goes when the review's launch root does.
 - **A vendor joins only on a full live probe.** Grok and Muse have candidate recipes, which
   `launcher.py reviewer-probe --vendor <v> --record <file>` runs live and `review` never runs. The
   probe checks reads, writes and network separately, from outside the session. It also checks the

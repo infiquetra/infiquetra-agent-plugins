@@ -2449,17 +2449,32 @@ def reviewer_claude_shell_paths(copy: Path) -> tuple[Path, Path]:
     return root / "shell" / "reviewer-shell.sh", root / "unsandboxed"
 
 
-def reviewer_claude_shell_script(sentinel: Path, token: str) -> str:
+def reviewer_claude_temp_dir(copy: Path) -> Path:
+    """The reviewer's own temp folder, beside *copy* in the launch root and never inside it.
+
+    The sandbox denies writes to every system temp root, and Claude's own temp directory for
+    sandboxed commands sits under one of them, so without this folder a reviewer's test that
+    writes a temp file fails for a reason the replay, which gives each test a writable
+    ``TMPDIR``, does not share. Outside the copy, so the scratch-change comparison never sees it.
+    """
+    return copy.resolve().parent / "tmp"
+
+
+def reviewer_claude_shell_script(sentinel: Path, token: str, temp: Path | None = None) -> str:
     """The prefix: outside the sandbox it runs the command as given; inside, on the allow-list.
 
     The sentinel holds *token*. Only a process outside the sandbox can read it, so anything else,
-    a denied read or a missing file included, filters: the check fails closed.
+    a denied read or a missing file included, filters: the check fails closed. With *temp*, a
+    sandboxed command's ``TMPDIR`` is that folder, whatever the sandbox set.
     """
     names = [n for n in REVIEWER_ENVIRONMENT_ALLOWED if not REVIEWER_CREDENTIAL_NAME.search(n)]
     for name in names:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
             raise ValueError(f"{name!r} is not a variable name")
     kept = " ".join(f'${{{n}+"{n}=${n}"}}' for n in names)
+    if temp is not None:
+        # Last, so it wins over the TMPDIR the allow-list passed on.
+        kept += f" TMPDIR={shlex.quote(str(temp))}"
     read = f"/bin/cat {shlex.quote(str(sentinel))} 2>/dev/null"
     return (
         "#!/bin/sh\n"
@@ -2482,13 +2497,16 @@ def reviewer_claude_shell_script(sentinel: Path, token: str) -> str:
 def reviewer_claude_materialize(
     settings: Mapping[str, Any], root: Path, copy: Path
 ) -> tuple[Path, dict[str, str]]:
-    """Write the settings, the shell prefix and its sentinel beside the copy; name the prefix."""
+    """Write the settings, shell prefix, sentinel and temp folder beside the copy; name the prefix."""
     path, _ = reviewer_settings_materialize(settings, root, copy)
     prefix, sentinel = reviewer_claude_shell_paths(copy)
+    temp = reviewer_claude_temp_dir(copy)
     token = os.urandom(16).hex()
     sentinel.write_text(token, "utf-8")
     prefix.parent.mkdir(parents=True, exist_ok=True)
-    prefix.write_text(reviewer_claude_shell_script(sentinel, token), "utf-8")
+    temp.mkdir(exist_ok=True)
+    temp.chmod(0o700)
+    prefix.write_text(reviewer_claude_shell_script(sentinel, token, temp), "utf-8")
     prefix.chmod(0o755)
     return path, {REVIEWER_SHELL_PREFIX: str(prefix)}
 
@@ -2629,15 +2647,20 @@ def reviewer_claude_settings(
     whose sentinel is denied by name, so the prefix filters even when the launch root is outside
     the home directory. The prefix is named in ``env`` as well, which outranks the user's settings.
 
+    The one write allowed beyond the copy is the reviewer's own temp folder
+    (:func:`reviewer_claude_temp_dir`), read back as well and under no denied temp root.
+
     Issue #262: *read_only* (the cargo home and the vendored dependencies) is allowed back for
     reading and named in ``denyWrite``, so read-only is stated rather than implied.
     """
     if toolchain is None:
         toolchain = reviewer_toolchain_paths(env)[0]
     prefix, sentinel = reviewer_claude_shell_paths(copy)
+    temp = reviewer_claude_temp_dir(copy)
     allow_read = [str(copy.resolve()), str(packet.resolve()), str(prefix.parent)]
     allow_read += [item["path"] for item in toolchain if item["path"] not in allow_read]
     allow_read += [path for path in read_only if path not in allow_read]
+    allow_read.append(str(temp))
     return {
         "env": {REVIEWER_SHELL_PREFIX: str(prefix)},
         "sandbox": {
@@ -2649,6 +2672,7 @@ def reviewer_claude_settings(
                 "denyWrite": list(reviewer_temp_roots(platform)) + list(read_only),
                 "denyRead": ["~"] + list(extra_deny_read) + [str(sentinel)],
                 "allowRead": allow_read,
+                "allowWrite": [str(temp)],
             },
             "network": {"strictAllowlist": True, "allowedDomains": []},
             "credentials": {
@@ -3367,6 +3391,9 @@ class ReviewerRecipe:
     materialize: Any = reviewer_settings_materialize
     #: Resolves the native executable a probe record binds; ``None`` runs ``binary`` from PATH.
     executable: Any = None
+    #: Maps the copy to the temp folder the sandbox leaves writable; ``None`` leaves none, and the
+    #: probe then proves a write to ``TMPDIR`` is denied.
+    temp_dir: Any = None
 
 
 REVIEWER_CLAUDE_RECIPE = ReviewerRecipe(
@@ -3382,6 +3409,8 @@ REVIEWER_CLAUDE_RECIPE = ReviewerRecipe(
     widening=reviewer_claude_widening,
     # Issue #225: commands run through the shell prefix that keeps start-up exports out.
     materialize=reviewer_claude_materialize,
+    # The replay gives each test a writable TMPDIR; the reviewer gets one beside its copy.
+    temp_dir=reviewer_claude_temp_dir,
 )
 
 #: Recipes ``reviewer-probe`` may run but ``review`` never does (issue #223, plan KTD1). A
@@ -4001,6 +4030,10 @@ def reviewer_launch(
         {"path": str(Path(extra_env[REVIEWER_SHELL_PREFIX]).parent),
          "reason": "the reviewer's shell prefix, which keeps start-up exports out (issue #225)"}
     ] if REVIEWER_SHELL_PREFIX in extra_env else []
+    temp_reads = [
+        {"path": str(recipe.temp_dir(copy)),
+         "reason": "the reviewer's own temp folder, also writable and beside the copy"}
+    ] if recipe.temp_dir is not None else []
     request.out.mkdir(parents=True, exist_ok=True)
     answer_path = request.out / "answer.json"
     final_message: dict[str, Any] | None = None
@@ -4038,7 +4071,7 @@ def reviewer_launch(
             "allowed": [
                 {"path": str(copy.resolve()), "reason": "the scratch copy the review works in"},
                 {"path": str(request.packet.resolve()), "reason": "the review packet"},
-            ] + shell_reads + dependency_reads + list(toolchain),
+            ] + shell_reads + dependency_reads + list(toolchain) + temp_reads,
             "dropped": dropped,
         },
         "answer_path": str(answer_path) if answer is not None else None,
@@ -4160,8 +4193,12 @@ def reviewer_probe_verdicts(
     vendor_write: Path | None = None,
     credential_count: int = 0,
     credentials_absent: Sequence[str] = (),
+    temp_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Judge each denial from outside the session: the filesystem and the command's own results.
+
+    With *temp_dir*, the recipe leaves that folder writable, so ``write-tmpdir`` holds when the
+    session's write to ``TMPDIR`` succeeded and landed there; ``write-tmp`` still proves ``/tmp``.
 
     Every check in ``REVIEWER_PROBE_CHECKS`` gets a verdict, so a record is always complete; when
     the command never ran, each check that needed it does not hold.
@@ -4198,7 +4235,10 @@ def reviewer_probe_verdicts(
          did("write_outside")),
         ("write-inside", results.get("write_inside") == "0" and (copy / "inside-written").exists(),
          did("write_inside")),
-        ("write-tmpdir", nonzero("write_tmpdir"), did("write_tmpdir")),
+        ("write-tmpdir",
+         (results.get("write_tmpdir") == "0" and (temp_dir / f"reviewer-probe-{tag}").exists())
+         if temp_dir is not None else nonzero("write_tmpdir"),
+         did("write_tmpdir")),
         ("write-tmp", nonzero("write_tmp") and not Path(f"/tmp/reviewer-probe-{tag}").exists(),
          did("write_tmp")),
         # Issue #223: denial is proven against a reachability check made outside the session.
@@ -4351,6 +4391,7 @@ def reviewer_probe(
             parsed=recipe.parse(proc.stdout or ""), session_exit=proc.returncode,
             reachability=(before, after), vendor_write=vendor_write,
             credential_count=len(present), credentials_absent=absent,
+            temp_dir=recipe.temp_dir(copy) if recipe.temp_dir is not None else None,
         )
     finally:
         for path in planted:
