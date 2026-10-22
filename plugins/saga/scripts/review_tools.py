@@ -882,12 +882,16 @@ def subprocess_runner(
     env: Mapping[str, str],
     timeout: int,
     shell: bool,
+    umask: int | None = None,
 ) -> ProcessResult:
     """Run one tool, shutting down its POSIX process group before returning.
 
     Descendants that deliberately start another session escape this lifetime boundary;
     it is not a sandbox. Other platforms retain subprocess.run's direct-process cleanup.
     A string command, or a shell, is a programming error.
+
+    *umask*, when given, is the file-creation mask the child starts with (POSIX only); this
+    process's own mask is not changed. Without it the child inherits the parent's mask.
     """
     if shell or isinstance(argv, str):
         raise RuntimeError("a review tool receives an argument vector and shell=False")
@@ -906,6 +910,7 @@ def subprocess_runner(
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
+        umask=-1 if umask is None else umask,
     )
     try:
         stdout, stderr = proc.communicate(timeout=timeout)

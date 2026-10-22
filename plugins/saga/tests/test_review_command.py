@@ -161,6 +161,7 @@ class _Runner:
 
     def __call__(
         self, argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+        umask: int | None = None,
     ) -> Any:
         assert shell is False
         assert isinstance(argv, list)
@@ -180,10 +181,12 @@ def _exec_runner() -> Any:
 
     def run(
         argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+        umask: int | None = None,
     ) -> Any:
         assert shell is False
         proc = subprocess.run(
             argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout, check=False,
+            umask=-1 if umask is None else umask,
         )
         return T.ProcessResult(proc.returncode, proc.stdout, proc.stderr)
 
@@ -2497,7 +2500,7 @@ def test_a_cargo_rerun_without_vendored_crates_still_gets_rustup(
     seen: list[tuple[list[str], dict[str, str]]] = []
 
     def record(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int,
-               shell: bool) -> Any:
+               shell: bool, umask: int | None = None) -> Any:
         if argv[0] == "/usr/bin/sandbox-exec":
             seen.append((list(argv), dict(env)))
             return T.ProcessResult(1, _CAPTURED)
@@ -2534,7 +2537,7 @@ def test_a_cargo_named_by_a_folder_in_the_command_never_opens_that_folder(
     profiles: list[str] = []
 
     def record(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int,
-               shell: bool) -> Any:
+               shell: bool, umask: int | None = None) -> Any:
         if argv[0] == "/usr/bin/sandbox-exec":
             profiles.append(argv[2])
             return T.ProcessResult(1, _CAPTURED)
@@ -2895,3 +2898,73 @@ def test_copied_checker_refuses_known_bad_drafts(
         f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
     assert expected in completed.stderr
+
+
+@pytest.mark.parametrize("helper", ["sandbox-exec", "bwrap"])
+def test_run_confined_gives_the_runner_umask_022_with_either_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, helper: str,
+) -> None:
+    """The re-run child starts with mask 022 whatever mask this process has (the replay gap)."""
+    monkeypatch.setattr(C, "platform_helper", lambda: helper)
+    seen: list[dict[str, Any]] = []
+
+    def record(argv: list[str], **kwargs: Any) -> Any:
+        seen.append({"argv": list(argv), **kwargs})
+        return T.ProcessResult(0, "")
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    C.run_confined(["python3", "-c", "pass"], scratch, {"HOME": str(scratch)}, scratch,
+                   runner=record, timeout=7)
+    assert C.RERUN_UMASK == 0o022
+    assert len(seen) == 1
+    assert seen[0]["umask"] == 0o022
+    assert seen[0]["shell"] is False
+    assert seen[0]["timeout"] == 7
+
+
+@pytest.mark.skipif(os.name != "posix", reason="umask is a POSIX setting")
+def test_a_real_rerun_child_gets_022_under_a_parent_umask_of_077(tmp_path: Path) -> None:
+    """The real runner gives the child the re-run's mask under a stricter parent mask."""
+    made = tmp_path / "made.txt"
+    code = f"open({str(made)!r}, 'w').close()"
+    previous = os.umask(0o077)
+    try:
+        result = C.review_tools.subprocess_runner(
+            [sys.executable, "-c", code], cwd=tmp_path, env=dict(os.environ), timeout=30,
+            shell=False, umask=C.RERUN_UMASK,
+        )
+        assert os.umask(0o077) == 0o077
+    finally:
+        os.umask(previous)
+    assert result.code == 0
+    assert made.stat().st_mode & 0o777 == 0o644
+
+
+@pytest.mark.skipif(os.name != "posix", reason="umask is a POSIX setting")
+def test_a_copied_test_file_gets_022_modes_under_a_stricter_parent_mask(tmp_path: Path) -> None:
+    source, dest = tmp_path / "source", tmp_path / "dest"
+    (source / "tests").mkdir(parents=True)
+    (source / "tests" / "test_x.py").write_text("def test_x():\n    pass\n", encoding="utf-8")
+    (source / "tests" / "run.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (source / "tests" / "run.sh").chmod(0o700)
+    dest.mkdir()
+    previous = os.umask(0o077)
+    try:
+        assert C._copy_one(source, dest, "tests/test_x.py")
+        assert C._copy_one(source, dest, "tests/run.sh")
+    finally:
+        os.umask(previous)
+    assert (dest / "tests" / "test_x.py").stat().st_mode & 0o777 == 0o644
+    assert (dest / "tests" / "run.sh").stat().st_mode & 0o777 == 0o755
+
+
+def test_the_final_worktree_is_checked_out_under_the_rerun_mask(tmp_path: Path) -> None:
+    seen: list[dict[str, Any]] = []
+
+    def runner(argv: list[str], **kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return T.ProcessResult(1, "", "no")
+
+    assert C._worktree(runner, tmp_path, "HEAD") == (None, None)
+    assert seen[0]["umask"] == C.RERUN_UMASK

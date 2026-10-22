@@ -44,6 +44,9 @@ import run_record  # noqa: E402
 import saga_setup  # noqa: E402
 
 RERUN_TIMEOUT = 120
+#: The file-creation mask every re-run child starts with, whatever mask this process has: the
+#: common default, so a file the code creates has the mode it has in normal use.
+RERUN_UMASK = 0o022
 #: The longest tail of a re-run's output that a degraded input keeps, after scrubbing.
 RERUN_TAIL_CHARS = 500
 #: How much of a re-run's output, with colour codes already removed, is scrubbed to find that
@@ -249,7 +252,9 @@ def run_confined(
         ]
     else:
         wrapped = _bwrap(scratch, argv, (*reads, *toolchain))
-    return runner(wrapped, cwd=cwd, env=dict(env), timeout=timeout, shell=False)
+    return runner(
+        wrapped, cwd=cwd, env=dict(env), timeout=timeout, shell=False, umask=RERUN_UMASK,
+    )
 
 
 def platform_helper() -> str | None:
@@ -1046,9 +1051,10 @@ def _worktree(runner: Process, repo: Path, head: str) -> tuple[Path | None, Path
     hooks = Path(tempfile.mkdtemp(prefix="saga-hooks-"))
     env = dict(os.environ)
     env["GIT_LFS_SKIP_SMUDGE"] = "1"
+    # The checkout's file modes come from the mask, so it uses the re-run's, not this process's.
     added = runner(
         ["git", "-c", f"core.hooksPath={hooks}", "worktree", "add", "--detach", str(path), head],
-        cwd=repo, env=env, timeout=RERUN_TIMEOUT, shell=False,
+        cwd=repo, env=env, timeout=RERUN_TIMEOUT, shell=False, umask=RERUN_UMASK,
     )
     if added.code != 0:
         shutil.rmtree(path, ignore_errors=True)
@@ -1387,6 +1393,8 @@ def _copy_one(source: Path, dest: Path, relative: str) -> bool:
             return False
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(resolved, target)
+    # copyfile creates the file under this process's mask; give it the mode a 022 checkout would.
+    target.chmod(0o755 if resolved.stat().st_mode & 0o111 else 0o644)
     return True
 
 

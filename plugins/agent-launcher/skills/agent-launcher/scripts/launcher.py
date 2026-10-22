@@ -2466,6 +2466,8 @@ def reviewer_claude_shell_script(sentinel: Path, token: str, temp: Path | None =
     The sentinel holds *token*. Only a process outside the sandbox can read it, so anything else,
     a denied read or a missing file included, filters: the check fails closed. With *temp*, a
     sandboxed command's ``TMPDIR`` is that folder, whatever the sandbox set.
+    Sandboxed commands also run under ``umask 022``, as saga's replay does; it is never reached
+    outside the sandbox.
     """
     names = [n for n in REVIEWER_ENVIRONMENT_ALLOWED if not REVIEWER_CREDENTIAL_NAME.search(n)]
     for name in names:
@@ -2490,6 +2492,9 @@ def reviewer_claude_shell_script(sentinel: Path, token: str, temp: Path | None =
         '  */bash) reviewer_bash=$SHELL ;;\n'
         "  *) reviewer_bash=/bin/bash ;;\n"
         "esac\n"
+        "# Same file-creation mask as saga's replay (RERUN_UMASK, 022), so a file the reviewer's\n"
+        "# test creates gets the mode the replay gives it, not one from the launching harness.\n"
+        "umask 022 || exit 1\n"
         f'exec /usr/bin/env -i {kept} "$reviewer_bash" --noprofile --norc -c "$1"\n'
     )
 
@@ -3615,8 +3620,8 @@ def reviewer_export_head(repo: Path, head: str, copy: Path) -> dict[str, str]:
         target.parent.mkdir(parents=True, exist_ok=True)
         _reviewer_writable_at(copy, target, relative)
         target.write_bytes(data)
-        if mode == "100755":
-            target.chmod(0o755)
+        # Explicit modes, so the copy matches saga's 022 re-run whatever mask the launcher has.
+        target.chmod(0o755 if mode == "100755" else 0o644)
     for target, data in links:
         target.parent.mkdir(parents=True, exist_ok=True)
         _reviewer_writable_at(copy, target, target.relative_to(copy).as_posix())

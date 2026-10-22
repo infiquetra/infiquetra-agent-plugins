@@ -2311,3 +2311,33 @@ def test_stable_transcript_keeps_test_names_and_failures() -> None:
     stable = T.stable_transcript(text)
     assert "tests/test_app.py::test_waits_5s - AssertionError: took 5s" in stable
     assert "0.05s" not in stable
+
+
+def _mode_written_by(runner_umask: int | None, parent_umask: int, tmp_path: Path) -> int:
+    """The mode of a file a child creates through ``subprocess_runner`` under *parent_umask*."""
+    target = tmp_path / f"made-{parent_umask:o}-{runner_umask}.txt"
+    code = f"open({str(target)!r}, 'w').close()"
+    kwargs: dict[str, Any] = {} if runner_umask is None else {"umask": runner_umask}
+    previous = os.umask(parent_umask)
+    try:
+        result = T.subprocess_runner(
+            [sys.executable, "-c", code], cwd=tmp_path, env=dict(os.environ), timeout=30,
+            shell=False, **kwargs,
+        )
+        assert os.umask(parent_umask) == parent_umask  # the runner left this process's mask alone
+    finally:
+        os.umask(previous)
+    assert result.code == 0
+    return target.stat().st_mode & 0o777
+
+
+@pytest.mark.skipif(os.name != "posix", reason="umask is a POSIX setting")
+def test_a_runner_umask_overrides_the_parents_mask_for_the_child_only(tmp_path: Path) -> None:
+    assert _mode_written_by(0o022, 0o077, tmp_path) == 0o644
+    assert _mode_written_by(0o022, 0o022, tmp_path) == 0o644
+
+
+@pytest.mark.skipif(os.name != "posix", reason="umask is a POSIX setting")
+def test_a_runner_without_umask_lets_the_child_inherit_the_parents_mask(tmp_path: Path) -> None:
+    assert _mode_written_by(None, 0o077, tmp_path) == 0o600
+    assert _mode_written_by(None, 0o022, tmp_path) == 0o644
