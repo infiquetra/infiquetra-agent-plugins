@@ -430,9 +430,12 @@ def test_tmpdir_the_settings_allow_writes_to_a_temp_folder_beside_the_copy_and_d
     assert not temp.is_relative_to(copy.resolve()) and not copy.resolve().is_relative_to(temp)
     assert filesystem["allowWrite"] == [str(temp)]
     assert filesystem["allowRead"][-1] == str(temp)
-    # The system temp roots stay denied, and the folder sits under none of them.
+    # The system temp roots stay denied. The folder lives in the launch root, which
+    # reviewer_work_root keeps outside every one of them (this test's tmp_path may not be).
     assert filesystem["denyWrite"] == list(launcher.reviewer_temp_roots())
-    assert not any(temp.is_relative_to(Path(root)) for root in filesystem["denyWrite"])
+    for root in launcher.reviewer_temp_roots():
+        with pytest.raises(launcher.ReviewerRefused):
+            launcher.reviewer_work_root({"XDG_CACHE_HOME": f"{root}/cache"})
 
 
 def test_tmpdir_the_temp_folder_is_private_to_the_reviewer(
