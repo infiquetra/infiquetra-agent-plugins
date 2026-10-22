@@ -2466,6 +2466,8 @@ def reviewer_claude_shell_script(sentinel: Path, token: str, temp: Path | None =
     The sentinel holds *token*. Only a process outside the sandbox can read it, so anything else,
     a denied read or a missing file included, filters: the check fails closed. With *temp*, a
     sandboxed command's ``TMPDIR`` is that folder, whatever the sandbox set.
+    Sandboxed commands also run under ``umask 022``, as saga's replay does; it is never reached
+    outside the sandbox.
     """
     names = [n for n in REVIEWER_ENVIRONMENT_ALLOWED if not REVIEWER_CREDENTIAL_NAME.search(n)]
     for name in names:
@@ -2490,6 +2492,9 @@ def reviewer_claude_shell_script(sentinel: Path, token: str, temp: Path | None =
         '  */bash) reviewer_bash=$SHELL ;;\n'
         "  *) reviewer_bash=/bin/bash ;;\n"
         "esac\n"
+        "# Same file-creation mask as saga's replay (RERUN_UMASK, 022), so a file the reviewer's\n"
+        "# test creates gets the mode the replay gives it, not one from the launching harness.\n"
+        "umask 022 || exit 1\n"
         f'exec /usr/bin/env -i {kept} "$reviewer_bash" --noprofile --norc -c "$1"\n'
     )
 

@@ -1559,3 +1559,50 @@ def test_offline_a_build_s_target_and_new_lock_are_clutter_but_a_tracked_lock_is
     changes = launcher.reviewer_scratch_changes(copy, manifest)
     assert changes["added"] == ["tests/repro.rs"]
     assert changes["modified"] == ["crate/Cargo.lock"]
+
+
+# ----------------------------------------------------------- the sandboxed shell's umask
+
+
+def _run_prefix(
+    launcher: ModuleType, tmp_path: Path, token: str, command: str, parent_umask: int
+) -> subprocess.CompletedProcess[str]:
+    """Run *command* through a real prefix script, in a child whose own umask is *parent_umask*."""
+    sentinel = tmp_path / "sentinel"
+    sentinel.write_text("token", "utf-8")
+    prefix = tmp_path / "reviewer-shell.sh"
+    prefix.write_text(launcher.reviewer_claude_shell_script(sentinel, token), "utf-8")
+    prefix.chmod(0o755)
+    return subprocess.run(
+        [str(prefix), command], cwd=tmp_path, capture_output=True, text=True, check=False,
+        preexec_fn=lambda: os.umask(parent_umask),
+    )
+
+
+def test_umask_the_sandboxed_branch_sets_022_before_it_runs_the_command(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    script = launcher.reviewer_claude_shell_script(Path("/example/sentinel"), "token")
+    outside, inside = script.split("\nfi\n", 1)
+    assert "umask" not in outside
+    assert "umask 022 || exit 1\n" in inside
+    assert inside.index("umask 022") < inside.index("exec /usr/bin/env -i")
+
+
+def test_umask_a_file_made_in_the_sandbox_is_world_readable_whatever_the_parent_mask(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    # A wrong token takes the sandboxed branch, as a denied sentinel read does.
+    made = _run_prefix(launcher, tmp_path, "other", "touch made; umask", 0o077)
+    assert made.returncode == 0, made.stderr
+    assert (tmp_path / "made").stat().st_mode & 0o777 == 0o644
+    assert made.stdout.strip() == "0022"
+
+
+def test_umask_a_command_outside_the_sandbox_keeps_the_parent_mask(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    made = _run_prefix(launcher, tmp_path, "token", "touch made; umask", 0o077)
+    assert made.returncode == 0, made.stderr
+    assert (tmp_path / "made").stat().st_mode & 0o777 == 0o600
+    assert made.stdout.strip() == "0077"
