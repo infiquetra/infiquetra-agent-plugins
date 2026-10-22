@@ -1,5 +1,25 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-22
+
+### Pin the file-creation mask a replay runs under
+
+**Evidence.** A reviewer's failing test for a file created world-readable
+passed in saga's replay. The replay inherited a strict file-creation mask
+(umask 077) from the process that launched the review, so the file came out
+owner-only, while the reviewer's own session had used 022. The replay child now
+always starts with umask 022 (`RERUN_UMASK`, passed to `Popen` through
+`review_tools.subprocess_runner`), and the sandboxed reviewer's shell prefix sets
+the same mask. Tests run a real child under a parent umask of 077 and check
+that the file mode is 0o644.
+
+**Mechanism.** The umask is process state that children inherit silently, so
+an authoritative re-run that does not set it measures its launcher's
+environment instead of the code.
+
+**Generalizable rule.** When a check re-runs someone else's test, pin and state
+every inherited process condition the test can observe.
+
 ## 2026-10-21
 
 ### Compare a replayed reproduction with what the reviewer actually recorded
