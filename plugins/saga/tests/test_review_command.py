@@ -2710,6 +2710,7 @@ def test_live_a_commit_s_own_source_replacement_cannot_outrank_the_rerun_s(
 
 _BUNDLE_MODULES: tuple[str, ...] = (
     "reviewer_answer.py", "review_formula.py", "review_records.py", "run_record.py",
+    "reproduction_match.py",
 )
 _ANSWER_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "reviewer_answer"
 def _bundle_env(tmp: Path) -> dict[str, str]:
@@ -2753,7 +2754,7 @@ def _bundled_checker(packet: Path) -> Path:
 
 
 def test_prepare_bundles_the_reviewer_self_check_modules(tmp_path: Path) -> None:
-    """Normal prepare copies the four checker modules byte-for-byte into packet/check/."""
+    """Normal prepare copies the five checker modules byte-for-byte into packet/check/."""
     out = _bundle_packet(tmp_path)
     bundled = out / "check"
     assert bundled.is_dir(), "prepare wrote no packet/check/ bundle (preflight helper absent)"

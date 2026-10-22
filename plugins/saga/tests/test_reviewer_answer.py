@@ -1082,3 +1082,165 @@ def test_scrub_records_cli_prints_no_fake_token(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     _no_sample_in(json.loads(proc.stdout))
     assert "[scrubbed:aws-access-key-id]" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# output-match: will the recorded output match saga's replay (advisory)
+# ---------------------------------------------------------------------------
+
+CARGO_TEST = "tests/repro_test.rs::adds_two_numbers"
+CARGO_FULL = """\
+running 1 test
+test adds_two_numbers ... FAILED
+
+failures:
+
+---- adds_two_numbers stdout ----
+
+thread 'adds_two_numbers' ({tid}) panicked at tests/repro_test.rs:3:25:
+assertion `left == right` failed
+  left: -1
+ right: 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    adds_two_numbers
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+"""
+CARGO_HEADER_ONLY = """\
+running 1 test
+test adds_two_numbers ... FAILED
+
+failures:
+    adds_two_numbers
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+"""
+PYTEST_TEST = "tests/test_sum.py::test_adds"
+PYTEST_FULL = """\
+============================= test session starts ==============================
+collected 1 item
+
+tests/test_sum.py F                                                      [100%]
+
+=================================== FAILURES ===================================
+__________________________________ test_adds ___________________________________
+
+    def test_adds():
+>       assert add(2, 3) == 5
+E       assert -1 == 5
+E        +  where -1 = add(2, 3)
+
+tests/test_sum.py:4: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_sum.py::test_adds - assert -1 == 5
+============================== 1 failed in 0.01s ===============================
+"""
+
+
+def _reproduced(test: str, output: str, key: str = "double-charge") -> dict[str, Any]:
+    drafted = answer()
+    proof = finding(drafted, key)["proof"]
+    proof["test"], proof["output"] = test, output
+    return drafted
+
+
+def _output_match(
+    tmp_path: Path, drafted: dict[str, Any], captured: str, *extra: str, key: str = "double-charge",
+) -> subprocess.CompletedProcess[str]:
+    draft, run = tmp_path / "draft.json", tmp_path / "run.txt"
+    draft.write_text(json.dumps(drafted), encoding="utf-8")
+    run.write_text(captured, encoding="utf-8")
+    return _cli(
+        "output-match", "--answer", str(draft), "--finding", key, "--output", str(run), *extra,
+    )
+
+
+def test_output_match_accepts_a_full_block_under_a_different_thread_id(tmp_path: Path) -> None:
+    drafted = _reproduced(CARGO_TEST, CARGO_FULL.format(tid=111))
+    proc = _output_match(tmp_path, drafted, CARGO_FULL.format(tid=987654))
+    assert proc.returncode == 0, proc.stderr
+    assert "would match" in proc.stdout
+    assert proc.stderr == ""
+
+
+def test_output_match_agrees_with_reproduction_match() -> None:
+    """The advice and saga's replay share one matcher, so they cannot disagree."""
+    matcher = _load("reproduction_match")
+    recorded, captured = CARGO_FULL.format(tid=1), CARGO_FULL.format(tid=2)
+    assert A.output_match(_reproduced(CARGO_TEST, recorded), "double-charge", captured) == (
+        matcher.matches(1, captured, recorded, CARGO_TEST), None
+    )
+    assert A.output_match(
+        _reproduced(CARGO_TEST, CARGO_HEADER_ONLY), "double-charge", captured
+    )[0] is matcher.matches(1, captured, CARGO_HEADER_ONLY, CARGO_TEST)
+
+
+def test_output_match_explains_a_single_assertion_line(tmp_path: Path) -> None:
+    drafted = _reproduced(CARGO_TEST, "assertion `left == right` failed")
+    proc = _output_match(tmp_path, drafted, CARGO_FULL.format(tid=5))
+    assert proc.returncode == 1
+    assert "would not match" in proc.stderr
+    assert "one line" in proc.stderr or "no runner failure block" in proc.stderr
+    assert "left: -1" in proc.stderr
+
+
+def test_output_match_explains_pytest_summary_line(tmp_path: Path) -> None:
+    drafted = _reproduced(PYTEST_TEST, "FAILED tests/test_sum.py::test_adds - assert -1 == 5")
+    proc = _output_match(tmp_path, drafted, PYTEST_FULL)
+    assert proc.returncode == 1
+    assert "would not match" in proc.stderr
+
+
+def test_output_match_accepts_a_full_pytest_block(tmp_path: Path) -> None:
+    drafted = _reproduced(PYTEST_TEST, PYTEST_FULL)
+    assert _output_match(tmp_path, drafted, PYTEST_FULL).returncode == 0
+
+
+def test_output_match_explains_a_header_without_the_failure_body(tmp_path: Path) -> None:
+    drafted = _reproduced(CARGO_TEST, CARGO_HEADER_ONLY)
+    proc = _output_match(tmp_path, drafted, CARGO_FULL.format(tid=5))
+    assert proc.returncode == 1
+    assert "would not match" in proc.stderr
+    assert "FAILED" in proc.stderr
+    assert "failure body" in proc.stderr
+    assert "---- adds_two_numbers stdout ----" in proc.stderr
+
+
+def test_output_match_says_when_the_captured_run_did_not_fail(tmp_path: Path) -> None:
+    drafted = _reproduced(CARGO_TEST, CARGO_FULL.format(tid=1))
+    proc = _output_match(tmp_path, drafted, CARGO_FULL.format(tid=1), "--exit-code", "0")
+    assert proc.returncode == 1
+    assert "exited 0" in proc.stderr
+
+
+def test_output_match_says_when_the_captured_run_does_not_fail_the_test(tmp_path: Path) -> None:
+    drafted = _reproduced(CARGO_TEST, CARGO_FULL.format(tid=1))
+    proc = _output_match(tmp_path, drafted, "running 1 test\ntest other ... ok\n")
+    assert proc.returncode == 1
+    assert "captured output" in proc.stderr
+
+
+def test_output_match_refuses_a_finding_that_is_not_reproduced(tmp_path: Path) -> None:
+    drafted = _reproduced(CARGO_TEST, CARGO_FULL.format(tid=1))
+    proc = _output_match(tmp_path, drafted, "x", key="lease-kept-on-error")
+    assert proc.returncode == 1
+    assert "not a reproduced finding" in proc.stderr
+    proc = _output_match(tmp_path, drafted, "x", key="no-such-finding")
+    assert proc.returncode == 1
+    assert "no finding" in proc.stderr
+
+
+def test_output_match_reports_an_unreadable_input(tmp_path: Path) -> None:
+    proc = _cli(
+        "output-match", "--answer", str(tmp_path / "none.json"), "--finding", "x",
+        "--output", str(tmp_path / "none.txt"),
+    )
+    assert proc.returncode == 2
+
+
+def test_output_match_is_listed_in_the_help() -> None:
+    assert "output-match" in _cli("--help").stdout
+    assert "Advisory" in _cli("output-match", "--help").stdout

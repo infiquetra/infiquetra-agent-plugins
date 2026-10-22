@@ -82,12 +82,15 @@ _PACKET_FILES = (
 )
 #: The trusted modules the reviewer may run from the packet to check its own answer before it
 #: gives one. They are copied byte for byte, so the reviewer runs the same checker saga runs.
-#: ``reviewer_answer.py`` imports its siblings by name, so all four travel together.
+#: ``reviewer_answer.py`` imports its siblings by name, so all five travel together.
+#: ``reproduction_match.py`` is the matcher ``finish`` replays with, so the reviewer's
+#: ``output-match`` advice and saga's replay share one rule.
 _CHECK_MODULES = (
     "reviewer_answer.py",
     "review_formula.py",
     "review_records.py",
     "run_record.py",
+    "reproduction_match.py",
 )
 _ZERO_USAGE = {"tokens_in": 0, "tokens_out": 0, "cost_usd": 0, "seconds": 0}
 
