@@ -678,12 +678,14 @@ def test_raw_proofs_hold_the_unscrubbed_proof_and_the_records_stay_scrubbed() ->
     answer = copy.deepcopy(ANSWER)
     reproduced = next(f for f in answer["findings"] if f["evidence"] == "reproduced")
     reproduced["proof"]["output"] = f"AssertionError: leaked {token}"
-    held: dict[str, dict[str, str]] = {}
+    held: dict[str, list[dict[str, str]]] = {}
     out = A.to_records(answer, ITEMS, RESULT, use_jev=False, raw_proofs=held)
     record = next(f for f in out["findings"] if f["evidence"] == "reproduced")
-    assert held[record["id"]]["output"] == f"AssertionError: leaked {token}"
-    assert held[record["id"]]["command"] == reproduced["proof"]["command"]
-    assert len(held) == sum(f["evidence"] == "reproduced" for f in out["findings"])
+    assert held[record["id"]][0]["output"] == f"AssertionError: leaked {token}"
+    assert held[record["id"]][0]["command"] == reproduced["proof"]["command"]
+    assert sum(len(v) for v in held.values()) == sum(
+        f["evidence"] == "reproduced" for f in out["findings"]
+    )
     assert token not in json.dumps(out)
     assert record["proof"]["output"] == "AssertionError: leaked [scrubbed:github-token]"
 
@@ -1231,6 +1233,15 @@ def test_output_match_refuses_a_finding_that_is_not_reproduced(tmp_path: Path) -
     proc = _output_match(tmp_path, drafted, "x", key="no-such-finding")
     assert proc.returncode == 1
     assert "no finding" in proc.stderr
+
+
+def test_output_match_explains_output_too_large_to_read(tmp_path: Path) -> None:
+    drafted = _reproduced(CARGO_TEST, CARGO_FULL.format(tid=1))
+    flood = "".join(f"test case_{n} ... FAILED\n" for n in range(10_002))
+    proc = _output_match(tmp_path, drafted, flood)
+    assert proc.returncode == 1
+    assert "too large" in proc.stderr
+    assert "Traceback" not in proc.stderr
 
 
 def test_output_match_reports_an_unreadable_input(tmp_path: Path) -> None:

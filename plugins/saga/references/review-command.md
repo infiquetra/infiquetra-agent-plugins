@@ -58,7 +58,7 @@ Before lines are compared, `normalise` strips surrounding blanks and collapses r
 
 The re-run tree is the packet's head commit with the reviewer's test files laid over it. The re-run is this process, confined. It is not a reviewer session. `--final` runs that check again for blocking findings that still have a command, on a detached worktree of the packet's head, with the same test files.
 
-**When a finding is downgraded to traced.** The finding's proof is replaced by one generic step, and `finish` records a degraded input (`tool` `review-command`, `lens` and `language` from the finding) so the reason shows in `review-run.json`, the lens grade's `degraded_inputs` and the state document:
+**When a finding is downgraded to traced.** The finding's proof is replaced by one generic step, and `finish` records a degraded input (`tool` `review-command`) so the reason shows in `review-run.json`, the lens grade's `degraded_inputs` and the state document:
 
 | `reason` | Meaning | `input` |
 |---|---|---|
@@ -69,10 +69,12 @@ The re-run tree is the packet's head commit with the reviewer's test files laid 
 | `missing-test-file` | the cited test file was not in the reviewer's scratch folder | the test file |
 | `re-run-not-argv` | the command is not a direct argument list | the command, scrubbed |
 | `re-run-timeout` | the re-run passed its 120 second limit | `re-run` |
-| `re-run-could-not-start` | the command never ran: a temporary folder could not be made, the sandbox helper could not start it, it exited 126 or 127, or the output holds a line from `sandbox-exec` or `bwrap` or a sandbox deny line | the program, scrubbed (`tmp` when the temporary folder failed) |
+| `re-run-could-not-start` | the command never ran: a temporary folder could not be made, the sandbox helper could not start it, it exited 126 or 127, or its output holds a line from `sandbox-exec` or `bwrap` saying so. A sandbox deny line alone is a mismatch, since a test that ran can be denied an operation | the program, scrubbed (`tmp` when the temporary folder failed) |
 | `re-run-mismatch` | the command ran and exited, but not with the recorded failure of the cited test | the test, scrubbed |
 
-The last two also carry `exit_code`, the re-run's exit code, and `output_tail`, the last 500 characters of its combined output after secret-shaped text is replaced by `[scrubbed:<kind>]` markers and colour codes are removed, so an operator can see what the re-run printed. A degraded input never changes a lens's grade letter, which depends only on its counts of blocking and fix-later findings; only a finding's own `degraded` flag lowers that finding from blocking to fix-later. A re-run that matched leaves no degraded input.
+`lens` and `language` come from the finding, except that `no-sandbox`, `bad-scratch`, `head-export`, `final-worktree`, `re-run-timeout` and `re-run-could-not-start` record language `none`, and `final-worktree` and the final round's `bad-scratch` record lens `correctness`.
+
+A `re-run-mismatch`, and a `re-run-could-not-start` read from the re-run's exit code or output, also carry `exit_code`, the re-run's exit code, and `output_tail`, the last 500 characters of its combined output after secret-shaped text is replaced by `[scrubbed:<kind>]` markers and colour codes are removed, so an operator can see what the re-run printed. One raised before the re-run began (the temporary folder, or an operating-system error starting the sandbox helper) carries neither. A degraded input never changes a lens's grade letter, which depends only on its counts of blocking and fix-later findings; only a finding's own `degraded` flag lowers that finding from blocking to fix-later. A re-run that matched leaves no degraded input.
 
 `prepare` publishes `--out` only after every step has succeeded. A failure leaves that directory uncreated.
 

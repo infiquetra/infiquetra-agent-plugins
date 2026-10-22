@@ -9,8 +9,10 @@ proof before replaying it, then compared the scrubbed recording with the raw
 re-run output. A test whose failure printed a token could never match, and a
 scrubber false positive on ordinary words broke matches the same way. The replay
 now runs and compares the reviewer's unscrubbed proof held in memory, while
-everything written stays scrubbed. Regression tests cover a token in a failure
-message, a false-positive phrase, the `--final` round, and a written-files check
+everything written stays scrubbed. The raw proofs are held per finding, because
+two reproduced findings can share an identity and each must replay its own proof.
+Regression tests cover a token in a failure message, a false-positive phrase,
+the `--final` round, findings that share an identity, and a written-files check
 that the raw value never reaches disk (`plugins/saga/scripts/review_command.py`,
 `plugins/saga/tests/test_review_command.py`).
 
@@ -30,6 +32,10 @@ mismatch now records `re-run-mismatch`, and a command that never started records
 `re-run-could-not-start`. Each carries the exit code and a scrubbed 500-character
 output tail. A test recomputes lens grades with and without these entries and
 gets the same letters.
+
+**Mechanism.** A downgrade with no reason erases the difference between a wrong
+claim, an environment that could not run the test, and a recording that could
+never match, and those need opposite fixes.
 
 **Generalizable rule.** When a gate silently lowers a result, record the reason
 beside the result, kept apart from anything that grades it.

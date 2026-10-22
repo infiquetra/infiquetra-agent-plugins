@@ -46,13 +46,15 @@ import saga_setup  # noqa: E402
 RERUN_TIMEOUT = 120
 #: The longest tail of a re-run's output that a degraded input keeps, after scrubbing.
 RERUN_TAIL_CHARS = 500
-#: How much of a re-run's output is scrubbed to find that tail; a secret cut by this window sits
-#: this far from the end, so no fragment of one reaches the tail.
+#: How much of a re-run's output, with colour codes already removed, is scrubbed to find that
+#: tail. A secret cut by this window sits this far from the end, and the window's partial first
+#: line is dropped too, so no fragment of one reaches the tail.
 _RERUN_TAIL_WINDOW = 100_000
 #: Exit codes a shell gives a command it found but could not run (126) or could not find (127).
 _COULD_NOT_START_CODES = frozenset({126, 127})
-#: A line the confinement helper itself prints, or a sandbox deny line.
-_HELPER_LINE = re.compile(r"^(?:sandbox-exec|bwrap): |\bSandbox: .*\bdeny\(\d+\) ", re.MULTILINE)
+#: A line the confinement helper itself prints when it cannot start the command. A sandbox deny
+#: line is not one: a test that ran can be denied an operation and still fail on its own.
+_HELPER_LINE = re.compile(r"^(?:sandbox-exec|bwrap): ", re.MULTILINE)
 _ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 _READ_PREFIXES = ("/usr", "/bin", "/opt", "/opt/homebrew", "/Library", "/System", "/dev")
 # /etc and the zoneinfo tree. Not /private/tmp and not the per-user temporary folder.
@@ -660,9 +662,9 @@ def _finish(
     converted = []
     # The reviewer's own command, test and output, held in memory only so the replay runs what was
     # written; every record, the run record and the state documents keep the scrubbed copy.
-    replay: list[dict[str, dict[str, str]]] = []
+    replay: list[dict[str, list[dict[str, str]]]] = []
     for answer, result in zip(answers, results, strict=True):
-        held: dict[str, dict[str, str]] = {}
+        held: dict[str, list[dict[str, str]]] = {}
         try:
             converted.append(reviewer_answer.to_records(
                 answer, items, result, ask=ask, use_jev=True, open_search_cap=cap,
@@ -804,7 +806,7 @@ def _rerun_findings(
     available: bool,
     cited: set[str],
     offline: Offline | None = None,
-    replay: Mapping[str, Mapping[str, str]] | None = None,
+    replay: Mapping[str, Sequence[Mapping[str, str]]] | None = None,
 ) -> list[dict[str, Any]]:
     reproduced = [finding for finding in findings if finding.get("evidence") == "reproduced"]
     if not reproduced:
@@ -836,14 +838,27 @@ def _rerun_findings(
                 "head-export",
             )]
         _copy_shared_tests(source, scratch, result, cited)
+        # Findings that share an identity each replay their own proof, matched by answer order.
+        seen: dict[str, int] = {}
         for finding in reproduced:
+            ident = str(finding.get("id"))
+            occurrence = seen.get(ident, 0)
+            seen[ident] = occurrence + 1
             degraded.extend(_rerun_one(
                 finding, source, scratch, home, runner, confine, offline,
-                (replay or {}).get(str(finding.get("id"))),
+                _raw_proof(replay, ident, occurrence),
             ))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return degraded
+
+
+def _raw_proof(
+    replay: Mapping[str, Sequence[Mapping[str, str]]] | None, ident: str, occurrence: int,
+) -> Mapping[str, str] | None:
+    """The reviewer's unscrubbed proof for the *occurrence*-th reproduced finding with *ident*."""
+    held = (replay or {}).get(ident) or ()
+    return held[occurrence] if occurrence < len(held) else None
 
 
 def _rerun_one(
@@ -954,12 +969,19 @@ def _could_not_start(ran: review_tools.ProcessResult) -> bool:
     """True when the re-run never ran the command: not found, not runnable or denied outright."""
     if ran.code in _COULD_NOT_START_CODES:
         return True
-    return _HELPER_LINE.search(f"{ran.stdout}{ran.stderr}"[-_RERUN_TAIL_WINDOW:]) is not None
+    return any(
+        _HELPER_LINE.search(stream[-_RERUN_TAIL_WINDOW:]) is not None
+        for stream in (ran.stdout, ran.stderr)
+    )
 
 
 def _output_tail(output: str) -> str:
     """The last ``RERUN_TAIL_CHARS`` of *output*, scrubbed before the cut so no fragment stays."""
-    window = reproduction_match.strip_ansi(output[-_RERUN_TAIL_WINDOW:])
+    # Colour codes go first: removing them after the cut would shrink the window towards the tail.
+    text = reproduction_match.strip_ansi(output)
+    window = text[-_RERUN_TAIL_WINDOW:]
+    if len(text) > _RERUN_TAIL_WINDOW and "\n" in window:
+        window = window.split("\n", 1)[1]
     return reviewer_answer.scrub_text(window)[0].strip()[-RERUN_TAIL_CHARS:].strip()
 
 
@@ -1018,7 +1040,8 @@ def _final_round(
             _copy_shared_tests(source, path, result, cited[owner])
             degraded.extend(_rerun_one(
                 finding, source, path, home, runner, confine, offline,
-                replay[owner].get(str(ident)) if owner < len(replay) else None,
+                # The merge keeps a shared identity's first reproduced finding.
+                _raw_proof(replay[owner], str(ident), 0) if owner < len(replay) else None,
             ))
     finally:
         _remove_worktree(runner, repo, path, hooks)

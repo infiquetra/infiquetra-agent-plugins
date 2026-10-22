@@ -992,6 +992,29 @@ def test_a_failure_that_prints_a_secret_shaped_value_still_reproduces(tmp_path: 
     assert _files_holding(tmp_path, _TOKEN) == []
 
 
+def test_findings_sharing_an_identity_each_replay_their_own_proof(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    unproved = _replay_finding("AssertionError: the charge ran twice")
+    unproved["key"] = "charged-twice"
+    unproved["consequence"] = "money-or-resources-wrongly-moved"
+    proved = _replay_finding("AssertionError: returned 2")
+    confine = _Confine(1, _CAPTURED)
+    code, err = _finish(
+        packet, [(_answer([unproved, proved]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    assert len(confine.calls) == 2
+    found = _llm_finding(_read(packet / "review-run.json"))
+    # The claim whose own output never replayed is not the one kept as reproduced.
+    assert found["evidence"] == "reproduced"
+    assert found["proof"]["output"] == "AssertionError: returned 2"
+    assert found["consequence"] != "money-or-resources-wrongly-moved"
+
+
 def test_the_final_round_replays_the_unscrubbed_proof_too(tmp_path: Path) -> None:
     _repo_path, packet, runner = _repro_packet(tmp_path)
     home = tmp_path / "home"
@@ -1052,6 +1075,17 @@ def test_the_replay_runs_the_command_as_written_while_the_record_is_scrubbed(
     assert _files_holding(tmp_path, _TOKEN) == []
 
 
+def test_colour_codes_after_a_secret_cannot_pull_a_fragment_into_the_tail() -> None:
+    key = "AKIA" + "Q7X2M9PLR4TZ8WB3"
+    # The raw window starts ten characters before the key ends; stripping the colour codes after
+    # the cut would leave only that fragment and a short ending.
+    after = "\x1b[0m" * 24_996 + "\nend!!"
+    assert len(after) == 99_990
+    tail = C._output_tail(f"leaked {key}{after}")
+    assert "R4TZ8WB3" not in tail
+    assert tail.endswith("end!!")
+
+
 def test_a_mismatch_records_why_with_a_capped_scrubbed_tail(tmp_path: Path) -> None:
     _repo_path, packet, runner = _repro_packet(tmp_path)
     home = tmp_path / "home"
@@ -1102,7 +1136,6 @@ def test_the_tail_scrubs_a_secret_inside_it(tmp_path: Path) -> None:
         (126, "permission denied\n"),
         (71, "sandbox-exec: execvp() of 'python3' failed: No such file or directory\n"),
         (1, "bwrap: execvp python3: No such file or directory\n"),
-        (1, "Sandbox: python3(4242) deny(1) file-read-data /private/var\n"),
     ],
 )
 def test_a_command_that_could_not_start_is_not_a_mismatch(
@@ -1128,6 +1161,23 @@ def test_a_command_that_could_not_start_is_not_a_mismatch(
     )
     assert entry["exit_code"] == code
     assert entry["output_tail"] == stdout.strip()
+
+
+def test_a_sandbox_deny_line_from_a_test_that_ran_is_a_mismatch(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    stdout = "Sandbox: python3(4242) deny(1) file-read-data /private/var\nError: other\n"
+    status, err = _finish(
+        packet,
+        [(_answer([_replay_finding("AssertionError: returned 2")]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=_Confine(1, stdout),
+    )
+    assert status == 0, err
+    reasons = [item["reason"] for item in _read(packet / "review-run.json")["degraded_inputs"]]
+    assert "re-run-mismatch" in reasons
+    assert "re-run-could-not-start" not in reasons
 
 
 def test_degraded_inputs_from_a_replay_never_change_a_grade_letter(tmp_path: Path) -> None:
