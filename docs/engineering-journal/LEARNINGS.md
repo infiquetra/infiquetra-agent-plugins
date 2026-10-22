@@ -2,6 +2,64 @@
 
 ## 2026-10-21
 
+### Compare a replayed reproduction with what the reviewer actually recorded
+
+**Evidence.** finish scrubbed secret-shaped text out of a reproduced finding's
+proof before replaying it, then compared the scrubbed recording with the raw
+re-run output. A test whose failure printed a token could never match, and a
+scrubber false positive on ordinary words broke matches the same way. The replay
+now runs and compares the reviewer's unscrubbed proof held in memory, while
+everything written stays scrubbed. The raw proofs are held per finding, because
+two reproduced findings can share an identity and each must replay its own proof.
+Regression tests cover a token in a failure message, a false-positive phrase,
+the `--final` round, findings that share an identity, and a written-files check
+that the raw value never reaches disk (`plugins/saga/scripts/review_command.py`,
+`plugins/saga/tests/test_review_command.py`).
+
+**Mechanism.** Redaction is an output concern. Applied before a comparison, it
+changes one side of the comparison, so equal inputs stop comparing equal.
+
+**Generalizable rule.** Redact at the boundary where data is written or shown,
+never before a check that needs to compare it with fresh output.
+
+### Record why an authoritative check downgraded a result
+
+**Evidence.** A replay mismatch downgraded a reproduced finding to traced and
+replaced its proof with one generic step, with no reason recorded. A command
+that could not start inside the sandbox looked the same as a genuine mismatch,
+so every loss had to be diagnosed by hand from leftover scratch copies. A
+mismatch now records `re-run-mismatch`, and a command that never started records
+`re-run-could-not-start`. Each carries the exit code and a scrubbed 500-character
+output tail. A test recomputes lens grades with and without these entries and
+gets the same letters.
+
+**Mechanism.** A downgrade with no reason erases the difference between a wrong
+claim, an environment that could not run the test, and a recording that could
+never match, and those need opposite fixes.
+
+**Generalizable rule.** When a gate silently lowers a result, record the reason
+beside the result, kept apart from anything that grades it.
+
+### Let a reviewer test its recording, and give it the environment the replay gives
+
+**Evidence.** Reproductions that survived replay had copied the runner's whole
+failure block. A single assertion line, or a failure header without its body,
+can never match. The packet's `check/` folder now carries the matcher with an
+advisory `output-match` mode, and the prompt asks for the whole block. It also
+asks that a condition the defect needs be set inside the test with its
+normal-use value, and that the test go where the runner already collects it.
+Sandboxed Claude reviewers also had no writable temporary directory, while the
+replay gives each test its own `TMPDIR`. They now get a per-review one beside
+the scratch copy.
+
+**Mechanism.** Checking against the authoritative matcher before submitting is
+cheap, while a mismatch found after submission costs the finding. A difference
+between the reviewer's environment and the replay's pushes reviewers into
+workarounds the replay refuses.
+
+**Generalizable rule.** Give the producer the same checker and the same
+environment that will judge its output, and keep the judge authoritative.
+
 ### Give a reviewer access to the contract before it submits its answer
 
 **Evidence.** Schema-valid reviewer answers can still fail item-to-finding

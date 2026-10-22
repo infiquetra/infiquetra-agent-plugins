@@ -417,6 +417,93 @@ def test_startup_a_claude_launch_runs_its_commands_through_the_prefix(
     assert json.loads(settings.read_text())["env"] == {PREFIX: str(prefix)}
 
 
+# A writable temp folder: the replay gives each test its own TMPDIR, so the reviewer gets one too.
+
+
+def test_tmpdir_the_settings_allow_writes_to_a_temp_folder_beside_the_copy_and_deny_the_roots(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, settings, _ = _claude_shell(launcher, tmp_path)
+    temp = launcher.reviewer_claude_temp_dir(copy)
+    filesystem = settings["sandbox"]["filesystem"]
+    assert temp.parent == copy.resolve().parent and temp.is_dir()
+    assert not temp.is_relative_to(copy.resolve()) and not copy.resolve().is_relative_to(temp)
+    assert filesystem["allowWrite"] == [str(temp)]
+    assert filesystem["allowRead"][-1] == str(temp)
+    # The system temp roots stay denied. The folder lives in the launch root, which
+    # reviewer_work_root keeps outside every one of them (this test's tmp_path may not be).
+    assert filesystem["denyWrite"] == list(launcher.reviewer_temp_roots())
+    for root in launcher.reviewer_temp_roots():
+        with pytest.raises(launcher.ReviewerRefused):
+            launcher.reviewer_work_root({"XDG_CACHE_HOME": f"{root}/cache"})
+
+
+def test_tmpdir_the_temp_folder_is_private_to_the_reviewer(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, _ = _claude_shell(launcher, tmp_path)
+    assert launcher.reviewer_claude_temp_dir(copy).stat().st_mode & 0o777 == 0o700
+
+
+@NOT_ROOT
+def test_tmpdir_a_sandboxed_command_sees_the_temp_folder_whatever_the_sandbox_set(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    env = _startup_env(tmp_path, TMPDIR="/tmp/sandbox-chosen", **extra)
+    out = _run_like_claude('echo "$TMPDIR"; touch "$TMPDIR/probe" && echo wrote', env, copy)
+    temp = launcher.reviewer_claude_temp_dir(copy)
+    assert out.split() == [str(temp), "wrote"] and (temp / "probe").is_file()
+
+
+@NOT_ROOT
+def test_tmpdir_a_path_with_spaces_and_quotes_still_reaches_the_command(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy = tmp_path / "it's a launch" / "copy"
+    copy.mkdir(parents=True)
+    settings = launcher.reviewer_claude_settings(copy, tmp_path / "packet", {}, toolchain=[])
+    _, extra = launcher.reviewer_claude_materialize(settings, copy.parent, copy)
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    out = _run_like_claude('printf %s "$TMPDIR"', _startup_env(tmp_path, **extra), copy)
+    assert out == str(launcher.reviewer_claude_temp_dir(copy))
+
+
+def test_tmpdir_outside_the_sandbox_a_hook_keeps_its_own_temp_directory(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    env = _startup_env(tmp_path, TMPDIR="/tmp/hook-chosen", **extra)
+    assert _run_like_claude('echo "$TMPDIR"', env, copy).strip() == "/tmp/hook-chosen"
+
+
+def test_tmpdir_a_claude_launch_writes_there_and_the_scratch_changes_do_not_show_it(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    seen: dict[str, Any] = {}
+
+    def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
+        temp = launcher.reviewer_claude_temp_dir(cwd)
+        (temp / "scratch-file").write_text("temporary\n")
+        seen["temp"] = temp
+        settings = json.loads(Path(argv[argv.index("--settings") + 1]).read_text())
+        seen["write"] = settings["sandbox"]["filesystem"]["allowWrite"]
+        return subprocess.CompletedProcess(argv, 0, CLAUDE_ANSWER, "")
+
+    result, _ = launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path, max_budget_usd="5"), env=_env(tmp_path),
+        session=session,
+    )
+    assert seen["write"] == [str(seen["temp"])] and not seen["temp"].is_relative_to(
+        Path(result["scratch"]["path"])
+    )
+    assert result["scratch"]["changes"] == {
+        "added": [], "modified": [], "deleted": [], "links": []
+    }
+
+
 @NOT_ROOT
 @pytest.mark.parametrize("fixed", [True, False])
 def test_startup_the_claude_probe_fails_without_the_prefix_and_passes_with_it(
@@ -434,8 +521,15 @@ def test_startup_the_claude_probe_fails_without_the_prefix_and_passes_with_it(
         ))
 
     def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
-        results = {k: v for k, v in HONEST.items() if k != "startup_variable"}
+        # Claude's TMPDIR write succeeds, in the folder the sandbox leaves writable.
+        results = {**HONEST, "write_tmpdir": "0"}
+        results.pop("startup_variable")
         _write_results(cwd.parent, results)
+        tag = re.search(r"reviewer-probe-([0-9a-f]{12})", (cwd / "probe.sh").read_text())
+        assert tag is not None
+        temp = launcher.reviewer_claude_temp_dir(cwd)
+        temp.mkdir(exist_ok=True)  # the unfixed variant skips the step that makes it
+        (temp / f"reviewer-probe-{tag.group(1)}").touch()
         if PREFIX in env:
             _sandbox_denies(launcher.reviewer_claude_shell_paths(cwd)[1])
         _run_like_claude('r=probe-results.txt\n' + launcher.REVIEWER_PROBE_STARTUP_LINE, dict(env),
@@ -594,6 +688,34 @@ def test_verdict_the_vendor_checks_fail_when_the_sandbox_lets_it_through(
     assert held[check] is False
 
 
+def test_verdict_write_tmpdir_with_a_writable_temp_folder_needs_the_write_to_land_there(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    temp = tmp_path / "temp-folder"
+    temp.mkdir()
+    allowed = {**HONEST, "write_tmpdir": "0"}
+    assert _verdicts(launcher, tmp_path, allowed, temp_dir=temp)["write-tmpdir"] is False
+    (temp / "reviewer-probe-t").touch()
+    held = _verdicts(launcher, tmp_path, allowed, temp_dir=temp)
+    assert held["write-tmpdir"] is True and held["write-tmp"] is True
+    # A denied write is no longer the expected result, and /tmp must still be denied.
+    assert _verdicts(launcher, tmp_path, HONEST, temp_dir=temp)["write-tmpdir"] is False
+    assert _verdicts(launcher, tmp_path, {**allowed, "write_tmp": "0"}, temp_dir=temp)[
+        "write-tmp"
+    ] is False
+
+
+def test_verdict_write_tmpdir_without_a_temp_folder_still_needs_a_denial(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    assert _verdicts(launcher, tmp_path, {**HONEST, "write_tmpdir": "0"})["write-tmpdir"] is False
+
+
+def test_verdict_only_the_claude_recipe_leaves_a_temp_folder_writable(launcher: ModuleType) -> None:
+    assert launcher.REVIEWER_CLAUDE_RECIPE.temp_dir is launcher.reviewer_claude_temp_dir
+    assert all(r.temp_dir is None for r in launcher.REVIEWER_CANDIDATES.values())
+
+
 @pytest.mark.parametrize(
     "parsed",
     [{"final": None, "is_error": True, "error": "no JSON"}, {"final": "", "is_error": False},
@@ -648,10 +770,13 @@ def test_record_holds_identity_and_verdicts_and_no_path_or_canary(
     claude.chmod(0o755)
 
     def session(argv: list[str], *, stdin: str, cwd: Path, env: Any, timeout: float) -> Any:
-        results = {**HONEST, "network_connect": "403", "network": "56"}
+        results = {**HONEST, "network_connect": "403", "network": "56", "write_tmpdir": "0"}
         results.pop("read_vendor_credential_1")
         results.pop("read_vendor_credential_0")
         _write_results(cwd.parent, results)
+        tag = re.search(r"reviewer-probe-([0-9a-f]{12})", (cwd / "probe.sh").read_text())
+        assert tag is not None
+        (launcher.reviewer_claude_temp_dir(cwd) / f"reviewer-probe-{tag.group(1)}").touch()
         return subprocess.CompletedProcess(argv, 0, CLAUDE_ANSWER, "")
 
     verdicts, code = launcher.reviewer_probe(

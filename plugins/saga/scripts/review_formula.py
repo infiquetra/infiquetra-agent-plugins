@@ -481,8 +481,9 @@ def compute(inputs: Mapping[str, Any]) -> dict[str, Any]:
 
     *inputs* holds ``findings`` and ``measurements`` in their input form, ``builder_records``,
     ``may_block`` (``{lens: {language: bool}}``; absent means every lens reports only) and
-    ``degraded_inputs`` (``[{lens, language, input, tool, reason}]``). Everything returned is sorted,
-    so the same inputs in any order give the same output.
+    ``degraded_inputs`` (``[{lens, language, input, tool, reason}]``, a re-run reason may add
+    ``exit_code`` and ``output_tail``; none of them changes a grade). Everything returned is
+    sorted, so the same inputs in any order give the same output.
     """
     builder_records = list(inputs.get("builder_records") or [])
     may_block = dict(inputs.get("may_block") or {})

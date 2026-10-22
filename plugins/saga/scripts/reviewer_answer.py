@@ -48,7 +48,8 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-import review_formula as formula  # noqa: E402  (after the sys.path shim, by design)
+import reproduction_match  # noqa: E402  (after the sys.path shim, by design)
+import review_formula as formula  # noqa: E402
 import review_records as records  # noqa: E402
 
 REFERENCES = _SCRIPTS_DIR.parent / "references"
@@ -707,8 +708,16 @@ def to_records(
     ask: Asker | None = None,
     use_jev: bool = True,
     open_search_cap: int = OPEN_SEARCH_CAP,
+    raw_proofs: dict[int, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """An accepted answer as review_records.v1 findings and answered where-to-look records."""
+    """An accepted answer as review_records.v1 findings and answered where-to-look records.
+
+    Everything returned is scrubbed. A caller that must replay a reproduction as the reviewer wrote
+    it passes an empty *raw_proofs*, and gets each reproduced finding's unscrubbed ``command``,
+    ``test`` and ``output`` filled in under its position in the returned findings; two findings can
+    share an identity, so the position is the key. That dict is for the caller's memory
+    only: it is never part of the returned records, so nothing here writes a raw value.
+    """
     problems = check(answer, items, open_search_cap=open_search_cap, result=result)
     if problems:
         raise AnswerRefused(problems)
@@ -716,7 +725,8 @@ def to_records(
     built: list[dict[str, Any]] = []
     identities: dict[str, str] = {}
     picks: list[dict[str, Any]] = []
-    for finding in (scrub_finding(found)[0] for found in answer["findings"]):
+    for original in answer["findings"]:
+        finding = scrub_finding(original)[0]
         rule = {"row": finding["row"], "ref": _rule_ref(finding, items)}
         record: dict[str, Any] = {
             "kind": "finding",
@@ -741,6 +751,12 @@ def to_records(
         record["id"] = records.finding_identity(record["lens"], rule, record["location"])
         identities[finding["key"]] = record["id"]
         if finding["evidence"] == "reproduced":
+            if raw_proofs is not None:
+                given = original.get("proof") or {}
+                raw_proofs[len(built)] = {
+                    name: given[name] for name in ("command", "test", "output")
+                    if isinstance(given.get(name), str)
+                }
             jev, note = jev_pick(finding, ask) if use_jev else (None, "Jev was not asked")
             record["consequence_jev"] = jev
             record["unconfirmed"] = jev is None
@@ -804,6 +820,97 @@ def paths() -> dict[str, str]:
     }
 
 
+def _short(text: str, width: int = 100) -> str:
+    return text if len(text) <= width else text[: width - 3] + "..."
+
+
+def _output_mismatch(code: int, captured: str, recorded: str, test: str) -> str:
+    """Why *recorded* would not match a run that printed *captured*, from the matcher's parts."""
+    match = reproduction_match
+    if code == 0:
+        return "the captured run exited 0; saga only matches a run that failed"
+    text = match.strip_ansi(captured[: match._CAPTURE_LIMIT])
+    recorded_text = match.strip_ansi(recorded[: match._CAPTURE_LIMIT])
+    file, name = match._split_cited(test) if test else ("", "")
+    hits = [item for item in match.failed_tests(text) if match._fits(item, file, name)]
+    if not hits:
+        return (
+            f"the captured output shows no failure of {test or 'the test'}; capture the run "
+            "of the command in the finding's proof, with the failure block included"
+        )
+    recorded_failures = match.failed_tests(recorded_text)
+    recorded_hits = [item for item in recorded_failures if match._fits(item, file, name)]
+    if recorded_hits and not any(item.body for item in recorded_hits):
+        header = recorded_hits[0].name
+        return (
+            f"the recorded output names '{header}' as FAILED but has no failure body, so there "
+            "is no failure message to compare; paste the whole failure block, from the "
+            f"'---- {header} stdout ----' line through the panic and assertion lines"
+        )
+    if recorded_failures and not recorded_hits:
+        return (
+            "the recorded output has failures for other tests only; none of them is "
+            f"{test or 'the cited test'}"
+        )
+    wanted = match._message_lines(hits[0])
+    if not wanted:
+        return "the captured failure carries no message lines to compare against"
+    if not recorded_hits:
+        flat = " ".join(match._message_lines(
+            match.Failure(None, "", tuple(match._lines(recorded_text)))
+        ))
+        if sum(map(len, wanted)) < match._MESSAGE_FLOOR:
+            return "the captured failure message is too short to identify the failure"
+        shown = "; ".join(f"'{_short(part)}'" for part in [p for p in wanted if p not in flat][:3])
+        return (
+            "the recorded output has no runner failure block (it looks like a one line summary "
+            "or a copied excerpt), so every message line of the failure must appear in it; "
+            f"missing from the recorded output: {shown}. Paste the full failure block"
+        )
+    expected = match._message_lines(recorded_hits[0])
+    own, joined = " ".join(wanted), " ".join(expected)
+    differing = [p for p in expected if p not in own] + [p for p in wanted if p not in joined]
+    detail = "; ".join(f"'{_short(part)}'" for part in differing[:3])
+    return (
+        "the recorded failure message and the captured one differ"
+        + (f" (for example {detail})" if detail else "")
+        + "; the recorded output must be this failure's message as the run prints it"
+    )
+
+
+def output_match(
+    answer: Any, key: str, captured: str, code: int = 1,
+) -> tuple[bool, str | None]:
+    """Would finding *key*'s ``proof.output`` match a replay that printed *captured*?
+
+    Advisory only. It runs nothing and shares ``reproduction_match.matches`` with saga's replay,
+    comparing the recorded output with *captured* raw against raw. *code* is the exit code of
+    the reviewer's own run (default 1, a failing run). Returns ``(matches, reason)``; the reason
+    is None when it matches, and says why when it does not.
+    """
+    found = [
+        item for item in (answer.get("findings") or ())
+        if isinstance(item, Mapping) and item.get("key") == key
+    ] if isinstance(answer, Mapping) else []
+    if not found:
+        return False, f"no finding with key '{key}' in the answer"
+    item = found[0]
+    proof = item.get("proof") if isinstance(item.get("proof"), Mapping) else {}
+    if item.get("evidence") != "reproduced":
+        return False, f"'{key}' is not a reproduced finding; only a reproduction is replayed"
+    recorded, test = proof.get("output"), proof.get("test")
+    if not isinstance(recorded, str) or not recorded.strip():
+        return False, f"'{key}' records no proof.output to compare"
+    test = test if isinstance(test, str) else ""
+    if reproduction_match.matches(code, captured, recorded, test):
+        return True, None
+    try:
+        return False, _output_mismatch(code, captured, recorded, test)
+    except reproduction_match._ParseLimit as exc:
+        # The matcher's parse limit: saga's replay gives up on output this large too.
+        return False, f"the output is too large for saga's matcher to read ({exc})"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="reviewer_answer.py",
@@ -815,6 +922,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("paths", help="Print saga's reviewer prompt and schema paths and SHA-256s.")
+    match = sub.add_parser(
+        "output-match",
+        help="Advisory: would a reproduced finding's recorded output match saga's replay?",
+        description=(
+            "Advisory: say whether a reproduced finding's proof.output would match the output "
+            "of a replay, using saga's own matcher. Give it the output you captured by running "
+            "the finding's command yourself. It runs no command and changes nothing; saga's "
+            "replay at finish still decides. Exit 0 would match; 1 would not, with the reason "
+            "on standard error; 2 an unreadable file."
+        ),
+    )
+    match.add_argument("--answer", type=Path, required=True, help="The draft answer JSON.")
+    match.add_argument("--finding", required=True, help="The finding's key in the answer.")
+    match.add_argument(
+        "--output", type=Path, required=True,
+        help="A file holding the complete output of your own run of the finding's command.",
+    )
+    match.add_argument(
+        "--exit-code", type=int, default=1,
+        help="The exit code of that run (default 1, a failing run).",
+    )
     for name, text in (
         ("check", "Refuse an answer that skips an item or breaks the answer contract."),
         ("records", (
@@ -853,6 +981,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "paths":
         print(json.dumps(paths(), indent=2))
         return 0
+    if args.command == "output-match":
+        try:
+            answer = _read(args.answer)
+            captured = args.output.read_text(encoding="utf-8", errors="replace")
+        except (OSError, ValueError) as exc:
+            print(f"reviewer_answer: cannot read an input: {exc}", file=sys.stderr)
+            return 2
+        matched, reason = output_match(answer, args.finding, captured, args.exit_code)
+        if matched:
+            print(f"{args.finding}: the recorded output would match (advisory; saga decides)")
+            return 0
+        print(f"{args.finding}: the recorded output would not match: {reason}", file=sys.stderr)
+        return 1
     try:
         answer = _read(args.answer)
         items = _read(args.items)

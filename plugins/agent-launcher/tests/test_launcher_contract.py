@@ -4594,6 +4594,7 @@ def test_reviewer_read_confinement_settings_are_pinned(
     # Issue #225: the shell prefix that keeps start-up exports out, and its denied sentinel.
     root = copy.resolve().parent
     prefix, sentinel = root / "shell" / "reviewer-shell.sh", root / "unsandboxed"
+    temp = root / "tmp"  # the reviewer's own writable temp folder, beside the copy
     assert settings == {
         "env": {"CLAUDE_CODE_SHELL_PREFIX": str(prefix)},
         "sandbox": {
@@ -4604,7 +4605,10 @@ def test_reviewer_read_confinement_settings_are_pinned(
             "filesystem": {
                 "denyWrite": ["/tmp", "/private/tmp", "/var/folders"],
                 "denyRead": ["~", str(sentinel)],
-                "allowRead": [str(copy.resolve()), str(packet.resolve()), str(prefix.parent)],
+                "allowRead": [
+                    str(copy.resolve()), str(packet.resolve()), str(prefix.parent), str(temp),
+                ],
+                "allowWrite": [str(temp)],
             },
             "network": {"strictAllowlist": True, "allowedDomains": []},
             "credentials": {"envVars": [{"name": "GH_TOKEN", "mode": "deny"}]},
@@ -4661,7 +4665,7 @@ def test_reviewer_read_confinement_allow_read_is_only_copy_packet_and_named_tool
     settings = launcher.reviewer_claude_settings(copy, packet, env)
     assert settings["sandbox"]["filesystem"]["allowRead"] == [
         str(copy.resolve()), str(packet.resolve()), str(copy.resolve().parent / "shell"),
-        str(interpreter / "bin"), str(interpreter / "lib"),
+        str(interpreter / "bin"), str(interpreter / "lib"), str(copy.resolve().parent / "tmp"),
     ]
 
 
@@ -5298,7 +5302,8 @@ def test_reviewer_the_prompt_fingerprint_changes_with_one_byte(
 # The probe: every verdict comes from the command's own results and the filesystem.
 
 HONEST = {
-    "read": "1", "write_outside": "1", "write_inside": "0", "write_tmpdir": "1",
+    # Claude's TMPDIR is the reviewer's own writable temp folder; /tmp stays denied.
+    "read": "1", "write_outside": "1", "write_inside": "0", "write_tmpdir": "0",
     "write_tmp": "1", "network": "56", "variable": "unset", "read_home": "1", "read_packet": "0",
     "python_test": "0", "git": "0", "plain_variable": "unset",
     # Issue #223.
@@ -5307,6 +5312,11 @@ HONEST = {
 }
 #: What ``claude -p --output-format json`` prints when the session answered.
 ANSWERED = json.dumps({"result": "done", "is_error": False, "usage": {}})
+
+
+def launcher_temp(copy: Path) -> Path:
+    """The reviewer's temp folder, as the probe's materialize step made it beside *copy*."""
+    return copy.resolve().parent / "tmp"
 
 
 def _probe_session(results: dict[str, str] | None, *, outside_write: bool = False,
@@ -5321,6 +5331,10 @@ def _probe_session(results: dict[str, str] | None, *, outside_write: bool = Fals
         if echo_home:
             output = home_canary.read_text()
         if results is not None:
+            if results.get("write_tmpdir") == "0":
+                tag = re.search(r'/reviewer-probe-([0-9a-f]+)" 2> /dev/null; echo "write_tmpdir',
+                                script).group(1)
+                (launcher_temp(cwd) / f"reviewer-probe-{tag}").touch()
             (cwd / "inside-written").write_text("")
             (cwd / "probe-results.txt").write_text(
                 "".join(f"{key}={value}\n" for key, value in results.items())
