@@ -44,6 +44,9 @@ import run_record  # noqa: E402
 import saga_setup  # noqa: E402
 
 RERUN_TIMEOUT = 120
+#: The file-creation mask every re-run child starts with, whatever mask this process has: the
+#: common default, so a file the code creates has the mode it has in normal use.
+RERUN_UMASK = 0o022
 #: The longest tail of a re-run's output that a degraded input keeps, after scrubbing.
 RERUN_TAIL_CHARS = 500
 #: How much of a re-run's output, with colour codes already removed, is scrubbed to find that
@@ -249,7 +252,9 @@ def run_confined(
         ]
     else:
         wrapped = _bwrap(scratch, argv, (*reads, *toolchain))
-    return runner(wrapped, cwd=cwd, env=dict(env), timeout=timeout, shell=False)
+    return runner(
+        wrapped, cwd=cwd, env=dict(env), timeout=timeout, shell=False, umask=RERUN_UMASK,
+    )
 
 
 def platform_helper() -> str | None:
