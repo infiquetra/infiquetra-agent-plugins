@@ -673,6 +673,21 @@ def test_no_jev_marks_every_reproduced_finding_unconfirmed() -> None:
     assert reproduced and all(f["unconfirmed"] for f in reproduced)
 
 
+def test_raw_proofs_hold_the_unscrubbed_proof_and_the_records_stay_scrubbed() -> None:
+    token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+    answer = copy.deepcopy(ANSWER)
+    reproduced = next(f for f in answer["findings"] if f["evidence"] == "reproduced")
+    reproduced["proof"]["output"] = f"AssertionError: leaked {token}"
+    held: dict[str, dict[str, str]] = {}
+    out = A.to_records(answer, ITEMS, RESULT, use_jev=False, raw_proofs=held)
+    record = next(f for f in out["findings"] if f["evidence"] == "reproduced")
+    assert held[record["id"]]["output"] == f"AssertionError: leaked {token}"
+    assert held[record["id"]]["command"] == reproduced["proof"]["command"]
+    assert len(held) == sum(f["evidence"] == "reproduced" for f in out["findings"])
+    assert token not in json.dumps(out)
+    assert record["proof"]["output"] == "AssertionError: leaked [scrubbed:github-token]"
+
+
 def test_jev_is_asked_only_about_reproduced_findings() -> None:
     ask = jev_says("money-or-resources-wrongly-moved")
     A.to_records(ANSWER, ITEMS, RESULT, ask=ask)

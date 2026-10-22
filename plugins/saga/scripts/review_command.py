@@ -15,6 +15,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess  # nosec B404
@@ -43,6 +44,15 @@ import run_record  # noqa: E402
 import saga_setup  # noqa: E402
 
 RERUN_TIMEOUT = 120
+#: The longest tail of a re-run's output that a degraded input keeps, after scrubbing.
+RERUN_TAIL_CHARS = 500
+#: How much of a re-run's output is scrubbed to find that tail; a secret cut by this window sits
+#: this far from the end, so no fragment of one reaches the tail.
+_RERUN_TAIL_WINDOW = 100_000
+#: Exit codes a shell gives a command it found but could not run (126) or could not find (127).
+_COULD_NOT_START_CODES = frozenset({126, 127})
+#: A line the confinement helper itself prints, or a sandbox deny line.
+_HELPER_LINE = re.compile(r"^(?:sandbox-exec|bwrap): |\bSandbox: .*\bdeny\(\d+\) ", re.MULTILINE)
 _ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 _READ_PREFIXES = ("/usr", "/bin", "/opt", "/opt/homebrew", "/Library", "/System", "/dev")
 # /etc and the zoneinfo tree. Not /private/tmp and not the per-user temporary folder.
@@ -645,11 +655,17 @@ def _finish(
         raise CommandFailure(2, "builder record: must be a JSON object")
     unit = _unit(store, args, builder) if store is not None else None
     converted = []
+    # The reviewer's own command, test and output, held in memory only so the replay runs what was
+    # written; every record, the run record and the state documents keep the scrubbed copy.
+    replay: list[dict[str, dict[str, str]]] = []
     for answer, result in zip(answers, results, strict=True):
+        held: dict[str, dict[str, str]] = {}
         try:
             converted.append(reviewer_answer.to_records(
                 answer, items, result, ask=ask, use_jev=True, open_search_cap=cap,
+                raw_proofs=held,
             ))
+            replay.append(held)
         except reviewer_answer.AnswerRefused as exc:
             raise CommandFailure(1, "\n".join(exc.problems)) from exc
     degraded = list(_read_json(packet / "degraded.json", "degraded"))
@@ -662,7 +678,7 @@ def _finish(
         for position, (produced, result) in enumerate(zip(converted, results, strict=True)):
             degraded.extend(_rerun_findings(
                 produced["findings"], result, repo, str(change.get("head") or ""),
-                home, runner, confine, available, cited[position], offline,
+                home, runner, confine, available, cited[position], offline, replay[position],
             ))
         findings, owners = _merge_findings(
             converted, _read_json(packet / "findings.json", "findings"),
@@ -672,7 +688,7 @@ def _finish(
         if args.final:
             degraded.extend(_final_round(
                 findings, owners, results, repo, str(change.get("head") or ""), home, runner,
-                confine, available, cited, offline,
+                confine, available, cited, offline, replay,
             ))
     may_block = _bools_from_packet(packet)
     reviewers, usage_specs, usage_totals = _reviewers_and_usage(
@@ -785,7 +801,8 @@ def _rerun_findings(
     available: bool,
     cited: set[str],
     offline: Offline | None = None,
-) -> list[dict[str, str]]:
+    replay: Mapping[str, Mapping[str, str]] | None = None,
+) -> list[dict[str, Any]]:
     reproduced = [finding for finding in findings if finding.get("evidence") == "reproduced"]
     if not reproduced:
         return []
@@ -806,7 +823,7 @@ def _rerun_findings(
         )]
     scratch = Path(tempfile.mkdtemp(prefix="saga-review-rerun-"))
     scratch.chmod(0o700)
-    degraded: list[dict[str, str]] = []
+    degraded: list[dict[str, Any]] = []
     try:
         if not _export_head(runner, repo, head, scratch):
             for finding in reproduced:
@@ -819,6 +836,7 @@ def _rerun_findings(
         for finding in reproduced:
             degraded.extend(_rerun_one(
                 finding, source, scratch, home, runner, confine, offline,
+                (replay or {}).get(str(finding.get("id"))),
             ))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -833,16 +851,26 @@ def _rerun_one(
     runner: Process,
     confine: Confine | None,
     offline: Offline | None = None,
-) -> list[dict[str, str]]:
+    replay: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Re-run one reproduced finding, and downgrade it unless it fails as recorded.
+
+    The finding's own proof is scrubbed, so it only names things in the degraded inputs. What runs
+    and what the re-run's output is compared with is *replay*, the reviewer's unscrubbed
+    ``command``, ``test`` and ``output``; a finding with none falls back to its own proof.
+    """
     proof = finding.get("proof") if isinstance(finding.get("proof"), Mapping) else {}
-    test = proof.get("test") if isinstance(proof, Mapping) else None
+    shown_test = str(proof.get("test") or "") if isinstance(proof, Mapping) else ""
+    shown_command = str(proof.get("command") or "") if isinstance(proof, Mapping) else ""
+    held = replay if replay else proof
+    test = held.get("test") if isinstance(held, Mapping) else None
     relative = reviewer_answer.test_file_of(test) if isinstance(test, str) else ""
     if not _copy_one(source, scratch, relative):
         _downgrade(finding)
         return [_degraded(
             str(finding.get("lens") or "correctness"),
             str(finding.get("language") or "none"),
-            relative or "test",
+            reviewer_answer.test_file_of(shown_test) or "test",
             "review-command",
             "missing-test-file",
         )]
@@ -852,17 +880,19 @@ def _rerun_one(
             str(finding.get("lens") or "correctness"), "none", "tmp", "review-command",
             "re-run-could-not-start",
         )]
-    command = proof.get("command") if isinstance(proof, Mapping) else None
+    command = held.get("command") if isinstance(held, Mapping) else None
     argv = _argv(command)
     if argv is None:
         _downgrade(finding)
         return [_degraded(
             str(finding.get("lens") or "correctness"),
             str(finding.get("language") or "none"),
-            str(command or ""),
+            shown_command,
             "review-command",
             "re-run-not-argv",
         )]
+    shown_program = _argv(shown_command)
+    program = str(shown_program[0]) if shown_program else shown_command
     env = child_environment(scratch)
     reads: tuple[Path, ...] = ()
     toolchain: tuple[Path, ...] = ()
@@ -892,19 +922,42 @@ def _rerun_one(
     except OSError:
         _downgrade(finding)
         return [_degraded(
-            str(finding.get("lens") or "correctness"), "none", str(argv[0]), "review-command",
+            str(finding.get("lens") or "correctness"), "none", program, "review-command",
             "re-run-could-not-start",
         )]
-    recorded = proof.get("output") if isinstance(proof, Mapping) else ""
-    test = proof.get("test") if isinstance(proof, Mapping) else ""
+    recorded = held.get("output") if isinstance(held, Mapping) else ""
     if _matches(
         ran,
         recorded if isinstance(recorded, str) else "",
         test if isinstance(test, str) else "",
     ):
         return []
+    # Everything below is persisted, so it comes from the scrubbed proof and the scrubbed tail.
+    lens = str(finding.get("lens") or "correctness")
+    language = str(finding.get("language") or "none")
+    started = not _could_not_start(ran)
     _downgrade(finding)
-    return []
+    return [_degraded(
+        lens, language if started else "none",
+        shown_test if started else program,
+        "review-command",
+        "re-run-mismatch" if started else "re-run-could-not-start",
+        exit_code=ran.code,
+        tail=_output_tail(f"{ran.stdout}{ran.stderr}"),
+    )]
+
+
+def _could_not_start(ran: review_tools.ProcessResult) -> bool:
+    """True when the re-run never ran the command: not found, not runnable or denied outright."""
+    if ran.code in _COULD_NOT_START_CODES:
+        return True
+    return _HELPER_LINE.search(f"{ran.stdout}{ran.stderr}"[-_RERUN_TAIL_WINDOW:]) is not None
+
+
+def _output_tail(output: str) -> str:
+    """The last ``RERUN_TAIL_CHARS`` of *output*, scrubbed before the cut so no fragment stays."""
+    window = reproduction_match.strip_ansi(output[-_RERUN_TAIL_WINDOW:])
+    return reviewer_answer.scrub_text(window)[0].strip()[-RERUN_TAIL_CHARS:].strip()
 
 
 def _final_round(
@@ -919,7 +972,8 @@ def _final_round(
     available: bool,
     cited: Sequence[set[str]],
     offline: Offline | None = None,
-) -> list[dict[str, str]]:
+    replay: Sequence[Mapping[str, Mapping[str, str]]] = (),
+) -> list[dict[str, Any]]:
     try:
         graded = review_formula.compute({"findings": findings})
     except review_formula.FormulaError as exc:
@@ -942,7 +996,7 @@ def _final_round(
             if finding.get("id") in blocking:
                 _downgrade(finding)
         return [_degraded("correctness", "none", "worktree", "review-command", "final-worktree")]
-    degraded: list[dict[str, str]] = []
+    degraded: list[dict[str, Any]] = []
     try:
         by_id = {finding.get("id"): finding for finding in findings}
         for ident in blocking:
@@ -959,7 +1013,10 @@ def _final_round(
                 ))
                 continue
             _copy_shared_tests(source, path, result, cited[owner])
-            degraded.extend(_rerun_one(finding, source, path, home, runner, confine, offline))
+            degraded.extend(_rerun_one(
+                finding, source, path, home, runner, confine, offline,
+                replay[owner].get(str(ident)) if owner < len(replay) else None,
+            ))
     finally:
         _remove_worktree(runner, repo, path, hooks)
     return degraded
@@ -1527,14 +1584,22 @@ def _number(value: Any) -> float:
     return float(value)
 
 
-def _degraded(lens: str, language: str, name: str, tool: str, reason: str) -> dict[str, str]:
-    return {
+def _degraded(
+    lens: str, language: str, name: str, tool: str, reason: str,
+    *, exit_code: int | None = None, tail: str | None = None,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
         "lens": lens if lens in review_formula.LENSES else "correctness",
         "language": language if language in review_formula.LANGUAGES else "none",
         "input": name or "sweep",
         "tool": tool,
         "reason": reason,
     }
+    if exit_code is not None:
+        entry["exit_code"] = exit_code
+    if tail:
+        entry["output_tail"] = tail
+    return entry
 
 
 def _seatbelt(

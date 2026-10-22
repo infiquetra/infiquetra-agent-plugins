@@ -947,6 +947,221 @@ def test_reproduced_rerun_output_mismatch_is_traced(tmp_path: Path) -> None:
     assert found["consequence_jev"] is None
 
 
+_TOKEN = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+
+
+def _replay_finding(output: str, command: str | None = None) -> dict[str, Any]:
+    found = _finding("A retry returns the new number.")
+    found["proof"]["output"] = output
+    if command is not None:
+        found["proof"]["command"] = command
+    return found
+
+
+def _files_holding(root: Path, value: str) -> list[str]:
+    """The files under *root* that hold *value*, other than the answer the test itself wrote."""
+    return [
+        str(path.relative_to(root)) for path in sorted(root.rglob("*"))
+        if path.is_file() and not path.name.startswith("answer-")
+        and value in path.read_text(encoding="utf-8", errors="replace")
+    ]
+
+
+def _llm_finding(run: dict[str, Any]) -> dict[str, Any]:
+    return next(item for item in run["findings"] if item["source"]["kind"] == "llm")
+
+
+def test_a_failure_that_prints_a_secret_shaped_value_still_reproduces(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    message = f"AssertionError: logged the token {_TOKEN} in the clear"
+    confine = _Confine(1, f"{message}\ntests/test_changed.py::test_changed\n")
+    code, err = _finish(
+        packet,
+        [(_answer([_replay_finding(message)]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    run = _read(packet / "review-run.json")
+    found = _llm_finding(run)
+    assert found["evidence"] == "reproduced"
+    # What is stored stays scrubbed, and the raw value is written nowhere.
+    assert "[scrubbed:github-token]" in found["proof"]["output"]
+    assert _files_holding(tmp_path, _TOKEN) == []
+
+
+def test_the_final_round_replays_the_unscrubbed_proof_too(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    message = f"AssertionError: logged the token {_TOKEN} in the clear"
+    confine = _Confine(1, f"{message}\ntests/test_changed.py::test_changed\n")
+    code, err = _finish(
+        packet, [(_answer([_replay_finding(message)]), _result(scratch, changes))],
+        home, runner, ask=_ask(), confine=confine, final=True,
+    )
+    assert code == 0, err
+    assert len(confine.calls) == 2
+    found = _llm_finding(_read(packet / "review-run.json"))
+    assert found["evidence"] == "reproduced"
+    assert _files_holding(tmp_path, _TOKEN) == []
+
+
+def test_a_scrub_false_positive_phrase_still_reproduces(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    message = "AssertionError: the bearer credential was written to the log"
+    assert "[scrubbed:bearer-token]" in A.scrub_text(message)[0]
+    confine = _Confine(1, f"{message}\ntests/test_changed.py::test_changed\n")
+    code, err = _finish(
+        packet,
+        [(_answer([_replay_finding(message)]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    found = _llm_finding(_read(packet / "review-run.json"))
+    assert found["evidence"] == "reproduced"
+    assert "[scrubbed:bearer-token]" in found["proof"]["output"]
+
+
+def test_the_replay_runs_the_command_as_written_while_the_record_is_scrubbed(
+    tmp_path: Path,
+) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    command = f"python3 -m pytest tests/test_changed.py -q -k {_TOKEN}"
+    confine = _Confine(1, _CAPTURED)
+    code, err = _finish(
+        packet,
+        [(_answer([_replay_finding("AssertionError: returned 2", command)]),
+          _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    assert confine.calls[0][-1] == _TOKEN
+    found = _llm_finding(_read(packet / "review-run.json"))
+    assert found["evidence"] == "reproduced"
+    assert _TOKEN not in found["proof"]["command"]
+    assert _files_holding(tmp_path, _TOKEN) == []
+
+
+def test_a_mismatch_records_why_with_a_capped_scrubbed_tail(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    noise = "a different failure line\n" * 100
+    ran = f"{noise}Error: leaked {_TOKEN}\nlast line of the run\n"
+    code, err = _finish(
+        packet,
+        [(_answer([_replay_finding("AssertionError: returned 2")]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=_Confine(1, ran),
+    )
+    assert code == 0, err
+    run = _read(packet / "review-run.json")
+    assert _llm_finding(run)["evidence"] == "traced"
+    entry = next(item for item in run["degraded_inputs"] if item["reason"] == "re-run-mismatch")
+    assert entry["tool"] == "review-command"
+    assert entry["exit_code"] == 1
+    assert entry["input"] == "tests/test_changed.py::test_changed"
+    assert 0 < len(entry["output_tail"]) <= C.RERUN_TAIL_CHARS
+    assert entry["output_tail"].endswith("last line of the run")
+    assert _files_holding(tmp_path, _TOKEN) == []
+    lens = next(grade for grade in run["lens_grades"] if grade["lens"] == entry["lens"])
+    assert entry in lens["degraded_inputs"]
+
+
+def test_the_tail_scrubs_a_secret_inside_it(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    code, err = _finish(
+        packet,
+        [(_answer([_replay_finding("AssertionError: returned 2")]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"),
+        confine=_Confine(1, f"Error: leaked {_TOKEN}\n"),
+    )
+    assert code == 0, err
+    run = _read(packet / "review-run.json")
+    entry = next(item for item in run["degraded_inputs"] if item["reason"] == "re-run-mismatch")
+    assert entry["output_tail"] == "Error: leaked [scrubbed:github-token]"
+
+
+@pytest.mark.parametrize(
+    ("code", "stdout"),
+    [
+        (127, "env: python3: No such file or directory\n"),
+        (126, "permission denied\n"),
+        (71, "sandbox-exec: execvp() of 'python3' failed: No such file or directory\n"),
+        (1, "bwrap: execvp python3: No such file or directory\n"),
+        (1, "Sandbox: python3(4242) deny(1) file-read-data /private/var\n"),
+    ],
+)
+def test_a_command_that_could_not_start_is_not_a_mismatch(
+    tmp_path: Path, code: int, stdout: str,
+) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    status, err = _finish(
+        packet,
+        [(_answer([_replay_finding("AssertionError: returned 2")]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=_Confine(code, stdout),
+    )
+    assert status == 0, err
+    run = _read(packet / "review-run.json")
+    assert _llm_finding(run)["evidence"] == "traced"
+    reasons = [item["reason"] for item in run["degraded_inputs"]]
+    assert "re-run-could-not-start" in reasons
+    assert "re-run-mismatch" not in reasons
+    entry = next(
+        item for item in run["degraded_inputs"] if item["reason"] == "re-run-could-not-start"
+    )
+    assert entry["exit_code"] == code
+    assert entry["output_tail"] == stdout.strip()
+
+
+def test_degraded_inputs_from_a_replay_never_change_a_grade_letter(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    code, err = _finish(
+        packet,
+        [(_answer([_replay_finding("AssertionError: returned 2")]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"),
+        confine=_Confine(1, "Error: a different failure\n"),
+    )
+    assert code == 0, err
+    run = _read(packet / "review-run.json")
+    assert any(item["reason"] == "re-run-mismatch" for item in run["degraded_inputs"])
+
+    def grades(degraded: list[dict[str, Any]]) -> list[tuple[str, str]]:
+        fresh = F.compute({
+            "findings": [
+                {key: value for key, value in item.items() if key not in F.COMPUTED_FINDING_KEYS}
+                for item in run["findings"]
+            ],
+            "measurements": run["measurements"],
+            "builder_records": run["builder_records"],
+            "may_block": run["may_block"],
+            "degraded_inputs": degraded,
+        })
+        return [(row["lens"], row["grade"]) for row in fresh["lens_grades"]]
+
+    assert grades(run["degraded_inputs"]) == grades([])
+    assert [(row["lens"], row["grade"]) for row in run["lens_grades"]] == grades([])
+
+
 def test_reproduced_rerun_timeout_is_traced(tmp_path: Path) -> None:
     _repo_path, packet, runner = _repro_packet(tmp_path)
     home = tmp_path / "home"
