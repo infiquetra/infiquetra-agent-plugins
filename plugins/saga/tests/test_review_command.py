@@ -16,6 +16,7 @@ import urllib.request
 from contextlib import redirect_stderr
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from unittest import mock
 from typing import Any
 
 import pytest
@@ -914,6 +915,142 @@ def test_reproduced_rerun_keeps_a_failing_match(tmp_path: Path) -> None:
     assert found["unconfirmed"] is True
     assert found["consequence_jev"] is None
     assert confine.calls
+
+
+def _jev_reply(
+    *, status: str = "ok", note: str = "", consequence: str = "required-behaviour-missing",
+    confidence: float = 0.9,
+) -> Any:
+    """An ask that answers the consequence question as given and every other question 0.91."""
+    def ask(_state: Any, questions: Any, **_kwargs: Any) -> Any:
+        if isinstance(questions, dict) and "consequence" in questions:
+            if status != "ok":
+                return SimpleNamespace(status=status, answers={}, note=note, model="jev-test")
+            return SimpleNamespace(
+                status="ok", model="jev-test", note="",
+                answers={"consequence": {
+                    "type": "choice", "choice": consequence, "confidence": confidence,
+                }},
+            )
+        answers = {key: {"type": "noul", "noul": 0.91} for key in questions}
+        return SimpleNamespace(
+            status="ok", ok=True, model="jev-test", latency_ms=5, note="",
+            usage={"input_tokens": 12, "output_tokens": 4}, answers=answers,
+        )
+
+    return ask
+
+
+def _finish_with_jev(tmp: Path, ask: Any) -> tuple[Path, str]:
+    _repo_path, packet, runner = _repro_packet(tmp)
+    home = tmp / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp, with_test=True)
+    code, err = _finish(
+        packet, [(_answer([_finding("A retry returns the new number.")]), _result(scratch, changes))],
+        home, runner, ask=ask, confine=_Confine(1, _CAPTURED),
+    )
+    assert code == 0, err
+    return packet, err
+
+
+@pytest.mark.parametrize(
+    ("ask", "expected"),
+    [
+        (
+            _jev_reply(consequence="misleads-a-person", confidence=0.5),
+            {
+                "status": "below-floor", "request": "ok", "jev_pick": None,
+                "jev_value": "misleads-a-person", "jev_confidence": 0.5, "floor": 0.6,
+                "reason": (
+                    "Jev chose 'misleads-a-person' with confidence 0.5, below the floor 0.6"
+                ),
+            },
+        ),
+        (
+            _jev_reply(status="timeout", note="the request timed out"),
+            {
+                "status": "request-failed", "request": "timeout", "jev_pick": None,
+                "jev_value": None, "jev_confidence": None, "floor": 0.6,
+                "reason": "the request timed out",
+            },
+        ),
+        (
+            _jev_reply(status="error", note="no key"),
+            {
+                "status": "request-failed", "request": "error", "jev_pick": None,
+                "jev_value": None, "jev_confidence": None, "floor": 0.6, "reason": "no key",
+            },
+        ),
+        (
+            _jev_reply(consequence="not-on-the-list", confidence=0.9),
+            {
+                "status": "off-list", "request": "ok", "jev_pick": None,
+                "jev_value": "not-on-the-list", "jev_confidence": 0.9, "floor": 0.6,
+                "reason": "Jev's answer 'not-on-the-list' is not on the closed list",
+            },
+        ),
+        (
+            _jev_reply(consequence="misleads-a-person", confidence=0.9),
+            {
+                "status": "accepted", "request": "ok", "jev_pick": "misleads-a-person",
+                "jev_value": "misleads-a-person", "jev_confidence": 0.9, "floor": 0.6,
+                "reason": "",
+            },
+        ),
+    ],
+    ids=["below-floor", "timeout", "error", "off-list", "accepted"],
+)
+def test_finish_records_why_each_jev_pick_is_missing_or_accepted(
+    tmp_path: Path, ask: Any, expected: dict[str, Any],
+) -> None:
+    packet, err = _finish_with_jev(tmp_path, ask)
+    entries = _read(packet / "consequence-picks.json")
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.pop("finding_id")
+    assert entry.pop("answer") == 0
+    assert entry.pop("reviewer_consequence")
+    for key, value in expected.items():
+        assert entry[key] == value, key
+    # The sidecar is a record only: no warning line, no degraded input, no grade.
+    assert "warning:" not in err
+    run = _read(packet / "review-run.json")
+    assert "consequence" not in json.dumps(_read(packet / "degraded.json"))
+    assert all(
+        "consequence-pick" not in json.dumps(grade.get("degraded_inputs", []))
+        for grade in run["lens_grades"]
+    )
+    found = next(item for item in run["findings"] if item["source"]["kind"] == "llm")
+    assert found["consequence_jev"] == expected["jev_pick"]
+    assert found["unconfirmed"] is (expected["jev_pick"] is None)
+
+
+def test_the_consequence_picks_sidecar_changes_no_record_or_grade(tmp_path: Path) -> None:
+    """The same finish gives byte-identical records and grades with and without the sidecar."""
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    args = (packet, [(_answer([_finding("A retry returns the new number.")]),
+                      _result(scratch, changes))], home, runner)
+    code, err = _finish(*args, ask=_jev_reply(confidence=0.5), confine=_Confine(1, _CAPTURED))
+    assert code == 0, err
+    names = ("review-run.json", "grades.json", "degraded.json", "findings.json")
+    with_sidecar = {name: (packet / name).read_bytes() for name in names}
+    (packet / "review-run.json").unlink()
+    original = C._write_json
+
+    def without_sidecar(path: Path, payload: object) -> None:
+        if path.name != "consequence-picks.json":
+            original(path, payload)
+
+    (packet / "consequence-picks.json").unlink()
+    with mock.patch.object(C, "_write_json", without_sidecar):
+        code, err = _finish(*args, ask=_jev_reply(confidence=0.5), confine=_Confine(1, _CAPTURED))
+    assert code == 0, err
+    assert not (packet / "consequence-picks.json").exists()
+    assert {name: (packet / name).read_bytes() for name in names} == with_sidecar
 
 
 def test_reproduced_rerun_exit_zero_is_traced(tmp_path: Path) -> None:

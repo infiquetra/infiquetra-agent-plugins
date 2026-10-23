@@ -667,6 +667,61 @@ def test_when_jev_cannot_answer_the_reviewer_s_pick_is_unconfirmed(jev: Any) -> 
     assert "unconfirmed" in computed(out, 0)["flags"]
 
 
+def test_a_pick_below_the_floor_keeps_jev_s_value_and_confidence() -> None:
+    out = A.to_records(
+        ANSWER, ITEMS, RESULT, ask=jev_says("misleads-a-person", confidence=0.5),
+    )
+    pick = out["consequence_picks"][0]
+    assert pick["jev"] is None
+    assert (pick["jev_status"], pick["jev_request"]) == ("below-floor", "ok")
+    assert (pick["jev_value"], pick["jev_confidence"], pick["jev_floor"]) == (
+        "misleads-a-person", 0.5, 0.6,
+    )
+    assert pick["note"] == "Jev chose 'misleads-a-person' with confidence 0.5, below the floor 0.6"
+
+
+def test_a_failed_request_or_off_list_answer_says_so_in_the_pick() -> None:
+    failed = A.jev_pick(finding(answer(), "double-charge"), jev_says(None, status="timeout"))
+    assert (failed["status"], failed["request"], failed["pick"]) == (
+        "request-failed", "timeout", None,
+    )
+    assert failed["reason"] == "no key in the environment"
+    off = A.jev_pick(finding(answer(), "double-charge"), jev_says("not-on-the-list"))
+    assert (off["status"], off["value"], off["confidence"]) == ("off-list", "not-on-the-list", 0.9)
+    none = A.jev_pick(finding(answer(), "double-charge"), jev_says(None))
+    assert (none["status"], none["value"], none["confidence"]) == ("no-answer", None, None)
+
+
+def test_a_choice_with_no_value_is_no_answer_not_off_list() -> None:
+    def ask(state: Any, questions: Any) -> Any:
+        return SimpleNamespace(status="ok", answers={"consequence": {"type": "choice"}}, note="")
+
+    pick = A.jev_pick(finding(answer(), "double-charge"), ask)
+    assert (pick["status"], pick["value"], pick["reason"]) == (
+        "no-answer", None, "Jev gave no consequence",
+    )
+
+
+def test_an_off_list_reason_is_scrubbed_and_cut_like_the_value() -> None:
+    token = "ghp_" + "a" * 36
+    pick = A.jev_pick(finding(answer(), "double-charge"), jev_says(token + "x" * 300))
+    assert pick["status"] == "off-list"
+    assert token not in pick["value"] and token not in pick["reason"]
+    assert len(pick["reason"]) <= len("Jev's answer '' is not on the closed list") + 200
+
+
+def test_an_accepted_pick_has_no_reason_and_an_unasked_one_says_so() -> None:
+    accepted = A.jev_pick(
+        finding(answer(), "double-charge"), jev_says("misleads-a-person"),
+    )
+    assert (accepted["status"], accepted["pick"], accepted["reason"]) == (
+        "accepted", "misleads-a-person", "",
+    )
+    out = A.to_records(ANSWER, ITEMS, RESULT, use_jev=False)
+    assert out["consequence_picks"][0]["jev_status"] == "not-asked"
+    assert out["consequence_picks"][0]["note"] == "Jev was not asked"
+
+
 def test_no_jev_marks_every_reproduced_finding_unconfirmed() -> None:
     out = A.to_records(ANSWER, ITEMS, RESULT, use_jev=False)
     reproduced = [f for f in out["findings"] if f["evidence"] == "reproduced"]

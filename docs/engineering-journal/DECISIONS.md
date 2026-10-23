@@ -1,5 +1,26 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-23
+
+### The question sweep returns up to 60 items, not 30
+
+**Decision.** `ITEM_CAP` in fleet-core's `jev_sweep` (`plugins/fleet-core/scripts/fleet_commons/jev_sweep.py`)
+rises from 30 to 60, and saga's bundled copy is regenerated with `scripts/bundle_fleet_module.py`. Items past
+the cap are still listed as degraded with reason `cap`. The $1 spend cap is unchanged. The operator made this
+call.
+
+**Rationale.** The reviewer must answer every where-to-look item, so the cap bounds the reviewer's work, not
+just the sweep's output. In a private measurement run on 2026-10-23 the cap of 30 was reached on the
+largest changes, which dropped the lower-probability tail before any reviewer saw it. Sixty keeps that tail for a large change while the work
+stays bounded.
+
+**Rejected alternatives.** No cap: reviewer effort and prompt size would grow with the change with no limit.
+A cap that scales with the change's size: it needs a second tuned number and makes two runs of different
+size hard to compare, for no evidence yet that a fixed number is wrong.
+
+**Revisit when.** A run's logged `cap` drops are still frequent at 60, or the reviewer's prompt tokens exceed
+Haiku's 100,000-token price step (above which Haiku's price rises five times).
+
 ## 2026-10-17
 
 ### The qwen vendor and the claude-muse provider leave the fleet vocabulary; claude-qwen is the Qwen route

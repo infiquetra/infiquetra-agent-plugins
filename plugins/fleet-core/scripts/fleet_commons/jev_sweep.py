@@ -49,7 +49,7 @@ def _load_sibling(name: str):
 typesafe_client = _load_sibling("typesafe_client")
 jev_log = _load_sibling("jev_log")
 
-ITEM_CAP = 30
+ITEM_CAP = 60
 SPEND_CAP_USD = Decimal("1")
 PIECE_KINDS = ("function", "block", "file")
 BLOCK_CONTEXT_LINES = 20
@@ -103,7 +103,7 @@ def sweep(
     getenv: Callable[[str], str | None] | None = None,
     urlopen: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
-    """Return at most 30 where-to-look items for ``pieces``.
+    """Return at most 60 where-to-look items for ``pieces``.
 
     ``ask`` defaults to the TypeSafe client. Tests pass a fake, or a ``urlopen``,
     so the suite makes no network call. Verdict lines are buffered and written

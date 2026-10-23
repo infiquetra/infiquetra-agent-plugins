@@ -2,6 +2,29 @@
 
 ## 2026-10-23
 
+### Record the reason a judgment came back empty where a person can read it
+
+**Evidence.** In a measurement run, most reproduced findings finished with a null Jev
+consequence, and nothing in the run said whether Jev had been unreachable, off the closed
+list, or merely under the confidence floor. `jev_pick` (`plugins/saga/scripts/reviewer_answer.py`)
+already built a reason note and `to_records` put it in `consequence_picks[...]["note"]`, but no
+caller read it, so the reason was built and thrown away. Worse, the below-floor message kept
+Jev's confidence and dropped the value it had chosen. `jev_pick` now returns structured fields
+(`status`, `request`, `value`, `confidence`, `floor`, `reason`, `pick`), and `finish`
+(`_consequence_pick_entries`, `plugins/saga/scripts/review_command.py`) writes them to
+`consequence-picks.json` in the packet. Tests: `test_finish_records_why_each_jev_pick_is_missing_or_accepted`
+and `test_the_consequence_picks_sidecar_changes_no_record_or_grade`
+(`plugins/saga/tests/test_review_command.py`).
+
+**Mechanism.** The reason existed only as a return value: nothing outside `finish`
+read `consequence_picks`, and `finish` dropped the note. The
+file is deliberately a sidecar: it is not a degraded input and prints no `warning:` line, because
+degraded inputs feed the lens grades and the corpus harness counts `warning:` lines, so either
+route would have changed the measurement it was meant to explain.
+
+**Generalizable rule.** When a step can return nothing, write down why in a file that no grade or
+warning count reads; a reason nobody can open is the same as no reason.
+
 ### Give a reviewer a place for its drafts that the scratch comparison never reads
 
 **Evidence.** In a measurement run, some reviewers forgot to delete their answer

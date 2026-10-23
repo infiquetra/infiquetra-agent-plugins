@@ -4,6 +4,12 @@
 
 ### Added
 
+- `finish` writes `consequence-picks.json` beside `review-run.json`, one entry per reproduced
+  finding, so a run can tell why a finding's Jev consequence is null: Jev's own value and
+  confidence when it answered below the confidence floor or off the closed list, the request
+  status when the request failed, and a prose reason. `jev_pick` returns these as fields rather
+  than a bare string. The file is not a degraded input and adds no `warning:` line, so grades
+  and records are unchanged. No version bump; that belongs to #147's saga release step.
 - Issue #224: the calibration file accepts the corpus's language ids and records the
   measured reviewer's configuration. The workflow id is `github-workflow` everywhere
   saga uses it, `cdk` joins every language list, `reviewer_configuration` is null or
@@ -30,6 +36,12 @@
 
 ### Changed
 
+- The question sweep returns up to 60 where-to-look items instead of 30 (`ITEM_CAP` in fleet-core's
+  `jev_sweep`, regenerated into `scripts/_bundled/jev_sweep.py`), so the reviewer answers every
+  item on a large change instead of losing the tail to the cap. `references/review-calibration.md`
+  names the new number. The calibration file records no pinned fingerprint yet, so none changed;
+  `jev_sweep.py` is already one of the fingerprinted components, so a calibrated file will see
+  the change.
 - Presentation metadata (author, repository, license, and keywords) now lives in the
   portable `plugin.json`. The Claude manifest keeps `author` and its paths, and no longer
   repeats `repository` or `keywords`.

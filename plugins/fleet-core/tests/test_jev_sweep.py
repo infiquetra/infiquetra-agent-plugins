@@ -200,25 +200,25 @@ def test_a_threshold_keeps_a_question_below_it_off(tmp_path: Path) -> None:
     assert above["items"][0]["questions"][0]["probability"] == 0.8
 
 
-def test_without_thresholds_the_thirty_most_likely_return(tmp_path: Path) -> None:
+def test_without_thresholds_the_sixty_most_likely_return(tmp_path: Path) -> None:
     result = _ranked(tmp_path, {})
-    assert len(result["items"]) == 30
+    assert len(result["items"]) == 60
     probabilities = [item["questions"][0]["probability"] for item in result["items"]]
     assert 0.01 not in probabilities
     assert {entry["reason"] for entry in result["degraded"]} == {"cap"}
     assert len(result["degraded"]) == 1
 
 
-def test_thirty_one_hits_return_thirty_highest_first(tmp_path: Path) -> None:
+def test_sixty_one_hits_return_sixty_highest_first(tmp_path: Path) -> None:
     result = _ranked(tmp_path, {"leak": 0})
     probabilities = [item["questions"][0]["probability"] for item in result["items"]]
-    assert probabilities == [index / 100 for index in range(31, 1, -1)]
+    assert probabilities == [index / 100 for index in range(61, 1, -1)]
     assert result["degraded"][0]["reason"] == "cap"
     assert result["degraded"][0]["piece"].startswith("p01.py")
 
 
 def _ranked(tmp_path: Path, thresholds: dict) -> dict[str, Any]:
-    pieces = [_piece(f"p{number:02d}.py") for number in range(1, 32)]
+    pieces = [_piece(f"p{number:02d}.py") for number in range(1, 62)]
 
     def ask(state, questions, **_kwargs):
         number = int(state["path"][1:3]) / 100

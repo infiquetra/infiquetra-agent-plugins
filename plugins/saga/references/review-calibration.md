@@ -42,7 +42,7 @@ A no-run lens has `drift` `report-only`, no `overall`, and `languages` `{}`. A r
 
 ## Thresholds
 
-A threshold row is `question` (an identifier), `threshold` (a number) and `piece_size` (a positive integer). An empty `thresholds` list means the sweep takes its 30 most likely items. This card only stores the list.
+A threshold row is `question` (an identifier), `threshold` (a number) and `piece_size` (a positive integer). An empty `thresholds` list means the sweep takes its 60 most likely items. This card only stores the list.
 
 ## Component paths
 

@@ -213,7 +213,10 @@ python3 plugins/saga/scripts/reviewer_answer.py records --answer <answer> --item
 reproduces a finding without its test, command and output, or reports more open-search findings
 than the cap. `records` fills each finding's identity, its `llm` source from the launch result and,
 for a reproduced finding, Jev's consequence pick; when Jev cannot answer, `consequence_jev` is null
-and `unconfirmed` is true. The proof keeps the reviewer's `command`, which the review command needs
+and `unconfirmed` is true. Alongside the records, `consequence_picks` lists each pick with its
+`jev_status`, `jev_value`, `jev_confidence` and `jev_floor`, so a null pick has a recorded reason
+(`references/review-command.md` describes the `consequence-picks.json` file `finish` writes from it).
+The proof keeps the reviewer's `command`, which the review command needs
 to re-run the test.
 
 ## Storage

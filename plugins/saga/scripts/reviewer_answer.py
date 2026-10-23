@@ -640,11 +640,48 @@ def _fleet(name: str) -> Any:
     return bundled_fleet.load(name)
 
 
-def jev_pick(finding: Mapping[str, Any], ask: Asker | None = None) -> tuple[str | None, str]:
-    """Jev's consequence for a reproduced finding, or ``None`` with the reason it has none.
+# What became of one Jev pick. ``accepted`` is the only status that yields a consequence.
+PICK_ACCEPTED = "accepted"
+PICK_NOT_ASKED = "not-asked"
+PICK_REQUEST_FAILED = "request-failed"
+PICK_NO_ANSWER = "no-answer"
+PICK_OFF_LIST = "off-list"
+PICK_BELOW_FLOOR = "below-floor"
+
+_VALUE_LIMIT = 200
+
+
+def _pick(
+    status: str,
+    reason: str,
+    *,
+    pick: str | None = None,
+    request: str | None = None,
+    value: Any = None,
+    confidence: float | None = None,
+    floor: float | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "pick": pick,
+        "request": request,
+        "value": None if value is None else scrub_text(str(value))[0][:_VALUE_LIMIT],
+        "confidence": confidence,
+        "floor": floor,
+        "reason": reason,
+    }
+
+
+def jev_pick(finding: Mapping[str, Any], ask: Asker | None = None) -> dict[str, Any]:
+    """Jev's consequence for a reproduced finding, with the reason when it has none.
+
+    The result carries ``pick`` (the accepted consequence or ``None``), ``status`` (one of the
+    ``PICK_*`` names), ``request`` (the client's status), Jev's own ``value`` and ``confidence``
+    when it gave them, the verb's ``floor`` and a prose ``reason``.
 
     Jev cannot answer when the request fails (no key, timeout, malformed, error), when it gives no
-    consequence from the closed list, or when its confidence is below the verb's floor.
+    consequence from the closed list, or when its confidence is below the verb's floor. A value
+    that is not accepted is still recorded, so a run can tell why a pick is missing.
     """
     client = _fleet("typesafe_client")
     verb = _fleet("jev_verbs").VERBS[JEV_VERB]
@@ -660,18 +697,32 @@ def jev_pick(finding: Mapping[str, Any], ask: Asker | None = None) -> tuple[str 
     caller = ask if ask is not None else client.ask
     result = caller(state, verb.question_set())
     status = getattr(result, "status", client.STATUS_ERROR)
+    floor = verb.confidence_floor
     if status != client.STATUS_OK:
-        return None, getattr(result, "note", "") or f"the request failed with status {status}"
+        return _pick(
+            PICK_REQUEST_FAILED,
+            getattr(result, "note", "") or f"the request failed with status {status}",
+            request=str(status), floor=floor,
+        )
     answer = (getattr(result, "answers", {}) or {}).get(JEV_VERB)
     if not isinstance(answer, Mapping):
-        return None, "Jev gave no consequence"
+        return _pick(PICK_NO_ANSWER, "Jev gave no consequence", request=str(status), floor=floor)
     value = client.answer_value(answer)
     confidence = client.answer_confidence(answer)
+    if value is None:
+        return _pick(PICK_NO_ANSWER, "Jev gave no consequence", request=str(status), floor=floor)
+    given = {"request": str(status), "value": value, "confidence": confidence, "floor": floor}
     if value not in formula.CONSEQUENCES:
-        return None, f"Jev's answer {value!r} is not on the closed list"
-    if confidence is None or confidence < verb.confidence_floor:
-        return None, f"Jev's confidence {confidence} is below the floor {verb.confidence_floor}"
-    return str(value), ""
+        # The reason repeats Jev's answer, so it is scrubbed and cut like ``value``.
+        shown = scrub_text(str(value))[0][:_VALUE_LIMIT]
+        return _pick(PICK_OFF_LIST, f"Jev's answer {shown!r} is not on the closed list", **given)
+    if confidence is None or confidence < floor:
+        return _pick(
+            PICK_BELOW_FLOOR,
+            f"Jev chose {value!r} with confidence {confidence}, below the floor {floor}",
+            **given,
+        )
+    return _pick(PICK_ACCEPTED, "", pick=str(value), **given)
 
 
 def _reviewer_source(result: Mapping[str, Any]) -> dict[str, str]:
@@ -757,7 +808,11 @@ def to_records(
                     name: given[name] for name in ("command", "test", "output")
                     if isinstance(given.get(name), str)
                 }
-            jev, note = jev_pick(finding, ask) if use_jev else (None, "Jev was not asked")
+            outcome = (
+                jev_pick(finding, ask) if use_jev
+                else _pick(PICK_NOT_ASKED, "Jev was not asked")
+            )
+            jev = outcome["pick"]
             record["consequence_jev"] = jev
             record["unconfirmed"] = jev is None
             applied = (
@@ -775,7 +830,12 @@ def to_records(
                 "jev": jev,
                 "applied": applied,
                 "flag": flag,
-                "note": note,
+                "note": outcome["reason"],
+                "jev_status": outcome["status"],
+                "jev_request": outcome["request"],
+                "jev_value": outcome["value"],
+                "jev_confidence": outcome["confidence"],
+                "jev_floor": outcome["floor"],
             })
         built.append(record)
 
