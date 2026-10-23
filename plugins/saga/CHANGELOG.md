@@ -4,6 +4,12 @@
 
 ### Added
 
+- `finish` writes `consequence-picks.json` beside `review-run.json`, one entry per reproduced
+  finding, so a run can tell why a finding's Jev consequence is null: Jev's own value and
+  confidence when it answered below the confidence floor or off the closed list, the request
+  status when the request failed, and a prose reason. `jev_pick` returns these as fields rather
+  than a bare string. The file is not a degraded input and adds no `warning:` line, so grades
+  and records are unchanged. No version bump; that belongs to #147's saga release step.
 - Issue #224: the calibration file accepts the corpus's language ids and records the
   measured reviewer's configuration. The workflow id is `github-workflow` everywhere
   saga uses it, `cdk` joins every language list, `reviewer_configuration` is null or

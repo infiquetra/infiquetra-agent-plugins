@@ -678,6 +678,7 @@ def _finish(
             replay.append(held)
         except reviewer_answer.AnswerRefused as exc:
             raise CommandFailure(1, "\n".join(exc.problems)) from exc
+    _write_json(packet / CONSEQUENCE_PICKS_FILE, _consequence_pick_entries(converted, answers))
     degraded = list(_read_json(packet / "degraded.json", "degraded"))
     degraded.extend(_uncited_test_inputs(warnings))
     available = reproduction_available(home, confine)
@@ -734,6 +735,37 @@ def _finish(
         _store_run(store, int(args.issue), unit, run, usage_specs["add"])
     _write_json(packet / "review-run.json", run)
     _post_trace(run, results, repo, store, args.issue, home, trace_opener)
+
+
+CONSEQUENCE_PICKS_FILE = "consequence-picks.json"
+
+
+def _consequence_pick_entries(
+    converted: Sequence[Mapping[str, Any]], answers: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """What became of every Jev consequence pick, for the packet's ``consequence-picks.json``.
+
+    One entry per reproduced finding, in answer order and then the reviewer's finding order. It
+    records the reviewer's consequence, Jev's accepted pick (``null`` when none), the value and
+    confidence Jev gave when it gave them, and the reason. It is a sidecar only: it is not a
+    degraded input and prints nothing, so no grade or warning count changes.
+    """
+    entries: list[dict[str, Any]] = []
+    for index, produced in enumerate(converted):
+        for pick in produced["consequence_picks"]:
+            entries.append({
+                "answer": index,
+                "finding_id": pick["finding_id"],
+                "reviewer_consequence": pick["llm"],
+                "jev_pick": pick["jev"],
+                "status": pick["jev_status"],
+                "request": pick["jev_request"],
+                "jev_value": pick["jev_value"],
+                "jev_confidence": pick["jev_confidence"],
+                "floor": pick["jev_floor"],
+                "reason": pick["note"],
+            })
+    return entries
 
 
 def _uncited_test_inputs(warnings: Sequence[str]) -> list[dict[str, str]]:
