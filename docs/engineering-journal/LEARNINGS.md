@@ -16,8 +16,8 @@ Jev's confidence and dropped the value it had chosen. `jev_pick` now returns str
 and `test_the_consequence_picks_sidecar_changes_no_record_or_grade`
 (`plugins/saga/tests/test_review_command.py`).
 
-**Mechanism.** The reason existed only as a return value, and the one consumer of
-`consequence_picks` that was meant to show it (the merge confirmation) never read the note. The
+**Mechanism.** The reason existed only as a return value: nothing outside `finish`
+read `consequence_picks`, and `finish` dropped the note. The
 file is deliberately a sidecar: it is not a degraded input and prints no `warning:` line, because
 degraded inputs feed the lens grades and the corpus harness counts `warning:` lines, so either
 route would have changed the measurement it was meant to explain.

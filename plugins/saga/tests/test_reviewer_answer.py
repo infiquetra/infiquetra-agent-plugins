@@ -692,6 +692,24 @@ def test_a_failed_request_or_off_list_answer_says_so_in_the_pick() -> None:
     assert (none["status"], none["value"], none["confidence"]) == ("no-answer", None, None)
 
 
+def test_a_choice_with_no_value_is_no_answer_not_off_list() -> None:
+    def ask(state: Any, questions: Any) -> Any:
+        return SimpleNamespace(status="ok", answers={"consequence": {"type": "choice"}}, note="")
+
+    pick = A.jev_pick(finding(answer(), "double-charge"), ask)
+    assert (pick["status"], pick["value"], pick["reason"]) == (
+        "no-answer", None, "Jev gave no consequence",
+    )
+
+
+def test_an_off_list_reason_is_scrubbed_and_cut_like_the_value() -> None:
+    token = "ghp_" + "a" * 36
+    pick = A.jev_pick(finding(answer(), "double-charge"), jev_says(token + "x" * 300))
+    assert pick["status"] == "off-list"
+    assert token not in pick["value"] and token not in pick["reason"]
+    assert len(pick["reason"]) <= len("Jev's answer '' is not on the closed list") + 200
+
+
 def test_an_accepted_pick_has_no_reason_and_an_unasked_one_says_so() -> None:
     accepted = A.jev_pick(
         finding(answer(), "double-charge"), jev_says("misleads-a-person"),

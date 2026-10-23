@@ -709,11 +709,13 @@ def jev_pick(finding: Mapping[str, Any], ask: Asker | None = None) -> dict[str, 
         return _pick(PICK_NO_ANSWER, "Jev gave no consequence", request=str(status), floor=floor)
     value = client.answer_value(answer)
     confidence = client.answer_confidence(answer)
+    if value is None:
+        return _pick(PICK_NO_ANSWER, "Jev gave no consequence", request=str(status), floor=floor)
     given = {"request": str(status), "value": value, "confidence": confidence, "floor": floor}
     if value not in formula.CONSEQUENCES:
-        return _pick(
-            PICK_OFF_LIST, f"Jev's answer {value!r} is not on the closed list", **given,
-        )
+        # The reason repeats Jev's answer, so it is scrubbed and cut like ``value``.
+        shown = scrub_text(str(value))[0][:_VALUE_LIMIT]
+        return _pick(PICK_OFF_LIST, f"Jev's answer {shown!r} is not on the closed list", **given)
     if confidence is None or confidence < floor:
         return _pick(
             PICK_BELOW_FLOOR,

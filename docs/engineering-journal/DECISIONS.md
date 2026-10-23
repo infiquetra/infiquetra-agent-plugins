@@ -10,8 +10,8 @@ the cap are still listed as degraded with reason `cap`. The $1 spend cap is unch
 call.
 
 **Rationale.** The reviewer must answer every where-to-look item, so the cap bounds the reviewer's work, not
-just the sweep's output. A cap of 30 was reached on large changes in a measurement run, which dropped the
-lower-probability tail before any reviewer saw it. Sixty keeps that tail for a large change while the work
+just the sweep's output. In a private measurement run on 2026-10-23 the cap of 30 was reached on the
+largest changes, which dropped the lower-probability tail before any reviewer saw it. Sixty keeps that tail for a large change while the work
 stays bounded.
 
 **Rejected alternatives.** No cap: reviewer effort and prompt size would grow with the change with no limit.

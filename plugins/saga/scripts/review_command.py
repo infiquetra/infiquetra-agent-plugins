@@ -678,7 +678,7 @@ def _finish(
             replay.append(held)
         except reviewer_answer.AnswerRefused as exc:
             raise CommandFailure(1, "\n".join(exc.problems)) from exc
-    _write_json(packet / CONSEQUENCE_PICKS_FILE, _consequence_pick_entries(converted, answers))
+    _write_json(packet / CONSEQUENCE_PICKS_FILE, _consequence_pick_entries(converted))
     degraded = list(_read_json(packet / "degraded.json", "degraded"))
     degraded.extend(_uncited_test_inputs(warnings))
     available = reproduction_available(home, confine)
@@ -740,9 +740,7 @@ def _finish(
 CONSEQUENCE_PICKS_FILE = "consequence-picks.json"
 
 
-def _consequence_pick_entries(
-    converted: Sequence[Mapping[str, Any]], answers: Sequence[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
+def _consequence_pick_entries(converted: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """What became of every Jev consequence pick, for the packet's ``consequence-picks.json``.
 
     One entry per reproduced finding, in answer order and then the reviewer's finding order. It
