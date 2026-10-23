@@ -217,7 +217,8 @@ them inside the scratch copy and delete them as described at the end of this sec
 Write the draft, run the checker, fix what it names, and run it again. The cap is the packet's own
 `open-search-cap.json`, or 5 when the packet names none. For a packet at
 `/Users/operator/review-packet` and a draft folder at `/Users/operator/drafts` (the path your launch
-message names as your draft folder, or the scratch copy when it names none):
+message names as your draft folder). With no draft folder, use the scratch copy's path instead, for
+example `/Users/operator/scratch-copy/answer-draft.json`:
 
 ```bash
 python3 "/Users/operator/review-packet/check/reviewer_answer.py" check \

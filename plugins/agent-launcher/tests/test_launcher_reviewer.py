@@ -527,7 +527,8 @@ def test_draft_folder_a_candidate_vendor_launch_passes_none(
     real = launcher.reviewer_launch_message
 
     def spy(*args: Any, **kwargs: Any) -> str:
-        drafts.append(kwargs.get("draft_folder"))
+        # The key itself, so a call site that never passes the argument fails here.
+        drafts.append(kwargs["draft_folder"])
         return real(*args, **kwargs)
 
     monkeypatch.setattr(launcher, "reviewer_launch_message", spy)
@@ -543,7 +544,9 @@ def test_draft_folder_a_candidate_vendor_launch_passes_none(
 def test_draft_folder_saga_s_prompt_sends_the_draft_there_and_keeps_the_deletion_warning() -> None:
     text = SAGA_PROMPT.read_text(encoding="utf-8")
     assert "draft folder" in text and "/Users/operator/drafts/answer-draft.json" in text
-    assert "scratch-copy/answer-draft.json" not in text and "scratch-copy/run-output" not in text
+    # The example commands use the draft folder; the scratch copy is named only as the fallback.
+    assert '--answer "/Users/operator/scratch-copy' not in text
+    assert '--output "/Users/operator/scratch-copy' not in text
     assert "names no draft folder" in text
     assert "A leftover\ntemporary file is a changed file in the scratch copy and refuses the answer." in text
 
