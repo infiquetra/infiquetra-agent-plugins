@@ -1,0 +1,85 @@
+# Mutation proof — agent-launcher portable documentation guards
+# Run: 2026-10-23, branch fix/reviewer-draft-folder, repository infiquetra-agent-plugins.
+#
+# Supersedes 2026-10-21-agent-launcher-mutation-proof-portable-docs.txt, which is
+# preserved unedited. Reason: SKILL.md gained one bullet about the reviewer's
+# draft folder, so the 2026-10-21 SKILL.md digest no longer names the shipped
+# bytes. README.md is unchanged; its digest is the same as in 2026-10-21, and its
+# classes were run again so this document stands on its own.
+#
+# Bound by content: the digests below name the bytes this run graded, never a
+# commit id. The binding test is
+# tests/test_agent_launcher_rule_audit.py MutationProofBindingTest. The guard
+# under proof is plugins/agent-launcher/tests/test_portable_docs.py. The audit
+# predicate is _skill_guard_problems / _readme_guard_problems, and the
+# mutation classes are skill_mutations and readme_mutations, all in
+# tests/test_agent_launcher_rule_audit.py; the campaign imported those tables.
+#
+# Method, unchanged from 2026-09-22: each class was written onto the graded
+# file. Then, in order:
+#   1. the audit predicate
+#   2. unittest DocGuardMutationCorpusTest.test_the_committed_blobs_pass_every_guard
+#   3. pytest plugins/agent-launcher/tests/test_portable_docs.py
+#   4. unittest MutationProofBindingTest
+# The graded file was then restored and its sha256 checked against the
+# pre-campaign digest before the next class. Both files matched after every
+# restore, and they match the footer below. Exit codes are those of each step
+# (the predicate step exits 1 when it reports at least one problem).
+#
+# MutationProofBindingTest failed on every class (exit 1). As in 2026-09-22,
+# 2026-10-11, 2026-10-17 and 2026-10-21 it is recorded and not counted as the
+# kill, because it fails whenever the graded bytes move -- and in this run the
+# committed SKILL.md bytes had themselves moved pending this document. A survivor
+# is a class that the audit predicate, the committed-blob test, and
+# test_portable_docs.py all let through.
+#
+# Skill mutations (plugins/agent-launcher/skills/agent-launcher/SKILL.md):
+#   M1 claude cache ladder re-inserted -> killed.
+#      predicate: forbidden:~/.claude/plugins/cache, forbidden:.claude/plugins/cache (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 2 failed, 12 passed (exit 1).
+#   M2 a stop condition removed -> killed.
+#      predicate: missing:Stop before launch if the wrapper dry run does not resolve the requested working (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 1 failed, 13 passed (exit 1).
+#   M3 receipt redirect removed -> killed.
+#      predicate: missing:launch prompt example (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 1 failed, 13 passed (exit 1).
+#   M4 forbidden close form re-inserted -> killed.
+#      predicate: forbidden:tab-id close form (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 1 failed, 13 passed (exit 1).
+#   M5 herdr dependency declaration removed -> killed.
+#      predicate: missing:herdr dependency declaration (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 1 failed, 13 passed (exit 1).
+#   M6 launch prompt flag removed -> killed.
+#      predicate: missing:launch prompt example (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 1 failed, 13 passed (exit 1).
+#   M7 receipt keep-list mangled -> killed by the audit, not by the portable-docs suite.
+#      predicate: missing:receipt keep-list (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 14 passed (exit 0).
+#   M12 pane-id sentence removed -> killed.
+#      predicate: missing:no pane_id sentence (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 1 failed, 13 passed (exit 1).
+#
+# README mutations (plugins/agent-launcher/README.md):
+#   M8 portable framing removed -> killed.
+#      predicate: missing:portable framing (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 1 failed, 13 passed (exit 1).
+#   M9 claude-only account limitation inverted -> killed.
+#      predicate: missing:claude-only account limitation (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 1 failed, 13 passed (exit 1).
+#   M10 no-registry limitation inverted -> killed.
+#      predicate: missing:no-registry limitation (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 1 failed, 13 passed (exit 1).
+#   M11 wrapper-and-Herdr requirement removed -> killed.
+#      predicate: missing:wrapper-and-herdr requirement (exit 1)
+#      committed-blob test: FAIL (exit 1). test_portable_docs.py: 1 failed, 13 passed (exit 1).
+#
+# Survivors: none. Twelve classes run, twelve killed by the audit predicate
+# and by test_the_committed_blobs_pass_every_guard. Eleven of the twelve were
+# also killed by test_portable_docs.py. M7 was not, as in 2026-09-22,
+# 2026-10-11, 2026-10-17 and 2026-10-21.
+#
+# Committed-blob control, measured on the restored bytes after the campaign:
+# both graded files pass every guard (zero problems; the committed-blob test
+# exits 0 and test_portable_docs.py reports 14 passed).
+plugins/agent-launcher/skills/agent-launcher/SKILL.md sha256:c8f25be2516cd2707d527a37485adfb717194090499ecf672b9b70c97ebb43a5
+plugins/agent-launcher/README.md sha256:2946e0318cb25fa46f024fc9788c5b38b73788ace24ea2ffde454dc0e460b21e

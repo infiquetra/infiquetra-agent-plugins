@@ -1,5 +1,33 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-23
+
+### Give a reviewer a place for its drafts that the scratch comparison never reads
+
+**Evidence.** In a measurement run, some reviewers forgot to delete their answer
+draft (`answer-draft.json`) from the scratch copy, and saga's finish check (`_check_scratch`, `plugins/saga/scripts/reviewer_answer.py`) refused each
+whole answer with "answer-draft.json (added) is not a reproduction test", losing
+every finding in it. The prompt (`plugins/saga/references/targeted-reviewer-prompt.md`,
+"Check your answer before you give it") had told the reviewer to put the draft and
+saved run outputs inside the copy and delete them. The launcher already made a
+writable folder beside the copy (`reviewer_claude_temp_dir`,
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`), but Claude's
+file Write and Edit tools could not write there and the launch message never named
+it. The settings now carry `Edit(//<folder>/**)` (`reviewer_claude_settings`),
+`reviewer_launch_message` takes a `draft_folder` and lists it under "This review",
+and the prompt sends the draft and saved outputs there, falling back to the copy
+with the deletion warning only when no folder is named (the candidate vendors get
+none). Tests: `plugins/agent-launcher/tests/test_launcher_reviewer.py`
+(`test_draft_folder_*`) and the pinned settings in `test_launcher_contract.py`.
+
+**Mechanism.** A cleanup instruction asks a model to remember a step on which the
+whole answer depends, and the comparison cannot tell a forgotten draft from a
+stray source change. Moving the scratch work to a place the comparison never reads
+removes the step instead of asking for it.
+
+**Generalizable rule.** When a check refuses everything over a stray file, give
+the file a home the check cannot see rather than asking the author to clean up.
+
 ## 2026-10-22
 
 ### Pin the file-creation mask a replay runs under

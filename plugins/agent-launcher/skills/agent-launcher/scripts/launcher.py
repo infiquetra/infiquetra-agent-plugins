@@ -2653,7 +2653,10 @@ def reviewer_claude_settings(
     the home directory. The prefix is named in ``env`` as well, which outranks the user's settings.
 
     The one write allowed beyond the copy is the reviewer's own temp folder
-    (:func:`reviewer_claude_temp_dir`), read back as well and under no denied temp root.
+    (:func:`reviewer_claude_temp_dir`), read back as well and under no denied temp root. Claude's
+    file Write and Edit tools may write there too, through their own permission rule, because the
+    launch message names it as the reviewer's draft folder: its answer draft and saved run outputs
+    belong outside the copy, where the scratch-change comparison never sees them.
 
     Issue #262: *read_only* (the cargo home and the vendored dependencies) is allowed back for
     reading and named in ``denyWrite``, so read-only is stated rather than implied.
@@ -2689,7 +2692,10 @@ def reviewer_claude_settings(
         "permissions": {
             # ``//`` starts an absolute path in a permission rule; ``/`` is relative to the settings
             # file. ``packet.resolve()`` begins with ``/``, so this reads ``Read(//<packet>/**)``.
-            "allow": ["Bash", "Edit(./**)", f"Read(/{packet.resolve()}/**)"],
+            # The temp folder is written the same way, so file Write and Edit may use it.
+            "allow": [
+                "Bash", "Edit(./**)", f"Edit(/{temp}/**)", f"Read(/{packet.resolve()}/**)",
+            ],
             "deny": ["WebFetch", "WebSearch", "mcp__*"]
             + [f"Read({path})" for path in list(REVIEWER_CREDENTIAL_PATHS) + list(extra_deny_read)],
         },
@@ -3678,9 +3684,20 @@ def reviewer_wrapper_path() -> Path:
 
 def reviewer_launch_message(
     wrapper: str, prompt: str, packet: Path, copy: Path, cap: int,
-    withheld: Sequence[str] = (),
+    withheld: Sequence[str] = (), draft_folder: Path | None = None,
 ) -> str:
-    """What the session reads on standard input: the wrapper, saga's prompt, where things are."""
+    """What the session reads on standard input: the wrapper, saga's prompt, where things are.
+
+    With *draft_folder*, the message names it as the place for the reviewer's answer draft and
+    saved run outputs: outside the scratch copy, so the scratch-change comparison never sees it.
+    Without one (a vendor that gets no such folder), the line is left out and the prompt tells the
+    reviewer to keep drafts in the copy and delete them.
+    """
+    draft = (
+        "- Your draft folder, outside the scratch copy and never compared: "
+        f"`{draft_folder.resolve()}`\n"
+        if draft_folder is not None else ""
+    )
     note = (
         "\nWithheld from the scratch copy, because they would run or read outside the sandbox; "
         "the packet's change still shows them:\n"
@@ -3696,6 +3713,7 @@ def reviewer_launch_message(
         f"- The review packet: `{packet.resolve()}`\n"
         f"- The scratch copy, your working directory: `{copy.resolve()}`\n"
         f"- The open search's cap on findings: {cap}\n"
+        f"{draft}"
         f"{note}\n"
         "Your final message is the answer JSON and nothing else.\n"
     )
@@ -4008,6 +4026,7 @@ def reviewer_launch(
     message = reviewer_launch_message(
         wrapper.read_text(encoding="utf-8"), prompt_text, request.packet, copy,
         request.open_search_cap, withheld,
+        draft_folder=recipe.temp_dir(copy) if recipe.temp_dir is not None else None,
     )
     prompt_path, stdin = reviewer_deliver_prompt(recipe, root, message)
     if executable is not None and record is not None:

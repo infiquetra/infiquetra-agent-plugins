@@ -138,6 +138,13 @@ platform. Every other vendor is refused by name.
   it, so the scratch-change comparison does not see it), allows writes there, and the shell prefix
   sets `TMPDIR` to it for sandboxed commands. `/tmp`, `/private/tmp` and `/var/folders` stay
   denied, and the folder goes when the review's launch root does.
+- **That folder is also the reviewer's draft folder.** The launch message lists it under
+  "This review" as "Your draft folder, outside the scratch copy and never compared", and the
+  settings carry a permission rule (`Edit(//<folder>/**)`) so Claude's file Write and Edit tools
+  may write there as well as sandboxed commands. Saga's prompt tells the reviewer to keep its
+  answer draft and saved run outputs there, so a forgotten draft cannot refuse the answer. A
+  vendor with no such folder gets no line, and the prompt tells the reviewer to keep drafts in the
+  copy and delete them.
 - **A vendor joins only on a full live probe.** Grok and Muse have candidate recipes, which
   `launcher.py reviewer-probe --vendor <v> --record <file>` runs live and `review` never runs. The
   probe checks reads, writes and network separately, from outside the session. It also checks the
