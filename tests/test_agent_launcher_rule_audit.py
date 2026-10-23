@@ -30,7 +30,7 @@ PACKAGE = ROOT / "plugins" / "agent-launcher"
 SKILL = PACKAGE / "skills" / "agent-launcher" / "SKILL.md"
 README = PACKAGE / "README.md"
 GUARD_SOURCE = PACKAGE / "tests" / "test_portable_docs.py"
-PROOF_DOCUMENT = ROOT / "docs" / "evidence" / "2026-10-21-agent-launcher-mutation-proof-portable-docs.txt"
+PROOF_DOCUMENT = ROOT / "docs" / "evidence" / "2026-10-23-agent-launcher-mutation-proof-portable-docs.txt"
 
 #: The launcher receipt must still name tab_id and then reused. The wrapper's
 #: own JSON keep-list is a different list and may name pane_id.
