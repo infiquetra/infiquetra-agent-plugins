@@ -36,6 +36,12 @@
 
 ### Changed
 
+- The question sweep returns up to 60 where-to-look items instead of 30 (`ITEM_CAP` in fleet-core's
+  `jev_sweep`, regenerated into `scripts/_bundled/jev_sweep.py`), so the reviewer answers every
+  item on a large change instead of losing the tail to the cap. `references/review-calibration.md`
+  names the new number. The calibration file records no pinned fingerprint yet, so none changed;
+  `jev_sweep.py` is already one of the fingerprinted components, so a calibrated file will see
+  the change.
 - Presentation metadata (author, repository, license, and keywords) now lives in the
   portable `plugin.json`. The Claude manifest keeps `author` and its paths, and no longer
   repeats `repository` or `keywords`.

@@ -22,6 +22,10 @@ The catalog requires `python>=3.12`.
 
 ### Changed
 
+- The sweep's item cap (`ITEM_CAP` in `jev_sweep`) rises from 30 to 60, so a large change keeps
+  more of its where-to-look items; anything past the cap is still listed as degraded with reason
+  `cap`. `references/typesafe.md` states the new number and saga's bundled copy is regenerated.
+  The $1 spend cap is unchanged. The package version stays 0.33.2.
 - Presentation metadata (author, repository, license, and keywords) now lives in the
   portable `plugin.json`, and the generated Codex manifest follows it.
 

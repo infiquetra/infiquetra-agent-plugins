@@ -171,7 +171,7 @@ def test_the_tier_bands_match_the_verb() -> None:
 
 def test_the_sweep_caps_in_the_reference_match_the_module() -> None:
     sweep = _load("jev_sweep_for_reference_drift", "jev_sweep.py")
-    assert sweep.ITEM_CAP == 30
+    assert sweep.ITEM_CAP == 60
     assert sweep.SPEND_CAP_USD == Decimal("1")
     assert sweep.PIECE_KINDS == ("function", "block", "file")
     assert sweep.BLOCK_CONTEXT_LINES == 20
@@ -181,7 +181,7 @@ def test_the_sweep_caps_in_the_reference_match_the_module() -> None:
     for kind in sweep.PIECE_KINDS:
         assert kind in paragraph
     assert "20" in paragraph and "400" in paragraph
-    assert "30" in paragraph and "$1" in paragraph
+    assert f"at most {sweep.ITEM_CAP} items" in paragraph and "$1" in paragraph
     assert "adversarial screening does not cover it" in DOC
     assert "fails open to no items" in DOC
 

@@ -3,8 +3,8 @@
 # source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_sweep.py
-# source-sha256: e6f9702527f860117846d7e052202cab1e04b49e5d0ef116276a74c387e8039c
-# output-sha256: e6f9702527f860117846d7e052202cab1e04b49e5d0ef116276a74c387e8039c
+# source-sha256: e7fba51e81b0160176bfd8cca71906431e9be226d5dcfa4a712005f9cd80e276
+# output-sha256: e7fba51e81b0160176bfd8cca71906431e9be226d5dcfa4a712005f9cd80e276
 # --- end generated bundle stamp ---
 """Classify pieces into a where-to-look list (issue 156).
 
@@ -57,7 +57,7 @@ def _load_sibling(name: str):
 typesafe_client = _load_sibling("typesafe_client")
 jev_log = _load_sibling("jev_log")
 
-ITEM_CAP = 30
+ITEM_CAP = 60
 SPEND_CAP_USD = Decimal("1")
 PIECE_KINDS = ("function", "block", "file")
 BLOCK_CONTEXT_LINES = 20
@@ -111,7 +111,7 @@ def sweep(
     getenv: Callable[[str], str | None] | None = None,
     urlopen: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
-    """Return at most 30 where-to-look items for ``pieces``.
+    """Return at most 60 where-to-look items for ``pieces``.
 
     ``ask`` defaults to the TypeSafe client. Tests pass a fake, or a ``urlopen``,
     so the suite makes no network call. Verdict lines are buffered and written
