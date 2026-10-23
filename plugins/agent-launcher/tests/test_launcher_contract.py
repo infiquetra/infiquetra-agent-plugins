@@ -4614,7 +4614,9 @@ def test_reviewer_read_confinement_settings_are_pinned(
             "credentials": {"envVars": [{"name": "GH_TOKEN", "mode": "deny"}]},
         },
         "permissions": {
-            "allow": ["Bash", "Edit(./**)", f"Read(/{packet.resolve()}/**)"],
+            "allow": [
+                "Bash", "Edit(./**)", f"Edit(/{temp}/**)", f"Read(/{packet.resolve()}/**)",
+            ],
             "deny": ["WebFetch", "WebSearch", "mcp__*"] + [f"Read({p})" for p in credentials],
         },
     }

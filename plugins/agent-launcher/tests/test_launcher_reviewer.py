@@ -438,6 +438,116 @@ def test_tmpdir_the_settings_allow_writes_to_a_temp_folder_beside_the_copy_and_d
             launcher.reviewer_work_root({"XDG_CACHE_HOME": f"{root}/cache"})
 
 
+# The temp folder doubles as the reviewer's draft folder: file tools may write there, and the
+# launch message names it, so a forgotten draft cannot reach the scratch-change comparison.
+
+
+def test_draft_folder_the_file_tools_may_write_in_the_temp_folder_and_nowhere_new(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, settings, _ = _claude_shell(launcher, tmp_path)
+    temp = launcher.reviewer_claude_temp_dir(copy)
+    allow = settings["permissions"]["allow"]
+    # Absolute-path form: a leading "//", then the folder, as the packet's Read rule is written.
+    assert f"Edit(/{temp}/**)" in allow and f"Edit(/{temp}/**)".startswith("Edit(//")
+    edits = [rule for rule in allow if rule.startswith(("Edit(", "Write("))]
+    assert edits == ["Edit(./**)", f"Edit(/{temp}/**)"]
+    assert "Bash" in allow and any(rule.startswith("Read(//") for rule in allow)
+    assert settings["sandbox"]["filesystem"]["allowWrite"] == [str(temp)]
+
+
+def _launch_message(launcher: ModuleType, tmp_path: Path, **kwargs: Any) -> str:
+    copy = tmp_path / "launch" / "copy"
+    copy.mkdir(parents=True, exist_ok=True)
+    return launcher.reviewer_launch_message(
+        "wrapper", "prompt", tmp_path / "packet", copy, 5, **kwargs
+    )
+
+
+def test_draft_folder_the_launch_message_names_it_when_given(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    folder = tmp_path / "launch" / "tmp"
+    message = _launch_message(launcher, tmp_path, draft_folder=folder)
+    line = (
+        "- Your draft folder, outside the scratch copy and never compared: "
+        f"`{folder.resolve()}`\n"
+    )
+    assert message.count(line) == 1
+    section = message.split("# This review\n\n", 1)[1]
+    assert section.index("The scratch copy") < section.index(line) < section.index("final message")
+
+
+def test_draft_folder_the_launch_message_omits_the_line_without_one(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    message = _launch_message(launcher, tmp_path)
+    assert "draft folder" not in message.split("# This review", 1)[1]
+    assert message == _launch_message(launcher, tmp_path, draft_folder=None)
+
+
+def test_draft_folder_a_claude_launch_hands_the_session_its_temp_folder(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    session = FakeSession(CLAUDE_ANSWER)
+    launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path, max_budget_usd="5"), env=_env(tmp_path),
+        session=session,
+    )
+    call = session.calls[0]
+    temp = launcher.reviewer_claude_temp_dir(call["cwd"])
+    assert f"- Your draft folder, outside the scratch copy and never compared: `{temp}`\n" in (
+        call["stdin"]
+    )
+
+
+def test_draft_folder_a_candidate_vendor_launch_passes_none(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, head = reviewed_repo
+    binary = _fake_vendor(tmp_path)
+    monkeypatch.setattr(launcher, "_reviewer_vendor_version", lambda path, env: "vendor 1.0")
+    candidate = launcher.dataclasses.replace(
+        launcher.REVIEWER_CANDIDATES["grok"], executable=lambda env: binary, widening=None,
+    )
+    assert candidate.temp_dir is None
+    monkeypatch.setitem(launcher.REVIEWER_CANDIDATES, "synthetic", candidate)
+    record = _passing_record(
+        launcher, "synthetic", sys.platform,
+        executable={"name": binary.name, "sha256": launcher._reviewer_sha256(binary),
+                    "version": "vendor 1.0"},
+    )
+    monkeypatch.setitem(launcher.REVIEWER_ADMISSIONS, ("synthetic", sys.platform), record)
+    monkeypatch.setitem(
+        launcher.REVIEWER_RECIPES, "synthetic", launcher._reviewer_admitted()["synthetic"]
+    )
+    drafts: list[Path | None] = []
+    real = launcher.reviewer_launch_message
+
+    def spy(*args: Any, **kwargs: Any) -> str:
+        drafts.append(kwargs.get("draft_folder"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(launcher, "reviewer_launch_message", spy)
+    grok_output = json.loads((FIXTURES / "grok-session-output.json").read_text())
+    session = FakeSession(json.dumps({**grok_output, "text": '{"findings": []}'}))
+    launcher.reviewer_launch(
+        _request(launcher, repo, head, tmp_path, vendor="synthetic", model="grok-4.7"),
+        env=_env(tmp_path), session=session,
+    )
+    assert drafts == [None]
+
+
+def test_draft_folder_saga_s_prompt_sends_the_draft_there_and_keeps_the_deletion_warning() -> None:
+    text = SAGA_PROMPT.read_text(encoding="utf-8")
+    assert "draft folder" in text and "/Users/operator/drafts/answer-draft.json" in text
+    assert "scratch-copy/answer-draft.json" not in text and "scratch-copy/run-output" not in text
+    assert "names no draft folder" in text
+    assert "A leftover\ntemporary file is a changed file in the scratch copy and refuses the answer." in text
+
+
 def test_tmpdir_the_temp_folder_is_private_to_the_reviewer(
     launcher: ModuleType, tmp_path: Path
 ) -> None:
