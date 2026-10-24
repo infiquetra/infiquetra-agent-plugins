@@ -1208,11 +1208,11 @@ def test_a_reproduced_finding_on_a_changed_line_still_blocks(tmp_path: Path) -> 
     assert run["changed_lines"] == {"src/app.py": [[4, 4]]}
 
 
-def test_a_reproduced_finding_wholly_outside_the_change_is_reported_not_blocking(
+def test_a_reproduced_not_introduced_finding_outside_the_change_is_reported_not_blocking(
     tmp_path: Path,
 ) -> None:
     outside = {**_location(), "lines": {"start": 1, "end": 2}}
-    run = _finish_one_reproduced(tmp_path, location=outside)
+    run = _finish_one_reproduced(tmp_path, location=outside, introduced=False)
     found = _llm_finding(run)
     assert found["evidence"] == "reproduced"
     assert found["severity"] == "fix-later"
@@ -1226,17 +1226,27 @@ def test_a_reproduced_finding_wholly_outside_the_change_is_reported_not_blocking
     assert any("severity" in problem for problem in R.validate(stripped))
 
 
-def test_a_reproduced_finding_marked_not_introduced_is_reported_not_blocking(
+def test_a_reproduced_introduced_finding_outside_the_change_still_blocks(tmp_path: Path) -> None:
+    """A regression the change caused, surfacing at an unchanged caller, refuses the merge."""
+    outside = {**_location(), "lines": {"start": 1, "end": 2}}
+    run = _finish_one_reproduced(tmp_path, location=outside, introduced=True)
+    found = _llm_finding(run)
+    assert found["severity"] == "blocks"
+    assert "pre-existing" not in found["severity_basis"]["modifiers"]
+    assert run["merge"]["allowed"] is False
+    assert R.validate(run) == []
+
+
+def test_a_reproduced_not_introduced_finding_on_a_changed_line_still_blocks(
     tmp_path: Path,
 ) -> None:
     run = _finish_one_reproduced(tmp_path, introduced=False)
     found = _llm_finding(run)
-    assert found["severity"] == "fix-later"
-    assert found["severity_basis"]["modifiers"] == ["pre-existing"]
-    assert run["merge"]["allowed"] is True
+    assert found["severity"] == "blocks"
+    assert run["merge"]["allowed"] is False
 
 
-def test_a_packet_without_changed_lines_grades_by_introduced_alone(tmp_path: Path) -> None:
+def test_a_packet_without_changed_lines_caps_nothing_as_pre_existing(tmp_path: Path) -> None:
     _repo_path, packet, runner = _repro_packet(tmp_path)
     change = _read(packet / "change.json")
     del change["changed_lines"]
@@ -1247,6 +1257,7 @@ def test_a_packet_without_changed_lines_grades_by_introduced_alone(tmp_path: Pat
     outside = {**_location(), "lines": {"start": 1, "end": 2}}
     found = _replay_finding("AssertionError: returned 2")
     found["location"] = outside
+    found["introduced"] = False
     code, err = _finish(
         packet, [(_answer([found]), _result(scratch, changes))], home, runner,
         ask=_ask(), confine=_Confine(1, _CAPTURED),

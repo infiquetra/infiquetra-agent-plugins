@@ -469,10 +469,13 @@ def test_a_run_keeps_the_changed_lines_it_was_graded_with(store: Path) -> None:
     where = {location["file"]: [[location["lines"]["start"], location["lines"]["end"]]]}
     inputs = _inputs_from(run)
     inputs["changed_lines"] = where
+    for finding in inputs["findings"]:
+        finding["introduced"] = False
     stored = R.record_run(store, 148, inputs)
     assert stored["changed_lines"] == where
     assert R.validate(stored) == []
-    # Lines elsewhere would make the stored finding pre-existing, so its severity must differ.
+    # Lines elsewhere would make the stored finding (marked not introduced) pre-existing, so its
+    # severity must differ.
     moved = {**stored, "changed_lines": {location["file"]: [[9000, 9001]]}}
     assert stored["findings"][0]["severity"] == "blocks"
     assert any("severity" in problem for problem in R.validate(moved))

@@ -12,6 +12,9 @@ import subprocess  # nosec B404
 from dataclasses import dataclass
 from pathlib import Path
 
+# The end of the one range that stands for every line of a file (a renamed file's old path).
+WHOLE_FILE = 2**31 - 1
+
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -56,7 +59,11 @@ class Change:
         Added or modified lines, plus the line on either side of a removal, because a finding
         about code that a change removed is anchored beside the gap. Inclusive ranges, sorted and
         merged; a path with none is left out. This is what ``review_formula`` reads as the
-        changed lines.
+        changed lines. Added, modified and renamed files are covered.
+
+        A renamed file's old path is listed too, as one range over the whole file, because the old
+        file's line numbers do not map onto the new ones: a finding that cites the old path is
+        then never placed outside the change.
         """
         touched: dict[str, list[list[int]]] = {}
         for item in self.files:
@@ -70,6 +77,8 @@ class Change:
                     ranges.append([line, line])
             if ranges:
                 touched[item.path] = ranges
+            if item.status == "renamed" and item.old_path and item.old_path != item.path:
+                touched[item.old_path] = [[1, WHOLE_FILE]]
         return dict(sorted(touched.items()))
 
 
@@ -100,7 +109,9 @@ def read(repo: Path | str, base: str, head: str) -> Change:
         else:
             status = "modified"
             lines = frozenset(added.get(path, ()))
-        around = frozenset(removed.get(path, ())) if status in {"modified", "renamed"} else frozenset()
+        around = (
+            frozenset(removed.get(path, ())) if status in {"modified", "renamed"} else frozenset()
+        )
         files.append(FileChange(
             path=path, status=status, lines=lines, old_path=record["old"], removed_at=around,
         ))

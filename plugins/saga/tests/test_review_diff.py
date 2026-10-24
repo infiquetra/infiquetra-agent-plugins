@@ -129,6 +129,24 @@ def test_a_pure_rename_has_no_changed_lines_and_an_edit_keeps_only_the_edit(tmp_
     assert change.lines_for("new.txt") == frozenset({2})
 
 
+def test_touched_lists_a_renamed_files_old_path_as_wholly_changed(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "old.txt").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    (repo / "keep.txt").write_text("k\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    _git(repo, "mv", "old.txt", "new.txt")
+    (repo / "new.txt").write_text("one\ntwo\nTHREE\nfour\n", encoding="utf-8")
+    head = _commit(repo, "rename and edit")
+    touched = D.read(repo, base, head).touched()
+    assert touched == {"new.txt": [[3, 3]], "old.txt": [[1, D.WHOLE_FILE]]}
+    assert "keep.txt" not in touched
+    # A pure rename touches no new line, but its old path is still named.
+    _git(repo, "mv", "keep.txt", "kept.txt")
+    pure = D.read(repo, head, _commit(repo, "pure rename")).touched()
+    assert pure == {"keep.txt": [[1, D.WHOLE_FILE]]}
+
+
 def test_a_binary_file_contributes_no_lines(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init(repo)

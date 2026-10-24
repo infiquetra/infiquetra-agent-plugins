@@ -21,18 +21,22 @@ computed in, each step named in ``severity_basis.modifiers`` when it changed som
 2. ``reproduced``: a row that blocks when reproduced, and was;
 3. ``excused``: a builder reason of the kind the row allows makes it a note;
 4. caps that lower ``blocks`` to ``fix-later``: ``degraded``, ``classifier-only``,
-   ``unreproduced`` (an LLM finding nobody reproduced) and ``pre-existing`` (the finding says the
-   change did not introduce it, or its lines lie wholly outside the lines the change added or
-   modified). A pre-existing finding is reported and never blocks, whatever its consequence: the
-   always-blocking harms below are not an exception. A tool finding is exempt from the lines test:
-   the runner already keeps only hits on changed lines, or hits new against the base, and a
-   base-to-head tool can fairly report a file the diff never names;
+   ``unreproduced`` (an LLM finding nobody reproduced) and ``pre-existing``. A finding is
+   pre-existing only when BOTH hold: the reviewer marked it ``introduced: false`` AND Saga's own
+   changed lines place its location outside the change. Neither alone is enough. The reviewer
+   cannot downgrade a block by itself, and a regression the change caused that surfaces at an
+   unchanged caller stays ``introduced: true`` and blocks. A pre-existing finding is reported and
+   never blocks, whatever its consequence: the always-blocking harms below are not an exception.
+   Without ``changed_lines`` nothing is capped (the formula cannot place a location, so it fails
+   closed). A tool finding is exempt: the runner sets ``introduced`` true for every tool finding
+   and keeps only hits on changed lines, or hits new against the base, so a base-to-head tool can
+   fairly report a file the diff never names;
 5. enforcement: a block counts for merge only where the lens may block for the finding's language,
    or where it is a reproduced "data lost or corrupted" or "a security boundary crossed" harm.
 
 The changed lines come in as ``changed_lines``, ``{path: [[start, end], ...]}`` with inclusive
-ranges, built by ``review_diff`` from the packet's diff. Without it only ``introduced`` is read, and
-a location is never called pre-existing: the formula cannot know.
+ranges, built by ``review_diff`` from the packet's diff. Without it a location is never called
+pre-existing, whatever ``introduced`` says.
 
 ``review_records.py`` validates records and stores them; it imports this module, never the reverse.
 """
@@ -41,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -124,9 +129,23 @@ class FormulaError(ValueError):
 
 
 def _normalised_path(path: str) -> str:
-    """A repository-relative path with ``./`` prefixes and doubled slashes removed."""
-    parts = [part for part in str(path).split("/") if part not in ("", ".")]
-    return "/".join(parts)
+    """A repository-relative path with ``./`` prefixes, doubled slashes and ``x/../`` removed."""
+    return posixpath.normpath(str(path))
+
+
+def _placed_path(file: str, ranges: Mapping[str, Any]) -> str | None:
+    """The key in *ranges* a cited file means, the normalised path itself when it names no
+    changed file, or ``None`` when the path cannot be placed in the repository at all.
+
+    A path that is absolute, or still holds ``..`` after normalising, is unplaceable. A diff-style
+    ``a/`` or ``b/`` prefix is stripped only when what is left is a changed file.
+    """
+    normal = _normalised_path(file)
+    if normal in (".", "") or normal.startswith("/") or ".." in normal.split("/"):
+        return None
+    if normal not in ranges and normal[:2] in ("a/", "b/") and normal[2:] in ranges:
+        return normal[2:]
+    return normal
 
 
 def changed_ranges(changed_lines: Any) -> dict[str, list[tuple[int, int]]] | None:
@@ -165,8 +184,10 @@ def lies_outside_change(
 ) -> bool:
     """True when a ``lines`` location shares no line with the change.
 
-    False when the changed lines are unknown, and for any location that is not a file and a line
-    range (a whole-project or plan-section location): the formula cannot place those.
+    False when the changed lines are unknown, for any location that is not a file and a line range
+    (a whole-project or plan-section location), and for a file path that cannot be placed
+    (absolute, or holding ``..``): the formula cannot place those. A file the change does not name
+    is outside it.
     """
     if ranges is None or not isinstance(location, Mapping) or location.get("scope") != "lines":
         return False
@@ -180,9 +201,10 @@ def lies_outside_change(
         or not isinstance(start, int) or not isinstance(end, int)
     ):
         return False
-    return not any(
-        low <= end and start <= high for low, high in ranges.get(_normalised_path(file), ())
-    )
+    placed = _placed_path(file, ranges)
+    if placed is None:
+        return False
+    return not any(low <= end and start <= high for low, high in ranges.get(placed, ()))
 
 
 @dataclass(frozen=True)
@@ -467,8 +489,9 @@ def outcome(
 ) -> dict[str, Any]:
     """The computed fields for one input finding: severity, its basis, flags and enforcement.
 
-    *changed_lines* is ``{path: [[start, end], ...]}``, the lines the change added or modified;
-    without it only the finding's own ``introduced`` marks it pre-existing.
+    *changed_lines* is ``{path: [[start, end], ...]}``, the lines the change added or modified. A
+    finding is capped as pre-existing only when it is marked not introduced AND those lines place
+    its location outside the change; without *changed_lines* nothing is capped.
     """
     preset = [key for key in COMPUTED_FINDING_KEYS if key in finding]
     if preset:
@@ -508,8 +531,10 @@ def outcome(
         elif source_kind == "llm" and evidence != "reproduced":
             severity = "fix-later"
             modifiers.append("unreproduced")
-        elif finding.get("introduced") is False or (
-            source_kind != "tool" and lies_outside_change(finding.get("location"), ranges)
+        elif (
+            source_kind != "tool"
+            and finding.get("introduced") is False
+            and lies_outside_change(finding.get("location"), ranges)
         ):
             severity = "fix-later"
             modifiers.append("pre-existing")
@@ -565,9 +590,8 @@ def compute(inputs: Mapping[str, Any]) -> dict[str, Any]:
     ``may_block`` (``{lens: {language: bool}}``; absent means every lens reports only) and
     ``degraded_inputs`` (``[{lens, language, input, tool, reason}]``, a re-run reason may add
     ``exit_code`` and ``output_tail``; none of them changes a grade) and ``changed_lines``
-    (``{path: [[start, end], ...]}``; absent means a location is never pre-existing). Everything
-    returned is
-    sorted, so the same inputs in any order give the same output.
+    (``{path: [[start, end], ...]}``; absent means no finding is capped as pre-existing).
+    Everything returned is sorted, so the same inputs in any order give the same output.
     """
     builder_records = list(inputs.get("builder_records") or [])
     may_block = dict(inputs.get("may_block") or {})
