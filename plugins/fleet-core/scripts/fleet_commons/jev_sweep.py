@@ -414,8 +414,11 @@ def _items(hits: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
             "lens": best["lens"],
             "location": copy.deepcopy(best["location"]),
             "language": best["language"],
+            # Most likely question first. `sorted` is stable, so questions with the same
+            # probability keep the bank's order, and two sweeps of one change list them alike.
             "questions": [
-                {"id": hit["question_id"], "probability": hit["probability"]} for hit in group
+                {"id": hit["question_id"], "probability": hit["probability"]}
+                for hit in sorted(group, key=lambda hit: -hit["probability"])
             ],
             "classifier": {"name": CLASSIFIER_NAME, "model": best["model"]},
             "degraded": any(bool(hit["degraded"]) for hit in group),

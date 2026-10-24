@@ -28,7 +28,7 @@ The commit under review does not choose the calibration file or the profile that
 | `measurements.json` | tool measurements |
 | `degraded.json` | degraded inputs, including a missing tool, a known gap, and a skipped sweep |
 | `builder-record.json` | the `--builder-record` file |
-| `where-to-look.json` | sweep items, then one item per missing tool or known gap. No answer yet |
+| `where-to-look.json` | sweep items, then one item per missing tool or known gap. Inside an item the questions are listed by Jev probability, highest first. No answer yet |
 | `missing-tools.json` | the question a reviewer answers when a tool did not run |
 | `may-block.json` | each lens and language, with the bool and the reason line |
 | `open-search-cap.json` | `{"cap": 5}` unless a later caller changes the file before `finish` |

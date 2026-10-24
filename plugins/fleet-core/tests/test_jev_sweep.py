@@ -227,6 +227,30 @@ def _ranked(tmp_path: Path, thresholds: dict) -> dict[str, Any]:
     return _run(tmp_path, _bank(_yes_no("leak")), pieces, thresholds, _rate(), ask)
 
 
+def test_questions_inside_an_item_are_listed_by_probability_then_bank_order(
+    tmp_path: Path,
+) -> None:
+    chances = {"low": 0.2, "tie-a": 0.5, "high": 0.9, "tie-b": 0.5, "mid": 0.4}
+
+    def ask(_state, questions, **_kwargs):
+        answers = {}
+        for key, spec in questions.items():
+            qid = spec["instructions"].split("\n", 1)[0]
+            answers[key] = {"type": "noul", "noul": chances[qid]}
+        return _Result(answers)
+
+    # The bank lists them in a different order from their probabilities.
+    bank = _bank(*(_yes_no(qid) for qid in ("low", "tie-a", "high", "tie-b", "mid")))
+    result = _run(tmp_path, bank, [_piece()], {}, _rate(), ask)
+    assert len(result["items"]) == 1
+    listed = [(question["id"], question["probability"]) for question in result["items"][0]["questions"]]
+    assert listed == [
+        ("high", 0.9), ("tie-a", 0.5), ("tie-b", 0.5), ("mid", 0.4), ("low", 0.2),
+    ]
+    again = _run(tmp_path / "again", bank, [_piece()], {}, _rate(), ask)
+    assert again["items"] == result["items"]
+
+
 def test_the_dollar_cap_stops_before_the_next_request(tmp_path: Path) -> None:
     calls: list[str] = []
 

@@ -36,6 +36,11 @@
 
 ### Changed
 
+- Inside each where-to-look item, the questions are listed by Jev probability, highest first, and
+  questions with the same probability keep the question bank's order (fleet-core's `jev_sweep`,
+  regenerated into `scripts/_bundled/jev_sweep.py`). The reviewer reads the question Jev rated
+  most likely first instead of wherever the bank placed it. No version bump; that belongs to
+  #147's saga release step.
 - The question sweep returns up to 60 where-to-look items instead of 30 (`ITEM_CAP` in fleet-core's
   `jev_sweep`, regenerated into `scripts/_bundled/jev_sweep.py`), so the reviewer answers every
   item on a large change instead of losing the tail to the cap. `references/review-calibration.md`

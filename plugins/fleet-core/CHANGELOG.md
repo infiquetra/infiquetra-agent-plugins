@@ -22,6 +22,10 @@ The catalog requires `python>=3.12`.
 
 ### Changed
 
+- Inside each where-to-look item the sweep lists its questions by Jev probability, highest first;
+  questions with the same probability keep the question bank's order. Before, they followed the
+  bank, so the question Jev rated most likely could be listed last. Saga's bundled copy is
+  regenerated. The package version stays 0.33.2.
 - The sweep's item cap (`ITEM_CAP` in `jev_sweep`) rises from 30 to 60, so a large change keeps
   more of its where-to-look items; anything past the cap is still listed as degraded with reason
   `cap`. `references/typesafe.md` states the new number and saga's bundled copy is regenerated.
