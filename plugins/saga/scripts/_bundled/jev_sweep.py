@@ -3,8 +3,8 @@
 # source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_sweep.py
-# source-sha256: e7fba51e81b0160176bfd8cca71906431e9be226d5dcfa4a712005f9cd80e276
-# output-sha256: e7fba51e81b0160176bfd8cca71906431e9be226d5dcfa4a712005f9cd80e276
+# source-sha256: cb2f98281843730f2bbcb157815a80305d06089d58793ba491858ce4a37cdd32
+# output-sha256: cb2f98281843730f2bbcb157815a80305d06089d58793ba491858ce4a37cdd32
 # --- end generated bundle stamp ---
 """Classify pieces into a where-to-look list (issue 156).
 
@@ -422,8 +422,11 @@ def _items(hits: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
             "lens": best["lens"],
             "location": copy.deepcopy(best["location"]),
             "language": best["language"],
+            # Most likely question first. `sorted` is stable, so questions with the same
+            # probability keep the bank's order, and two sweeps of one change list them alike.
             "questions": [
-                {"id": hit["question_id"], "probability": hit["probability"]} for hit in group
+                {"id": hit["question_id"], "probability": hit["probability"]}
+                for hit in sorted(group, key=lambda hit: -hit["probability"])
             ],
             "classifier": {"name": CLASSIFIER_NAME, "model": best["model"]},
             "degraded": any(bool(hit["degraded"]) for hit in group),

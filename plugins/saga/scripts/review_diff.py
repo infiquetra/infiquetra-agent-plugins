@@ -12,6 +12,9 @@ import subprocess  # nosec B404
 from dataclasses import dataclass
 from pathlib import Path
 
+# The end of the one range that stands for every line of a file (a renamed file's old path).
+WHOLE_FILE = 2**31 - 1
+
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -21,12 +24,17 @@ class ReviewDiffError(ValueError):
 
 @dataclass(frozen=True)
 class FileChange:
-    """One path in the diff. ``lines`` are added or modified lines in the new file."""
+    """One path in the diff. ``lines`` are added or modified lines in the new file.
+
+    ``removed_at`` holds the new-file lines on either side of a hunk that only removed lines. They
+    are not added or modified, so ``lines`` leaves them out; ``Change.touched`` counts them.
+    """
 
     path: str
     status: str
     lines: frozenset[int]
     old_path: str | None = None
+    removed_at: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -45,6 +53,34 @@ class Change:
                 return item.lines
         return frozenset()
 
+    def touched(self) -> dict[str, list[list[int]]]:
+        """``{path: [[start, end], ...]}``: the lines a finding can fairly be said to be about.
+
+        Added or modified lines, plus the line on either side of a removal, because a finding
+        about code that a change removed is anchored beside the gap. Inclusive ranges, sorted and
+        merged; a path with none is left out. This is what ``review_formula`` reads as the
+        changed lines. Added, modified and renamed files are covered.
+
+        A renamed file's old path is listed too, as one range over the whole file, because the old
+        file's line numbers do not map onto the new ones: a finding that cites the old path is
+        then never placed outside the change.
+        """
+        touched: dict[str, list[list[int]]] = {}
+        for item in self.files:
+            if item.status not in {"added", "modified", "renamed"}:
+                continue
+            ranges: list[list[int]] = []
+            for line in sorted(item.lines | item.removed_at):
+                if ranges and line <= ranges[-1][1] + 1:
+                    ranges[-1][1] = max(ranges[-1][1], line)
+                else:
+                    ranges.append([line, line])
+            if ranges:
+                touched[item.path] = ranges
+            if item.status == "renamed" and item.old_path and item.old_path != item.path:
+                touched[item.old_path] = [[1, WHOLE_FILE]]
+        return dict(sorted(touched.items()))
+
 
 def read(repo: Path | str, base: str, head: str) -> Change:
     """The change ``git diff`` reports between ``base`` and ``head``."""
@@ -53,7 +89,7 @@ def read(repo: Path | str, base: str, head: str) -> Change:
     _require_commit(root, head)
     raw = _git(root, ["diff", "--raw", "-z", "--find-renames", base, head])
     patch = _git(root, ["diff", "-U0", "--no-color", "--find-renames", base, head])
-    added, binary = _parse_patch(patch)
+    added, binary, removed = _parse_patch(patch)
     files: list[FileChange] = []
     for record in _parse_raw(raw):
         path = record["path"]
@@ -73,7 +109,12 @@ def read(repo: Path | str, base: str, head: str) -> Change:
         else:
             status = "modified"
             lines = frozenset(added.get(path, ()))
-        files.append(FileChange(path=path, status=status, lines=lines, old_path=record["old"]))
+        around = (
+            frozenset(removed.get(path, ())) if status in {"modified", "renamed"} else frozenset()
+        )
+        files.append(FileChange(
+            path=path, status=status, lines=lines, old_path=record["old"], removed_at=around,
+        ))
     return Change(files=tuple(files))
 
 
@@ -126,8 +167,9 @@ def _parse_raw(blob: str) -> list[dict[str, str | None]]:
     return records
 
 
-def _parse_patch(text: str) -> tuple[dict[str, set[int]], set[str]]:
+def _parse_patch(text: str) -> tuple[dict[str, set[int]], set[str], dict[str, set[int]]]:
     added: dict[str, set[int]] = {}
+    removed: dict[str, set[int]] = {}
     binary: set[str] = set()
     current: str | None = None
     for line in text.splitlines():
@@ -145,7 +187,10 @@ def _parse_patch(text: str) -> tuple[dict[str, set[int]], set[str]]:
             count = int(match.group(2)) if match.group(2) is not None else 1
             if count:
                 added.setdefault(current, set()).update(range(start, start + count))
-    return added, binary
+            else:
+                # Lines were removed after new line ``start``: the gap sits between it and the next.
+                removed.setdefault(current, set()).update({max(start, 1), start + 1})
+    return added, binary, removed
 
 
 def _new_path(header: str) -> str:

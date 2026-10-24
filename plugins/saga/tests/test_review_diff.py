@@ -80,6 +80,34 @@ def test_added_modified_and_deleted_lines_match_git(tmp_path: Path) -> None:
     assert by_path["gone.txt"].lines == frozenset()
 
 
+def test_touched_counts_added_lines_and_the_lines_beside_a_removal(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "mixed.txt").write_text("a\nb\nc\nd\ne\nf\ng\nh\n", encoding="utf-8")
+    (repo / "only_removed.txt").write_text("1\n2\n3\n4\n", encoding="utf-8")
+    (repo / "gone.txt").write_text("delete me\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    # Line 2 is rewritten, and lines 5 and 6 are removed (nothing is added there).
+    (repo / "mixed.txt").write_text("a\nB\nc\nd\ng\nh\n", encoding="utf-8")
+    (repo / "only_removed.txt").write_text("1\n4\n", encoding="utf-8")
+    (repo / "gone.txt").unlink()
+    (repo / "new.txt").write_text("x\ny\n", encoding="utf-8")
+    head = _commit(repo, "head")
+
+    change = D.read(repo, base, head)
+    by_path = {item.path: item for item in change.files}
+    assert by_path["mixed.txt"].lines == frozenset({2})
+    assert by_path["mixed.txt"].removed_at == frozenset({4, 5})
+    assert by_path["only_removed.txt"].lines == frozenset()
+    assert by_path["only_removed.txt"].removed_at == frozenset({1, 2})
+    assert by_path["gone.txt"].removed_at == frozenset()
+    assert change.touched() == {
+        "mixed.txt": [[2, 2], [4, 5]],
+        "new.txt": [[1, 2]],
+        "only_removed.txt": [[1, 2]],
+    }
+
+
 def test_a_pure_rename_has_no_changed_lines_and_an_edit_keeps_only_the_edit(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init(repo)
@@ -99,6 +127,24 @@ def test_a_pure_rename_has_no_changed_lines_and_an_edit_keeps_only_the_edit(tmp_
     change = D.read(repo, renamed, edited)
     assert change.files[0].status == "modified"
     assert change.lines_for("new.txt") == frozenset({2})
+
+
+def test_touched_lists_a_renamed_files_old_path_as_wholly_changed(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "old.txt").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    (repo / "keep.txt").write_text("k\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    _git(repo, "mv", "old.txt", "new.txt")
+    (repo / "new.txt").write_text("one\ntwo\nTHREE\nfour\n", encoding="utf-8")
+    head = _commit(repo, "rename and edit")
+    touched = D.read(repo, base, head).touched()
+    assert touched == {"new.txt": [[3, 3]], "old.txt": [[1, D.WHOLE_FILE]]}
+    assert "keep.txt" not in touched
+    # A pure rename touches no new line, but its old path is still named.
+    _git(repo, "mv", "keep.txt", "kept.txt")
+    pure = D.read(repo, head, _commit(repo, "pure rename")).touched()
+    assert pure == {"keep.txt": [[1, D.WHOLE_FILE]]}
 
 
 def test_a_binary_file_contributes_no_lines(tmp_path: Path) -> None:

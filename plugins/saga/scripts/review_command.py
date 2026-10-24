@@ -339,8 +339,19 @@ def _prepare(
         )
         degraded.extend(sweep_degraded)
         gaps = [entry for entry in degraded if entry.get("reason") in {"missing", "known-gap"}]
-        where = [*items, *(_gap_item(entry) for entry in gaps)]
+        # The tool runner already wrote the scripted checks' own items (for instance the
+        # machine-specific-value check) to this file; they join the sweep's items, not replaced.
+        scripted = _read_json(staging / "where-to-look.json", "where-to-look")
+        where = _merge_where_items(
+            scripted if isinstance(scripted, list) else [],
+            items,
+            [_gap_item(entry) for entry in gaps],
+        )
         may_block, reasons = _may_block_map(findings, measurements, calibration, profile)
+        # The lines the change added, modified or removed beside. A finding the reviewer marked not
+        # introduced AND placed wholly outside them is pre-existing and never blocks. Written to
+        # change.json so finish grades the same way.
+        changed = change.touched()
         try:
             grades = review_formula.compute({
                 "findings": findings,
@@ -348,6 +359,7 @@ def _prepare(
                 "builder_records": [builder],
                 "may_block": may_block,
                 "degraded_inputs": degraded,
+                "changed_lines": changed,
             })
         except review_formula.FormulaError as exc:
             raise CommandFailure(2, str(exc)) from exc
@@ -359,6 +371,7 @@ def _prepare(
         ))
         _write_json(staging / "change.json", {
             "repo": str(repo.resolve()), "base": base, "head": head, "files": files,
+            "changed_lines": changed,
         })
         (staging / "diff.patch").write_text(patch.stdout, encoding="utf-8")
         _write_json(staging / "builder-record.json", builder)
@@ -391,6 +404,7 @@ def _prepare(
                     "builder_records": [builder],
                     "may_block": may_block,
                     "degraded_inputs": degraded,
+                    "changed_lines": changed,
                 })
             except review_records.ReviewRecordError as exc:
                 raise CommandFailure(2, "\n".join(exc.problems)) from exc
@@ -531,6 +545,47 @@ def _jev_rate() -> dict[str, float] | None:
     return None
 
 
+def _merge_where_items(
+    scripted: Sequence[Any],
+    swept: Sequence[Any],
+    gaps: Sequence[Any],
+) -> list[dict[str, Any]]:
+    """Every where-to-look item the reviewer must answer: scripted, then swept, then tool gaps.
+
+    *scripted* items come from saga's own checks and are facts (probability 1), so none is ever
+    dropped. The sweep's cap (``ITEM_CAP``) bounds only *swept*; scripted and gap items come on
+    top of it, so a packet can hold more items than the cap. An item that repeats an earlier
+    one's lens, language, location, classifier and question ids is kept once, the earlier one
+    winning. The caller writes the result in the packet's canonical order
+    (``review_tools.stable_order``).
+    """
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in (*scripted, *swept, *gaps):
+        if not isinstance(item, Mapping):
+            continue
+        classifier = item.get("classifier")
+        questions = item.get("questions")
+        key = json.dumps(
+            [
+                item.get("lens"),
+                item.get("language"),
+                item.get("location"),
+                classifier.get("name") if isinstance(classifier, Mapping) else None,
+                sorted(
+                    str(question.get("id")) for question in questions
+                    if isinstance(question, Mapping)
+                ) if isinstance(questions, list) else [],
+            ],
+            sort_keys=True, ensure_ascii=False,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(dict(item))
+    return merged
+
+
 def _gap_item(entry: Mapping[str, Any]) -> dict[str, Any]:
     tool = str(entry.get("tool") or "tool")
     question = entry.get("input") or tool
@@ -658,6 +713,11 @@ def _finish(
     if not isinstance(change, Mapping):
         raise CommandFailure(2, "change.json: must be a JSON object")
     repo = Path(str(change.get("repo") or ""))
+    # A packet written before changed_lines existed has none; the formula then caps nothing as
+    # pre-existing, as before the rule existed.
+    changed_lines = change.get("changed_lines")
+    if changed_lines is not None and not isinstance(changed_lines, Mapping):
+        raise CommandFailure(2, "change.json: changed_lines must be a JSON object")
     home = Path(args.home) if args.home is not None else Path.home()
     store = _existing_store(args)
     builder = _read_json(packet / "builder-record.json", "builder record")
@@ -699,7 +759,7 @@ def _finish(
         if args.final:
             degraded.extend(_final_round(
                 findings, owners, results, repo, str(change.get("head") or ""), home, runner,
-                confine, available, cited, offline, replay, positions,
+                confine, available, cited, offline, replay, positions, changed_lines,
             ))
     may_block = _bools_from_packet(packet)
     reviewers, usage_specs, usage_totals = _reviewers_and_usage(
@@ -725,6 +785,8 @@ def _finish(
         "degraded_inputs": degraded,
         "reviewers": reviewers,
     }
+    if changed_lines is not None:
+        inputs["changed_lines"] = dict(changed_lines)
     try:
         run = review_records.build_run(inputs)
     except review_records.ReviewRecordError as exc:
@@ -1025,9 +1087,10 @@ def _final_round(
     offline: Offline | None = None,
     replay: Sequence[Mapping[int, Mapping[str, str]]] = (),
     positions: Mapping[str, int] | None = None,
+    changed_lines: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     try:
-        graded = review_formula.compute({"findings": findings})
+        graded = review_formula.compute({"findings": findings, "changed_lines": changed_lines})
     except review_formula.FormulaError as exc:
         raise CommandFailure(2, str(exc)) from exc
     blocking = []

@@ -299,7 +299,7 @@ def _bools(packet: Path) -> dict[str, dict[str, bool]]:
 
 def _location() -> dict[str, Any]:
     return {
-        "scope": "lines", "file": "src/app.py", "lines": {"start": 2, "end": 2},
+        "scope": "lines", "file": "src/app.py", "lines": {"start": 2, "end": 4},
         "function": "changed", "anchor": "return 2",
     }
 
@@ -418,6 +418,9 @@ def _line_packet(tmp: Path) -> tuple[Path, Path, _Runner]:
 
 def _assert_change_and_patch(repo: Path, base: str, head: str, packet: Path) -> None:
     change = _read(packet / "change.json")
+    changed = change.pop("changed_lines")
+    # The one edited line, or the one line the function repo rewrites.
+    assert changed in ({"src/app.py": [[4, 4]]}, {"src/app.py": [[2, 2]]})
     assert change == {
         "base": base,
         "files": [{"path": "src/app.py", "status": "modified"}],
@@ -524,6 +527,75 @@ def test_prepare_records_writes_validated_findings_and_identical_grades(tmp_path
     )
     assert code == 0, err
     assert (second / "grades.json").read_bytes() == (first / "grades.json").read_bytes()
+
+
+def _scripted_item(line: int = 2, *, name: str = "machine-specific-value") -> dict[str, Any]:
+    return {
+        "kind": "where_to_look", "schema": R.SCHEMA, "lens": "architecture-maintainability",
+        "language": "python", "degraded": False,
+        "questions": [{"id": "machine-specific-value", "probability": 1}],
+        "classifier": {"name": name, "model": "review-checks 1.0.0"},
+        "location": {
+            "scope": "lines", "file": "src/app.py", "lines": {"start": line, "end": line},
+            "function": "changed", "anchor": f"machine-specific-value:home:{line}",
+        },
+    }
+
+
+def _scripted_adapter(items: tuple[dict[str, Any], ...]) -> Any:
+    return T.Adapter(
+        id="scripted", tool="scripted", invoke=lambda _context: ["scripted", "scan"],
+        parse=lambda _text: T.ParseResult(items=items), default_version="1.0.0",
+        rows=("security.scanner-high",), lens="security", comparison="lines",
+    )
+
+
+def test_prepare_keeps_the_scripted_items_beside_the_sweeps(tmp_path: Path) -> None:
+    repo, base, head = _repo(tmp_path, function=True)
+    profile = _profile(tmp_path / "outside")
+    builder = _builder(tmp_path / "builder.json")
+    bank = _bank(tmp_path / "bank.json")
+    home = tmp_path / "home"
+    home.mkdir()
+    out = tmp_path / "packet"
+    scripted = _scripted_item()
+    argv = [
+        "prepare", "--repo", str(repo), "--base", base, "--head", head, "--profile", str(profile),
+        "--builder-record", str(builder), "--out", str(out), "--home", str(home),
+        "--bank", str(bank),
+    ]
+    # The same scripted item twice, as two scans of one line would give it.
+    adapter = _scripted_adapter((scripted, dict(scripted)))
+    code, err = _main(argv, adapters=[adapter], runner=_Runner(), ask=_ask())
+    assert code == 0, err
+    where = _read(out / "where-to-look.json")
+    names = sorted(item["classifier"]["name"] for item in where)
+    assert names.count("machine-specific-value") == 1
+    assert len(where) == 2
+    kept = next(item for item in where if item["classifier"]["name"] == "machine-specific-value")
+    assert kept["questions"] == [{"id": "machine-specific-value", "probability": 1}]
+    assert "answer" not in kept
+    # The sweep's own item is still there.
+    assert any(item["classifier"]["name"] != "machine-specific-value" for item in where)
+    again = tmp_path / "again"
+    argv[argv.index(str(out))] = str(again)
+    code, err = _main(argv, adapters=[adapter], runner=_Runner(), ask=_ask())
+    assert code == 0, err
+    assert (again / "where-to-look.json").read_bytes() == (out / "where-to-look.json").read_bytes()
+
+
+def test_scripted_items_are_not_counted_against_the_sweeps_cap() -> None:
+    swept = [
+        {**_scripted_item(number), "classifier": {"name": "jev-sweep", "model": "jev-test"}}
+        for number in range(1, 61)
+    ]
+    scripted = [_scripted_item(61), _scripted_item(62)]
+    gap = {**_scripted_item(1), "classifier": {"name": "missing-tool", "model": "none"}}
+    merged = C._merge_where_items(scripted, swept, [gap, dict(gap)])
+    assert len(merged) == 63
+    assert [item["classifier"]["name"] for item in merged[:2]] == ["machine-specific-value"] * 2
+    assert merged[-1]["classifier"]["name"] == "missing-tool"
+    assert C._merge_where_items(["not an item", None], [], []) == []
 
 
 def test_prepare_packet_names_every_where_to_look_item(tmp_path: Path) -> None:
@@ -1109,6 +1181,92 @@ def _files_holding(root: Path, value: str) -> list[str]:
 
 def _llm_finding(run: dict[str, Any]) -> dict[str, Any]:
     return next(item for item in run["findings"] if item["source"]["kind"] == "llm")
+
+
+def _finish_one_reproduced(tmp: Path, **over: Any) -> dict[str, Any]:
+    _repo_path, packet, runner = _repro_packet(tmp)
+    home = tmp / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp, with_test=True)
+    found = _replay_finding("AssertionError: returned 2")
+    found["consequence"] = "security-boundary-crossed"
+    found.update(over)
+    code, err = _finish(
+        packet, [(_answer([found]), _result(scratch, changes))], home, runner,
+        ask=_ask(consequence="security-boundary-crossed"), confine=_Confine(1, _CAPTURED),
+    )
+    assert code == 0, err
+    return _read(packet / "review-run.json")
+
+
+def test_a_reproduced_finding_on_a_changed_line_still_blocks(tmp_path: Path) -> None:
+    run = _finish_one_reproduced(tmp_path)
+    found = _llm_finding(run)
+    assert found["evidence"] == "reproduced"
+    assert found["severity"] == "blocks"
+    assert run["merge"]["allowed"] is False
+    assert run["changed_lines"] == {"src/app.py": [[4, 4]]}
+
+
+def test_a_reproduced_not_introduced_finding_outside_the_change_is_reported_not_blocking(
+    tmp_path: Path,
+) -> None:
+    outside = {**_location(), "lines": {"start": 1, "end": 2}}
+    run = _finish_one_reproduced(tmp_path, location=outside, introduced=False)
+    found = _llm_finding(run)
+    assert found["evidence"] == "reproduced"
+    assert found["severity"] == "fix-later"
+    assert found["severity_basis"]["modifiers"] == ["pre-existing"]
+    assert run["merge"]["allowed"] is True
+    assert found["id"] not in run["merge"]["blocking"]
+    assert found["id"] not in run["merge"]["report_only_blocks"]
+    assert R.validate(run) == []
+    # Take the changed lines away and the stored severity no longer matches a recomputation.
+    stripped = {key: value for key, value in run.items() if key != "changed_lines"}
+    assert any("severity" in problem for problem in R.validate(stripped))
+
+
+def test_a_reproduced_introduced_finding_outside_the_change_still_blocks(tmp_path: Path) -> None:
+    """A regression the change caused, surfacing at an unchanged caller, refuses the merge."""
+    outside = {**_location(), "lines": {"start": 1, "end": 2}}
+    run = _finish_one_reproduced(tmp_path, location=outside, introduced=True)
+    found = _llm_finding(run)
+    assert found["severity"] == "blocks"
+    assert "pre-existing" not in found["severity_basis"]["modifiers"]
+    assert run["merge"]["allowed"] is False
+    assert R.validate(run) == []
+
+
+def test_a_reproduced_not_introduced_finding_on_a_changed_line_still_blocks(
+    tmp_path: Path,
+) -> None:
+    run = _finish_one_reproduced(tmp_path, introduced=False)
+    found = _llm_finding(run)
+    assert found["severity"] == "blocks"
+    assert run["merge"]["allowed"] is False
+
+
+def test_a_packet_without_changed_lines_caps_nothing_as_pre_existing(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    change = _read(packet / "change.json")
+    del change["changed_lines"]
+    _dump(packet / "change.json", change)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    outside = {**_location(), "lines": {"start": 1, "end": 2}}
+    found = _replay_finding("AssertionError: returned 2")
+    found["location"] = outside
+    found["introduced"] = False
+    code, err = _finish(
+        packet, [(_answer([found]), _result(scratch, changes))], home, runner,
+        ask=_ask(), confine=_Confine(1, _CAPTURED),
+    )
+    assert code == 0, err
+    run = _read(packet / "review-run.json")
+    assert "changed_lines" not in run
+    assert _llm_finding(run)["severity"] == "blocks"
+    assert R.validate(run) == []
 
 
 def test_a_failure_that_prints_a_secret_shaped_value_still_reproduces(tmp_path: Path) -> None:

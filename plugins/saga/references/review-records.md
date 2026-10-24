@@ -20,7 +20,7 @@ Every record names its `kind` and carries `schema: "review_records.v1"`.
 | `measurement` | number a tool produced | lens, row, tool and version, metric, value, threshold, direction; `met` or `missed` once computed |
 | `where_to_look` | classifier hit | lens, location, the questions that fired with their probabilities, classifier and model, and the LLM's answer: a finding, or cleared with a reason |
 | `lens_grade` | lens per review | counts of blocking, fix-later and note items, the A–F grade, degraded inputs, and per language whether the lens may block |
-| `review_run` | review | all of the above, plus card, repository, base and head commits, saga version, round, tool versions, usage (tokens, cost, seconds), an optional reviewers array (vendor, model, role, prompt and configuration fingerprints, and a note when the configuration differs), builder-record snapshots, the may-block answers, raw-output fingerprints and the merge answer |
+| `review_run` | review | all of the above, plus card, repository, base and head commits, saga version, round, tool versions, usage (tokens, cost, seconds), an optional reviewers array (vendor, model, role, prompt and configuration fingerprints, and a note when the configuration differs), builder-record snapshots, the may-block answers, an optional `changed_lines` (`{path: [[start, end], ...]}`, the lines the findings were graded against, so a stored run recomputes to the same severities), raw-output fingerprints and the merge answer |
 | `builder_record` | unit | acceptance criteria and their checks, a declaration per policy question (applies or not, and the proving test), and every reason the builder gives |
 
 Validate any of them with:
@@ -50,7 +50,7 @@ no known kind.
 | `trigger` | `normal-use`, `retry`, `interrupt`, `concurrency`, `old-data`, `other-caller`, `misuse-only`, or `null` |
 | `evidence` | `reproduced`, `traced`, `suspected`, `tool-result` |
 | `proof` | `test` or `output` when reproduced; `steps` (file-and-line) when traced; `raw_output`, a SHA-256 of the tool's raw output, for a tool result |
-| `introduced` | whether this change introduced it |
+| `introduced` | whether this change introduced it. `false` caps the finding at fix later with the `pre-existing` modifier only when the changed lines also place its location outside the change; `false` alone never caps it |
 | `degraded` | whether it was answered without the tool that should answer it |
 | `unconfirmed` | true exactly when a reproduced LLM finding has no Jev consequence pick |
 | `merge_outcome` | `null`, or `{outcome}` where outcome is `fixed`, `dismissed` (needs `reason`), `fixed-now`, `filed` (needs `issue`) or `left` |
@@ -168,7 +168,17 @@ the finding is marked `unconfirmed`.
 2. `reproduced`: a row that blocks when reproduced, and was.
 3. `excused`: a builder reason of the row's kind, naming this finding's identity, makes it a note.
 4. Caps that lower blocks to fix later: `degraded`; `classifier-only` (Jev never blocks);
-   `unreproduced` (an LLM finding nobody reproduced).
+   `unreproduced` (an LLM finding nobody reproduced); `pre-existing` (BOTH the finding's
+   `introduced` is false AND its `lines` location shares no line with the lines the change added or modified, plus the line on either side of a removal; the
+   reviewer's word alone cannot lower a block, and a regression the change caused at an unchanged
+   caller stays `introduced: true` and blocks). A pre-existing finding is reported and never
+   blocks, and that includes the "data lost or corrupted" and "a security boundary crossed"
+   harms: the next step then has nothing to enforce. Without `changed_lines`, or for a whole-project
+   or section location, or for a path that is absolute or holds `..`, nothing is capped, because the
+   formula cannot place it. A tool finding is exempt from the lines test: the runner sets
+   `introduced` true on its findings and already keeps only hits on changed lines (or, for a
+   base-to-head tool, hits new against the base, which can sit in a file the diff never names),
+   so none is capped. Only the first cap that applies is named, in the order above.
 5. `always-blocks`: a block that is a reproduced "data lost or corrupted" or "a security boundary
    crossed" harm.
 

@@ -36,6 +36,34 @@
 
 ### Changed
 
+- A finding about code the change did not introduce is reported and never blocks. In
+  `review_formula.py` a finding is capped at fix-later and carries the `pre-existing` modifier only
+  when BOTH hold: the reviewer marked it `introduced: false`, AND the lines the change added or
+  modified place its `lines` location outside the change (a file the change does not name counts as
+  outside). Neither alone is enough: the reviewer cannot lower a block by itself, and a regression
+  the change caused that surfaces at an unchanged caller, marked `introduced: true`, still blocks.
+  The cap covers the always-blocking harms ("data lost or corrupted", "a security boundary
+  crossed") when the finding is pre-existing in this sense: by operator decision such a harm is
+  listed, not merge-refusing. The formula stays pure: the changed lines come in as
+  `changed_lines`, `{path: [[start, end], ...]}`, which `review_diff.Change.touched()` builds from
+  the diff (added, modified and renamed files; added or modified lines, plus the line on either
+  side of a removal; a renamed file's old path as one whole-file range). Cited paths are normalised
+  with `posixpath.normpath`; a leading `./` and a diff-style `a/` or `b/` prefix (only when what is
+  left is a changed file) are ignored, and an absolute path or one holding `..` cannot be placed
+  and is never capped. `prepare` writes `changed_lines` to `change.json`, `finish` reads them back,
+  and a stored review run keeps them (optional `changed_lines`) so that validation recomputes the
+  same severities. A packet or run without `changed_lines`, and the build loop's gate, cap nothing
+  (fail closed, as before the rule existed); a location that is not a file and a line range is
+  never called pre-existing. A tool finding is exempt: the runner sets `introduced` true on it.
+  The older code-review skill kept a finding as introduced when the diff calls into the cited code
+  or newly exposes it (`validator.md`, step 2); this rule is narrower, because the lines test alone
+  cannot see a caller the diff newly exposes, so it needs the reviewer's `introduced` as well. No
+  version bump; that belongs to #147's saga release step.
+- Inside each where-to-look item, the questions are listed by Jev probability, highest first, and
+  questions with the same probability keep the question bank's order (fleet-core's `jev_sweep`,
+  regenerated into `scripts/_bundled/jev_sweep.py`). The reviewer reads the question Jev rated
+  most likely first instead of wherever the bank placed it. No version bump; that belongs to
+  #147's saga release step.
 - The question sweep returns up to 60 where-to-look items instead of 30 (`ITEM_CAP` in fleet-core's
   `jev_sweep`, regenerated into `scripts/_bundled/jev_sweep.py`), so the reviewer answers every
   item on a large change instead of losing the tail to the cap. `references/review-calibration.md`
@@ -50,6 +78,27 @@
 
 ### Fixed
 
+- `prepare` keeps the scripted checks' where-to-look items. It rewrote `where-to-look.json` with
+  only the sweep's items and the missing-tool items, so items from the scripted checks, such as the
+  machine-specific-value check, never reached the reviewer even when the check had found the exact
+  line. They are now merged in. They are not counted against the sweep's cap of 60, which bounds
+  only the sweep's items, so a packet can hold more than 60. An item that repeats another's lens,
+  language, location, classifier and question ids is kept once. No version bump; that belongs to
+  #147's saga release step.
+- The ctags call in `scripts/sweep_pieces.py` no longer passes `--` before the file. Universal
+  Ctags 6.2.1 rejects it ("Unknown option: --", exit 1), so every piece had fallen back to a
+  fixed line window and no where-to-look item named a function. The path is the sweep's own
+  temporary file: absolute, and its name starts with `source`, so a leading `-` cannot occur. The
+  same ctags gives no `end` line for Rust, TypeScript or shell tags, so a function without one now
+  ends where its braces close: a small scanner counts braces outside strings, comments and
+  parentheses, and looks no further than the next tag that is not nested inside the function. Code
+  after the closing brace that ctags did not tag (a shell script's main body, a TypeScript
+  `export default`) is no longer swallowed. When no matching close brace is found, the function
+  gets no span and the fixed line window applies. The scanner misjudges a TypeScript return type
+  written as an object type (`(): { a: number } {`). Tests run the real ctags, when it is
+  installed, and assert the boundaries for Rust, TypeScript and shell; the CI plugin-tests job
+  installs Universal Ctags, and there those tests fail, not skip, when it is missing. No version
+  bump; that belongs to #147's saga release step.
 - Issue #264: `finish` recognises a reproduction test's failure in each supported runner's own
   output, so a reproduced Rust (and Vitest, Jest, Go, Dart, Swift or unittest) finding counts as
   reproduced and can block. The match rule is in the new `scripts/reproduction_match.py`: the

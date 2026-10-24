@@ -628,6 +628,7 @@ def _formula_inputs(run: Mapping[str, Any]) -> dict[str, Any]:
         "builder_records": list(run.get("builder_records") or []),
         "may_block": dict(run.get("may_block") or {}),
         "degraded_inputs": list(run.get("degraded_inputs") or []),
+        **({"changed_lines": run["changed_lines"]} if "changed_lines" in run else {}),
     }
 
 
@@ -683,9 +684,19 @@ def _check_review_run(check: _Check, record: Any) -> None:
                     check.add(f"{path}.sha256", "must be 64 lowercase hex characters")
     if "reviewers" in record:
         _check_reviewers(check, record["reviewers"])
+    if "changed_lines" in record:
+        _check_changed_lines(check, record["changed_lines"])
     if len(check.problems) != before or not all(name in record for name in REQUIRED["review_run"]):
         return  # recompute only a run whose parts are each well formed
     _check_recomputation(check, record)
+
+
+def _check_changed_lines(check: _Check, value: Any) -> None:
+    """Optional ``{path: [[start, end], ...]}``: the lines the change added or modified."""
+    try:
+        formula.changed_ranges(value)
+    except formula.FormulaError as exc:
+        check.add("changed_lines", str(exc).removeprefix("changed_lines: "))
 
 
 def _check_reviewers(check: _Check, value: Any) -> None:
@@ -785,6 +796,7 @@ RUN_FIELDS: tuple[str, ...] = (
     "where_to_look",
     "raw_outputs",
     "reviewers",
+    "changed_lines",
 )
 
 

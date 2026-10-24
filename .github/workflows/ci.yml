@@ -65,6 +65,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-plugin-tests.txt
 
+      # The sweep's real-ctags tests run the actual Universal Ctags binary, because the mocked
+      # unit tests cannot see a flag the real tool rejects. With CI set those tests fail rather
+      # than skip when ctags is missing, so this install is what keeps them honest.
+      - name: Install Universal Ctags
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y universal-ctags
+          ctags --version | head -n 1
+
       - name: Run ported plugin tests
         run: python -m pytest plugins/*/tests -q --import-mode=importlib
 

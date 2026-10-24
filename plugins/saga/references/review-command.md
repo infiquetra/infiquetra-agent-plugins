@@ -22,13 +22,13 @@ The commit under review does not choose the calibration file or the profile that
 
 | File | Holds |
 |---|---|
-| `change.json` | resolved repository path, full base and head SHAs, and each file's path and status |
+| `change.json` | resolved repository path, full base and head SHAs, each file's path and status, and `changed_lines`: for each added, modified or renamed file, the inclusive line ranges the change added or modified, plus the line on either side of a removal. A renamed file's old path is listed too, as one range over the whole file, so a finding that cites the old path is not placed outside the change. `finish` hands `changed_lines` to the formula. A finding is capped at fix later (`pre-existing`) only when BOTH hold: the reviewer marked it `introduced: false`, and these lines place its location outside the change (a file the change does not name counts as outside). A regression the change caused that surfaces at an unchanged caller is `introduced: true` and still blocks. A packet written without `changed_lines` caps nothing as pre-existing: the formula cannot place a location, so it fails closed, as it did before the rule existed |
 | `diff.patch` | `git diff --find-renames` between those SHAs |
 | `findings.json` | tool findings, in the input form the formula computes |
 | `measurements.json` | tool measurements |
 | `degraded.json` | degraded inputs, including a missing tool, a known gap, and a skipped sweep |
 | `builder-record.json` | the `--builder-record` file |
-| `where-to-look.json` | sweep items, then one item per missing tool or known gap. No answer yet |
+| `where-to-look.json` | the scripted checks' own items (for instance each machine-specific value on an added line), the sweep's items, then one item per missing tool or known gap, written in canonical order. A scripted item is a fact and is never dropped; the sweep's cap of 60 bounds only the sweep's items, so a packet can hold more than 60. An item that repeats an earlier one's lens, language, location, classifier and question ids is kept once. Inside an item the questions are listed by Jev probability, highest first. No answer yet |
 | `missing-tools.json` | the question a reviewer answers when a tool did not run |
 | `may-block.json` | each lens and language, with the bool and the reason line |
 | `open-search-cap.json` | `{"cap": 5}` unless a later caller changes the file before `finish` |

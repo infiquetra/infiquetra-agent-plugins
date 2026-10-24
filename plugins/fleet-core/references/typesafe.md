@@ -12,7 +12,13 @@ State sent to TypeSafe leaves this machine and reaches a third-party vendor. The
 
 ### May be sent, after redaction
 
-Issue bodies, plan and requirements text, code-review findings, diffs, commit messages, file paths, and the repository's own policy documents. This is content this fleet already sends to other model vendors through the external-engine HTTP bridge, so sending it here creates no new class of exposure. The sweep may send, after redaction, the changed function, the changed block with 20 lines on each side, and a whole file of at most 400 lines. The sweep returns at most 60 items and spends at most $1.
+Issue bodies, plan and requirements text, code-review findings, diffs, commit messages, file paths,
+and the repository's own policy documents. This is content this fleet already sends to other model
+vendors through the external-engine HTTP bridge, so sending it here creates no new class of
+exposure. The sweep may send, after redaction, the changed function, the changed block with 20 lines
+on each side, and a whole file of at most 400 lines. The sweep returns at most 60 items and spends
+at most $1. Inside an item the questions are listed most likely first, and questions with the same
+probability keep the question bank's order.
 
 ### May never be sent
 

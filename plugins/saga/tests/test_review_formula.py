@@ -457,6 +457,203 @@ def test_a_lens_that_may_block_enforces_any_block_for_that_language_only() -> No
     assert other["merge"]["allowed"] is True
 
 
+# --- findings about code the change did not introduce --------------------------------------------
+
+
+def located(file: str, start: int, end: int) -> dict[str, Any]:
+    return {"scope": "lines", "file": file, "lines": {"start": start, "end": end}}
+
+
+CHANGED = {"src/app.py": [[10, 20], [40, 41]]}
+
+
+def _modifiers(finding: dict[str, Any], changed: Any = CHANGED) -> list[str]:
+    return F.outcome(finding, changed_lines=changed)["severity_basis"]["modifiers"]
+
+
+def test_not_introduced_and_outside_the_change_is_capped_at_fix_later() -> None:
+    for start, end in ((1, 9), (21, 39), (42, 99)):
+        finding = llm_finding(introduced=False, location=located("src/app.py", start, end))
+        result = F.outcome(finding, changed_lines=CHANGED)
+        assert result["severity"] == "fix-later", (start, end)
+        assert result["severity_basis"]["modifiers"] == ["pre-existing"]
+        assert result["enforced"] is False
+    untouched_file = llm_finding(introduced=False, location=located("src/other.py", 12, 13))
+    assert F.outcome(untouched_file, changed_lines=CHANGED)["severity"] == "fix-later"
+
+
+def test_not_introduced_but_inside_the_change_is_not_capped() -> None:
+    for start, end in ((10, 10), (20, 20), (5, 10), (20, 30), (1, 99), (41, 41)):
+        finding = llm_finding(introduced=False, location=located("src/app.py", start, end))
+        result = F.outcome(finding, changed_lines=CHANGED)
+        assert result["severity"] == "blocks", (start, end)
+        assert "pre-existing" not in result["severity_basis"]["modifiers"]
+
+
+def test_introduced_but_outside_the_change_is_still_a_block() -> None:
+    """A regression the change caused can surface at an unchanged caller."""
+    finding = llm_finding(introduced=True, location=located("src/caller.py", 3, 4))
+    result = F.outcome(finding, changed_lines=CHANGED)
+    assert result["severity"] == "blocks"
+    assert "pre-existing" not in result["severity_basis"]["modifiers"]
+    unmarked = llm_finding(location=located("src/app.py", 90, 91))
+    assert F.outcome(unmarked, changed_lines=CHANGED)["severity"] == "blocks"
+
+
+@pytest.mark.parametrize("harm", F.ALWAYS_BLOCKING)
+def test_an_introduced_always_blocking_harm_outside_the_change_still_refuses_merge(
+    harm: str,
+) -> None:
+    finding = llm_finding(
+        lens="security", consequence=harm, introduced=True, location=located("src/caller.py", 9, 9),
+    )
+    result = F.compute({"findings": [finding], "changed_lines": CHANGED})
+    assert result["findings"][0]["severity"] == "blocks"
+    assert "always-blocks" in result["findings"][0]["severity_basis"]["modifiers"]
+    assert result["merge"]["allowed"] is False
+
+
+@pytest.mark.parametrize("harm", F.ALWAYS_BLOCKING)
+def test_a_pre_existing_always_blocking_harm_is_reported_and_does_not_refuse_merge(
+    harm: str,
+) -> None:
+    """By operator decision a harm the change did not introduce is reported, not merge-refusing."""
+    finding = llm_finding(
+        lens="security", consequence=harm, introduced=False, location=located("src/app.py", 90, 91),
+    )
+    result = F.compute({"findings": [finding], "changed_lines": CHANGED})
+    assert result["merge"] == {"allowed": True, "blocking": [], "report_only_blocks": []}
+    reported = result["findings"][0]
+    assert reported["severity"] == "fix-later"
+    assert reported["enforced"] is False
+    assert "always-blocks" not in reported["severity_basis"]["modifiers"]
+    assert grades(result)["security"] == "B"
+    # Inside the change the same harm still refuses the merge, introduced or not.
+    inside = llm_finding(
+        lens="security", consequence=harm, introduced=False, location=located("src/app.py", 12, 13),
+    )
+    assert F.compute({"findings": [inside], "changed_lines": CHANGED})["merge"]["allowed"] is False
+
+
+def test_without_changed_lines_nothing_is_capped_as_pre_existing() -> None:
+    for introduced in (True, False):
+        finding = llm_finding(introduced=introduced, location=located("src/app.py", 500, 501))
+        assert F.outcome(finding)["severity"] == "blocks"
+        assert F.outcome(finding, changed_lines=None)["severity"] == "blocks"
+    result = F.compute({"findings": [llm_finding(introduced=False)]})
+    assert result["findings"][0]["severity"] == "blocks"
+
+
+def test_a_deletion_only_change_leaves_an_introduced_finding_blocking() -> None:
+    finding = llm_finding(introduced=True, location=located("src/app.py", 5, 6))
+    assert F.outcome(finding, changed_lines={})["severity"] == "blocks"
+    # And a not-introduced one is outside a change that touches no line at all.
+    assert F.outcome(
+        llm_finding(introduced=False, location=located("src/app.py", 5, 6)), changed_lines={},
+    )["severity"] == "fix-later"
+
+
+@pytest.mark.parametrize(
+    "spelled",
+    ["./src/app.py", "src//app.py", "a/src/app.py", "b/src/app.py", "src/x/../app.py",
+     "./a/src/app.py"],
+)
+def test_a_path_is_normalised_before_it_is_placed(spelled: str) -> None:
+    inside = llm_finding(introduced=False, location=located(spelled, 12, 13))
+    assert F.outcome(inside, changed_lines=CHANGED)["severity"] == "blocks", spelled
+    outside = llm_finding(introduced=False, location=located(spelled, 90, 91))
+    assert F.outcome(outside, changed_lines=CHANGED)["severity"] == "fix-later", spelled
+
+
+def test_dot_slash_and_diff_prefixes_match_a_changed_file_named_without_them() -> None:
+    changed = {"x": [[1, 5]]}
+    for spelled in ("./x", "a/x", "b/x", "x"):
+        finding = llm_finding(introduced=False, location=located(spelled, 2, 3))
+        assert F.outcome(finding, changed_lines=changed)["severity"] == "blocks", spelled
+    # The prefix is stripped only when what is left is a changed file.
+    other = llm_finding(introduced=False, location=located("a/y", 2, 3))
+    assert F.outcome(other, changed_lines=changed)["severity"] == "fix-later"
+    real_dir = {"a/x": [[1, 5]]}
+    exact = llm_finding(introduced=False, location=located("a/x", 2, 3))
+    assert F.outcome(exact, changed_lines=real_dir)["severity"] == "blocks"
+
+
+@pytest.mark.parametrize(
+    "unplaceable",
+    ["/etc/passwd", "/src/app.py", "../src/app.py", "src/../../app.py", "..", "a/../../x", "."],
+)
+def test_an_absolute_or_escaping_path_cannot_be_placed_and_is_never_capped(
+    unplaceable: str,
+) -> None:
+    finding = llm_finding(introduced=False, location=located(unplaceable, 90, 91))
+    result = F.outcome(finding, changed_lines=CHANGED)
+    assert result["severity"] == "blocks", unplaceable
+    assert "pre-existing" not in result["severity_basis"]["modifiers"]
+    assert F.lies_outside_change(finding["location"], F.changed_ranges(CHANGED)) is False
+
+
+def test_a_location_that_is_not_a_line_range_is_never_called_outside() -> None:
+    whole = {"scope": "whole-project", "file": ".", "anchor": "cargo-deny"}
+    finding = tool_finding("security.dependency-high", introduced=False, location=whole)
+    assert F.outcome(finding, changed_lines=CHANGED)["severity"] == "blocks"
+    unreviewed = llm_finding(introduced=False, location=whole)
+    assert F.outcome(unreviewed, changed_lines=CHANGED)["severity"] == "blocks"
+    section = {"scope": "plan-section", "file": "docs/plan.md", "section": "Goals"}
+    assert F.outcome(llm_finding(introduced=False, location=section), changed_lines=CHANGED)[
+        "severity"
+    ] == "blocks"
+    assert F.lies_outside_change(whole, F.changed_ranges(CHANGED)) is False
+    assert F.lies_outside_change(None, F.changed_ranges(CHANGED)) is False
+
+
+def test_a_tool_finding_is_never_capped_as_pre_existing() -> None:
+    """The runner sets ``introduced`` true on a tool finding, so the AND rule never caps one.
+
+    The formula also exempts a tool finding from the lines test: the runner keeps only changed-line
+    hits, or hits new against the base, and a base-to-head tool can report a file the diff never
+    names.
+    """
+    outside = tool_finding(
+        "testing.surviving-mutant", introduced=True, location=located("template.yaml", 1, 1),
+    )
+    result = F.outcome(outside, changed_lines=CHANGED)
+    assert result["severity"] == "blocks"
+    assert result["severity_basis"]["modifiers"] == []
+    not_introduced = tool_finding(
+        "testing.surviving-mutant", "rf:3", introduced=False,
+        location=located("template.yaml", 1, 1),
+    )
+    assert F.outcome(not_introduced, changed_lines=CHANGED)["severity"] == "blocks"
+
+
+def test_a_note_and_a_fix_later_row_are_not_changed_by_being_pre_existing() -> None:
+    note = tool_finding(
+        "architecture-maintainability.duplicate", introduced=False,
+        location=located("src/app.py", 1, 2),
+    )
+    assert F.outcome(note, changed_lines=CHANGED)["severity"] == "note"
+    assert F.outcome(note, changed_lines=CHANGED)["severity_basis"]["modifiers"] == []
+
+
+def test_changed_lines_that_are_malformed_are_refused() -> None:
+    for bad in (
+        [], "src/app.py", {"src/app.py": "10-20"}, {"src/app.py": [[10]]},
+        {"src/app.py": [[20, 10]]}, {"src/app.py": [[0, 3]]}, {"src/app.py": [[1.5, 3]]},
+        {"src/app.py": [[True, 3]]}, {"": [[1, 2]]},
+    ):
+        with pytest.raises(F.FormulaError):
+            F.compute({"findings": [], "changed_lines": bad})
+
+
+def test_changed_lines_in_any_order_give_the_same_result() -> None:
+    finding = llm_finding(introduced=True, location=located("src/app.py", 41, 41))
+    in_order = {"src/app.py": [[10, 20], [40, 41]]}
+    reversed_ = {"src/app.py": [[40, 41], [10, 20]]}
+    forward = F.compute({"findings": [finding], "changed_lines": in_order})
+    backward = F.compute({"findings": [finding], "changed_lines": reversed_})
+    assert json.dumps(forward, sort_keys=True) == json.dumps(backward, sort_keys=True)
+
+
 # --- determinism -------------------------------------------------------------------------------
 
 

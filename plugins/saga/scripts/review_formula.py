@@ -20,10 +20,23 @@ computed in, each step named in ``severity_basis.modifiers`` when it changed som
 1. the base outcome of the row;
 2. ``reproduced``: a row that blocks when reproduced, and was;
 3. ``excused``: a builder reason of the kind the row allows makes it a note;
-4. caps that lower ``blocks`` to ``fix-later``: ``degraded``, ``classifier-only`` and
-   ``unreproduced`` (an LLM finding nobody reproduced);
+4. caps that lower ``blocks`` to ``fix-later``: ``degraded``, ``classifier-only``,
+   ``unreproduced`` (an LLM finding nobody reproduced) and ``pre-existing``. A finding is
+   pre-existing only when BOTH hold: the reviewer marked it ``introduced: false`` AND Saga's own
+   changed lines place its location outside the change. Neither alone is enough. The reviewer
+   cannot downgrade a block by itself, and a regression the change caused that surfaces at an
+   unchanged caller stays ``introduced: true`` and blocks. A pre-existing finding is reported and
+   never blocks, whatever its consequence: the always-blocking harms below are not an exception.
+   Without ``changed_lines`` nothing is capped (the formula cannot place a location, so it fails
+   closed). A tool finding is exempt: the runner sets ``introduced`` true for every tool finding
+   and keeps only hits on changed lines, or hits new against the base, so a base-to-head tool can
+   fairly report a file the diff never names;
 5. enforcement: a block counts for merge only where the lens may block for the finding's language,
    or where it is a reproduced "data lost or corrupted" or "a security boundary crossed" harm.
+
+The changed lines come in as ``changed_lines``, ``{path: [[start, end], ...]}`` with inclusive
+ranges, built by ``review_diff`` from the packet's diff. Without it a location is never called
+pre-existing, whatever ``introduced`` says.
 
 ``review_records.py`` validates records and stores them; it imports this module, never the reverse.
 """
@@ -32,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -112,6 +126,85 @@ JUDGED = "judged"
 
 class FormulaError(ValueError):
     """An input the formula cannot compute: a preset severity, an unknown row."""
+
+
+def _normalised_path(path: str) -> str:
+    """A repository-relative path with ``./`` prefixes, doubled slashes and ``x/../`` removed."""
+    return posixpath.normpath(str(path))
+
+
+def _placed_path(file: str, ranges: Mapping[str, Any]) -> str | None:
+    """The key in *ranges* a cited file means, the normalised path itself when it names no
+    changed file, or ``None`` when the path cannot be placed in the repository at all.
+
+    A path that is absolute, or still holds ``..`` after normalising, is unplaceable. A diff-style
+    ``a/`` or ``b/`` prefix is stripped only when what is left is a changed file.
+    """
+    normal = _normalised_path(file)
+    if normal in (".", "") or normal.startswith("/") or ".." in normal.split("/"):
+        return None
+    if normal not in ranges and normal[:2] in ("a/", "b/") and normal[2:] in ranges:
+        return normal[2:]
+    return normal
+
+
+def changed_ranges(changed_lines: Any) -> dict[str, list[tuple[int, int]]] | None:
+    """*changed_lines* as ``{path: [(start, end), ...]}``, or ``None`` when it was not given.
+
+    Raises ``FormulaError`` for a value that is not ``{path: [[start, end], ...]}`` with positive
+    integers and ``start <= end``.
+    """
+    if changed_lines is None:
+        return None
+    if not isinstance(changed_lines, Mapping):
+        raise FormulaError("changed_lines: must be an object of path to line ranges")
+    ranges: dict[str, list[tuple[int, int]]] = {}
+    for path, spans in changed_lines.items():
+        if not isinstance(path, str) or not path or not isinstance(spans, Sequence) or isinstance(
+            spans, (str, bytes)
+        ):
+            raise FormulaError(f"changed_lines.{path}: must be a list of [start, end] ranges")
+        cleaned: list[tuple[int, int]] = []
+        for span in spans:
+            if (
+                not isinstance(span, Sequence)
+                or isinstance(span, (str, bytes))
+                or len(span) != 2
+                or any(isinstance(end, bool) or not isinstance(end, int) for end in span)
+                or not 1 <= span[0] <= span[1]
+            ):
+                raise FormulaError(f"changed_lines.{path}: {span!r} is not a [start, end] range")
+            cleaned.append((span[0], span[1]))
+        ranges.setdefault(_normalised_path(path), []).extend(cleaned)
+    return ranges
+
+
+def lies_outside_change(
+    location: Any, ranges: Mapping[str, Sequence[tuple[int, int]]] | None
+) -> bool:
+    """True when a ``lines`` location shares no line with the change.
+
+    False when the changed lines are unknown, for any location that is not a file and a line range
+    (a whole-project or plan-section location), and for a file path that cannot be placed
+    (absolute, or holding ``..``): the formula cannot place those. A file the change does not name
+    is outside it.
+    """
+    if ranges is None or not isinstance(location, Mapping) or location.get("scope") != "lines":
+        return False
+    lines = location.get("lines")
+    file = location.get("file")
+    if not isinstance(lines, Mapping) or not isinstance(file, str):
+        return False
+    start, end = lines.get("start"), lines.get("end")
+    if (
+        isinstance(start, bool) or isinstance(end, bool)
+        or not isinstance(start, int) or not isinstance(end, int)
+    ):
+        return False
+    placed = _placed_path(file, ranges)
+    if placed is None:
+        return False
+    return not any(low <= end and start <= high for low, high in ranges.get(placed, ()))
 
 
 @dataclass(frozen=True)
@@ -392,13 +485,20 @@ def outcome(
     finding: Mapping[str, Any],
     builder_records: Sequence[Mapping[str, Any]] = (),
     may_block: Mapping[str, Any] | None = None,
+    changed_lines: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The computed fields for one input finding: severity, its basis, flags and enforcement."""
+    """The computed fields for one input finding: severity, its basis, flags and enforcement.
+
+    *changed_lines* is ``{path: [[start, end], ...]}``, the lines the change added or modified. A
+    finding is capped as pre-existing only when it is marked not introduced AND those lines place
+    its location outside the change; without *changed_lines* nothing is capped.
+    """
     preset = [key for key in COMPUTED_FINDING_KEYS if key in finding]
     if preset:
         raise FormulaError(
             f"{preset[0]}: a finding is handed in without it; code computes it, never the reviewer"
         )
+    ranges = changed_ranges(changed_lines)
     cited = (finding.get("rule") or {}).get("row")
     evidence = finding.get("evidence")
     consequence, flags = _applied_consequence(finding)
@@ -431,6 +531,13 @@ def outcome(
         elif source_kind == "llm" and evidence != "reproduced":
             severity = "fix-later"
             modifiers.append("unreproduced")
+        elif (
+            source_kind != "tool"
+            and finding.get("introduced") is False
+            and lies_outside_change(finding.get("location"), ranges)
+        ):
+            severity = "fix-later"
+            modifiers.append("pre-existing")
     if row.merge_confirmation:
         flags.append("merge-confirmation")
     if finding.get("unconfirmed"):
@@ -482,14 +589,17 @@ def compute(inputs: Mapping[str, Any]) -> dict[str, Any]:
     *inputs* holds ``findings`` and ``measurements`` in their input form, ``builder_records``,
     ``may_block`` (``{lens: {language: bool}}``; absent means every lens reports only) and
     ``degraded_inputs`` (``[{lens, language, input, tool, reason}]``, a re-run reason may add
-    ``exit_code`` and ``output_tail``; none of them changes a grade). Everything returned is
-    sorted, so the same inputs in any order give the same output.
+    ``exit_code`` and ``output_tail``; none of them changes a grade) and ``changed_lines``
+    (``{path: [[start, end], ...]}``; absent means no finding is capped as pre-existing).
+    Everything returned is sorted, so the same inputs in any order give the same output.
     """
     builder_records = list(inputs.get("builder_records") or [])
     may_block = dict(inputs.get("may_block") or {})
+    changed = inputs.get("changed_lines")
+    changed_ranges(changed)  # refuse a malformed value once, before any finding is computed
     findings: list[dict[str, Any]] = []
     for finding in inputs.get("findings") or []:
-        findings.append({**finding, **outcome(finding, builder_records, may_block)})
+        findings.append({**finding, **outcome(finding, builder_records, may_block, changed)})
     findings.sort(key=lambda item: (str(item.get("id")), _canonical(item)))
 
     measurements = []

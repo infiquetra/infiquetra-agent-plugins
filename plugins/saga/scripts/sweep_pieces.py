@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import stat
 import subprocess  # nosec B404
 import tempfile
@@ -113,7 +114,7 @@ def read_ctags_spans(
     run = runner or _default_runner
     suffix = Path(path).suffix
     with tempfile.TemporaryDirectory(prefix="sweep-") as directory:
-        blob = Path(directory) / f"source{suffix}"
+        blob = (Path(directory) / f"source{suffix}").absolute()
         blob.write_text(text, encoding="utf-8")
         blob.chmod(stat.S_IRUSR | stat.S_IWUSR)
         version = _run(run, ["ctags", "--options=NONE", "--version"], directory)
@@ -131,14 +132,16 @@ def read_ctags_spans(
                 f"--language-force={forced}",
                 "-o",
                 "-",
-                "--",
+                # No "--" here: Universal Ctags 6.2.1 rejects it ("Unknown option: --", exit 1),
+                # which sent every piece to the fixed line window. The path is safe without it,
+                # because it is absolute (the tempdir) and its name begins with "source".
                 str(blob),
             ],
             directory,
         )
         if proc is None or proc.returncode != 0:
             return None
-        return _parse_tags(proc.stdout or "")
+        return _parse_tags(proc.stdout or "", text.splitlines(), language)
 
 
 def calibration_path_lists() -> list[list[str]] | None:
@@ -553,8 +556,18 @@ def _piece(
     return piece
 
 
-def _parse_tags(stdout: str) -> list[dict[str, Any]] | None:
-    spans = []
+def _parse_tags(
+    stdout: str, source: list[str] | None = None, language: str | None = None,
+) -> list[dict[str, Any]] | None:
+    """Function spans from ctags' JSON lines.
+
+    A tag carries ``end`` only for some languages: Universal Ctags 6.2.1 gives it for C and
+    Python but not for Rust, TypeScript or shell. When *source* is given, a function without
+    ``end`` ends at its closing brace (see ``_derived_end``); *language* is the sweep's name for
+    the language (``rust``, ``shell`` and so on). Without *source* such a tag is skipped, as
+    before, and so is one whose closing brace cannot be found.
+    """
+    tags = []
     for raw in stdout.splitlines():
         line = raw.strip()
         if not line:
@@ -565,14 +578,20 @@ def _parse_tags(stdout: str) -> list[dict[str, Any]] | None:
             return None
         if not isinstance(item, dict):
             continue
+        number = item.get("line", item.get("start"))
+        if isinstance(number, bool) or not isinstance(number, int):
+            continue
+        tags.append((number, item))
+    tags.sort(key=lambda pair: (pair[0], str(pair[1].get("name"))))
+    spans = []
+    for index, (start, item) in enumerate(tags):
         kind = str(item.get("kind", "")).lower()
         if kind not in _TAG_KINDS:
             continue
         end = item.get("end")
-        start = item.get("line", item.get("start"))
-        if isinstance(end, bool) or not isinstance(end, int):
-            continue
-        if isinstance(start, bool) or not isinstance(start, int) or end < start:
+        if end is None and source is not None:
+            end = _derived_end(tags, index, source, language)
+        if isinstance(end, bool) or not isinstance(end, int) or end < start:
             continue
         name = item.get("name")
         spans.append({
@@ -582,6 +601,124 @@ def _parse_tags(stdout: str) -> list[dict[str, Any]] | None:
             "anchor": "",
         })
     return spans
+
+
+def _qualified(item: dict[str, Any]) -> str:
+    """The tag's scope path and name with ``.`` as the separator, so ``A::b`` and ``A.b`` agree."""
+    name = str(item.get("name") or "")
+    scope = item.get("scope")
+    joined = f"{scope}.{name}" if isinstance(scope, str) and scope else name
+    return joined.replace("::", ".")
+
+
+def _nested_in(inner: dict[str, Any], outer: dict[str, Any]) -> bool:
+    scope = inner.get("scope")
+    if not isinstance(scope, str) or not scope:
+        return False
+    qualified = _qualified(outer)
+    scope = scope.replace("::", ".")
+    return scope == qualified or scope.startswith(f"{qualified}.")
+
+
+def _derived_end(
+    tags: list[tuple[int, dict[str, Any]]],
+    index: int,
+    source: list[str],
+    language: str | None = None,
+) -> int | None:
+    """Last line of a function whose ctags tag has no ``end``, or ``None``.
+
+    It is the line where the function's braces close again (see ``_brace_end``), looking no
+    further than the line before the next tag that is not nested inside the function, or the end
+    of the file. Code after the closing brace that ctags did not tag (a shell script's main body, a
+    TypeScript ``export default``) is therefore left out. When no matching close brace is found in
+    that range the function gets no span, and the changed lines in it fall back to the fixed line
+    window, rather than a span being invented.
+    """
+    start, item = tags[index]
+    limit = len(source)
+    for later, other in tags[index + 1:]:
+        if later > start and not _nested_in(other, item):
+            limit = later - 1
+            break
+    if start < 1 or start > limit:
+        return None
+    return _brace_end(source, start, min(limit, len(source)), language)
+
+
+# A Rust character literal, which can hold a brace; anything else after a quote is a lifetime.
+_RUST_CHAR = re.compile(r"'(?:\\[^']+|[^'\\])'")
+
+
+def _brace_end(source: list[str], start: int, limit: int, language: str | None) -> int | None:
+    """The line, from *start* to *limit*, where the first ``{`` opened on it is closed again.
+
+    A small scanner, not a parser. It counts ``{`` and ``}`` only outside string literals,
+    comments and parentheses or brackets (so a destructured parameter ``({ a }: P)`` and an array
+    type ``[u8; 4]`` do not count). It returns ``None`` when a ``;`` ends a declaration that has
+    no body, when a ``}`` closes something that was never opened here, or when the range ends with
+    the braces still open. Known to misjudge a TypeScript return type written as an object type,
+    ``(): { a: number } {``, which closes on its own line.
+    """
+    shell = language == "shell"
+    rust = language == "rust"
+    depth = 0
+    opened = False
+    nest = 0
+    quote: str | None = None
+    block = False
+    for number in range(start, limit + 1):
+        line = source[number - 1]
+        index = 0
+        while index < len(line):
+            char = line[index]
+            if block:
+                if line.startswith("*/", index):
+                    block = False
+                    index += 2
+                else:
+                    index += 1
+                continue
+            if quote is not None:
+                if char == "\\" and not (shell and quote == "'"):
+                    index += 2
+                    continue
+                if char == quote:
+                    quote = None
+                index += 1
+                continue
+            if shell:
+                if char == "#" and (index == 0 or line[index - 1] in " \t;&|("):
+                    break
+            elif line.startswith("//", index):
+                break
+            elif line.startswith("/*", index):
+                block = True
+                index += 2
+                continue
+            if char == "'" and rust:
+                match = _RUST_CHAR.match(line, index)
+                index = match.end() if match else index + 1
+                continue
+            if char in "\"'" or (char == "`" and not shell):
+                quote = char
+            elif char in "([":
+                nest += 1
+            elif char in ")]":
+                nest = max(0, nest - 1)
+            elif nest == 0 and char == "{":
+                depth += 1
+                opened = True
+            elif nest == 0 and char == "}":
+                if not opened:
+                    return None
+                depth -= 1
+                if depth == 0:
+                    return number
+            elif char == ";" and nest == 0 and not opened and not shell:
+                return None
+            index += 1
+    return None
 
 
 def _run(runner: Runner, argv: list[str], cwd: str) -> Any:
