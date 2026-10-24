@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import socket
 import stat
 import subprocess
@@ -421,7 +422,7 @@ _REAL_SOURCES = {
         "pub struct Thing {\n    n: i32,\n}\n\nimpl Thing {\n"
         "    pub fn new() -> Self {\n        Thing { n: 0 }\n    }\n\n"
         "    #[inline]\n    pub fn get(&self) -> i32 {\n        self.n\n    }\n}\n",
-        {"new": (6, 8), "get": (11, 14)},
+        {"new": (6, 8), "get": (11, 13)},
     ),
     "typescript": (
         "src/app.ts", "TypeScript",
@@ -436,34 +437,166 @@ _REAL_SOURCES = {
     ),
 }
 
+# Code after the last function that ctags does not tag. The span must stop at the closing brace.
+_UNTAGGED_AFTER = {
+    "shell": (
+        "bin/setup.sh", "Sh",
+        "#!/bin/sh\nsetup() {\n  echo ready\n}\n\nsetup\necho done\n",
+        {"setup": (2, 4)},
+    ),
+    "typescript": (
+        "src/app.ts", "TypeScript",
+        'import { n } from "./n";\n\nconst k = 1;\n\n// adds one\n'
+        "function f(x: number) {\n  return x + k;\n}\n\n"
+        "export default {\n  f,\n};\n",
+        {"f": (6, 8)},
+    ),
+    "rust": (
+        "src/lib.rs", "Rust",
+        "struct S;\n\nimpl S {\n    fn a(&self) -> u8 {\n        1\n    }\n}\n\n"
+        "fn free() -> u8 {\n    let c = '}';\n    \"}\".len() as u8\n}\n\n"
+        "println!(\"trailing\");\n",
+        {"a": (4, 6), "free": (9, 12)},
+    ),
+}
+
+
+def _require_ctags(ctags_name: str) -> None:
+    """Skip when ctags is absent here; fail when it is absent in CI, where it must be installed."""
+    if ctags_name in _REAL_CTAGS:
+        return
+    reason = f"Universal Ctags with the {ctags_name} parser is not installed"
+    if os.environ.get("CI"):
+        pytest.fail(f"{reason}; the CI job installs it, so it must be there")
+    pytest.skip(reason)
+
 
 @pytest.mark.parametrize("language", sorted(_REAL_SOURCES))
 def test_the_real_ctags_returns_function_boundaries(language: str) -> None:
     """The unit tests above mock ctags, so only this one saw the "--" the real tool rejects."""
     path, ctags_name, text, expected = _REAL_SOURCES[language]
-    if ctags_name not in _REAL_CTAGS:
-        pytest.skip(f"Universal Ctags with the {ctags_name} parser is not installed")
+    _require_ctags(ctags_name)
     spans = P.read_ctags_spans(text, path, language)
     assert spans, "ctags ran but no function came back; the call is probably rejected again"
     found = {span["name"]: (span["start"], span["end"]) for span in spans}
     assert found == expected
 
 
-def test_a_function_whose_tag_has_no_end_ends_before_the_next_unnested_tag() -> None:
-    lines = "\n".join(
-        json.dumps(tag) for tag in (
-            {"name": "outer", "kind": "function", "line": 1},
-            {"name": "inner", "kind": "function", "line": 2, "scope": "outer"},
-            {"name": "next", "kind": "function", "line": 7},
-        )
+@pytest.mark.parametrize("language", sorted(_UNTAGGED_AFTER))
+def test_the_real_ctags_spans_stop_at_the_closing_brace_not_at_untagged_code(
+    language: str,
+) -> None:
+    """Holds whether this ctags gives an ``end`` (it is used) or not (the brace scan derives it)."""
+    path, ctags_name, text, expected = _UNTAGGED_AFTER[language]
+    _require_ctags(ctags_name)
+    spans = P.read_ctags_spans(text, path, language)
+    assert spans
+    found = {span["name"]: (span["start"], span["end"]) for span in spans}
+    assert found == expected
+
+
+def _tags(*tags: dict[str, Any]) -> str:
+    return "\n".join(json.dumps(tag) for tag in tags)
+
+
+def _found(spans: list[dict[str, Any]] | None) -> dict[str, tuple[int, int]]:
+    assert spans is not None
+    return {span["name"]: (span["start"], span["end"]) for span in spans}
+
+
+def test_a_function_with_no_end_ends_at_its_closing_brace_inside_the_next_tags_limit() -> None:
+    lines = _tags(
+        {"name": "outer", "kind": "function", "line": 1},
+        {"name": "inner", "kind": "function", "line": 2, "scope": "outer"},
+        {"name": "next", "kind": "function", "line": 7},
     )
     source = ["fn outer() {", "    fn inner() {}", "}", "", "// about next", "#[inline]",
               "fn next() {", "}", "", ""]
-    spans = P._parse_tags(lines, source)  # type: ignore[attr-defined]
-    assert spans is not None
-    found = {span["name"]: (span["start"], span["end"]) for span in spans}
-    assert found == {"outer": (1, 3), "inner": (2, 3), "next": (7, 8)}
+    assert _found(P._parse_tags(lines, source)) == {  # type: ignore[attr-defined]
+        "outer": (1, 3), "inner": (2, 2), "next": (7, 8),
+    }
     assert P._parse_tags(lines) == []  # type: ignore[attr-defined]
+
+
+def test_a_shell_function_does_not_run_to_the_end_of_the_file() -> None:
+    source = ["#!/bin/sh", "setup() {", "  echo ready", "}", "", "setup", "echo done"]
+    lines = _tags({"name": "setup", "kind": "function", "line": 2})
+    spans = P._parse_tags(lines, source, "shell")  # type: ignore[attr-defined]
+    assert _found(spans) == {"setup": (2, 4)}
+
+
+def test_a_typescript_function_does_not_swallow_the_export_default_after_it() -> None:
+    source = [
+        'import { n } from "./n";', "", "const k = 1;", "", "// adds one",
+        "function f(x: number) {", "  return x + k;", "}", "",
+        "export default {", "  f,", "};",
+    ]
+    lines = _tags({"name": "f", "kind": "function", "line": 6})
+    spans = P._parse_tags(lines, source, "typescript")  # type: ignore[attr-defined]
+    assert _found(spans) == {"f": (6, 8)}
+
+
+def test_a_rust_impl_method_and_free_function_end_at_their_own_braces() -> None:
+    source = [
+        "struct S;", "", "impl S {", "    fn a(&self) -> u8 {", "        1", "    }", "}", "",
+        "fn free() -> u8 {", "    let c = '}';", '    "}".len() as u8', "}", "",
+        'println!("trailing");',
+    ]
+    lines = _tags(
+        {"name": "S", "kind": "implementation", "line": 3},
+        {"name": "a", "kind": "method", "line": 4, "scope": "S", "scopeKind": "implementation"},
+        {"name": "free", "kind": "function", "line": 9},
+    )
+    spans = P._parse_tags(lines, source, "rust")  # type: ignore[attr-defined]
+    assert _found(spans) == {"a": (4, 6), "free": (9, 12)}
+
+
+def test_a_tags_own_end_is_used_when_ctags_gives_one() -> None:
+    """A newer ctags may emit ``end`` for Rust; its value wins and the scan is not run."""
+    source = ["fn a() {", "}", "trailing", "fn b() {", "}"]
+    lines = _tags(
+        {"name": "a", "kind": "function", "line": 1, "end": 2},
+        {"name": "b", "kind": "function", "line": 4, "end": 5},
+    )
+    assert _found(P._parse_tags(lines, source, "rust")) == {  # type: ignore[attr-defined]
+        "a": (1, 2), "b": (4, 5),
+    }
+
+
+@pytest.mark.parametrize(
+    ("language", "source"),
+    [
+        ("rust", ["fn a() {", "    let x = 1;"]),
+        ("rust", ["trait T {", "    fn a(&self);", "    fn b(&self);", "}"]),
+        ("shell", ["a() {", '  echo "}"', "  # }"]),
+        ("typescript", ["function f() {", '  const s = "}";', "  // }", "  /* } */"]),
+    ],
+)
+def test_a_function_with_no_matching_close_brace_gets_no_span(
+    language: str, source: list[str],
+) -> None:
+    """The braces in strings and comments do not count, so these never close: fixed window."""
+    line = 2 if source[0].startswith("trait") else 1
+    name = "a" if language != "typescript" else "f"
+    lines = _tags({"name": name, "kind": "function", "line": line})
+    assert P._parse_tags(lines, source, language) == []  # type: ignore[attr-defined]
+
+
+def test_braces_in_parameters_strings_and_comments_do_not_move_the_end() -> None:
+    source = [
+        "function C({ a, b }: Props, [c]: number[] = []) {",
+        '  const s = "{"; // }',
+        "  const t = `${a}`;",
+        "  /* } */ return { a, b };",
+        "}",
+        "const after = {};",
+    ]
+    lines = _tags({"name": "C", "kind": "function", "line": 1})
+    spans = P._parse_tags(lines, source, "typescript")  # type: ignore[attr-defined]
+    assert _found(spans) == {"C": (1, 5)}
+    shell = ["f() {", '  echo "${#x} {"', "  case $1 in a) echo a ;; esac", "}", "echo $#"]
+    lines = _tags({"name": "f", "kind": "function", "line": 1})
+    assert _found(P._parse_tags(lines, shell, "shell")) == {"f": (1, 4)}  # type: ignore[attr-defined]
 
 
 def test_the_parser_row_is_on_the_tool_list_and_not_an_adapter() -> None:
