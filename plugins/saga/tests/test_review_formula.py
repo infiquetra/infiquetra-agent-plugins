@@ -647,8 +647,10 @@ def test_changed_lines_that_are_malformed_are_refused() -> None:
 
 def test_changed_lines_in_any_order_give_the_same_result() -> None:
     finding = llm_finding(introduced=True, location=located("src/app.py", 41, 41))
-    forward = F.compute({"findings": [finding], "changed_lines": {"src/app.py": [[10, 20], [40, 41]]}})
-    backward = F.compute({"findings": [finding], "changed_lines": {"src/app.py": [[40, 41], [10, 20]]}})
+    in_order = {"src/app.py": [[10, 20], [40, 41]]}
+    reversed_ = {"src/app.py": [[40, 41], [10, 20]]}
+    forward = F.compute({"findings": [finding], "changed_lines": in_order})
+    backward = F.compute({"findings": [finding], "changed_lines": reversed_})
     assert json.dumps(forward, sort_keys=True) == json.dumps(backward, sort_keys=True)
 
 

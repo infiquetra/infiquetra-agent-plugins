@@ -243,7 +243,9 @@ def test_questions_inside_an_item_are_listed_by_probability_then_bank_order(
     bank = _bank(*(_yes_no(qid) for qid in ("low", "tie-a", "high", "tie-b", "mid")))
     result = _run(tmp_path, bank, [_piece()], {}, _rate(), ask)
     assert len(result["items"]) == 1
-    listed = [(question["id"], question["probability"]) for question in result["items"][0]["questions"]]
+    listed = [
+        (question["id"], question["probability"]) for question in result["items"][0]["questions"]
+    ]
     assert listed == [
         ("high", 0.9), ("tie-a", 0.5), ("tie-b", 0.5), ("mid", 0.4), ("low", 0.2),
     ]

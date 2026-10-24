@@ -596,7 +596,8 @@ def test_braces_in_parameters_strings_and_comments_do_not_move_the_end() -> None
     assert _found(spans) == {"C": (1, 5)}
     shell = ["f() {", '  echo "${#x} {"', "  case $1 in a) echo a ;; esac", "}", "echo $#"]
     lines = _tags({"name": "f", "kind": "function", "line": 1})
-    assert _found(P._parse_tags(lines, shell, "shell")) == {"f": (1, 4)}  # type: ignore[attr-defined]
+    spans = P._parse_tags(lines, shell, "shell")  # type: ignore[attr-defined]
+    assert _found(spans) == {"f": (1, 4)}
 
 
 def test_the_parser_row_is_on_the_tool_list_and_not_an_adapter() -> None:
