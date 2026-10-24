@@ -348,8 +348,9 @@ def _prepare(
             [_gap_item(entry) for entry in gaps],
         )
         may_block, reasons = _may_block_map(findings, measurements, calibration, profile)
-        # The lines the change added, modified or removed beside: a finding wholly outside them is
-        # pre-existing and never blocks. Written to change.json so finish grades the same way.
+        # The lines the change added, modified or removed beside. A finding the reviewer marked not
+        # introduced AND placed wholly outside them is pre-existing and never blocks. Written to
+        # change.json so finish grades the same way.
         changed = change.touched()
         try:
             grades = review_formula.compute({
@@ -554,8 +555,9 @@ def _merge_where_items(
     *scripted* items come from saga's own checks and are facts (probability 1), so none is ever
     dropped. The sweep's cap (``ITEM_CAP``) bounds only *swept*; scripted and gap items come on
     top of it, so a packet can hold more items than the cap. An item that repeats an earlier
-    one's lens, language, location, classifier and question ids is kept once, the earlier one winning. The caller writes
-    the result in the packet's canonical order (``review_tools.stable_order``).
+    one's lens, language, location, classifier and question ids is kept once, the earlier one
+    winning. The caller writes the result in the packet's canonical order
+    (``review_tools.stable_order``).
     """
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -711,8 +713,8 @@ def _finish(
     if not isinstance(change, Mapping):
         raise CommandFailure(2, "change.json: must be a JSON object")
     repo = Path(str(change.get("repo") or ""))
-    # A packet written before changed_lines existed has none; only `introduced` then marks a
-    # finding pre-existing.
+    # A packet written before changed_lines existed has none; the formula then caps nothing as
+    # pre-existing, as before the rule existed.
     changed_lines = change.get("changed_lines")
     if changed_lines is not None and not isinstance(changed_lines, Mapping):
         raise CommandFailure(2, "change.json: changed_lines must be a JSON object")

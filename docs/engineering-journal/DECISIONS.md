@@ -2,67 +2,98 @@
 
 ## 2026-10-24
 
-### A finding about code the change did not introduce never blocks, not even an always-blocking harm
+### A finding is pre-existing only when it is not introduced AND lies outside the change
 
-**Decision.** In `plugins/saga/scripts/review_formula.py`, a finding whose `introduced` is false, or whose
-`lines` location shares no line with the lines the change added or modified (plus the line on either side
-of a removal), has its severity capped at fix-later and carries the `pre-existing` modifier. The cap
-applies to reviewer findings and tool findings (a tool finding is tested on `introduced` only, see
-below), and to the always-blocking harms ("data lost or
-corrupted", "a security boundary crossed"): a pre-existing one is reported and is not merge-refusing. The
-modifier is named after the first cap that applies, in the order `degraded`, `classifier-only`,
-`unreproduced`, `pre-existing`. A whole-project or section location is never called outside the change,
-and a packet written without `changed_lines` is graded on `introduced` alone. The operator made this call.
+**Decision.** In `plugins/saga/scripts/review_formula.py`, a blocking finding is capped at fix-later
+and carries the `pre-existing` modifier only when BOTH hold: (a) the reviewer marked it `introduced:
+false`, and (b) Saga's computed `changed_lines` (the lines the change added or modified, plus the
+line on either side of a removal, from `review_diff.Change.touched()`) place its `lines` location
+outside the change. A file the change does not name counts as outside. Placing a path uses
+`posixpath.normpath`; a leading `./` and a diff-style `a/` or `b/` prefix (only when what is left is
+a changed file) are ignored; an absolute path or one holding `..` cannot be placed and is never
+capped. A renamed file's old path is listed as changed (one whole-file range), so a finding citing
+it is not treated as outside. A whole-project or section location is never capped. When
+`changed_lines` is absent (older packets, stored runs, and the build loop's gate in `build_loop.py`
+`_judge_findings`) nothing is capped: the formula cannot place a location, so it fails closed, which
+is what main did before the rule existed, and older stored runs still validate. Tool findings keep
+the earlier treatment: they are exempt from the lines test, and the runner sets `introduced: true`
+on every tool finding, so they are never capped. The operator made these calls.
 
-**Rationale.** In a private measurement run, a real bug the change never touched blocked every review of
-an otherwise unmodified copy of a large upstream change. Merge should be refused for what a change does,
-not for what the repository already had. The cap is safe on that data: re-grading the recorded findings
-offline kept every defect the run had caught. Treating the always-blocking harms differently would leave
-the same false block alive for the two harms that refuse merge on a report-only lens.
+**Rationale.** In a private measurement run, a real bug the change never touched blocked every
+review of an otherwise unmodified copy of a large upstream change. Merge should be refused for what
+a change does, not for what the repository already had. Requiring both conditions closes the two
+ways to get that wrong: the reviewer cannot lower a block by marking `introduced: false` on its own
+(a reviewer-controlled downgrade is a security hole), and a regression the change caused that
+surfaces at an unchanged caller, marked `introduced: true`, still blocks (the code review's P1
+case). The first version of this rule capped on either condition; that is what this entry replaces.
 
-**Tool findings and the lines test.** The brief was to apply the lines test to tool findings too. It
-is a no-op for tools compared on changed lines (the runner, `review_tools._run_adapter`, already drops
-hits outside the changed lines) and wrong for tools compared base to head: their hits are new against
-the base but can sit in a file the diff never names, such as a template a CDK app synthesizes. An
-existing test (`test_checkov_cdk_finding_present_at_base_is_absent`) failed when the test was applied
-to them. So `outcome()` skips the lines test for `source.kind == "tool"` and still applies `introduced`.
+**Always-blocking harms.** A pre-existing "data lost or corrupted" or "a security boundary crossed"
+harm, in this sense, is reported at fix-later and is not merge-refusing. The operator decided this;
+the alternative leaves the same false block alive for the two harms that refuse merge on a
+report-only lens. An introduced one, wherever it sits, still refuses merge. Revisit if the operator
+wants pre-existing harms of those two kinds to always block.
 
-**Rejected alternatives.** Run the reviewer's test on the base commit as well, and call the finding
-pre-existing when it fails there: it needs a second run per reproduced finding and a writable base
-checkout, and the reviewer's own `introduced` plus the diff already gives the answer. Exempt the
-always-blocking harms: a pre-existing leak is still real, but it is not this change's to fix, and it
-stays visible at fix-later. Trust only `introduced`: a reviewer can mark it true by habit; the diff is
-the check that does not depend on the reviewer. Count only added lines, not the lines beside a removal:
-findings about deleted code would always read as pre-existing.
+**Rejected alternatives.** The lines test alone: it caps a regression the change caused at an
+unchanged caller. `introduced` alone: a reviewer can mark it by habit or by error, and nothing
+checks it against the diff. Either condition capping: that has both failures at once. Run the
+reviewer's test on the base commit and call the finding pre-existing when it fails there: it needs a
+second run per reproduced finding and a writable base checkout. Count only added lines, not the
+lines beside a removal: findings about deleted code would always read as pre-existing. Apply the
+lines test to tool findings: it breaks tools compared base to head, whose hits are new against the
+base but can sit in a file the diff never names
+(`test_checkov_cdk_finding_present_at_base_is_absent` failed when it was applied).
 
 **Revisit when.** A run shows a defect the change introduced being capped (for example a deleted
-guard whose finding sits more than one line from the gap), or findings that rely on a changed file's
-unchanged lines are being lost. Also revisit the build loop's gate (`build_loop.py`
-`_judge_findings`), which still calls `outcome()` without `changed_lines`, so only `introduced` applies there.
+guard whose finding sits more than one line from the gap), or a pre-existing harm the operator wants
+to block. Also revisit when `build_loop.py` `_judge_findings` should pass `changed_lines`, which it
+does not today.
+
+### A function with no ctags end line ends at its closing brace
+
+**Decision.** `sweep_pieces._derived_end` finds the end of a function whose tag has no `end`
+(Universal Ctags 6.2.1 for Rust, TypeScript, shell) by scanning braces from the tag's line
+(`_brace_end`): braces inside strings, comments and parentheses or brackets are skipped, and the end
+is the line where depth returns to zero, looking no further than the line before the next tag that
+is not nested in the function. If no matching close brace is found, the function gets no span and
+its changed lines fall back to the fixed line window. A tag's own `end` is used when ctags gives
+one, so both older and newer ctags work.
+
+**Rationale.** The first version ended a function at the line before the next tag, which swallowed
+untagged top-level code after the last function (a shell script's main body, a TypeScript
+`export default`). A wrong piece misleads the reviewer; a window is honestly degraded.
+
+**Rejected alternatives.** Keep the next-tag boundary and call it wider: it is wrong, not just wide.
+Use a real parser per language: heavy, and a new dependency for a small gain. Always fill the gap
+with the fixed window: loses function names for every Rust, TypeScript and shell piece.
+
+**Revisit when.** A language the scanner handles badly shows up in a run (known: a TypeScript return
+type written as an object type, Rust raw strings, shell heredocs), or ctags emits `end` for these
+languages and the scanner is no longer needed.
 
 ### Duplication and machine-specific values stay non-blocking: flagged, not blocked
 
 **Decision.** The operator decided that architecture findings such as duplicated code and
-machine-specific values stay non-blocking. No severity row changes: `architecture-maintainability.duplicate`
-stays a note and `architecture-maintainability.machine-specific-value` stays fix-later in
-`plugins/saga/scripts/review_formula.py`. The change shipped with this entry makes the machine-specific
-check's items reach the reviewer (see the scripted-items decision above), so the reviewer is asked about
-them; it does not make them block.
+machine-specific values stay non-blocking. No severity row changes:
+`architecture-maintainability.duplicate` stays a note and
+`architecture-maintainability.machine-specific-value` stays fix-later in
+`plugins/saga/scripts/review_formula.py`. The change shipped with this entry makes the
+machine-specific check's items reach the reviewer (see the scripted-items decision below), so the
+reviewer is asked about them; it does not make them block.
 
 **Rationale.** A narrow architecture rule that blocks would be a new policy for every language Saga
 reviews, decided on a handful of planted cases from one repository. Flagging at fix-later keeps the
 finding visible without refusing merge for something a person can reasonably accept.
 
-**Rejected alternatives.** Let narrow, deterministic architecture findings (a home-directory path, an
-exact duplicate block) block when they sit on added lines: it would catch the planted cases, but the
-evidence is one defect and one clean copy, and it adds a blocking rule outside the calibration.
+**Rejected alternatives.** Let narrow, deterministic architecture findings (a home-directory path,
+an exact duplicate block) block when they sit on added lines: it would catch the planted cases, but
+the evidence is one defect and one clean copy, and it adds a blocking rule outside the calibration.
 
 **Follow-up (conflict, not resolved here).** `plugins/saga/references/review-calibration.json` still
 expects the architecture lens to block 6 in 10 planted architecture defects (`must_block` for
 `architecture-maintainability`). With these rows that mark cannot be met on duplication or
 machine-specific plants, whatever the reviewer does. Either the calibration mark or the corpus's
-treatment of those plants has to change (for example, scoring them as "flagged at fix-later or above at
-the location"). This entry deliberately leaves the file alone.
+treatment of those plants has to change (for example, scoring them as "flagged at fix-later or above
+at the location"). This entry deliberately leaves the file alone.
 
 **Revisit when.** The calibration marks are next set, or a measurement run is scored against them.
 
@@ -77,22 +108,23 @@ stay byte identical. An item that repeats an earlier one's lens, language, locat
 and question ids is kept once. The sweep's cap of 60 (`ITEM_CAP`) bounds only the sweep's items.
 Scripted and tool-gap items come on top of it and are never dropped.
 
-**Rationale.** In a private measurement run a scripted check found a hard-coded home-directory path on
-the exact planted line, and the packet carried no machine-specific item because `prepare` overwrote the
-file with only the sweep's items. The reviewer is told to answer every item, so an item the sweep
-never produced was an item nobody asked about. A scripted item is a fact at probability 1, not a
-guess, so applying the cap to it would drop evidence in favour of guesses.
+**Rationale.** In a private measurement run a scripted check found a hard-coded home-directory path
+on the exact planted line, and the packet carried no machine-specific item because `prepare`
+overwrote the file with only the sweep's items. The reviewer is told to answer every item, so an
+item the sweep never produced was an item nobody asked about. A scripted item is a fact at
+probability 1, not a guess, so applying the cap to it would drop evidence in favour of guesses.
 
 **Rejected alternatives.** Counting scripted items against the cap of 60: it would let a change with
 many machine-specific values push out the sweep's items, and the cap then stops meaning "bounded
 sweep". A second, separate cap on scripted items: no evidence yet that one is needed, and a second
 tuned number is cost without data. Keeping the sweep's probability order in the file: the file was
-already sorted into canonical order for byte-identical packets, and a reviewer's answers refer to items
-by their position in the written file, so the order only has to be stable once the packet exists.
+already sorted into canonical order for byte-identical packets, and a reviewer's answers refer to
+items by their position in the written file, so the order only has to be stable once the packet
+exists.
 
 **Revisit when.** A change adds so many scripted items that the reviewer's prompt grows past Haiku's
-100,000-token price step, or a packet's item count is routinely far above 60 because of scripted items.
-
+100,000-token price step, or a packet's item count is routinely far above 60 because of scripted
+items.
 ## 2026-10-23
 
 ### The question sweep returns up to 60 items, not 30

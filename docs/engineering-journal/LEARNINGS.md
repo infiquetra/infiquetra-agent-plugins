@@ -7,42 +7,54 @@
 **Evidence.** In a private measurement run, every review of an unmodified copy of one large upstream
 change was blocked by the same finding: a walker bug in code the change never touched. Each reviewer
 marked it `introduced: false`, and each reproduced it with its own test. `outcome()` in
-`plugins/saga/scripts/review_formula.py` never read `introduced`, and the re-run in `review_command.py`
-(`_rerun_one`) runs a test on the change's head only, so nothing could see that the same test fails on
-the base. The older code-review skill had the rule (`skills/code-review/references/validator.md`, step 2:
-a pre-existing finding is not validated for externalization); the formula pipeline dropped it. Now
-`outcome()` caps a blocking finding at fix-later with the `pre-existing` modifier when `introduced` is
-false or its `lines` location shares no line with `changed_lines`. Tests:
-`test_a_pre_existing_always_blocking_harm_is_reported_and_does_not_refuse_merge` and the neighbouring
-tests in `plugins/saga/tests/test_review_formula.py`; end to end in
+`plugins/saga/scripts/review_formula.py` never read `introduced`, and the re-run in
+`review_command.py` (`_rerun_one`) runs a test on the change's head only, so nothing could see that
+the same test fails on the base. The older code-review skill had a related rule, but a different one
+(`skills/code-review/references/validator.md`, step 2: a finding is pre-existing only if the cited
+line predates the branch AND the diff does not call into it or change its callers in a way that
+newly exposes the issue); the formula pipeline had no such rule at all. Now `outcome()` caps a
+blocking finding at fix-later with the `pre-existing` modifier only when `introduced` is false AND
+`changed_lines` place its `lines` location outside the change. The lines test alone would miss a
+regression the change caused at an unchanged caller, and `introduced` alone would let a reviewer
+lower a block by itself. Tests:
+`test_a_pre_existing_always_blocking_harm_is_reported_and_does_not_refuse_merge`,
+`test_an_introduced_always_blocking_harm_outside_the_change_still_refuses_merge` and the
+neighbouring tests in `plugins/saga/tests/test_review_formula.py`; end to end in
 `plugins/saga/tests/test_review_command.py`.
 
 **Mechanism.** The formula is pure, so it cannot read the diff. The lines had to travel with the
-packet: `review_diff.Change.touched()` builds them, `prepare` writes `change.json`, `finish` hands them to
-`compute`, and the stored run keeps them, because validation recomputes every severity and would
-otherwise disagree with the stored one. A removal adds no line, so the line on either side of it counts
-as touched; without that, a finding about code the change deleted would always read as pre-existing.
+packet: `review_diff.Change.touched()` builds them, `prepare` writes `change.json`, `finish` hands
+them to `compute`, and the stored run keeps them, because validation recomputes every severity and
+would otherwise disagree with the stored one. A removal adds no line, so the line on either side of
+it counts as touched; without that, a finding about code the change deleted would always read as
+pre-existing.
 
-**Generalizable rule.** When a rule needs data the checker cannot compute (here, the diff), pass the data
-in as an input and store it with the result, so a recomputation reads what the first computation read.
+**Generalizable rule.** When a rule needs data the checker cannot compute (here, the diff), pass the
+data in as an input and store it with the result, so a recomputation reads what the first
+computation read.
 
 ### A mocked external tool hides a call the real tool rejects
 
 **Evidence.** In a private measurement run, no where-to-look item named a function, and every piece
-was marked degraded. `read_ctags_spans` (`plugins/saga/scripts/sweep_pieces.py`) passed `--` before the
-file name. Universal Ctags 6.2.1 exits 1 with "Unknown option: --" for it, and `_default_runner` turned
-that into `None`, which `_spans` reads as "the parser did not run". Every test in
+was marked degraded. `read_ctags_spans` (`plugins/saga/scripts/sweep_pieces.py`) passed `--` before
+the file name. Universal Ctags 6.2.1 exits 1 with "Unknown option: --" for it, and `_default_runner`
+turned that into `None`, which `_spans` reads as "the parser did not run". Every test in
 `plugins/saga/tests/test_sweep_pieces.py` replaced ctags with a fake runner, so none of them saw the
 rejection. Once the flag was gone, the same ctags still gave no `end` line for Rust, TypeScript or
-shell tags (it does for C and Python), and `_parse_tags` skipped every tag without one: the call would
-have succeeded and still returned no function. The fix drops `--`, derives a missing end from the next
-non-nested tag, and adds `test_the_real_ctags_returns_function_boundaries`, which runs the installed
-ctags and skips when it is absent.
+shell tags (it does for C and Python), and `_parse_tags` skipped every tag without one: the call
+would have succeeded and still returned no function. The fix drops `--`, derives a missing end by
+scanning braces from the tag's line to where they close (bounded by the next tag that is not nested
+in it), and adds `test_the_real_ctags_returns_function_boundaries`, which runs the installed ctags.
+It skips when ctags is absent locally and fails when `CI` is set, where the plugin-tests job
+installs Universal Ctags. A first version ended a function at the line before the next tag, which
+swallowed untagged top-level code after it (a shell script's main body ran to the end of the file; a
+TypeScript `export default` was included in the function before it), so the span was wrong, not just
+wider.
 
-**Mechanism.** A fake runner proves the code handles the output a person imagined, not the output the
-tool prints. Two separate gaps (a rejected flag, then a field the tool omits for these languages) sat
-behind each other, and the first one hid the second because the failure path and the empty-result
-path both end in the same silent fallback.
+**Mechanism.** A fake runner proves the code handles the output a person imagined, not the output
+the tool prints. Two separate gaps (a rejected flag, then a field the tool omits for these
+languages) sat behind each other, and the first one hid the second because the failure path and the
+empty-result path both end in the same silent fallback.
 
 **Generalizable rule.** For every tool a step shells out to, keep one test that runs the real binary
 (skipped when it is not installed) and asserts a non-empty, useful result, not only that nothing
