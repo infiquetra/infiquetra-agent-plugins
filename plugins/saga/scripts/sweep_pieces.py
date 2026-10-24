@@ -113,7 +113,7 @@ def read_ctags_spans(
     run = runner or _default_runner
     suffix = Path(path).suffix
     with tempfile.TemporaryDirectory(prefix="sweep-") as directory:
-        blob = Path(directory) / f"source{suffix}"
+        blob = (Path(directory) / f"source{suffix}").absolute()
         blob.write_text(text, encoding="utf-8")
         blob.chmod(stat.S_IRUSR | stat.S_IWUSR)
         version = _run(run, ["ctags", "--options=NONE", "--version"], directory)
@@ -131,14 +131,16 @@ def read_ctags_spans(
                 f"--language-force={forced}",
                 "-o",
                 "-",
-                "--",
+                # No "--" here: Universal Ctags 6.2.1 rejects it ("Unknown option: --", exit 1),
+                # which sent every piece to the fixed line window. The path is safe without it,
+                # because it is absolute (the tempdir) and its name begins with "source".
                 str(blob),
             ],
             directory,
         )
         if proc is None or proc.returncode != 0:
             return None
-        return _parse_tags(proc.stdout or "")
+        return _parse_tags(proc.stdout or "", text.splitlines())
 
 
 def calibration_path_lists() -> list[list[str]] | None:
@@ -553,8 +555,15 @@ def _piece(
     return piece
 
 
-def _parse_tags(stdout: str) -> list[dict[str, Any]] | None:
-    spans = []
+def _parse_tags(stdout: str, source: list[str] | None = None) -> list[dict[str, Any]] | None:
+    """Function spans from ctags' JSON lines.
+
+    A tag carries ``end`` only for some languages: Universal Ctags 6.2.1 gives it for C and
+    Python but not for Rust, TypeScript or shell. When *source* is given, a function without
+    ``end`` ends where the next tag that is not nested inside it begins (see ``_derived_end``).
+    Without *source* such a tag is skipped, as before.
+    """
+    tags = []
     for raw in stdout.splitlines():
         line = raw.strip()
         if not line:
@@ -565,14 +574,20 @@ def _parse_tags(stdout: str) -> list[dict[str, Any]] | None:
             return None
         if not isinstance(item, dict):
             continue
+        number = item.get("line", item.get("start"))
+        if isinstance(number, bool) or not isinstance(number, int):
+            continue
+        tags.append((number, item))
+    tags.sort(key=lambda pair: (pair[0], str(pair[1].get("name"))))
+    spans = []
+    for index, (start, item) in enumerate(tags):
         kind = str(item.get("kind", "")).lower()
         if kind not in _TAG_KINDS:
             continue
         end = item.get("end")
-        start = item.get("line", item.get("start"))
-        if isinstance(end, bool) or not isinstance(end, int):
-            continue
-        if isinstance(start, bool) or not isinstance(start, int) or end < start:
+        if end is None and source is not None:
+            end = _derived_end(tags, index, source)
+        if isinstance(end, bool) or not isinstance(end, int) or end < start:
             continue
         name = item.get("name")
         spans.append({
@@ -582,6 +597,50 @@ def _parse_tags(stdout: str) -> list[dict[str, Any]] | None:
             "anchor": "",
         })
     return spans
+
+
+def _qualified(item: dict[str, Any]) -> str:
+    """The tag's scope path and name with ``.`` as the separator, so ``A::b`` and ``A.b`` agree."""
+    name = str(item.get("name") or "")
+    scope = item.get("scope")
+    joined = f"{scope}.{name}" if isinstance(scope, str) and scope else name
+    return joined.replace("::", ".")
+
+
+def _nested_in(inner: dict[str, Any], outer: dict[str, Any]) -> bool:
+    scope = inner.get("scope")
+    if not isinstance(scope, str) or not scope:
+        return False
+    qualified = _qualified(outer)
+    scope = scope.replace("::", ".")
+    return scope == qualified or scope.startswith(f"{qualified}.")
+
+
+def _derived_end(
+    tags: list[tuple[int, dict[str, Any]]], index: int, source: list[str],
+) -> int | None:
+    """Last line of a function whose ctags tag has no ``end``.
+
+    It is the line before the next tag that is not nested inside the function, or the end of the
+    file for the last one, with blank, comment and attribute lines just above that boundary left
+    out. It can run past the closing brace over code ctags did not tag. That is a wider piece, not
+    a wrong one, and it still beats a fixed window.
+    """
+    start, item = tags[index]
+    limit = len(source)
+    for later, other in tags[index + 1:]:
+        if later > start and not _nested_in(other, item):
+            limit = later - 1
+            break
+    end = min(limit, len(source))
+    while end > start and _is_filler(source[end - 1]):
+        end -= 1
+    return end if end >= start else None
+
+
+def _is_filler(line: str) -> bool:
+    stripped = line.strip()
+    return not stripped or stripped.startswith(("//", "#", "@", "/*", "*"))
 
 
 def _run(runner: Runner, argv: list[str], cwd: str) -> Any:

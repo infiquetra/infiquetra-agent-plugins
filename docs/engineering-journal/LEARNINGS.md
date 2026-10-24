@@ -1,5 +1,29 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-24
+
+### A mocked external tool hides a call the real tool rejects
+
+**Evidence.** In a private measurement run, no where-to-look item named a function, and every piece
+was marked degraded. `read_ctags_spans` (`plugins/saga/scripts/sweep_pieces.py`) passed `--` before the
+file name. Universal Ctags 6.2.1 exits 1 with "Unknown option: --" for it, and `_default_runner` turned
+that into `None`, which `_spans` reads as "the parser did not run". Every test in
+`plugins/saga/tests/test_sweep_pieces.py` replaced ctags with a fake runner, so none of them saw the
+rejection. Once the flag was gone, the same ctags still gave no `end` line for Rust, TypeScript or
+shell tags (it does for C and Python), and `_parse_tags` skipped every tag without one: the call would
+have succeeded and still returned no function. The fix drops `--`, derives a missing end from the next
+non-nested tag, and adds `test_the_real_ctags_returns_function_boundaries`, which runs the installed
+ctags and skips when it is absent.
+
+**Mechanism.** A fake runner proves the code handles the output a person imagined, not the output the
+tool prints. Two separate gaps (a rejected flag, then a field the tool omits for these languages) sat
+behind each other, and the first one hid the second because the failure path and the empty-result
+path both end in the same silent fallback.
+
+**Generalizable rule.** For every tool a step shells out to, keep one test that runs the real binary
+(skipped when it is not installed) and asserts a non-empty, useful result, not only that nothing
+crashed; a silent fallback needs a test that fails when the fallback is taken.
+
 ## 2026-10-23
 
 ### Record the reason a judgment came back empty where a person can read it

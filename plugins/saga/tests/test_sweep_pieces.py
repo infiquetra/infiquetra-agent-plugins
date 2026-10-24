@@ -381,6 +381,91 @@ def test_the_ctags_tempfile_keeps_the_suffix_and_forces_the_language() -> None:
     assert held and not held[0].exists()
 
 
+def test_the_ctags_call_passes_no_double_dash_and_an_absolute_path() -> None:
+    seen: list[list[str]] = []
+
+    def runner(argv: list[str], _cwd: str) -> SimpleNamespace:
+        seen.append(list(argv))
+        if "--version" in argv:
+            return SimpleNamespace(returncode=0, stdout="Universal Ctags 6.2.1\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    assert P.read_ctags_spans("fn a() {}\n", "-odd/-name.rs", "rust", runner=runner) == []
+    assert "--" not in seen[1]
+    assert Path(seen[1][-1]).is_absolute()
+    assert not Path(seen[1][-1]).name.startswith("-")
+
+
+def _real_universal_ctags_languages() -> set[str]:
+    try:
+        version = subprocess.run(  # noqa: S603
+            ["ctags", "--options=NONE", "--version"],  # noqa: S607
+            check=False, capture_output=True, text=True, timeout=30,
+        )
+        if version.returncode != 0 or "Universal Ctags" not in version.stdout:
+            return set()
+        listed = subprocess.run(  # noqa: S603
+            ["ctags", "--options=NONE", "--list-languages"],  # noqa: S607
+            check=False, capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    return {line.split()[0] for line in listed.stdout.splitlines() if line.split()}
+
+
+_REAL_CTAGS = _real_universal_ctags_languages()
+
+_REAL_SOURCES = {
+    "rust": (
+        "src/lib.rs", "Rust",
+        "pub struct Thing {\n    n: i32,\n}\n\nimpl Thing {\n"
+        "    pub fn new() -> Self {\n        Thing { n: 0 }\n    }\n\n"
+        "    #[inline]\n    pub fn get(&self) -> i32 {\n        self.n\n    }\n}\n",
+        {"new": (6, 8), "get": (11, 14)},
+    ),
+    "typescript": (
+        "src/app.ts", "TypeScript",
+        "function add(a: number): number {\n  return a + 1;\n}\n\n"
+        "function sub(a: number): number {\n  return a - 1;\n}\n",
+        {"add": (1, 3), "sub": (5, 7)},
+    ),
+    "shell": (
+        "bin/run.sh", "Sh",
+        "first() {\n  echo one\n}\n\nsecond() {\n  echo two\n}\n",
+        {"first": (1, 3), "second": (5, 7)},
+    ),
+}
+
+
+@pytest.mark.parametrize("language", sorted(_REAL_SOURCES))
+def test_the_real_ctags_returns_function_boundaries(language: str) -> None:
+    """The unit tests above mock ctags, so only this one saw the "--" the real tool rejects."""
+    path, ctags_name, text, expected = _REAL_SOURCES[language]
+    if ctags_name not in _REAL_CTAGS:
+        pytest.skip(f"Universal Ctags with the {ctags_name} parser is not installed")
+    spans = P.read_ctags_spans(text, path, language)
+    assert spans, "ctags ran but no function came back; the call is probably rejected again"
+    found = {span["name"]: (span["start"], span["end"]) for span in spans}
+    assert found == expected
+
+
+def test_a_function_whose_tag_has_no_end_ends_before_the_next_unnested_tag() -> None:
+    lines = "\n".join(
+        json.dumps(tag) for tag in (
+            {"name": "outer", "kind": "function", "line": 1},
+            {"name": "inner", "kind": "function", "line": 2, "scope": "outer"},
+            {"name": "next", "kind": "function", "line": 7},
+        )
+    )
+    source = ["fn outer() {", "    fn inner() {}", "}", "", "// about next", "#[inline]",
+              "fn next() {", "}", "", ""]
+    spans = P._parse_tags(lines, source)  # type: ignore[attr-defined]
+    assert spans is not None
+    found = {span["name"]: (span["start"], span["end"]) for span in spans}
+    assert found == {"outer": (1, 3), "inner": (2, 3), "next": (7, 8)}
+    assert P._parse_tags(lines) == []  # type: ignore[attr-defined]
+
+
 def test_the_parser_row_is_on_the_tool_list_and_not_an_adapter() -> None:
     document = yaml.safe_load((REFERENCES / "review-tools.yaml").read_text(encoding="utf-8"))
     row = next(item for item in document["tools"] if item.get("id") == "universal-ctags")

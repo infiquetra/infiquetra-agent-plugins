@@ -50,6 +50,15 @@
 
 ### Fixed
 
+- The ctags call in `scripts/sweep_pieces.py` no longer passes `--` before the file. Universal
+  Ctags 6.2.1 rejects it ("Unknown option: --", exit 1), so every piece had fallen back to a
+  fixed line window and no where-to-look item named a function. The path is the sweep's own
+  temporary file: absolute, and its name starts with `source`, so a leading `-` cannot occur. The
+  same ctags gives no `end` line for Rust, TypeScript or shell tags, so a function without one now
+  ends at the line before the next tag that is not nested inside it (blank, comment and attribute
+  lines above that tag left out). The span can run past the closing brace over untagged code; it
+  is wider, not wrong. A test runs the real ctags, when it is installed, and asserts the boundaries
+  for Rust, TypeScript and shell. No version bump; that belongs to #147's saga release step.
 - Issue #264: `finish` recognises a reproduction test's failure in each supported runner's own
   output, so a reproduced Rust (and Vitest, Jest, Go, Dart, Swift or unittest) finding counts as
   reproduced and can block. The match rule is in the new `scripts/reproduction_match.py`: the
