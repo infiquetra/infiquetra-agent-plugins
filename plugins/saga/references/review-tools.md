@@ -320,7 +320,7 @@ The family draft, the kind draft, and the curated Checkov ids are the last fence
 
 ## Scripted checks
 
-Issue 155 adds five checks in `scripts/review_checks.py`. The runner starts the plugin's copy of that script. The commit under review does not configure these checks. `where-to-look.json` carries the unanswered machine-specific items. A confirmed machine-specific finding stays fix later. When the relocated test command fails, `architecture-maintainability.relocated-run-fails` blocks in the same outcome file.
+Issue 155 adds five checks in `scripts/review_checks.py`. The runner starts the plugin's copy of that script. The commit under review does not configure these checks. `where-to-look.json` carries the unanswered machine-specific items, beside the sweep's items; `prepare` merges them and no longer replaces the scripted items with the sweep's. A confirmed machine-specific finding stays fix later. When the relocated test command fails, `architecture-maintainability.relocated-run-fails` blocks in the same outcome file.
 
 | Adapter id | Comparison | Row | Computed severity |
 |---|---|---|---|

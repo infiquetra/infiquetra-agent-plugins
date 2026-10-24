@@ -339,7 +339,14 @@ def _prepare(
         )
         degraded.extend(sweep_degraded)
         gaps = [entry for entry in degraded if entry.get("reason") in {"missing", "known-gap"}]
-        where = [*items, *(_gap_item(entry) for entry in gaps)]
+        # The tool runner already wrote the scripted checks' own items (for instance the
+        # machine-specific-value check) to this file; they join the sweep's items, not replaced.
+        scripted = _read_json(staging / "where-to-look.json", "where-to-look")
+        where = _merge_where_items(
+            scripted if isinstance(scripted, list) else [],
+            items,
+            [_gap_item(entry) for entry in gaps],
+        )
         may_block, reasons = _may_block_map(findings, measurements, calibration, profile)
         try:
             grades = review_formula.compute({
@@ -529,6 +536,46 @@ def _jev_rate() -> dict[str, float] | None:
             parsed[key] = float(value)
         return parsed
     return None
+
+
+def _merge_where_items(
+    scripted: Sequence[Any],
+    swept: Sequence[Any],
+    gaps: Sequence[Any],
+) -> list[dict[str, Any]]:
+    """Every where-to-look item the reviewer must answer: scripted, then swept, then tool gaps.
+
+    *scripted* items come from saga's own checks and are facts (probability 1), so none is ever
+    dropped. The sweep's cap (``ITEM_CAP``) bounds only *swept*; scripted and gap items come on
+    top of it, so a packet can hold more items than the cap. An item that repeats an earlier
+    one's lens, language, location, classifier and question ids is kept once, the earlier one winning. The caller writes
+    the result in the packet's canonical order (``review_tools.stable_order``).
+    """
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in (*scripted, *swept, *gaps):
+        if not isinstance(item, Mapping):
+            continue
+        classifier = item.get("classifier")
+        questions = item.get("questions")
+        key = json.dumps(
+            [
+                item.get("lens"),
+                item.get("language"),
+                item.get("location"),
+                classifier.get("name") if isinstance(classifier, Mapping) else None,
+                sorted(
+                    str(question.get("id")) for question in questions
+                    if isinstance(question, Mapping)
+                ) if isinstance(questions, list) else [],
+            ],
+            sort_keys=True, ensure_ascii=False,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(dict(item))
+    return merged
 
 
 def _gap_item(entry: Mapping[str, Any]) -> dict[str, Any]:

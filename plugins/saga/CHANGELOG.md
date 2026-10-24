@@ -55,6 +55,13 @@
 
 ### Fixed
 
+- `prepare` keeps the scripted checks' where-to-look items. It rewrote `where-to-look.json` with
+  only the sweep's items and the missing-tool items, so items from the scripted checks, such as the
+  machine-specific-value check, never reached the reviewer even when the check had found the exact
+  line. They are now merged in. They are not counted against the sweep's cap of 60, which bounds
+  only the sweep's items, so a packet can hold more than 60. An item that repeats another's lens,
+  language, location, classifier and question ids is kept once. No version bump; that belongs to
+  #147's saga release step.
 - The ctags call in `scripts/sweep_pieces.py` no longer passes `--` before the file. Universal
   Ctags 6.2.1 rejects it ("Unknown option: --", exit 1), so every piece had fallen back to a
   fixed line window and no where-to-look item named a function. The path is the sweep's own

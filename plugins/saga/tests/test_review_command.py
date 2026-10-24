@@ -526,6 +526,75 @@ def test_prepare_records_writes_validated_findings_and_identical_grades(tmp_path
     assert (second / "grades.json").read_bytes() == (first / "grades.json").read_bytes()
 
 
+def _scripted_item(line: int = 2, *, name: str = "machine-specific-value") -> dict[str, Any]:
+    return {
+        "kind": "where_to_look", "schema": R.SCHEMA, "lens": "architecture-maintainability",
+        "language": "python", "degraded": False,
+        "questions": [{"id": "machine-specific-value", "probability": 1}],
+        "classifier": {"name": name, "model": "review-checks 1.0.0"},
+        "location": {
+            "scope": "lines", "file": "src/app.py", "lines": {"start": line, "end": line},
+            "function": "changed", "anchor": f"machine-specific-value:home:{line}",
+        },
+    }
+
+
+def _scripted_adapter(items: tuple[dict[str, Any], ...]) -> Any:
+    return T.Adapter(
+        id="scripted", tool="scripted", invoke=lambda _context: ["scripted", "scan"],
+        parse=lambda _text: T.ParseResult(items=items), default_version="1.0.0",
+        rows=("security.scanner-high",), lens="security", comparison="lines",
+    )
+
+
+def test_prepare_keeps_the_scripted_items_beside_the_sweeps(tmp_path: Path) -> None:
+    repo, base, head = _repo(tmp_path, function=True)
+    profile = _profile(tmp_path / "outside")
+    builder = _builder(tmp_path / "builder.json")
+    bank = _bank(tmp_path / "bank.json")
+    home = tmp_path / "home"
+    home.mkdir()
+    out = tmp_path / "packet"
+    scripted = _scripted_item()
+    argv = [
+        "prepare", "--repo", str(repo), "--base", base, "--head", head, "--profile", str(profile),
+        "--builder-record", str(builder), "--out", str(out), "--home", str(home),
+        "--bank", str(bank),
+    ]
+    # The same scripted item twice, as two scans of one line would give it.
+    adapter = _scripted_adapter((scripted, dict(scripted)))
+    code, err = _main(argv, adapters=[adapter], runner=_Runner(), ask=_ask())
+    assert code == 0, err
+    where = _read(out / "where-to-look.json")
+    names = sorted(item["classifier"]["name"] for item in where)
+    assert names.count("machine-specific-value") == 1
+    assert len(where) == 2
+    kept = next(item for item in where if item["classifier"]["name"] == "machine-specific-value")
+    assert kept["questions"] == [{"id": "machine-specific-value", "probability": 1}]
+    assert "answer" not in kept
+    # The sweep's own item is still there.
+    assert any(item["classifier"]["name"] != "machine-specific-value" for item in where)
+    again = tmp_path / "again"
+    argv[argv.index(str(out))] = str(again)
+    code, err = _main(argv, adapters=[adapter], runner=_Runner(), ask=_ask())
+    assert code == 0, err
+    assert (again / "where-to-look.json").read_bytes() == (out / "where-to-look.json").read_bytes()
+
+
+def test_scripted_items_are_not_counted_against_the_sweeps_cap() -> None:
+    swept = [
+        {**_scripted_item(number), "classifier": {"name": "jev-sweep", "model": "jev-test"}}
+        for number in range(1, 61)
+    ]
+    scripted = [_scripted_item(61), _scripted_item(62)]
+    gap = {**_scripted_item(1), "classifier": {"name": "missing-tool", "model": "none"}}
+    merged = C._merge_where_items(scripted, swept, [gap, dict(gap)])
+    assert len(merged) == 63
+    assert [item["classifier"]["name"] for item in merged[:2]] == ["machine-specific-value"] * 2
+    assert merged[-1]["classifier"]["name"] == "missing-tool"
+    assert C._merge_where_items(["not an item", None], [], []) == []
+
+
 def test_prepare_packet_names_every_where_to_look_item(tmp_path: Path) -> None:
     repo, base, head = _repo(tmp_path, function=True)
     profile = _profile(tmp_path / "outside")

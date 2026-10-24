@@ -1,5 +1,34 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-24
+
+### Saga's scripted where-to-look items are merged into the packet, not replaced by the sweep's
+
+**Decision.** `_prepare` in `plugins/saga/scripts/review_command.py` reads the items the tool runner
+already wrote to `where-to-look.json` (the scripted checks' own items, such as the
+machine-specific-value check) and merges them with the sweep's items and the missing-tool items in
+`_merge_where_items`. Scripted items come first, then the sweep's, then tool gaps; the file is still
+written in the packet's canonical order (`review_tools.stable_order`), so two prepares of one change
+stay byte identical. An item that repeats an earlier one's lens, language, location, classifier name
+and question ids is kept once. The sweep's cap of 60 (`ITEM_CAP`) bounds only the sweep's items.
+Scripted and tool-gap items come on top of it and are never dropped.
+
+**Rationale.** In a private measurement run a scripted check found a hard-coded home-directory path on
+the exact planted line, and the packet carried no machine-specific item because `prepare` overwrote the
+file with only the sweep's items. The reviewer is told to answer every item, so an item the sweep
+never produced was an item nobody asked about. A scripted item is a fact at probability 1, not a
+guess, so applying the cap to it would drop evidence in favour of guesses.
+
+**Rejected alternatives.** Counting scripted items against the cap of 60: it would let a change with
+many machine-specific values push out the sweep's items, and the cap then stops meaning "bounded
+sweep". A second, separate cap on scripted items: no evidence yet that one is needed, and a second
+tuned number is cost without data. Keeping the sweep's probability order in the file: the file was
+already sorted into canonical order for byte-identical packets, and a reviewer's answers refer to items
+by their position in the written file, so the order only has to be stable once the packet exists.
+
+**Revisit when.** A change adds so many scripted items that the reviewer's prompt grows past Haiku's
+100,000-token price step, or a packet's item count is routinely far above 60 because of scripted items.
+
 ## 2026-10-23
 
 ### The question sweep returns up to 60 items, not 30
