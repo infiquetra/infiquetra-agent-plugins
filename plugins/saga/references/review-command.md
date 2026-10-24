@@ -22,7 +22,7 @@ The commit under review does not choose the calibration file or the profile that
 
 | File | Holds |
 |---|---|
-| `change.json` | resolved repository path, full base and head SHAs, and each file's path and status |
+| `change.json` | resolved repository path, full base and head SHAs, each file's path and status, and `changed_lines`: for each added or modified file, the inclusive line ranges the change added or modified, plus the line on either side of a removal. `finish` hands them to the formula, so a finding wholly outside them is reported and never blocks. A packet written without `changed_lines` is graded on each finding's `introduced` alone |
 | `diff.patch` | `git diff --find-renames` between those SHAs |
 | `findings.json` | tool findings, in the input form the formula computes |
 | `measurements.json` | tool measurements |

@@ -803,6 +803,21 @@
         "degraded_inputs": {
           "type": "array"
         },
+        "changed_lines": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          }
+        },
         "merge": {
           "type": "object",
           "required": [

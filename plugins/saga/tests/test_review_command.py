@@ -299,7 +299,7 @@ def _bools(packet: Path) -> dict[str, dict[str, bool]]:
 
 def _location() -> dict[str, Any]:
     return {
-        "scope": "lines", "file": "src/app.py", "lines": {"start": 2, "end": 2},
+        "scope": "lines", "file": "src/app.py", "lines": {"start": 2, "end": 4},
         "function": "changed", "anchor": "return 2",
     }
 
@@ -418,6 +418,9 @@ def _line_packet(tmp: Path) -> tuple[Path, Path, _Runner]:
 
 def _assert_change_and_patch(repo: Path, base: str, head: str, packet: Path) -> None:
     change = _read(packet / "change.json")
+    changed = change.pop("changed_lines")
+    # The one edited line, or the one line the function repo rewrites.
+    assert changed in ({"src/app.py": [[4, 4]]}, {"src/app.py": [[2, 2]]})
     assert change == {
         "base": base,
         "files": [{"path": "src/app.py", "status": "modified"}],
@@ -1178,6 +1181,81 @@ def _files_holding(root: Path, value: str) -> list[str]:
 
 def _llm_finding(run: dict[str, Any]) -> dict[str, Any]:
     return next(item for item in run["findings"] if item["source"]["kind"] == "llm")
+
+
+def _finish_one_reproduced(tmp: Path, **over: Any) -> dict[str, Any]:
+    _repo_path, packet, runner = _repro_packet(tmp)
+    home = tmp / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp, with_test=True)
+    found = _replay_finding("AssertionError: returned 2")
+    found["consequence"] = "security-boundary-crossed"
+    found.update(over)
+    code, err = _finish(
+        packet, [(_answer([found]), _result(scratch, changes))], home, runner,
+        ask=_ask(consequence="security-boundary-crossed"), confine=_Confine(1, _CAPTURED),
+    )
+    assert code == 0, err
+    return _read(packet / "review-run.json")
+
+
+def test_a_reproduced_finding_on_a_changed_line_still_blocks(tmp_path: Path) -> None:
+    run = _finish_one_reproduced(tmp_path)
+    found = _llm_finding(run)
+    assert found["evidence"] == "reproduced"
+    assert found["severity"] == "blocks"
+    assert run["merge"]["allowed"] is False
+    assert run["changed_lines"] == {"src/app.py": [[4, 4]]}
+
+
+def test_a_reproduced_finding_wholly_outside_the_change_is_reported_not_blocking(
+    tmp_path: Path,
+) -> None:
+    outside = {**_location(), "lines": {"start": 1, "end": 2}}
+    run = _finish_one_reproduced(tmp_path, location=outside)
+    found = _llm_finding(run)
+    assert found["evidence"] == "reproduced"
+    assert found["severity"] == "fix-later"
+    assert found["severity_basis"]["modifiers"] == ["pre-existing"]
+    assert run["merge"]["allowed"] is True
+    assert found["id"] not in run["merge"]["blocking"]
+    assert found["id"] not in run["merge"]["report_only_blocks"]
+    assert R.validate(run) == []
+    # Take the changed lines away and the stored severity no longer matches a recomputation.
+    stripped = {key: value for key, value in run.items() if key != "changed_lines"}
+    assert any("severity" in problem for problem in R.validate(stripped))
+
+
+def test_a_reproduced_finding_marked_not_introduced_is_reported_not_blocking(
+    tmp_path: Path,
+) -> None:
+    run = _finish_one_reproduced(tmp_path, introduced=False)
+    found = _llm_finding(run)
+    assert found["severity"] == "fix-later"
+    assert found["severity_basis"]["modifiers"] == ["pre-existing"]
+    assert run["merge"]["allowed"] is True
+
+
+def test_a_packet_without_changed_lines_grades_by_introduced_alone(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    change = _read(packet / "change.json")
+    del change["changed_lines"]
+    _dump(packet / "change.json", change)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    outside = {**_location(), "lines": {"start": 1, "end": 2}}
+    found = _replay_finding("AssertionError: returned 2")
+    found["location"] = outside
+    code, err = _finish(
+        packet, [(_answer([found]), _result(scratch, changes))], home, runner,
+        ask=_ask(), confine=_Confine(1, _CAPTURED),
+    )
+    assert code == 0, err
+    run = _read(packet / "review-run.json")
+    assert "changed_lines" not in run
+    assert _llm_finding(run)["severity"] == "blocks"
+    assert R.validate(run) == []
 
 
 def test_a_failure_that_prints_a_secret_shaped_value_still_reproduces(tmp_path: Path) -> None:

@@ -1092,7 +1092,9 @@ def _run(
                     change, profile, home, degraded, extra
                 )
             findings = _findings_from(pending) + cov_findings
-            _emit(output, findings, measurements, degraded, builder_record, items)
+            _emit(
+                output, findings, measurements, degraded, builder_record, items, change.touched(),
+            )
             return 0
     finally:
         for _language, path in extra:
@@ -3018,6 +3020,7 @@ def _emit(
     degraded: Sequence[Mapping[str, str]],
     builder: Mapping[str, Any] | None,
     items: Sequence[Mapping[str, Any]] = (),
+    changed_lines: Mapping[str, Any] | None = None,
 ) -> None:
     for record in (*findings, *measurements):
         problems = review_records.validate(record)
@@ -3033,6 +3036,7 @@ def _emit(
             "measurements": list(measurements),
             "builder_records": [builder] if builder else [],
             "degraded_inputs": list(degraded),
+            "changed_lines": changed_lines,
         })
     except review_formula.FormulaError as exc:
         raise RunnerFailure(2, str(exc)) from exc

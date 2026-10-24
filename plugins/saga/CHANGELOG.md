@@ -36,6 +36,24 @@
 
 ### Changed
 
+- A finding about code the change did not introduce is reported and never blocks. In
+  `review_formula.py`, a finding whose `introduced` is false, or whose `lines` location shares no
+  line with the lines the change added or modified, has its severity capped at fix-later and
+  carries the `pre-existing` modifier. It applies to reviewer findings and tool findings (a tool
+  finding is tested on `introduced` only: the runner already keeps just the hits on changed lines,
+  or the hits new against the base, and a base-to-head tool such as checkov on a synthesized
+  template can fairly report a file the diff never names), and to the always-blocking harms ("data lost or corrupted", "a security boundary crossed"): a
+  pre-existing one is listed, not merge-refusing. The formula stays pure: the changed lines come
+  in as `changed_lines`, `{path: [[start, end], ...]}`, which `review_diff.Change.touched()` builds
+  from the diff (added or modified lines, plus the line on either side of a removal, because a
+  finding about removed code sits beside the gap). `prepare` writes them to `change.json`,
+  `finish` reads them back, and a stored review run keeps them (optional `changed_lines`) so that
+  validation recomputes the same severities. A packet without `changed_lines` is graded on
+  `introduced` alone; a location that is not a file and a line range is never called
+  pre-existing. The older code-review skill had this rule (`validator.md`, step 2); the formula
+  pipeline had dropped it. Stored runs written before this change that hold a blocking finding
+  with `introduced: false` no longer validate against a fresh computation. No version bump; that
+  belongs to #147's saga release step.
 - Inside each where-to-look item, the questions are listed by Jev probability, highest first, and
   questions with the same probability keep the question bank's order (fleet-core's `jev_sweep`,
   regenerated into `scripts/_bundled/jev_sweep.py`). The reviewer reads the question Jev rated

@@ -2,6 +2,70 @@
 
 ## 2026-10-24
 
+### A finding about code the change did not introduce never blocks, not even an always-blocking harm
+
+**Decision.** In `plugins/saga/scripts/review_formula.py`, a finding whose `introduced` is false, or whose
+`lines` location shares no line with the lines the change added or modified (plus the line on either side
+of a removal), has its severity capped at fix-later and carries the `pre-existing` modifier. The cap
+applies to reviewer findings and tool findings (a tool finding is tested on `introduced` only, see
+below), and to the always-blocking harms ("data lost or
+corrupted", "a security boundary crossed"): a pre-existing one is reported and is not merge-refusing. The
+modifier is named after the first cap that applies, in the order `degraded`, `classifier-only`,
+`unreproduced`, `pre-existing`. A whole-project or section location is never called outside the change,
+and a packet written without `changed_lines` is graded on `introduced` alone. The operator made this call.
+
+**Rationale.** In a private measurement run, a real bug the change never touched blocked every review of
+an otherwise unmodified copy of a large upstream change. Merge should be refused for what a change does,
+not for what the repository already had. The cap is safe on that data: re-grading the recorded findings
+offline kept every defect the run had caught. Treating the always-blocking harms differently would leave
+the same false block alive for the two harms that refuse merge on a report-only lens.
+
+**Tool findings and the lines test.** The brief was to apply the lines test to tool findings too. It
+is a no-op for tools compared on changed lines (the runner, `review_tools._run_adapter`, already drops
+hits outside the changed lines) and wrong for tools compared base to head: their hits are new against
+the base but can sit in a file the diff never names, such as a template a CDK app synthesizes. An
+existing test (`test_checkov_cdk_finding_present_at_base_is_absent`) failed when the test was applied
+to them. So `outcome()` skips the lines test for `source.kind == "tool"` and still applies `introduced`.
+
+**Rejected alternatives.** Run the reviewer's test on the base commit as well, and call the finding
+pre-existing when it fails there: it needs a second run per reproduced finding and a writable base
+checkout, and the reviewer's own `introduced` plus the diff already gives the answer. Exempt the
+always-blocking harms: a pre-existing leak is still real, but it is not this change's to fix, and it
+stays visible at fix-later. Trust only `introduced`: a reviewer can mark it true by habit; the diff is
+the check that does not depend on the reviewer. Count only added lines, not the lines beside a removal:
+findings about deleted code would always read as pre-existing.
+
+**Revisit when.** A run shows a defect the change introduced being capped (for example a deleted
+guard whose finding sits more than one line from the gap), or findings that rely on a changed file's
+unchanged lines are being lost. Also revisit the build loop's gate (`build_loop.py`
+`_judge_findings`), which still calls `outcome()` without `changed_lines`, so only `introduced` applies there.
+
+### Duplication and machine-specific values stay non-blocking: flagged, not blocked
+
+**Decision.** The operator decided that architecture findings such as duplicated code and
+machine-specific values stay non-blocking. No severity row changes: `architecture-maintainability.duplicate`
+stays a note and `architecture-maintainability.machine-specific-value` stays fix-later in
+`plugins/saga/scripts/review_formula.py`. The change shipped with this entry makes the machine-specific
+check's items reach the reviewer (see the scripted-items decision above), so the reviewer is asked about
+them; it does not make them block.
+
+**Rationale.** A narrow architecture rule that blocks would be a new policy for every language Saga
+reviews, decided on a handful of planted cases from one repository. Flagging at fix-later keeps the
+finding visible without refusing merge for something a person can reasonably accept.
+
+**Rejected alternatives.** Let narrow, deterministic architecture findings (a home-directory path, an
+exact duplicate block) block when they sit on added lines: it would catch the planted cases, but the
+evidence is one defect and one clean copy, and it adds a blocking rule outside the calibration.
+
+**Follow-up (conflict, not resolved here).** `plugins/saga/references/review-calibration.json` still
+expects the architecture lens to block 6 in 10 planted architecture defects (`must_block` for
+`architecture-maintainability`). With these rows that mark cannot be met on duplication or
+machine-specific plants, whatever the reviewer does. Either the calibration mark or the corpus's
+treatment of those plants has to change (for example, scoring them as "flagged at fix-later or above at
+the location"). This entry deliberately leaves the file alone.
+
+**Revisit when.** The calibration marks are next set, or a measurement run is scored against them.
+
 ### Saga's scripted where-to-look items are merged into the packet, not replaced by the sweep's
 
 **Decision.** `_prepare` in `plugins/saga/scripts/review_command.py` reads the items the tool runner

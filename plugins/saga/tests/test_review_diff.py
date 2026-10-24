@@ -80,6 +80,34 @@ def test_added_modified_and_deleted_lines_match_git(tmp_path: Path) -> None:
     assert by_path["gone.txt"].lines == frozenset()
 
 
+def test_touched_counts_added_lines_and_the_lines_beside_a_removal(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "mixed.txt").write_text("a\nb\nc\nd\ne\nf\ng\nh\n", encoding="utf-8")
+    (repo / "only_removed.txt").write_text("1\n2\n3\n4\n", encoding="utf-8")
+    (repo / "gone.txt").write_text("delete me\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    # Line 2 is rewritten, and lines 5 and 6 are removed (nothing is added there).
+    (repo / "mixed.txt").write_text("a\nB\nc\nd\ng\nh\n", encoding="utf-8")
+    (repo / "only_removed.txt").write_text("1\n4\n", encoding="utf-8")
+    (repo / "gone.txt").unlink()
+    (repo / "new.txt").write_text("x\ny\n", encoding="utf-8")
+    head = _commit(repo, "head")
+
+    change = D.read(repo, base, head)
+    by_path = {item.path: item for item in change.files}
+    assert by_path["mixed.txt"].lines == frozenset({2})
+    assert by_path["mixed.txt"].removed_at == frozenset({4, 5})
+    assert by_path["only_removed.txt"].lines == frozenset()
+    assert by_path["only_removed.txt"].removed_at == frozenset({1, 2})
+    assert by_path["gone.txt"].removed_at == frozenset()
+    assert change.touched() == {
+        "mixed.txt": [[2, 2], [4, 5]],
+        "new.txt": [[1, 2]],
+        "only_removed.txt": [[1, 2]],
+    }
+
+
 def test_a_pure_rename_has_no_changed_lines_and_an_edit_keeps_only_the_edit(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init(repo)

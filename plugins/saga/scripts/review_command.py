@@ -348,6 +348,9 @@ def _prepare(
             [_gap_item(entry) for entry in gaps],
         )
         may_block, reasons = _may_block_map(findings, measurements, calibration, profile)
+        # The lines the change added, modified or removed beside: a finding wholly outside them is
+        # pre-existing and never blocks. Written to change.json so finish grades the same way.
+        changed = change.touched()
         try:
             grades = review_formula.compute({
                 "findings": findings,
@@ -355,6 +358,7 @@ def _prepare(
                 "builder_records": [builder],
                 "may_block": may_block,
                 "degraded_inputs": degraded,
+                "changed_lines": changed,
             })
         except review_formula.FormulaError as exc:
             raise CommandFailure(2, str(exc)) from exc
@@ -366,6 +370,7 @@ def _prepare(
         ))
         _write_json(staging / "change.json", {
             "repo": str(repo.resolve()), "base": base, "head": head, "files": files,
+            "changed_lines": changed,
         })
         (staging / "diff.patch").write_text(patch.stdout, encoding="utf-8")
         _write_json(staging / "builder-record.json", builder)
@@ -398,6 +403,7 @@ def _prepare(
                     "builder_records": [builder],
                     "may_block": may_block,
                     "degraded_inputs": degraded,
+                    "changed_lines": changed,
                 })
             except review_records.ReviewRecordError as exc:
                 raise CommandFailure(2, "\n".join(exc.problems)) from exc
@@ -705,6 +711,11 @@ def _finish(
     if not isinstance(change, Mapping):
         raise CommandFailure(2, "change.json: must be a JSON object")
     repo = Path(str(change.get("repo") or ""))
+    # A packet written before changed_lines existed has none; only `introduced` then marks a
+    # finding pre-existing.
+    changed_lines = change.get("changed_lines")
+    if changed_lines is not None and not isinstance(changed_lines, Mapping):
+        raise CommandFailure(2, "change.json: changed_lines must be a JSON object")
     home = Path(args.home) if args.home is not None else Path.home()
     store = _existing_store(args)
     builder = _read_json(packet / "builder-record.json", "builder record")
@@ -746,7 +757,7 @@ def _finish(
         if args.final:
             degraded.extend(_final_round(
                 findings, owners, results, repo, str(change.get("head") or ""), home, runner,
-                confine, available, cited, offline, replay, positions,
+                confine, available, cited, offline, replay, positions, changed_lines,
             ))
     may_block = _bools_from_packet(packet)
     reviewers, usage_specs, usage_totals = _reviewers_and_usage(
@@ -772,6 +783,8 @@ def _finish(
         "degraded_inputs": degraded,
         "reviewers": reviewers,
     }
+    if changed_lines is not None:
+        inputs["changed_lines"] = dict(changed_lines)
     try:
         run = review_records.build_run(inputs)
     except review_records.ReviewRecordError as exc:
@@ -1072,9 +1085,10 @@ def _final_round(
     offline: Offline | None = None,
     replay: Sequence[Mapping[int, Mapping[str, str]]] = (),
     positions: Mapping[str, int] | None = None,
+    changed_lines: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     try:
-        graded = review_formula.compute({"findings": findings})
+        graded = review_formula.compute({"findings": findings, "changed_lines": changed_lines})
     except review_formula.FormulaError as exc:
         raise CommandFailure(2, str(exc)) from exc
     blocking = []

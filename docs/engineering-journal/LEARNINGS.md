@@ -2,6 +2,30 @@
 
 ## 2026-10-24
 
+### The formula ignored the field that says a finding predates the change
+
+**Evidence.** In a private measurement run, every review of an unmodified copy of one large upstream
+change was blocked by the same finding: a walker bug in code the change never touched. Each reviewer
+marked it `introduced: false`, and each reproduced it with its own test. `outcome()` in
+`plugins/saga/scripts/review_formula.py` never read `introduced`, and the re-run in `review_command.py`
+(`_rerun_one`) runs a test on the change's head only, so nothing could see that the same test fails on
+the base. The older code-review skill had the rule (`skills/code-review/references/validator.md`, step 2:
+a pre-existing finding is not validated for externalization); the formula pipeline dropped it. Now
+`outcome()` caps a blocking finding at fix-later with the `pre-existing` modifier when `introduced` is
+false or its `lines` location shares no line with `changed_lines`. Tests:
+`test_a_pre_existing_always_blocking_harm_is_reported_and_does_not_refuse_merge` and the neighbouring
+tests in `plugins/saga/tests/test_review_formula.py`; end to end in
+`plugins/saga/tests/test_review_command.py`.
+
+**Mechanism.** The formula is pure, so it cannot read the diff. The lines had to travel with the
+packet: `review_diff.Change.touched()` builds them, `prepare` writes `change.json`, `finish` hands them to
+`compute`, and the stored run keeps them, because validation recomputes every severity and would
+otherwise disagree with the stored one. A removal adds no line, so the line on either side of it counts
+as touched; without that, a finding about code the change deleted would always read as pre-existing.
+
+**Generalizable rule.** When a rule needs data the checker cannot compute (here, the diff), pass the data
+in as an input and store it with the result, so a recomputation reads what the first computation read.
+
 ### A mocked external tool hides a call the real tool rejects
 
 **Evidence.** In a private measurement run, no where-to-look item named a function, and every piece
