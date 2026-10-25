@@ -2580,6 +2580,39 @@ def test_relocated_runs_differing_only_in_duration_record_identical_bytes(tmp_pa
     _same_packets(*outputs)
 
 
+def test_relocated_output_with_colour_codes_inside_the_scratch_folder_records_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    """The relocated command's output was scrubbed before its colour codes were removed, so a
+    scratch folder name split by an escape sequence reached the stored hash."""
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"languages": {"python": {"test_command": "pytest -q"}}},
+    })
+    outputs = []
+    for run in range(2):
+        def runner(
+            argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+        ) -> Any:
+            folder = str(cwd)
+            return T.ProcessResult(1, (
+                f"\x1b[31m{folder[:-3]}\x1b[1m{folder[-3:]}\x1b[0m/tests/test_app.py\n"
+                "FAILED tests/test_app.py::test_one - AssertionError\n"
+            ))
+
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, profile, output, tmp_path / "home",
+            adapters=[], runner=runner, framework=True,
+        ) == 0
+        outputs.append(output)
+    assert any(
+        item["rule"]["row"] == "architecture-maintainability.relocated-run-fails"
+        for item in _read(outputs[0], "findings.json")
+    )
+    _same_packets(*outputs)
+
+
 def test_coverage_reports_differing_only_in_timestamp_record_identical_bytes(
     tmp_path: Path,
 ) -> None:

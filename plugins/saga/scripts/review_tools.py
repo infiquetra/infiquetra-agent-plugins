@@ -2896,7 +2896,9 @@ def _one_relocated(
         whole_project=True,
         row=_RELOCATED_ROW,
         language=language,
-        raw_output=store_raw(stable_transcript(_scrub(result.stdout or "")).encode(), home),
+        raw_output=store_raw(
+            stable_transcript(_scrub(_ANSI_ESCAPE.sub("", result.stdout or ""))).encode(), home,
+        ),
         tool="relocated-test",
         version="not-recorded",
     )
