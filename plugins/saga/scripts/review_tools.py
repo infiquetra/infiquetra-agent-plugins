@@ -599,6 +599,7 @@ _TRANSCRIPT_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
 _DART_PROGRESS = re.compile(r"^\d+:\d\d(?::\d\d)? \+\d+(?: ~\d+)?(?: -\d+)?: (.*)$")
 _DART_KEPT = ("Some tests failed.", "All tests passed!", "No tests ran.")
 _JEST_SUITE = re.compile(r"^(?:PASS|FAIL) ")
+_JEST_COVERAGE_WARNING = re.compile(r"^Failed to collect coverage from ")
 _JEST_SUMMARY = re.compile(r"^(?:Seed|Test Suites|Tests|Snapshots|Time|Ran all test suites)\b")
 _VITEST_FILE = re.compile(r"^ [✓×❯↓] ")
 _LIBTEST_RESULT = re.compile(r"^test .+ \.\.\. \S+$")
@@ -622,9 +623,7 @@ def stable_transcript(text: str) -> str:
         for pattern, replacement in _TRANSCRIPT_REWRITES:
             line = pattern.sub(replacement, line)
         rewritten.append(line)
-    rewritten = _sorted_blocks(rewritten, _JEST_SUITE.match, lambda line: not (
-        _JEST_SUITE.match(line) or _JEST_SUMMARY.match(line)
-    ))
+    rewritten = _sorted_jest(rewritten)
     rewritten = _sorted_blocks(rewritten, _VITEST_FILE.match, lambda line: line.startswith("   "))
     rewritten = _sorted_blocks(rewritten, _LIBTEST_RESULT.match, lambda _line: False)
     # Jest moves a blank line with a block's position; blank lines carry nothing.
@@ -654,6 +653,51 @@ def _dart_failures(lines: list[str]) -> list[str]:
     failures = sorted(block for block in blocks if block[0] not in _DART_KEPT)
     summary = [block for block in blocks if block[0] in _DART_KEPT]
     return preamble + [line for block in failures + summary for line in block]
+
+
+def _sorted_jest(lines: list[str]) -> list[str]:
+    """Jest's suite blocks in one sorted run, then its other worker lines sorted, then its summary.
+
+    Jest prints a suite's result when the worker finishes it, and its warnings (``Failed to
+    collect coverage from ...`` with the ``ERROR:`` and ``STACK:`` lines under it) land between
+    suites at whatever point the worker reached. Sorting only adjacent suites let each warning
+    split them differently on each run (issue 147), so every suite block is collected first.
+    A block is a ``PASS`` or ``FAIL`` line and the indented or blank lines under it. Text with no
+    suite line is left alone.
+    """
+    if not any(_JEST_SUITE.match(line) for line in lines):
+        return lines
+    suites: list[list[str]] = []
+    others: list[list[str]] = []
+    summary: list[str] = []
+    sink: list[str] | None = None
+    in_warning = False
+    for line in lines:
+        indented = not line or line[0].isspace()
+        if _JEST_SUITE.match(line):
+            sink = [line]
+            suites.append(sink)
+            in_warning = False
+        elif _JEST_SUMMARY.match(line):
+            sink = summary
+            summary.append(line)
+            in_warning = False
+        elif in_warning and (indented or line.startswith(("ERROR:", "STACK:"))):
+            assert sink is not None
+            sink.append(line)
+        elif indented and sink is not None:
+            sink.append(line)
+        elif _JEST_COVERAGE_WARNING.match(line):
+            sink = [line]
+            others.append(sink)
+            in_warning = True
+        else:
+            sink = [line]
+            others.append(sink)
+            in_warning = False
+    return [
+        line for group in (*sorted(suites), *sorted(others)) for line in group
+    ] + summary
 
 
 def _sorted_blocks(

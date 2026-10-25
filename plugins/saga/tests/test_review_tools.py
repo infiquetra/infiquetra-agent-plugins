@@ -2503,6 +2503,28 @@ def test_vitest_failure_text_with_colour_and_a_temporary_config_name_hashes_once
     assert "ab12cd34" not in first
 
 
+def test_jest_runs_with_coverage_warnings_at_different_positions_hash_once() -> None:
+    """Issue 147: ``Failed to collect coverage from ...`` lines split the suite blocks at random
+    points, so sorting only adjacent suites left a different order on each run."""
+    warning = (
+        "Failed to collect coverage from /w/src/broken.ts\n"
+        "ERROR: Unexpected token\n"
+        "STACK: SyntaxError: Unexpected token\n"
+        "    at parse (/w/node_modules/x.js:1:1)\n"
+    )
+    a = "PASS ./a.test.js\n  \u2713 adds (2 ms)\n"
+    b = "FAIL ./b.test.js\n  \u25cf subtracts\n\n    expected 1\n"
+    c = "PASS ./c.test.js\n"
+    summary = "Test Suites: 1 failed, 2 passed, 3 total\nTime:        1.2 s\nRan all test suites.\n"
+    first = T.stable_transcript(a + warning + b + c + summary)
+    second = T.stable_transcript(c + b + a + warning + summary)
+    third = T.stable_transcript(warning + c + a + b + summary)
+    assert first == second == third
+    assert first.endswith("Ran all test suites.\n")
+    assert "ERROR: Unexpected token\nSTACK:" in first
+    assert T.stable_transcript(a + b) != T.stable_transcript(a + c)
+
+
 def test_stable_transcript_keeps_test_names_and_failures() -> None:
     text = (
         "FAILED tests/test_app.py::test_waits_5s - AssertionError: took 5s\n"
