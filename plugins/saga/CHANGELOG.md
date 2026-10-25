@@ -91,7 +91,10 @@
   text removed, and with nothing left behind by an earlier tool.
   - After each tool the runner removes every untracked or ignored entry the tool added to the
     head worktree and restores any tracked file it changed. It never follows a symlink, never
-    leaves the worktree, and keeps the linked dependency folders. It rewrites tracked files from
+    leaves the worktree, and keeps the linked dependency folders. It also keeps the build-cache
+    folders `target`, `.build` and `.saga-build` when they are real folders at the worktree root:
+    removing them made each Rust and Swift build tool build cold and spend the shared 900-second
+    mutation budget. It rewrites tracked files from
     the stored blob, so no smudge filter or hook runs. The `git status` that finds the changes
     runs with the system and global git configuration off and, on git 2.40 or later, with
     attributes read from the empty tree, so no clean filter runs either; on an older git a

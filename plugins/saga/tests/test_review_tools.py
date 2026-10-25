@@ -1091,6 +1091,57 @@ def test_cleanup_removes_a_link_residue_and_never_follows_one(tmp_path: Path) ->
     assert os.path.islink(repo / "swapped")
 
 
+def test_build_caches_at_the_worktree_root_survive_for_the_next_tool(tmp_path: Path) -> None:
+    """Issue 147: Rust's ``target`` and Swift's ``.build`` and ``.saga-build`` were deleted after
+    every tool, so each build tool built cold and spent the shared mutation budget."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("not the worktree\n", encoding="utf-8")
+    seen: list[dict[str, bool]] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if argv[0] == "first":
+            (cwd / "target").mkdir()
+            (cwd / "target" / "x").write_text("built\n", encoding="utf-8")
+            (cwd / ".saga-build").mkdir()
+            (cwd / ".saga-build" / "y").write_text("built\n", encoding="utf-8")
+            (cwd / "random-ignored").mkdir()
+            (cwd / "random-ignored" / "z").write_text("junk\n", encoding="utf-8")
+            (cwd / "sub").mkdir()
+            (cwd / "sub" / "target").mkdir()
+            (cwd / "sub" / "target" / "w").write_text("nested\n", encoding="utf-8")
+            (cwd / ".build").symlink_to(outside, target_is_directory=True)
+        else:
+            seen.append({
+                "target": (cwd / "target" / "x").is_file(),
+                "saga-build": (cwd / ".saga-build" / "y").is_file(),
+                "random": (cwd / "random-ignored").exists(),
+                "nested": (cwd / "sub" / "target").exists(),
+                "link": os.path.lexists(cwd / ".build"),
+            })
+        return T.ProcessResult(0, "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
+    assert seen == [{
+        "target": True, "saga-build": True, "random": False, "nested": False, "link": False,
+    }]
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "not the worktree\n"
+
+
 def test_the_settings_the_runner_stripped_stay_stripped_between_tools(tmp_path: Path) -> None:
     """The residue clean-up starts from the stripped tree, so it never puts a stripped file back."""
     repo = tmp_path / "repo"

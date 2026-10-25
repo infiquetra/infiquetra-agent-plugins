@@ -3296,6 +3296,13 @@ _RESIDUE_STATUS = (
     "--ignore-submodules=all",
 )
 _RESTORE_BATCH = 200
+#: Build-cache folders a tool creates at the worktree root and the tools after it reuse: Rust's
+#: ``target`` and Swift's ``.build`` and ``.saga-build``. Removing them after every tool made
+#: cargo check, clippy, the shuffle run and the no-network run each build cold, and the cold builds
+#: spend the 900 second mutation budget the mutation tools share (issue 147). They are kept only
+#: as real folders at the root; a link by one of these names is removed like any other residue.
+#: The reviewed commit's own sources never live here, and no tool reads a finding from them.
+_BUILD_CACHES = frozenset({"target", ".build", ".saga-build"})
 _DIR_FLAGS = (
     getattr(os, "O_RDONLY", 0) | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 )
@@ -3416,12 +3423,22 @@ class _TreeResidue:
         state = self._state()
         if state is None:
             return
-        removed = sorted(name for name in state[0] - self.known if self._remove(name))
+        removed = sorted(
+            name for name in state[0] - self.known
+            if not self._is_build_cache(name) and self._remove(name)
+        )
         restored = self._restore(sorted(state[1] - self.changed))
         if (removed or restored) and diagnostics_directory is not None:
             review_diagnostics.write_residue(
                 diagnostics_directory, adapter_id, removed, restored
             )
+
+    def _is_build_cache(self, name: str) -> bool:
+        """A build-cache folder at the worktree root, which stays for the next tool."""
+        if name.rstrip("/") not in _BUILD_CACHES:
+            return False
+        path = self.root / name.rstrip("/")
+        return path.is_dir() and not path.is_symlink()
 
     def _parts(self, name: str) -> list[str] | None:
         parts = name.rstrip("/").split("/")
