@@ -775,25 +775,33 @@ def _invoke_knip(context: ScanContext) -> list[str]:
     return ["knip", "--reporter", "json", "--config", str(staged)]
 
 
+def _canonical_lists(value: object) -> object:
+    """``value`` with every list, at any depth, in canonical JSON order.
+
+    knip nests lists inside its entries (``enumMembers`` and ``classMembers`` map a name to a
+    list, ``duplicates`` is a list of lists), and each is in whatever order its walk finished.
+    """
+    if isinstance(value, dict):
+        return {key: _canonical_lists(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return review_tools.sorted_items([_canonical_lists(item) for item in value])
+    return value
+
+
 def _sort_knip(data: dict[str, Any]) -> None:
     """knip lists its issues in whatever order its file walk finished, so sort them.
 
-    Entries go by file, then by their canonical JSON, and each list inside an entry (exports,
-    types, dependencies) is sorted the same way (issue 147).
+    Every list in the report is sorted at every depth, and the issues then go by file and by
+    their canonical JSON (issue 147).
     """
-    if "files" in data:
-        data["files"] = review_tools.sorted_items(data["files"])
+    for key, value in list(data.items()):
+        data[key] = _canonical_lists(value)
     issues = data.get("issues")
-    if not isinstance(issues, list):
-        return
-    for issue in issues:
-        if isinstance(issue, dict):
-            for key, value in issue.items():
-                issue[key] = review_tools.sorted_items(value)
-    data["issues"] = sorted(issues, key=lambda issue: (
-        str(issue.get("file") or "") if isinstance(issue, dict) else "",
-        json.dumps(issue, sort_keys=True),
-    ))
+    if isinstance(issues, list):
+        data["issues"] = sorted(issues, key=lambda issue: (
+            str(issue.get("file") or "") if isinstance(issue, dict) else "",
+            json.dumps(issue, sort_keys=True),
+        ))
 
 
 def _stable_knip(text: str) -> str:

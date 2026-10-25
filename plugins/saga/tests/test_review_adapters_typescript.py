@@ -1280,6 +1280,28 @@ def test_knip_runs_differing_only_in_issue_order_record_identical_bytes(tmp_path
     assert (output / "findings.json").read_bytes() != (outputs[0] / "findings.json").read_bytes()
 
 
+def test_knip_lists_nested_at_any_depth_are_sorted_before_hashing() -> None:
+    """Issue 147: enumMembers and classMembers map a name to a list, and duplicates is a list of
+    lists; each came out in the order knip's walk finished."""
+    adapter = _adapter("knip")
+    members = {"Color": [{"name": "Red"}, {"name": "Blue"}], "Size": [{"name": "Large"}]}
+    one = {"files": ["b.js", "a.js"], "issues": [{
+        "file": "src/a.js", "enumMembers": members,
+        "classMembers": {"Widget": [{"name": "render"}, {"name": "init"}]},
+        "duplicates": [[{"name": "x"}, {"name": "y"}], [{"name": "p"}, {"name": "q"}]],
+    }]}
+    two = json.loads(json.dumps(one))
+    two["files"].reverse()
+    issue = two["issues"][0]
+    issue["enumMembers"] = {"Size": members["Size"], "Color": list(reversed(members["Color"]))}
+    issue["classMembers"]["Widget"].reverse()
+    issue["duplicates"] = [list(reversed(group)) for group in reversed(issue["duplicates"])]
+    assert T._stable_raw(adapter, json.dumps(one)) == T._stable_raw(adapter, json.dumps(two))
+    other = json.loads(json.dumps(one))
+    other["issues"][0]["duplicates"][0].append({"name": "extra"})
+    assert T._stable_raw(adapter, json.dumps(one)) != T._stable_raw(adapter, json.dumps(other))
+
+
 def test_knip_preexisting_entries_drop(tmp_path: Path) -> None:
     repo, _source = _ts_repo(tmp_path)
     base = _commit(repo, "base")
