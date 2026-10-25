@@ -567,10 +567,12 @@ def _invoke_stryker(context: ScanContext) -> list[str]:
         raise ToolGap("not-configured", "testing.surviving-mutant")
     _stage_tsconfig(context)
     argv = ["stryker", "run", "--testRunner", runner, "--reporters", "json"]
-    # The sandbox copy of the project goes to the adapter's scratch folder and is removed even
-    # after a failed run. Left in the worktree, knip and the later tools read the copy (issue 147).
-    if context.scratch is not None:
-        argv.extend(["--tempDirName", str(context.scratch / "stryker-tmp")])
+    # The sandbox stays in its default place, ``.stryker-tmp`` in the worktree: StrykerJS links a
+    # project's real ``node_modules`` folders into the sandbox, and from there it finds the
+    # worktree's linked dependency folder; from any folder outside the worktree no parent has one,
+    # and every initial test run fails with "Cannot find module". ``--cleanTempDir always`` removes
+    # the sandbox even after a failed run, and the runner removes whatever is left before the next
+    # tool runs (issue 147).
     argv.extend(["--cleanTempDir", "always"])
     staged = _stage_first_base(context, _STRYKER_CONFIGS)
     _refuse_relative_imports(staged, "testing.surviving-mutant")

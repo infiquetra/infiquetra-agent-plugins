@@ -93,8 +93,10 @@
     head worktree and restores any tracked file it changed. It never follows a symlink, never
     leaves the worktree, and keeps the linked dependency folders. It rewrites tracked files from
     the stored blob, so no filter or hook runs. Removed names go to the private diagnostics
-    folder only. StrykerJS also gets `--tempDirName` under the scratch folder and
-    `--cleanTempDir always`. Its failed-run sandbox in the worktree made knip report hundreds of
+    folder only. StrykerJS also gets `--cleanTempDir always`, and keeps its sandbox in the
+    worktree's default `.stryker-tmp`, which the clean-up removes: Stryker links only real
+    `node_modules` folders into a sandbox, so a sandbox outside the worktree cannot find the
+    linked dependencies. Its failed-run sandbox in the worktree made knip report hundreds of
     unused files in the copy.
   - cfn-lint now lints only files that pass the runner's CloudFormation check, and the tool
     environment sets `PYTHONHASHSEED=0`. Before, workflows, pre-commit config and cookiecutter
