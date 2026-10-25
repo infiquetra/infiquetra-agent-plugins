@@ -57,21 +57,40 @@ def _semgrep_argv(context: ScanContext) -> list[str]:
     return argv
 
 
-def _stable_json(text: str, drop: Callable[[dict[str, Any]], None]) -> str:
-    """A JSON report with its per-run fields removed, keys sorted. Text that is not JSON stays."""
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return text
-    if isinstance(data, dict):
-        drop(data)
-    return json.dumps(data, indent=2, sort_keys=True) + "\n"
+_stable_json = review_tools.stable_json
+_sorted_items = review_tools.sorted_items
 
 
-def _sorted_items(items: object) -> object:
-    if not isinstance(items, list):
-        return items
-    return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
+#: The folder the saga rules are rendered into, named by ``tempfile`` with eight random characters.
+_RENDERED_RULES = re.compile(r"saga-rules-[a-z0-9_]{8}")
+
+
+def _bare_rule_ids(results: object) -> None:
+    """Rewrite a result's ``check_id`` that carries the random rendered-rules folder.
+
+    Semgrep builds the id from the rule file's path, which is a fresh folder on every run. The
+    parser already keeps only the trailing ``saga.<name>``; the stored copy must do the same
+    (issue 147). An id with no such tail keeps its text with the folder name masked.
+    """
+    if not isinstance(results, list):
+        return
+    for item in results:
+        check_id = item.get("check_id") if isinstance(item, dict) else None
+        if not isinstance(check_id, str) or _RENDERED_RULES.search(check_id) is None:
+            continue
+        bare = _SAGA_RULE_ID.search(check_id)
+        item["check_id"] = bare.group(0) if bare else _RENDERED_RULES.sub("saga-rules-", check_id)
+
+
+def _mask_rendered_rules(value: object) -> object:
+    """``value`` with the random rendered-rules folder name masked in every string it holds."""
+    if isinstance(value, str):
+        return _RENDERED_RULES.sub("saga-rules-", value)
+    if isinstance(value, list):
+        return [_mask_rendered_rules(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _mask_rendered_rules(item) for key, item in value.items()}
+    return value
 
 
 def _drop_semgrep_timing(data: dict[str, Any]) -> None:
@@ -79,6 +98,10 @@ def _drop_semgrep_timing(data: dict[str, Any]) -> None:
     # scanning time, peak memory); it differs on every run (issue 244).
     data.pop("time", None)
     data.pop("profiling_results", None)
+    _bare_rule_ids(data.get("results"))
+    if "errors" in data:
+        # An error names the rule file it failed on, or quotes its path, so it carries the folder.
+        data["errors"] = _mask_rendered_rules(data["errors"])
     for key in ("results", "errors"):
         if key in data:
             data[key] = _sorted_items(data[key])

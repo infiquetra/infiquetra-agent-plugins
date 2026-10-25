@@ -17,6 +17,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess  # nosec B404
 import sys
 import tempfile
@@ -283,6 +284,9 @@ class ScanContext:
     scratch: Path | None = None
     #: Private local telemetry, deliberately outside emitted records and hashes.
     diagnostics_directory: Path | None = None
+    #: Which tree this scan reads: ``head``, or ``base`` for a base-and-head comparison's first
+    #: scan. It names the scan's folders under ``scratch`` so the two never share one.
+    scan: str = "head"
 
 
 @dataclass(frozen=True)
@@ -518,9 +522,45 @@ def _scrub(text: str, root: Path | None = None) -> str:
     return _scratch_pattern().sub(r"<tmp>/\1", text)
 
 
+def stable_json(text: str, drop: Callable[[dict[str, Any]], None]) -> str:
+    """A JSON report with its per-run fields removed, keys sorted. Text that is not JSON stays.
+
+    ``drop`` edits a top-level object in place; any other JSON document is only re-keyed.
+    """
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if isinstance(data, dict):
+        drop(data)
+    return json.dumps(data, indent=2, sort_keys=True) + "\n"
+
+
+def sorted_items(items: object) -> object:
+    """A list in canonical JSON order. Anything else is returned as it came."""
+    if not isinstance(items, list):
+        return items
+    return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
+
+
+def stable_sorted_list(text: str) -> str:
+    """A JSON list of reports in canonical order. Text that is not a JSON list stays."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if not isinstance(data, list):
+        return text
+    return json.dumps(sorted_items(data), indent=2, sort_keys=True) + "\n"
+
+
 def _stable_raw(adapter: Adapter, text: str) -> str:
-    """Raw output as stored and hashed: scratch folders named stably, then the adapter's rewrite."""
-    text = _scrub(text)
+    """Raw output as stored and hashed: scratch folders named stably, then the adapter's rewrite.
+
+    Colour codes go first. A folder name split by an escape sequence is not a folder name to the
+    scrub, and Vite colours the code frame that quotes the worktree path (issue 147).
+    """
+    text = _scrub(_ANSI_ESCAPE.sub("", text))
     if adapter.stable_raw is not None:
         text = adapter.stable_raw(text)
     return text
@@ -542,6 +582,8 @@ _TRANSCRIPT_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^(\s+)Start at\s+\S.*$"), r"\1Start at"),
     (re.compile(rf"^(\s+)Duration\s+{_NUMBER}m?s.*$"), r"\1Duration"),
     (re.compile(rf"^(\s*[✓×❯↓✗√·] .*?) {_NUMBER}m?s$"), r"\1"),
+    # Vite writes the loaded config to "vitest.config.ts.timestamp-1792130474945-3fa9c1d2e4b5.mjs".
+    (re.compile(r"\.timestamp-\d+-[0-9a-f]+\.mjs"), ".timestamp.mjs"),
     # Jest: "Time:        0.623 s, estimated 1 s", "PASS ./a.test.js (5.1 s)", "✓ adds (2 ms)".
     (re.compile(r"^Time:\s+\S.*$"), "Time:"),
     (re.compile(rf"^(\s*(?:PASS|FAIL|[✓✕○√×]) .*?) \({_NUMBER} m?s\)$"), r"\1"),
@@ -560,6 +602,7 @@ _TRANSCRIPT_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
 _DART_PROGRESS = re.compile(r"^\d+:\d\d(?::\d\d)? \+\d+(?: ~\d+)?(?: -\d+)?: (.*)$")
 _DART_KEPT = ("Some tests failed.", "All tests passed!", "No tests ran.")
 _JEST_SUITE = re.compile(r"^(?:PASS|FAIL) ")
+_JEST_COVERAGE_WARNING = re.compile(r"^Failed to collect coverage from ")
 _JEST_SUMMARY = re.compile(r"^(?:Seed|Test Suites|Tests|Snapshots|Time|Ran all test suites)\b")
 _VITEST_FILE = re.compile(r"^ [✓×❯↓] ")
 _LIBTEST_RESULT = re.compile(r"^test .+ \.\.\. \S+$")
@@ -583,9 +626,7 @@ def stable_transcript(text: str) -> str:
         for pattern, replacement in _TRANSCRIPT_REWRITES:
             line = pattern.sub(replacement, line)
         rewritten.append(line)
-    rewritten = _sorted_blocks(rewritten, _JEST_SUITE.match, lambda line: not (
-        _JEST_SUITE.match(line) or _JEST_SUMMARY.match(line)
-    ))
+    rewritten = _sorted_jest(rewritten)
     rewritten = _sorted_blocks(rewritten, _VITEST_FILE.match, lambda line: line.startswith("   "))
     rewritten = _sorted_blocks(rewritten, _LIBTEST_RESULT.match, lambda _line: False)
     # Jest moves a blank line with a block's position; blank lines carry nothing.
@@ -615,6 +656,51 @@ def _dart_failures(lines: list[str]) -> list[str]:
     failures = sorted(block for block in blocks if block[0] not in _DART_KEPT)
     summary = [block for block in blocks if block[0] in _DART_KEPT]
     return preamble + [line for block in failures + summary for line in block]
+
+
+def _sorted_jest(lines: list[str]) -> list[str]:
+    """Jest's suite blocks in one sorted run, then its other worker lines sorted, then its summary.
+
+    Jest prints a suite's result when the worker finishes it, and its warnings (``Failed to
+    collect coverage from ...`` with the ``ERROR:`` and ``STACK:`` lines under it) land between
+    suites at whatever point the worker reached. Sorting only adjacent suites let each warning
+    split them differently on each run (issue 147), so every suite block is collected first.
+    A block is a ``PASS`` or ``FAIL`` line and the indented or blank lines under it. Text with no
+    suite line is left alone.
+    """
+    if not any(_JEST_SUITE.match(line) for line in lines):
+        return lines
+    suites: list[list[str]] = []
+    others: list[list[str]] = []
+    summary: list[str] = []
+    sink: list[str] | None = None
+    in_warning = False
+    for line in lines:
+        indented = not line or line[0].isspace()
+        if _JEST_SUITE.match(line):
+            sink = [line]
+            suites.append(sink)
+            in_warning = False
+        elif _JEST_SUMMARY.match(line):
+            sink = summary
+            summary.append(line)
+            in_warning = False
+        elif in_warning and (indented or line.startswith(("ERROR:", "STACK:"))):
+            assert sink is not None
+            sink.append(line)
+        elif indented and sink is not None:
+            sink.append(line)
+        elif _JEST_COVERAGE_WARNING.match(line):
+            sink = [line]
+            others.append(sink)
+            in_warning = True
+        else:
+            sink = [line]
+            others.append(sink)
+            in_warning = False
+    return [
+        line for group in (*sorted(suites), *sorted(others)) for line in group
+    ] + summary
 
 
 def _sorted_blocks(
@@ -1072,15 +1158,22 @@ def _run(
             for adapter in adapters:
                 _link_env(adapter, repo, head_root, head_sha, head_sha)
             head_languages = run_languages(head_root)
+            # What stands in the worktree now (the linked dependency folders, the stripped
+            # settings files) is what every tool starts from; whatever a tool adds or edits
+            # is undone before the next one runs.
+            residue = _TreeResidue(head_root)
             for adapter in adapters:
                 if adapter.mode == "fix" or not adapter.tool:
                     continue
-                pending.extend(_run_adapter(
-                    adapter, repo, base_sha, head_sha, head_root, change, home, profile,
-                    process, tool_env, deadline, degraded, items, base_markers,
-                    head_markers, head_languages,
-                    diagnostics_directory,
-                ))
+                try:
+                    pending.extend(_run_adapter(
+                        adapter, repo, base_sha, head_sha, head_root, change, home, profile,
+                        process, tool_env, deadline, degraded, items, base_markers,
+                        head_markers, head_languages,
+                        diagnostics_directory,
+                    ))
+                finally:
+                    residue.clear(adapter.id, diagnostics_directory)
             measurements: list[dict[str, Any]] = []
             cov_findings: list[dict[str, Any]] = []
             if framework:
@@ -1314,6 +1407,23 @@ def _staged_base_files(
             shutil.rmtree(directory, ignore_errors=True)
 
 
+def scan_folder(context: ScanContext, name: str) -> Path:
+    """A fresh, empty folder for one scan's own files (copies, generated config, a session).
+
+    It lives under the adapter's scratch folder, so nothing it holds outlives the adapter, and it
+    is named by the scan (``base`` or ``head``), so the two scans of a comparison never see each
+    other's files and a repeat of one scan starts empty (issue 147). A context with no scratch
+    folder, which only a direct caller builds, gets ``<home>/<name>`` emptied first.
+    """
+    if context.scratch is not None:
+        path = context.scratch / f"{name}-{context.scan}"
+    else:
+        path = context.home / name
+    _remove_tree(path)
+    path.mkdir(parents=True)
+    return path
+
+
 @contextmanager
 def _scratch() -> Iterator[Path]:
     """A fresh owner-only folder outside every scan tree, removed afterwards."""
@@ -1344,6 +1454,9 @@ def _tool_env(home: Path) -> tuple[dict[str, str], list[str]]:
     fresh_tmp = tempfile.mkdtemp(prefix="saga-tool-tmp-")
     env["HOME"] = fresh_home
     env["TMPDIR"] = fresh_tmp
+    # Python tools order sets and dicts of strings by a per-process hash seed. cfn-lint reported a
+    # different subset of one rule's errors on each run until the seed was fixed (issue 147).
+    env["PYTHONHASHSEED"] = "0"
     if sys.platform == "win32":
         env["TEMP"] = fresh_tmp
         env["TMP"] = fresh_tmp
@@ -1423,9 +1536,7 @@ def _run_adapter(
         off_pin = problem in {"version-mismatch", "version-unreadable"}
         if off_pin:
             degraded.append(_degraded(adapter, _primary_row(adapter), str(problem)))
-        if adapter.mutation and time.monotonic() >= deadline:
-            degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
-            return []
+        # The budget is checked in ``_once``, after the tool says whether it has anything to run.
         timeout = adapter.timeout_seconds
         if adapter.mutation:
             timeout = max(1, min(timeout, int(deadline - time.monotonic())))
@@ -1499,7 +1610,9 @@ def _once(
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
     diagnostic = _attempt_diagnostic(adapter, context, label, "initial", deadline)
     try:
-        result, problem, ran = _capture(adapter, context, process, env, timeout, diagnostic)
+        result, problem, ran = _capture(
+            adapter, context, process, env, timeout, diagnostic, deadline,
+        )
     except ToolGap as exc:
         if diagnostic is not None:
             diagnostic.finish("skipped", exc.reason)
@@ -1517,7 +1630,7 @@ def _once(
     if problem is not None:
         if diagnostic is not None:
             diagnostic.finish("failed", problem)
-        degraded.append(_degraded(adapter, _primary_row(adapter), problem))
+        degraded.append(_problem_entry(adapter, problem))
         return (), {}
     assert result is not None
     try:
@@ -1662,7 +1775,8 @@ def _base_and_head(
                 _strip_settings(base_root, only=_C4C_SETTINGS_NAMES)
                 _link_env(adapter, repo, base_root, base_sha, head_sha)
                 base_hits, base_digest, base_problem, base_ran = _scan_root(
-                    adapter, replace(context, repo=base_root, root=base_root), process, env,
+                    adapter, replace(context, repo=base_root, root=base_root, scan="base"),
+                    process, env,
                     timeout, "base", degraded, items,
                 )
         except ToolGap:
@@ -1752,10 +1866,13 @@ def _capture(
     env: Mapping[str, str],
     timeout: int,
     diagnostic: review_diagnostics.Attempt | None = None,
+    deadline: float | None = None,
 ) -> tuple[ProcessResult | None, str | None, bool]:
     """Run ``invoke``. jscpd is parsed from a report outside either worktree.
 
     The third value is false when ``invoke`` returned no argument vector. ``ToolGap`` propagates.
+    A mutation tool with an argument vector to run after ``deadline`` is not run and gets the
+    problem ``cap``; one with nothing to run never reaches the budget (issue 147).
     When the adapter declares ``stream`` or ``report_file``, the parsed text replaces
     stdout on the returned result, so parsing and the stored raw output read the same bytes.
     """
@@ -1769,6 +1886,8 @@ def _capture(
         argv = adapter.invoke(scan)
         if not argv:
             return None, None, False
+        if adapter.mutation and deadline is not None and time.monotonic() >= deadline:
+            return None, "cap", True
         if adapter.report_file is not None:
             # A committed report (or a symlink where the report goes) must
             # not be what gets parsed. Refuse a report that would land
@@ -2045,6 +2164,18 @@ def _degraded(adapter: Adapter, row: str, reason: str) -> dict[str, str]:
     if len(adapter.languages) == 1 and adapter.languages[0] in review_formula.LANGUAGES:
         language = adapter.languages[0]
     return _gap(lens, language, row, adapter.tool or adapter.id, reason)
+
+
+def _problem_entry(adapter: Adapter, problem: str) -> dict[str, str]:
+    """The degraded entry for a run that did not finish.
+
+    A mutation tool that ran out of time, its own or the run's shared budget, is recorded as
+    ``cap`` either way. Whether it finished inside the budget on this run or the next is timing,
+    and the two reasons used to depend on where the budget happened to run out (issue 147).
+    """
+    if adapter.mutation and problem in ("timeout", "cap"):
+        return _degraded(adapter, "testing.surviving-mutant", "cap")
+    return _degraded(adapter, _primary_row(adapter), problem)
 
 
 def _failure_raw(adapter: Adapter, result: ProcessResult, home: Path) -> str:
@@ -2765,7 +2896,9 @@ def _one_relocated(
         whole_project=True,
         row=_RELOCATED_ROW,
         language=language,
-        raw_output=store_raw(stable_transcript(_scrub(result.stdout or "")).encode(), home),
+        raw_output=store_raw(
+            stable_transcript(_scrub(_ANSI_ESCAPE.sub("", result.stdout or ""))).encode(), home,
+        ),
         tool="relocated-test",
         version="not-recorded",
     )
@@ -3150,6 +3283,255 @@ def _link_env(
         dest = target_root / name
         if source.exists() and not os.path.lexists(dest):
             dest.symlink_to(source, target_is_directory=source.is_dir())
+
+
+#: Git for the residue check runs with the same protections ``_worktree`` uses, and more: no hook,
+#: no fsmonitor command, and no Git LFS filter, because the tree being cleaned is untrusted.
+_RESIDUE_GIT = (
+    "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false",
+    "-c", "filter.lfs.smudge=", "-c", "filter.lfs.process=", "-c", "filter.lfs.required=false",
+)
+#: ``git status`` as the residue check reads it: NUL separated, untracked and ignored entries
+#: named once per folder, and no look inside a submodule.
+_RESIDUE_STATUS = (
+    "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignored=traditional",
+    "--ignore-submodules=all",
+)
+_RESTORE_BATCH = 200
+#: Build-cache folders a tool creates at the worktree root and the tools after it reuse: Rust's
+#: ``target`` and Swift's ``.build`` and ``.saga-build``. Removing them after every tool made
+#: cargo check, clippy, the shuffle run and the no-network run each build cold, and the cold builds
+#: spend the 900 second mutation budget the mutation tools share (issue 147). They are kept only
+#: as real folders at the root; a link by one of these names is removed like any other residue.
+#: The reviewed commit's own sources never live here, and no tool reads a finding from them.
+_BUILD_CACHES = frozenset({"target", ".build", ".saga-build"})
+_DIR_FLAGS = (
+    getattr(os, "O_RDONLY", 0) | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+)
+#: Removal and restoring walk the tree through directory descriptors opened without following
+#: links. A platform without them gets no clean-up rather than a path-based one.
+_FD_SAFE = (
+    hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW") and hasattr(os, "fchmod")
+    and os.open in os.supports_dir_fd and os.unlink in os.supports_dir_fd
+    and os.rmdir in os.supports_dir_fd and os.mkdir in os.supports_dir_fd
+    and os.stat in os.supports_dir_fd and os.symlink in os.supports_dir_fd
+    and os.listdir in os.supports_fd
+)
+
+
+def _remove_at(dir_fd: int, name: str) -> None:
+    """Remove ``name`` below the open directory ``dir_fd``. A link is unlinked, never followed.
+
+    Every step is relative to a descriptor, and every directory is opened with ``O_NOFOLLOW``, so
+    a path component swapped for a symlink after it was checked fails the open instead of leading
+    out of the tree. A directory a tool left read-only is made owner-writable through its
+    descriptor first.
+    """
+    info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    if not stat.S_ISDIR(info.st_mode):
+        os.unlink(name, dir_fd=dir_fd)
+        return
+    child = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+    try:
+        os.fchmod(child, 0o700)
+        for entry in os.listdir(child):
+            _remove_at(child, entry)
+    finally:
+        os.close(child)
+    os.rmdir(name, dir_fd=dir_fd)
+
+
+class _TreeResidue:
+    """Undo what one tool leaves in the shared head worktree before the next tool runs.
+
+    The tools run one after another in one worktree. StrykerJS leaves ``.stryker-tmp/sandbox-*``
+    when it fails, and knip then reports the copy, so what a tool saw depended on what ran before
+    it and on a random folder name. The state taken at construction is the baseline: the linked
+    dependency folders and the settings files the runner stripped. ``clear`` removes every
+    untracked or ignored entry that is not in the baseline and puts back every tracked file the
+    baseline did not already show as changed.
+
+    The worktree is untrusted, so nothing here follows a symlink and nothing leaves the worktree:
+    removal and restoring go through directory descriptors opened with ``O_NOFOLLOW``, and a
+    tracked file is rewritten from the object database (the stored blob), which runs no filter,
+    smudge or hook. The ``git status`` that finds the changes would run a configured clean filter
+    on a file whose size and time match the index. It runs with the system and global git
+    configuration switched off and, on git 2.40 or later, with the attributes read from the empty
+    tree (``--attr-source``), so the reviewed tree names no filter and none runs, whether the
+    driver is in the operator's global configuration or in the repository's own. On an older git
+    the repository's own configuration is still read, and a filter driver defined there can run.
+    ``subprocess_runner`` stops a tool's process group before it returns, so
+    nothing it started is writing while this runs. A descendant that deliberately started its own
+    session escapes that, as ``subprocess_runner`` documents; the descriptor-relative walk keeps
+    such a process from steering a removal outside the worktree, but not from re-creating files.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.root_real = os.path.realpath(root)
+        self.env = {
+            **os.environ, "GIT_LFS_SKIP_SMUDGE": "1", "GIT_LITERAL_PATHSPECS": "1",
+            "GIT_OPTIONAL_LOCKS": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+        }
+        self.prefix: tuple[str, ...] = ()
+        empty = self._git(["hash-object", "-t", "tree", os.devnull])
+        if empty is not None:
+            tree = empty.stdout.decode().strip()
+            self.prefix = ("--attr-source", tree)
+            if self._git(["status", "--porcelain=v1", "--ignore-submodules=all"]) is None:
+                self.prefix = ()  # a git before 2.40 does not take --attr-source
+        state = self._state()
+        self.known: frozenset[str] = state[0] if state is not None else frozenset()
+        self.changed: frozenset[str] = state[1] if state is not None else frozenset()
+        self.readable = state is not None and _FD_SAFE
+
+    def _git(self, args: Sequence[str]) -> subprocess.CompletedProcess[bytes] | None:
+        try:
+            result = subprocess.run(  # nosec B603
+                ["git", *self.prefix, *_RESIDUE_GIT, *args],
+                cwd=self.root, env=self.env, capture_output=True, check=False,
+            )
+        except OSError:
+            return None
+        return result if result.returncode == 0 else None
+
+    def _state(self) -> tuple[frozenset[str], frozenset[str]] | None:
+        """``(untracked and ignored names, changed tracked names)``, or None when git declined."""
+        result = self._git(_RESIDUE_STATUS)
+        if result is None:
+            return None
+        left: set[str] = set()
+        changed: set[str] = set()
+        entries = result.stdout.split(b"\0")
+        index = 0
+        while index < len(entries):
+            entry = entries[index]
+            index += 1
+            if len(entry) < 4:
+                continue
+            code, name = entry[:2], os.fsdecode(entry[3:])
+            if code[:1] in (b"R", b"C"):
+                index += 1  # a rename or copy lists its source as the next entry
+            if code in (b"??", b"!!"):
+                left.add(name)
+            else:
+                changed.add(name)
+        return frozenset(left), frozenset(changed)
+
+    def clear(self, adapter_id: str, diagnostics_directory: Path | None = None) -> None:
+        """Remove and restore what the tool that just ran left behind."""
+        if not self.readable:
+            return
+        state = self._state()
+        if state is None:
+            return
+        removed = sorted(
+            name for name in state[0] - self.known
+            if not self._is_build_cache(name) and self._remove(name)
+        )
+        restored = self._restore(sorted(state[1] - self.changed))
+        if (removed or restored) and diagnostics_directory is not None:
+            review_diagnostics.write_residue(
+                diagnostics_directory, adapter_id, removed, restored
+            )
+
+    def _is_build_cache(self, name: str) -> bool:
+        """A build-cache folder at the worktree root, which stays for the next tool."""
+        if name.rstrip("/") not in _BUILD_CACHES:
+            return False
+        path = self.root / name.rstrip("/")
+        return path.is_dir() and not path.is_symlink()
+
+    def _parts(self, name: str) -> list[str] | None:
+        parts = name.rstrip("/").split("/")
+        if not parts or any(part in ("", ".", "..") or "\0" in part for part in parts):
+            return None
+        return parts
+
+    def _open_parent(self, parts: Sequence[str], create: bool = False) -> int | None:
+        """A descriptor for the folder holding ``parts[-1]``, every step opened without following."""
+        try:
+            fd = os.open(self.root_real, _DIR_FLAGS)
+        except OSError:
+            return None
+        for part in parts[:-1]:
+            try:
+                try:
+                    child = os.open(part, _DIR_FLAGS, dir_fd=fd)
+                except FileNotFoundError:
+                    if not create:
+                        raise
+                    os.mkdir(part, 0o777, dir_fd=fd)
+                    child = os.open(part, _DIR_FLAGS, dir_fd=fd)
+            except OSError:
+                os.close(fd)
+                return None
+            os.close(fd)
+            fd = child
+        return fd
+
+    def _remove(self, name: str) -> bool:
+        """Delete one untracked or ignored entry inside the worktree. A symlink is unlinked."""
+        parts = self._parts(name)
+        if parts is None:
+            return False
+        fd = self._open_parent(parts)
+        if fd is None:
+            return False
+        try:
+            _remove_at(fd, parts[-1])
+        except (OSError, RecursionError):
+            return False
+        finally:
+            os.close(fd)
+        return True
+
+    def _restore(self, names: Sequence[str]) -> list[str]:
+        """Put tracked files the tool changed back to the reviewed commit, from stored blobs."""
+        restored: list[str] = []
+        for start in range(0, len(names), _RESTORE_BATCH):
+            batch = list(names[start:start + _RESTORE_BATCH])
+            listed = self._git(["ls-tree", "-z", "HEAD", "--", *batch])
+            if listed is None:
+                continue
+            for record in listed.stdout.split(b"\0"):
+                header, _tab, raw = record.partition(b"\t")
+                fields = header.split(b" ")
+                if not raw or len(fields) != 3 or fields[1] != b"blob":
+                    continue  # a submodule entry is not a file; nothing else changes here
+                name = os.fsdecode(raw)
+                blob = self._git(["cat-file", "blob", fields[2].decode()])
+                if blob is not None and self._write(name, fields[0], blob.stdout):
+                    restored.append(name)
+        return restored
+
+    def _write(self, name: str, mode: bytes, data: bytes) -> bool:
+        """Write one tracked file, replacing whatever stands there. Nothing is followed."""
+        parts = self._parts(name)
+        if parts is None:
+            return False
+        fd = self._open_parent(parts, create=True)
+        if fd is None:
+            return False
+        try:
+            try:
+                _remove_at(fd, parts[-1])
+            except FileNotFoundError:
+                pass
+            if mode == b"120000":
+                os.symlink(os.fsdecode(data), parts[-1], dir_fd=fd)
+                return True
+            handle = os.open(
+                parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o755 if mode == b"100755" else 0o644, dir_fd=fd,
+            )
+            with os.fdopen(handle, "wb") as out:
+                out.write(data)
+            return True
+        except (OSError, RecursionError):
+            return False
+        finally:
+            os.close(fd)
 
 
 def _remove_tree(path: Path) -> None:

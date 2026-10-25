@@ -235,11 +235,15 @@ sys.stdout.write(json.dumps(data))
 raise SystemExit(0)
 """
 
+# cfn-lint reads CloudFormation. Handed a workflow, a pre-commit config or a cookiecutter
+# template it reports "'Resources' is a required property", a false finding, so only files that
+# pass the runner's own CloudFormation check are linted (issue 147).
 _CFN_WRAPPER = review_tools.TRACKED_PRELUDE + r"""
-import json, shutil, subprocess, sys
+import json, re, shutil, subprocess, sys
 from pathlib import Path
 root = Path(sys.argv[1])
 dest = Path(sys.argv[2])
+template = re.compile(__CLOUDFORMATION__, re.MULTILINE)
 rels = []
 for path in tracked_files(root):
     if not regular_in_root(path, root):
@@ -247,6 +251,11 @@ for path in tracked_files(root):
     if path.name.startswith(".") and "cfnlint" in path.name:
         continue
     if path.suffix.lower() not in {".yaml", ".yml", ".json", ".template"}:
+        continue
+    try:
+        if template.search(path.read_bytes()) is None:
+            continue
+    except OSError:
         continue
     rel = path.relative_to(root)
     target = dest / rel
@@ -261,7 +270,7 @@ proc = subprocess.run(
 )
 sys.stdout.write(proc.stdout or "[]")
 raise SystemExit(0)
-"""
+""".replace("__CLOUDFORMATION__", repr(review_tools._CLOUDFORMATION.pattern))
 
 
 def _document() -> dict[str, object]:
@@ -279,8 +288,7 @@ def _rel(path: str) -> str:
 def _invoke_cdk_nag(context: ScanContext) -> list[str]:
     if not (context.root / "cdk.json").is_file():
         return []
-    out = context.home / "cdk-nag-out"
-    out.mkdir(parents=True, exist_ok=True)
+    out = review_tools.scan_folder(context, "cdk-nag-out")
     return ["python3", "-c", _CDK_NAG_WRAPPER, str(context.root), str(out)]
 
 
@@ -319,14 +327,12 @@ def _parse_cdk_nag(text: str) -> ParseResult:
 def _invoke_checkov_cdk(context: ScanContext) -> list[str]:
     if not (context.root / "cdk.json").is_file():
         return []
-    dest = context.home / "checkov-cdk"
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = review_tools.scan_folder(context, "checkov-cdk")
     return ["python3", "-c", _CHECKOV_WRAPPER, "cdk", str(context.root), str(dest)]
 
 
 def _invoke_checkov_cfn(context: ScanContext) -> list[str]:
-    dest = context.home / "checkov-cfn"
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = review_tools.scan_folder(context, "checkov-cfn")
     return ["python3", "-c", _CHECKOV_WRAPPER, "cfn", str(context.root), str(dest)]
 
 
@@ -369,8 +375,7 @@ def _parse_checkov(text: str) -> ParseResult:
 
 
 def _invoke_cfn_lint(context: ScanContext) -> list[str]:
-    dest = context.home / "cfn-lint-src"
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = review_tools.scan_folder(context, "cfn-lint-src")
     return ["python3", "-c", _CFN_WRAPPER, str(context.root), str(dest)]
 
 
@@ -431,6 +436,7 @@ def _from_row(
     parse: Callable[[str], ParseResult],
     *,
     version_argv: tuple[str, ...] = (),
+    stable_raw: Callable[[str], str] | None = None,
 ) -> Adapter:
     tool_id = str(row.get("id") or "")
     return Adapter(
@@ -451,6 +457,7 @@ def _from_row(
         curated_rules=tuple(str(item) for item in (row.get("curated_block_rules") or ())),
         version_argv=version_argv,
         narrow_env=bool(row.get("narrow_env")),
+        stable_raw=stable_raw,
     )
 
 
@@ -480,7 +487,11 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
         if tool_id not in by_id:
             continue
         argv = _CDK_VERSION if tool_id == "cdk-nag" else ()
-        built.append(_from_row(by_id[tool_id], invoke[tool_id], parse[tool_id], version_argv=argv))
+        # cfn-lint lists its errors in the order its rules finished.
+        stable = review_tools.stable_sorted_list if tool_id == "cfn-lint" else None
+        built.append(_from_row(
+            by_id[tool_id], invoke[tool_id], parse[tool_id], version_argv=argv, stable_raw=stable,
+        ))
     return built
 
 

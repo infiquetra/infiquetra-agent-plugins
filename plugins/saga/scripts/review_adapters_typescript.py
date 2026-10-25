@@ -10,6 +10,7 @@ import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -566,6 +567,13 @@ def _invoke_stryker(context: ScanContext) -> list[str]:
         raise ToolGap("not-configured", "testing.surviving-mutant")
     _stage_tsconfig(context)
     argv = ["stryker", "run", "--testRunner", runner, "--reporters", "json"]
+    # The sandbox stays in its default place, ``.stryker-tmp`` in the worktree: StrykerJS links a
+    # project's real ``node_modules`` folders into the sandbox, and from there it finds the
+    # worktree's linked dependency folder; from any folder outside the worktree no parent has one,
+    # and every initial test run fails with "Cannot find module". ``--cleanTempDir always`` removes
+    # the sandbox even after a failed run, and the runner removes whatever is left before the next
+    # tool runs (issue 147).
+    argv.extend(["--cleanTempDir", "always"])
     staged = _stage_first_base(context, _STRYKER_CONFIGS)
     _refuse_relative_imports(staged, "testing.surviving-mutant")
     targets = _stryker_targets(context)
@@ -765,6 +773,39 @@ def _invoke_knip(context: ScanContext) -> list[str]:
             staged = context.root / "knip.saga.json"
             staged.write_text("{}\n", encoding="utf-8")
     return ["knip", "--reporter", "json", "--config", str(staged)]
+
+
+def _canonical_lists(value: object) -> object:
+    """``value`` with every list, at any depth, in canonical JSON order.
+
+    knip nests lists inside its entries (``enumMembers`` and ``classMembers`` map a name to a
+    list, ``duplicates`` is a list of lists), and each is in whatever order its walk finished.
+    """
+    if isinstance(value, dict):
+        return {key: _canonical_lists(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return review_tools.sorted_items([_canonical_lists(item) for item in value])
+    return value
+
+
+def _sort_knip(data: dict[str, Any]) -> None:
+    """knip lists its issues in whatever order its file walk finished, so sort them.
+
+    Every list in the report is sorted at every depth, and the issues then go by file and by
+    their canonical JSON (issue 147).
+    """
+    for key, value in list(data.items()):
+        data[key] = _canonical_lists(value)
+    issues = data.get("issues")
+    if isinstance(issues, list):
+        data["issues"] = sorted(issues, key=lambda issue: (
+            str(issue.get("file") or "") if isinstance(issue, dict) else "",
+            json.dumps(issue, sort_keys=True),
+        ))
+
+
+def _stable_knip(text: str) -> str:
+    return review_tools.stable_json(text, _sort_knip)
 
 
 def _knip_name(item: object, fallback: str) -> str:
@@ -996,7 +1037,10 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             gap_first=bool(row.get("gap_first")),
             base_files=tuple(str(item) for item in (row.get("base_files") or ())),
             local_bins=tuple(str(item) for item in (row.get("local_bins") or ())),
-            stable_raw=review_tools.stable_transcript if tool_id in _TRANSCRIPTS else None,
+            stable_raw=(
+                review_tools.stable_transcript if tool_id in _TRANSCRIPTS
+                else _stable_knip if tool_id == "knip" else None
+            ),
         ))
     return built
 

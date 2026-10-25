@@ -533,8 +533,7 @@ def _invoke_vulture(context: ScanContext) -> list[str]:
     files = _py_rels(context.root)
     if not files:
         return []
-    dest = context.home / "vulture-src"
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = review_tools.scan_folder(context, "vulture-src")
     return ["python3", "-c", _VULTURE_WRAPPER, str(context.root), str(dest), *files]
 
 
@@ -596,7 +595,9 @@ def _invoke_cosmic(context: ScanContext) -> list[str]:
     modules = _changed_python(context)
     if not modules:
         return []
-    toml = context.home / "cosmic-ray.toml"
+    # The config, and the session database the wrapper writes beside it, live in the scan's own
+    # folder. In the runner home the session database survived into the next prepare (issue 147).
+    toml = review_tools.scan_folder(context, "cosmic-ray") / "cosmic-ray.toml"
     toml.write_text(
         "\n".join([
             "[cosmic-ray]",

@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
@@ -670,6 +671,86 @@ def test_an_unfinished_mutation_run_is_capped(tmp_path: Path) -> None:
     assert _severity(output, row="testing.surviving-mutant") == "fix-later"
 
 
+def test_scan_folders_are_fresh_per_scan_and_live_under_scratch(tmp_path: Path) -> None:
+    """Issue 147: adapters copied files into a persistent folder under the runner home and scanned
+    the whole folder, so a file copied by one scan was scanned again by the next."""
+    home = tmp_path / "home"
+    home.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    head = T.ScanContext(tmp_path, tmp_path, home, scratch=scratch)
+    first = T.scan_folder(head, "copy")
+    (first / "left.txt").write_text("copied by the first scan\n", encoding="utf-8")
+    again = T.scan_folder(head, "copy")
+    assert list(again.iterdir()) == []
+    base = T.scan_folder(replace(head, scan="base"), "copy")
+    assert base != again
+    (base / "base.txt").write_text("base\n", encoding="utf-8")
+    assert list(T.scan_folder(head, "copy").iterdir()) == []
+    assert (base / "base.txt").is_file()
+    assert scratch in again.parents and list(home.iterdir()) == []
+
+
+def test_a_mutation_tool_with_nothing_to_run_records_no_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue 147: the budget was checked before the tool said whether it had work, so a spent
+    budget recorded ``cap`` for a tool that would have run nothing, on one run and not the next."""
+    monkeypatch.setattr(T, "MUTATION_CAP_SECONDS", -1)
+    repo, base, head = _pair(tmp_path)
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="mutant", tool="mutant", mutation=True, lens="testing",
+        rows=("testing.surviving-mutant",), invoke=lambda _context: [],
+    )
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=runner,
+    ) == 0
+    assert _reasons(output) == []
+    assert all(_version(call["argv"]) for call in runner.calls)
+
+
+def test_a_mutation_tool_with_work_after_the_budget_records_cap_and_is_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(T, "MUTATION_CAP_SECONDS", -1)
+    repo, base, head = _pair(tmp_path)
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="mutant", tool="mutant", mutation=True, lens="testing",
+        rows=("testing.surviving-mutant",),
+    )
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=runner,
+    ) == 0
+    assert _reasons(output) == [("mutant", "testing.surviving-mutant", "cap")]
+    assert all(_version(call["argv"]) for call in runner.calls)
+
+
+def test_a_mutation_tool_that_times_out_records_cap(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        raise subprocess.TimeoutExpired(argv, 1)
+
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="mutant", tool="mutant", mutation=True, lens="testing",
+        rows=("testing.surviving-mutant",),
+    )
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(handler),
+    ) == 0
+    assert _reasons(output) == [("mutant", "testing.surviving-mutant", "cap")]
+
+
 def test_no_test_command_and_no_coverage_report_are_known_gaps(tmp_path: Path) -> None:
     repo, base, head = _pair(tmp_path)
     output = tmp_path / "out"
@@ -801,6 +882,290 @@ def test_the_environment_symlink_is_created_only_when_lockfile_blobs_match(
     )
     assert code == 0
     assert all(linked is False for _sha, linked in observe.seen)
+
+
+def test_a_tool_leaves_nothing_in_the_worktree_for_the_next_tool(tmp_path: Path) -> None:
+    """Issue 147: StrykerJS left ``.stryker-tmp/sandbox-*`` in the shared head worktree and the
+    tools after it read the copy. Whatever one tool adds or edits is undone before the next runs."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "package-lock.json").write_text("lock\n", encoding="utf-8")
+    (repo / "tracked.txt").write_text("one\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    (repo / "node_modules").mkdir()
+    (repo / "node_modules" / "marker").write_text("dependency\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("not the worktree\n", encoding="utf-8")
+    seen: list[dict[str, Any]] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if argv[0] == "first":
+            sandbox = cwd / ".stryker-tmp" / "sandbox-AbC123"
+            sandbox.mkdir(parents=True)
+            (sandbox / "unused.ts").write_text("export const x = 1;\n", encoding="utf-8")
+            (sandbox / "locked").mkdir()
+            (sandbox / "locked" / "file").write_text("x\n", encoding="utf-8")
+            (sandbox / "locked").chmod(0o500)
+            (cwd / "stray.txt").write_text("left behind\n", encoding="utf-8")
+            (cwd / "tracked.txt").write_text("edited by a tool\n", encoding="utf-8")
+            (cwd / "README").unlink()
+            (cwd / "link-out").symlink_to(outside, target_is_directory=True)
+            (cwd / "cache").mkdir()
+            (cwd / "cache" / "link").symlink_to(outside, target_is_directory=True)
+            return T.ProcessResult(0, "scan\n")
+        seen.append({
+            "sandbox": (cwd / ".stryker-tmp").exists(),
+            "stray": (cwd / "stray.txt").exists(),
+            "link": os.path.lexists(cwd / "link-out"),
+            "cache": (cwd / "cache").exists(),
+            "tracked": (cwd / "tracked.txt").read_text(encoding="utf-8"),
+            "readme": (
+                (cwd / "README").read_text(encoding="utf-8") if (cwd / "README").exists() else None
+            ),
+            "node_modules": (cwd / "node_modules").is_symlink(),
+            "dependency": (cwd / "node_modules" / "marker").is_file(),
+        })
+        return T.ProcessResult(0, "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(
+            id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"],
+            env_dirs=("node_modules",), lockfiles=("package-lock.json",),
+        )
+
+    diagnostics = tmp_path / "diagnostics"
+    output = tmp_path / "out"
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+        diagnostics_directory=diagnostics,
+    ) == 0
+    assert seen == [{
+        "sandbox": False, "stray": False, "link": False, "cache": False,
+        "tracked": "one\n", "readme": "two\n", "node_modules": True, "dependency": True,
+    }]
+    # No link was followed, and the linked dependency folder still holds its files.
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "not the worktree\n"
+    assert (repo / "node_modules" / "marker").is_file()
+    # Removed names are logged to the diagnostics folder only, never to a record.
+    logged = [json.loads(path.read_text(encoding="utf-8")) for path in diagnostics.rglob("residue.json")]
+    assert len(logged) == 1
+    assert ".stryker-tmp/" in logged[0]["removed"]
+    assert "stray.txt" in logged[0]["removed"]
+    assert sorted(logged[0]["restored"]) == ["README", "tracked.txt"]
+    for name in _FOUR:
+        assert "stray.txt" not in (output / name).read_text(encoding="utf-8")
+        assert "stryker-tmp" not in (output / name).read_text(encoding="utf-8")
+
+
+def test_cleanup_restores_files_without_running_a_configured_filter(tmp_path: Path) -> None:
+    """The reviewed repository can name a filter driver in its attributes. Putting a tracked file
+    back reads the stored blob, so a smudge filter the operator configured does not run."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    flag = tmp_path / "armed"
+    log = tmp_path / "smudge.log"
+    script = tmp_path / "smudge.sh"
+    script.write_text(
+        f'#!/bin/sh\n[ -e {shlex.quote(str(flag))} ] && echo ran >> {shlex.quote(str(log))}\ncat\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    _git(repo, "config", "filter.probe.smudge", str(script))
+    _git(repo, "config", "filter.probe.clean", "cat")
+    (repo / ".gitattributes").write_text("*.dat filter=probe\n", encoding="utf-8")
+    (repo / "data.dat").write_text("one\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    seen: list[str] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if argv[0] == "first":
+            flag.write_text("armed\n", encoding="utf-8")
+            (cwd / "data.dat").write_text("changed by a tool\n", encoding="utf-8")
+        else:
+            seen.append((cwd / "data.dat").read_text(encoding="utf-8"))
+        return T.ProcessResult(0, "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
+    assert seen == ["one\n"]
+    assert not log.exists()
+
+
+@pytest.mark.parametrize("where", ["global", "local"])
+def test_the_residue_check_runs_no_configured_clean_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str,
+) -> None:
+    """``git status`` runs a clean filter on a file whose size and time match the index. The
+    residue check must run none, whether the driver is in the operator's global git configuration
+    or in the repository's own."""
+    probe = subprocess.run(
+        ["git", "--attr-source", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "version"],
+        capture_output=True, check=False,
+    )
+    if probe.returncode != 0:
+        pytest.skip("git before 2.40 has no --attr-source")
+    flag = tmp_path / "armed"
+    log = tmp_path / "clean.log"
+    script = tmp_path / "clean.sh"
+    script.write_text(
+        f'#!/bin/sh\n[ -e {shlex.quote(str(flag))} ] && echo ran >> {shlex.quote(str(log))}\ncat\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    configuration = f'[filter "probe"]\n\tclean = {script}\n\tsmudge = cat\n'
+    if where == "global":
+        (tmp_path / "gitconfig").write_text(configuration, encoding="utf-8")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    repo = tmp_path / "repo"
+    _init(repo)
+    if where == "local":
+        _git(repo, "config", "filter.probe.clean", str(script))
+        _git(repo, "config", "filter.probe.smudge", "cat")
+    (repo / ".gitattributes").write_text("*.dat filter=probe\n", encoding="utf-8")
+    (repo / "data.dat").write_text("one\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if not _version(argv) and argv[0] == "first":
+            flag.write_text("armed\n", encoding="utf-8")
+            time.sleep(1.1)  # the index records the checkout time; a later file is not "clean"
+            (cwd / "data.dat").write_text("two\n", encoding="utf-8")  # same size as the original
+        return T.ProcessResult(0, "1.0.0" if _version(argv) else "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
+    assert not log.exists()
+
+
+def test_cleanup_removes_a_link_residue_and_never_follows_one(tmp_path: Path) -> None:
+    """A link left in the worktree is removed as a link. A path whose parent was swapped for a
+    link after the check is refused, so nothing outside the worktree is touched."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    _commit(repo, "base")
+    outside = tmp_path / "outside"
+    (outside / "inner").mkdir(parents=True)
+    (outside / "inner" / "victim.txt").write_text("keep\n", encoding="utf-8")
+    (outside / "victim.txt").write_text("keep\n", encoding="utf-8")
+    residue = T._TreeResidue(repo)
+    (repo / "link-out").symlink_to(outside, target_is_directory=True)
+    (repo / "file-link").symlink_to(outside / "victim.txt")
+    assert residue._remove("link-out") is True
+    assert residue._remove("file-link") is True
+    assert not os.path.lexists(repo / "link-out")
+    assert not os.path.lexists(repo / "file-link")
+    # The parent component is a link to a folder outside: refused, target untouched.
+    (repo / "swapped").symlink_to(outside, target_is_directory=True)
+    assert residue._remove("swapped/victim.txt") is False
+    assert residue._remove("swapped/inner") is False
+    assert residue._remove("../outside/victim.txt") is False
+    assert residue._write("swapped/victim.txt", b"100644", b"overwritten\n") is False
+    assert (outside / "victim.txt").read_text(encoding="utf-8") == "keep\n"
+    assert (outside / "inner" / "victim.txt").read_text(encoding="utf-8") == "keep\n"
+    assert os.path.islink(repo / "swapped")
+
+
+def test_build_caches_at_the_worktree_root_survive_for_the_next_tool(tmp_path: Path) -> None:
+    """Issue 147: Rust's ``target`` and Swift's ``.build`` and ``.saga-build`` were deleted after
+    every tool, so each build tool built cold and spent the shared mutation budget."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("not the worktree\n", encoding="utf-8")
+    seen: list[dict[str, bool]] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if argv[0] == "first":
+            (cwd / "target").mkdir()
+            (cwd / "target" / "x").write_text("built\n", encoding="utf-8")
+            (cwd / ".saga-build").mkdir()
+            (cwd / ".saga-build" / "y").write_text("built\n", encoding="utf-8")
+            (cwd / "random-ignored").mkdir()
+            (cwd / "random-ignored" / "z").write_text("junk\n", encoding="utf-8")
+            (cwd / "sub").mkdir()
+            (cwd / "sub" / "target").mkdir()
+            (cwd / "sub" / "target" / "w").write_text("nested\n", encoding="utf-8")
+            (cwd / ".build").symlink_to(outside, target_is_directory=True)
+        else:
+            seen.append({
+                "target": (cwd / "target" / "x").is_file(),
+                "saga-build": (cwd / ".saga-build" / "y").is_file(),
+                "random": (cwd / "random-ignored").exists(),
+                "nested": (cwd / "sub" / "target").exists(),
+                "link": os.path.lexists(cwd / ".build"),
+            })
+        return T.ProcessResult(0, "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
+    assert seen == [{
+        "target": True, "saga-build": True, "random": False, "nested": False, "link": False,
+    }]
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "not the worktree\n"
+
+
+def test_the_settings_the_runner_stripped_stay_stripped_between_tools(tmp_path: Path) -> None:
+    """The residue clean-up starts from the stripped tree, so it never puts a stripped file back."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / ".eslintrc.json").write_text("{}\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    seen: list[bool] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if not _version(argv) and argv[0] == "second":
+            seen.append((cwd / ".eslintrc.json").exists())
+        return T.ProcessResult(0, "1.0.0" if _version(argv) else "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
+    assert seen == [False]
 
 
 def test_raw_output_is_owner_only_under_the_home_directory(
@@ -2215,6 +2580,39 @@ def test_relocated_runs_differing_only_in_duration_record_identical_bytes(tmp_pa
     _same_packets(*outputs)
 
 
+def test_relocated_output_with_colour_codes_inside_the_scratch_folder_records_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    """The relocated command's output was scrubbed before its colour codes were removed, so a
+    scratch folder name split by an escape sequence reached the stored hash."""
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"languages": {"python": {"test_command": "pytest -q"}}},
+    })
+    outputs = []
+    for run in range(2):
+        def runner(
+            argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+        ) -> Any:
+            folder = str(cwd)
+            return T.ProcessResult(1, (
+                f"\x1b[31m{folder[:-3]}\x1b[1m{folder[-3:]}\x1b[0m/tests/test_app.py\n"
+                "FAILED tests/test_app.py::test_one - AssertionError\n"
+            ))
+
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, profile, output, tmp_path / "home",
+            adapters=[], runner=runner, framework=True,
+        ) == 0
+        outputs.append(output)
+    assert any(
+        item["rule"]["row"] == "architecture-maintainability.relocated-run-fails"
+        for item in _read(outputs[0], "findings.json")
+    )
+    _same_packets(*outputs)
+
+
 def test_coverage_reports_differing_only_in_timestamp_record_identical_bytes(
     tmp_path: Path,
 ) -> None:
@@ -2301,6 +2699,49 @@ def test_cobertura_timestamp_and_scratch_source_are_not_stored() -> None:
 ])
 def test_stable_transcript_drops_per_run_values(first: str, second: str) -> None:
     assert T.stable_transcript(first) == T.stable_transcript(second)
+
+
+def test_vitest_failure_text_with_colour_and_a_temporary_config_name_hashes_once() -> None:
+    """Issue 147: Vite names its loaded config by the clock and quotes the worktree path inside
+    colour codes, so a failed run's stored text differed between two runs of one change."""
+    adapter = _stub(stable_raw=T.stable_transcript)
+
+    def failure(scratch: str, stamp: str) -> str:
+        folder = f"{tempfile.gettempdir()}/saga-review-{scratch}"
+        return (
+            f"failed to load config from {folder}/vitest.config.ts\n"
+            f"\x1b[31m{folder[:-3]}\x1b[1m{folder[-3:]}\x1b[22m/vitest.config.ts\x1b[39m\n"
+            f"Error: ENOENT {folder}/node_modules/.vite-temp/"
+            f"vitest.config.ts.timestamp-{stamp}.mjs\n"
+        )
+
+    first = T._stable_raw(adapter, failure("ab12cd34", "1792130474945-3fa9c1d2e4b5"))
+    second = T._stable_raw(adapter, failure("zz99yy88", "1792130482403-77c0de1a9b3f"))
+    assert first == second
+    assert "vitest.config.ts.timestamp.mjs" in first and "\x1b" not in first
+    assert "ab12cd34" not in first
+
+
+def test_jest_runs_with_coverage_warnings_at_different_positions_hash_once() -> None:
+    """Issue 147: ``Failed to collect coverage from ...`` lines split the suite blocks at random
+    points, so sorting only adjacent suites left a different order on each run."""
+    warning = (
+        "Failed to collect coverage from /w/src/broken.ts\n"
+        "ERROR: Unexpected token\n"
+        "STACK: SyntaxError: Unexpected token\n"
+        "    at parse (/w/node_modules/x.js:1:1)\n"
+    )
+    a = "PASS ./a.test.js\n  \u2713 adds (2 ms)\n"
+    b = "FAIL ./b.test.js\n  \u25cf subtracts\n\n    expected 1\n"
+    c = "PASS ./c.test.js\n"
+    summary = "Test Suites: 1 failed, 2 passed, 3 total\nTime:        1.2 s\nRan all test suites.\n"
+    first = T.stable_transcript(a + warning + b + c + summary)
+    second = T.stable_transcript(c + b + a + warning + summary)
+    third = T.stable_transcript(warning + c + a + b + summary)
+    assert first == second == third
+    assert first.endswith("Ran all test suites.\n")
+    assert "ERROR: Unexpected token\nSTACK:" in first
+    assert T.stable_transcript(a + b) != T.stable_transcript(a + c)
 
 
 def test_stable_transcript_keeps_test_names_and_failures() -> None:

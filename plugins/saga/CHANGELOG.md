@@ -86,6 +86,42 @@
 
 ### Fixed
 
+- Issue #147: running `prepare` twice on one change now gives the same packet, and two kinds of
+  false finding go away. A review tool's stored-output hash is canonical: sorted, with volatile
+  text removed, and with nothing left behind by an earlier tool.
+  - After each tool the runner removes every untracked or ignored entry the tool added to the
+    head worktree and restores any tracked file it changed. It never follows a symlink, never
+    leaves the worktree, and keeps the linked dependency folders. It also keeps the build-cache
+    folders `target`, `.build` and `.saga-build` when they are real folders at the worktree
+    root: removing them made each Rust and Swift build tool build cold and spend the shared
+    900-second mutation budget. It rewrites tracked files from the stored blob, so no smudge
+    filter or hook runs. The `git status` that finds the changes runs with the system and global
+    git configuration off and, on git 2.40 or later, with attributes read from the empty tree,
+    so no clean filter runs either; on an older git a filter driver defined in the repository's
+    own configuration can still run. Removed names go to the private diagnostics folder only.
+    StrykerJS also gets `--cleanTempDir always`, and keeps its sandbox in the worktree's default
+    `.stryker-tmp`, which the clean-up removes: Stryker links only real `node_modules` folders
+    into a sandbox, so a sandbox outside the worktree cannot find the linked dependencies. Its
+    failed-run sandbox in the worktree made knip report hundreds of unused files in the copy.
+  - cfn-lint now lints only files that pass the runner's CloudFormation check, and the tool
+    environment sets `PYTHONHASHSEED=0`. Before, workflows, pre-commit config and cookiecutter
+    templates drew false "'Resources' is a required property" findings, and the reported subset
+    of errors changed from run to run. The seed applies to every tool started under that
+    environment, so it also fixes the hash seed for the reviewed project's own Python tests
+    that those tools run.
+  - The stored raw output is sorted or scrubbed for knip (every list, at every depth), cfn-lint
+    and SwiftLint (issue order), Semgrep (the random `saga-rules-<random>` folder in rule ids
+    and errors), Vitest (colour codes before the scratch scrub, and Vite's
+    `*.timestamp-<ms>-<hex>.mjs` name), the relocated test's output (colour codes before the
+    scratch scrub) and Jest (every suite block sorted together, then other worker lines, then
+    the summary).
+  - The mutation budget is checked after a tool returns an argument vector, so a tool with
+    nothing to run no longer records `cap`. A mutation tool that times out is recorded as `cap`
+    as well. cosmic-ray's config and session database live in the scan's scratch folder.
+  - Each scan that copies files (checkov, cfn-lint, vulture, shellcheck, zizmor, actionlint)
+    gets a fresh folder under scratch, separate for base and head, in place of a fixed folder
+    under the runner home. cdk-nag only writes its synth output, and that folder is fresh too.
+    No version bump; that belongs to #147's saga release step.
 - `prepare` keeps the scripted checks' where-to-look items. It rewrote `where-to-look.json` with
   only the sweep's items and the missing-tool items, so items from the scripted checks, such as the
   machine-specific-value check, never reached the reviewer even when the check had found the exact

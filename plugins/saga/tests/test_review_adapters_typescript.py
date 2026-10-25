@@ -1048,6 +1048,10 @@ def test_stryker_survivor_on_changed_lines_blocks(tmp_path: Path) -> None:
     assert "--testRunner" in argv and argv[argv.index("--testRunner") + 1] == "jest"
     assert "--reporters" in argv and argv[argv.index("--reporters") + 1] == "json"
     assert "--mutate" in argv
+    # Issue 147: the sandbox is removed even after a failure. It must stay in the worktree:
+    # outside it Stryker finds no node_modules to link and every initial test run fails.
+    assert argv[argv.index("--cleanTempDir") + 1] == "always"
+    assert "--tempDirName" not in argv
     findings = _read(output, "findings.json")
     assert {finding["rule"]["ref"] for finding in findings} == {"surviving-mutant"}
     assert findings[0]["location"]["file"] == "src/example.js"
@@ -1057,9 +1061,11 @@ def test_stryker_survivor_on_changed_lines_blocks(tmp_path: Path) -> None:
 
 def test_stryker_past_deadline_records_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(T, "MUTATION_CAP_SECONDS", -1)
-    repo, _source = _stryker_repo(tmp_path)
+    repo, source = _stryker_repo(tmp_path)
     base = _commit(repo, "base")
-    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("a + b;", "a + b + 0;"), encoding="utf-8"
+    )
     head = _commit(repo, "head")
     output = tmp_path / "out"
     runner = _Calls(
@@ -1178,7 +1184,7 @@ def test_stryker_refuses_a_report_parent_outside_the_worktree(
     assert all("--version" in call for call in runner.calls)
 
 
-def test_stryker_killed_run_records_timeout(tmp_path: Path) -> None:
+def test_stryker_killed_run_records_cap(tmp_path: Path) -> None:
     repo, source = _stryker_repo(tmp_path)
     base = _commit(repo, "base")
     source.write_text(
@@ -1194,7 +1200,8 @@ def test_stryker_killed_run_records_timeout(tmp_path: Path) -> None:
     assert _read(output, "findings.json") == []
     degraded = _degraded(output, "stryker")
     assert len(degraded) == 1
-    assert degraded[0]["reason"] == "timeout"
+    # Issue 147: a mutation tool that runs out of time is recorded as cap, however it ran out.
+    assert degraded[0]["reason"] == "cap"
 
 
 def test_stryker_reads_the_report_file_not_stdout(tmp_path: Path) -> None:
@@ -1236,6 +1243,63 @@ def test_knip_unused_code_is_a_note(tmp_path: Path) -> None:
     assert _severity(output, "unused-export") == "note"
     assert _severity(output, "unused-dependency") == "note"
     assert _finding(output, "unused-dependency")["location"]["file"] == "package.json"
+
+
+def test_knip_runs_differing_only_in_issue_order_record_identical_bytes(tmp_path: Path) -> None:
+    """Issue 147: knip lists issues in the order its file walk finished, and the raw output hash
+    moved with it although the findings did not."""
+    repo, _source = _ts_repo(tmp_path)
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    payload = json.loads(_fixture("knip.json"))
+    payload["issues"][1]["exports"] = [{"name": "b", "line": 9}, {"name": "a", "line": 4}]
+    reordered = json.loads(json.dumps(payload))
+    reordered["issues"].reverse()
+    for issue in reordered["issues"]:
+        issue["exports"].reverse()
+    outputs = []
+    for run, document in enumerate((payload, reordered)):
+        output = tmp_path / f"out-{run}"
+        runner = _Calls(base, json.dumps(document), base_payload='{"issues": []}')
+        assert _run(
+            repo, base, head, _profile(tmp_path / "profile.json"), output,
+            tmp_path / "home", [_adapter("knip")], runner,
+        ) == 0
+        outputs.append(output)
+    assert len(_read(outputs[0], "findings.json")) == 4
+    for name in ("findings.json", "outcomes.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+    changed = json.loads(json.dumps(payload))
+    changed["issues"][0]["file"] = "src/other.js"
+    output = tmp_path / "out-changed"
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("knip")], _Calls(base, json.dumps(changed), base_payload='{"issues": []}'),
+    ) == 0
+    assert (output / "findings.json").read_bytes() != (outputs[0] / "findings.json").read_bytes()
+
+
+def test_knip_lists_nested_at_any_depth_are_sorted_before_hashing() -> None:
+    """Issue 147: enumMembers and classMembers map a name to a list, and duplicates is a list of
+    lists; each came out in the order knip's walk finished."""
+    adapter = _adapter("knip")
+    members = {"Color": [{"name": "Red"}, {"name": "Blue"}], "Size": [{"name": "Large"}]}
+    one = {"files": ["b.js", "a.js"], "issues": [{
+        "file": "src/a.js", "enumMembers": members,
+        "classMembers": {"Widget": [{"name": "render"}, {"name": "init"}]},
+        "duplicates": [[{"name": "x"}, {"name": "y"}], [{"name": "p"}, {"name": "q"}]],
+    }]}
+    two = json.loads(json.dumps(one))
+    two["files"].reverse()
+    issue = two["issues"][0]
+    issue["enumMembers"] = {"Size": members["Size"], "Color": list(reversed(members["Color"]))}
+    issue["classMembers"]["Widget"].reverse()
+    issue["duplicates"] = [list(reversed(group)) for group in reversed(issue["duplicates"])]
+    assert T._stable_raw(adapter, json.dumps(one)) == T._stable_raw(adapter, json.dumps(two))
+    other = json.loads(json.dumps(one))
+    other["issues"][0]["duplicates"][0].append({"name": "extra"})
+    assert T._stable_raw(adapter, json.dumps(one)) != T._stable_raw(adapter, json.dumps(other))
 
 
 def test_knip_preexisting_entries_drop(tmp_path: Path) -> None:
@@ -1460,7 +1524,7 @@ def test_tool_env_is_allow_listed(
     assert env_seen, "no process env captured"
     allowed = {"PATH", "PATHEXT", "LANG", "LC_ALL", "LC_CTYPE", "TZ"}
     expected = {name for name in allowed if name in os.environ}
-    expected |= {"HOME", "TMPDIR", "CARGO_HOME", "RUSTUP_HOME"}
+    expected |= {"HOME", "TMPDIR", "CARGO_HOME", "RUSTUP_HOME", "PYTHONHASHSEED"}
     for env in env_seen:
         assert set(env) == expected
         assert env["HOME"] != os.environ.get("HOME")
@@ -1468,6 +1532,7 @@ def test_tool_env_is_allow_listed(
         assert Path(env["TMPDIR"]).is_absolute()
         assert env["CARGO_HOME"].startswith(str(tmp_path / "home"))
         assert env["RUSTUP_HOME"] == str(Path.home() / ".rustup")
+        assert env["PYTHONHASHSEED"] == "0"
 
 
 def _live_bin(name: str) -> None:
@@ -1630,6 +1695,70 @@ def test_live_knip_reports_a_new_unused_file(tmp_path: Path) -> None:
     _valid(output)
     assert _severity(output, "unused-file") == "note"
     assert _finding(output, "unused-file")["location"]["file"] == "src/unused.js"
+
+
+def test_live_stryker_runs_tests_that_import_a_dependency_through_a_linked_node_modules(
+    tmp_path: Path,
+) -> None:
+    """Issue 147: with the sandbox outside the worktree, Stryker found no node_modules to link and
+    every initial test run failed with "Cannot find module". The real StrykerJS runs the adapter's
+    own arguments here, with its ``command`` test runner standing in for jest (the jest runner
+    plugin is a download; the committed stryker.conf.json names the command), against a worktree whose ``node_modules`` is the symlink saga makes."""
+    _live_bin("stryker")
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "package.json").write_text(json.dumps({
+        "name": "example", "version": "1.0.0", "devDependencies": {"jest": "^30.0.0"},
+    }), encoding="utf-8")
+    (repo / "package-lock.json").write_text('{"lockfileVersion": 3}\n', encoding="utf-8")
+    (repo / "stryker.conf.json").write_text(json.dumps({
+        "testRunner": "command", "commandRunner": {"command": "node test.js"},
+    }), encoding="utf-8")
+    (repo / "src" / "add.js").write_text(
+        "function add(a, b) {\n  return a + b;\n}\nmodule.exports = { add };\n", encoding="utf-8"
+    )
+    (repo / "test.js").write_text(
+        "const dep = require('example-dependency');\n"
+        "const { add } = require('./src/add');\n"
+        "if (add(1, 2) !== 3 || dep.value !== 1) { process.exit(1); }\n",
+        encoding="utf-8",
+    )
+    base = _commit(repo, "base")
+    # The operator's installed dependencies; the review links them into its worktree.
+    (repo / "node_modules" / "example-dependency").mkdir(parents=True)
+    (repo / "node_modules" / "example-dependency" / "index.js").write_text(
+        "module.exports = { value: 1 };\n", encoding="utf-8"
+    )
+    (repo / "src" / "add.js").write_text(
+        "function add(a, b) {\n  const unused = 1 + 1;\n  return a + b;\n}\n"
+        "module.exports = { add };\n", encoding="utf-8"
+    )
+    head = _commit(repo, "head")
+    seen: list[list[str]] = []
+
+    def runner(argv: list[str], **kwargs: Any) -> Any:
+        if argv[0].endswith("stryker") and "run" in argv:
+            seen.append(list(argv))
+            index = argv.index("--testRunner")
+            argv = [*argv[:index], "--testRunner", "command", *argv[index + 2:]]
+        return T.subprocess_runner(argv, **kwargs)
+
+    output = tmp_path / "out"
+    home = tmp_path / "home"
+    home.mkdir()
+    adapter = _adapter("stryker")
+    assert T.run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, home=home,
+        adapters=[adapter], runner=runner, framework=False,
+    ) == 0
+    assert len(seen) == 1 and "--tempDirName" not in seen[0]
+    assert _degraded(output, "stryker") == []
+    findings = _read(output, "findings.json")
+    assert {finding["rule"]["ref"] for finding in findings} == {"surviving-mutant"}
+    assert findings[0]["location"]["file"] == "src/add.js"
 
 
 def test_live_dependency_cruiser_reports_a_new_cycle(tmp_path: Path) -> None:

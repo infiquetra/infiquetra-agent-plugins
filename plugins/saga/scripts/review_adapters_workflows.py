@@ -81,8 +81,7 @@ def _rel(path: str) -> str:
 
 
 def _invoke_zizmor(context: ScanContext) -> list[str]:
-    dest = context.home / "zizmor-src"
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = review_tools.scan_folder(context, "zizmor-src")
     return ["python3", "-c", _ZIZMOR_WRAPPER, str(context.root), str(dest)]
 
 
@@ -206,9 +205,8 @@ def _invoke_actionlint(context: ScanContext) -> list[str]:
     ]
     if not names:
         return []
-    dest = context.home / "actionlint-src"
-    dest.mkdir(parents=True, exist_ok=True)
-    config = context.home / "actionlint.yaml"
+    dest = review_tools.scan_folder(context, "actionlint-src")
+    config = review_tools.scan_folder(context, "actionlint-config") / "actionlint.yaml"
     config.write_text("{}\n", encoding="utf-8")
     return ["python3", "-c", _ACTIONLINT_WRAPPER, str(context.root), str(dest), str(config)]
 

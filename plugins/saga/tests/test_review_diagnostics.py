@@ -53,12 +53,17 @@ def test_initial_and_retry_evidence_survive_independently(tmp_path: Path, retry:
         (folder / "outcomes.json").write_text(json.dumps({"outcomes": [{
             "scenario": "Baseline", "summary": "Failure", "log_path": "log/baseline.log",
         }]}))
+        if calls == 1 and retry == "budget":
+            time.sleep(1.1)  # the first attempt spends what was left of the one-second budget
         if calls == 2 and retry == "timeout":
             raise subprocess.TimeoutExpired(argv, 1, output=b"retry partial", stderr=b"retry error")
         return T.ProcessResult(0 if calls == 2 and retry == "success" else 4,
                                f"console {calls}", f"stderr {calls}")
 
-    deadline = time.monotonic() + (-1 if retry == "budget" else 30)
+    # The initial attempt runs whenever the tool has work and the budget is not spent yet (the
+    # budget is checked after the tool returns an argument vector, issue 147); "budget" leaves the
+    # retry nothing.
+    deadline = time.monotonic() + (1 if retry == "budget" else 30)
     degraded: list[Any] = []
     T._once(_adapter(), context, process, {}, 5, "head", degraded, [], deadline)
     attempts = {}
