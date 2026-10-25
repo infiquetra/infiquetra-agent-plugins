@@ -2,6 +2,14 @@
 
 ## [1.3.3] - 2026-10-14
 
+### Changed
+
+- Issue #147, option A: the calibration marks ask architecture-maintainability planted
+  defects to be flagged, not blocked. `MARKS` gives that lens `must_flag` 6/10 (a finding
+  of any severity at the planted location) in place of `must_block`, with `may_block_clean`
+  1/20 unchanged; `review-calibration.json` and `.md` match. No review grade changes; the
+  corpus harness must read `must_flag` before it pins this commit.
+
 ### Added
 
 - `finish` writes `consequence-picks.json` beside `review-run.json`, one entry per reproduced

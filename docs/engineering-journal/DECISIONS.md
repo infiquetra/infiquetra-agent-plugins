@@ -13,8 +13,10 @@ the 2026-10-24 entry "Duplication and machine-specific values stay non-blocking"
 `document_problems` requires `marks` to equal `MARKS` exactly, and
 `plugins/saga/references/review-calibration.md` says architecture is flagged: a finding of any
 severity at the planted location counts. Correctness, security and testing keep `must_block`. No
-severity row in `review_formula.py` changes. Nothing at runtime reads `MARKS` apart from that
-equality check, so no review grade changes.
+severity row in `review_formula.py` changes. Nothing in Saga's review path reads `MARKS` apart
+from that equality check, so no review grade changes. The corpus harness does read the marks
+(`pinned.py` loads `MARKS`; `scoring.clears_marks` reads each lens's `must_block`), so a corpus
+harness that does not know `must_flag` raises a KeyError on any Saga pin that includes this change.
 
 **Rationale.** The formula makes duplicate, undocumented departure and complexity a note, and
 machine-specific value and dispute fix-later, so a 6 in 10 blocking mark on architecture plants
@@ -24,9 +26,9 @@ could not be met whatever the reviewer did. The mark now asks for what the formu
 language, decided on a handful of planted cases (see the 2026-10-24 entry). Lowering the architecture
 mark and keeping `must_block`: it still measures a blocking outcome the formula does not aim for.
 
-**Follow-up.** The corpus has to read `must_flag` (falling back to `must_block`) and count an
+**Follow-up.** Before the corpus moves its Saga pin past this change, the corpus has to read `must_flag` (falling back to `must_block`) and count an
 architecture defect as caught when a finding of any severity sits at its location, on the new Saga
-pin. Until then its `held_out_blocked` for this lens means "caught under the lens's mark".
+pin. After that, its `held_out_blocked` for this lens means "caught under the lens's mark".
 
 **Revisit when.** A measurement run scored against `must_flag` shows the lens flagging well below 6 in
 10, or the operator wants architecture plants to block.

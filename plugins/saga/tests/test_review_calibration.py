@@ -249,6 +249,11 @@ def test_marks_with_architecture_must_block_are_refused() -> None:
     assert "not an identifier: marks" in calibration.document_problems(data)
 
 
+def test_lens_mark_refuses_an_unknown_catch_kind() -> None:
+    with pytest.raises(ValueError, match="unknown catch kind: must_note"):
+        calibration._lens_mark((6, 10), (1, 20), "must_note")
+
+
 def test_format_refuses_an_unknown_key_and_free_text(tmp_path: Path) -> None:
     extra = _committed()
     extra["comment"] = "hello"
