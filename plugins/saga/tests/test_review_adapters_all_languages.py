@@ -900,6 +900,25 @@ def test_semgrep_runs_differing_only_in_timing_record_identical_bytes(tmp_path: 
     )
 
 
+def test_semgrep_ids_naming_the_rendered_rules_folder_hash_once() -> None:
+    """Issue 147: the saga rules are rendered into ``saga-rules-<random>``, and Semgrep builds
+    each rule id from that path, so the stored output differed on every run."""
+
+    def report(folder: str) -> str:
+        return json.dumps({"results": [
+            {"check_id": f"Users.me.home.{folder}.saga.no-eval", "path": "a.py"},
+            {"check_id": f"Users.me.home.{folder}.other.rule", "path": "b.py"},
+        ], "errors": []})
+
+    first = A._stable_semgrep(report("saga-rules-ab12cd34"))
+    second = A._stable_semgrep(report("saga-rules-zz99yy88"))
+    assert first == second
+    stored = json.loads(first)["results"]
+    assert {item["check_id"] for item in stored} == {"saga.no-eval", "Users.me.home.saga-rules-.other.rule"}
+    unrelated = json.dumps({"results": [{"check_id": "python.lang.audit", "path": "a.py"}]})
+    assert json.loads(A._stable_semgrep(unrelated))["results"][0]["check_id"] == "python.lang.audit"
+
+
 def test_jscpd_runs_differing_only_in_detection_date_record_identical_bytes(
     tmp_path: Path,
 ) -> None:
