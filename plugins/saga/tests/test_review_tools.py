@@ -670,6 +670,26 @@ def test_an_unfinished_mutation_run_is_capped(tmp_path: Path) -> None:
     assert _severity(output, row="testing.surviving-mutant") == "fix-later"
 
 
+def test_scan_folders_are_fresh_per_scan_and_live_under_scratch(tmp_path: Path) -> None:
+    """Issue 147: adapters copied files into a persistent folder under the runner home and scanned
+    the whole folder, so a file copied by one scan was scanned again by the next."""
+    home = tmp_path / "home"
+    home.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    head = T.ScanContext(tmp_path, tmp_path, home, scratch=scratch)
+    first = T.scan_folder(head, "copy")
+    (first / "left.txt").write_text("copied by the first scan\n", encoding="utf-8")
+    again = T.scan_folder(head, "copy")
+    assert list(again.iterdir()) == []
+    base = T.scan_folder(replace(head, scan="base"), "copy")
+    assert base != again
+    (base / "base.txt").write_text("base\n", encoding="utf-8")
+    assert list(T.scan_folder(head, "copy").iterdir()) == []
+    assert (base / "base.txt").is_file()
+    assert scratch in again.parents and list(home.iterdir()) == []
+
+
 def test_a_mutation_tool_with_nothing_to_run_records_no_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

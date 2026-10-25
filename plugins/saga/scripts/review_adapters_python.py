@@ -533,8 +533,7 @@ def _invoke_vulture(context: ScanContext) -> list[str]:
     files = _py_rels(context.root)
     if not files:
         return []
-    dest = context.home / "vulture-src"
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = review_tools.scan_folder(context, "vulture-src")
     return ["python3", "-c", _VULTURE_WRAPPER, str(context.root), str(dest), *files]
 
 

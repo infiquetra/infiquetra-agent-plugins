@@ -650,6 +650,39 @@ def test_cfn_lint_is_handed_only_files_that_pass_the_cloudformation_check(
     assert sorted(linted[linted.index("json") + 1:]) == ["legacy.template", "stack.json", "template.yaml"]
 
 
+def test_a_file_copied_for_one_cfn_lint_scan_is_not_linted_by_the_next(tmp_path: Path) -> None:
+    """Issue 147: the copy folder persisted under the runner home, so cfn-lint also scanned the
+    files an earlier scan had copied there."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "cfn-lint"
+    stub.write_text('#!/bin/sh\nls -A > "$STUB_OUT"\necho "[]"\n', encoding="utf-8")
+    stub.chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    listings = []
+    for name in ("first", "second"):
+        (tmp_path / name).mkdir()
+        repo, _base, _head = _repo(tmp_path / name, {
+            f"{name}.yaml": "Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n",
+        }, {"README": "head\n"})
+        argv = _adapter("cfn-lint").invoke(T.ScanContext(repo, repo, home, scratch=scratch))
+        seen = tmp_path / f"{name}.txt"
+        done = subprocess.run(
+            argv, capture_output=True, text=True, check=False,
+            env={
+                **os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                "STUB_OUT": str(seen),
+            },
+        )
+        assert done.returncode == 0, done.stderr
+        listings.append(seen.read_text(encoding="utf-8").split())
+    assert listings == [["first.yaml"], ["second.yaml"]]
+    assert list(home.iterdir()) == []
+
+
 def test_cfn_lint_runs_differing_only_in_error_order_hash_once() -> None:
     """Issue 147: cfn-lint lists its errors in the order its rules finished."""
     one = [_cfn("E1001", 1, "first"), _cfn("E3012", 2, "second"), _cfn("W2001", 3, "third")]

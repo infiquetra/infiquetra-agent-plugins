@@ -288,8 +288,7 @@ def _rel(path: str) -> str:
 def _invoke_cdk_nag(context: ScanContext) -> list[str]:
     if not (context.root / "cdk.json").is_file():
         return []
-    out = context.home / "cdk-nag-out"
-    out.mkdir(parents=True, exist_ok=True)
+    out = review_tools.scan_folder(context, "cdk-nag-out")
     return ["python3", "-c", _CDK_NAG_WRAPPER, str(context.root), str(out)]
 
 
@@ -328,14 +327,12 @@ def _parse_cdk_nag(text: str) -> ParseResult:
 def _invoke_checkov_cdk(context: ScanContext) -> list[str]:
     if not (context.root / "cdk.json").is_file():
         return []
-    dest = context.home / "checkov-cdk"
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = review_tools.scan_folder(context, "checkov-cdk")
     return ["python3", "-c", _CHECKOV_WRAPPER, "cdk", str(context.root), str(dest)]
 
 
 def _invoke_checkov_cfn(context: ScanContext) -> list[str]:
-    dest = context.home / "checkov-cfn"
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = review_tools.scan_folder(context, "checkov-cfn")
     return ["python3", "-c", _CHECKOV_WRAPPER, "cfn", str(context.root), str(dest)]
 
 
@@ -378,8 +375,7 @@ def _parse_checkov(text: str) -> ParseResult:
 
 
 def _invoke_cfn_lint(context: ScanContext) -> list[str]:
-    dest = context.home / "cfn-lint-src"
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = review_tools.scan_folder(context, "cfn-lint-src")
     return ["python3", "-c", _CFN_WRAPPER, str(context.root), str(dest)]
 
 

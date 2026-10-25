@@ -72,8 +72,7 @@ def _rel(path: str) -> str:
 
 
 def _invoke_shellcheck(context: ScanContext) -> list[str]:
-    dest = context.home / "shellcheck-src"
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = review_tools.scan_folder(context, "shellcheck-src")
     return ["python3", "-c", _SHELLCHECK_WRAPPER, str(context.root), str(dest)]
 
 
