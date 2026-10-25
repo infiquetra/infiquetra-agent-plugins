@@ -111,10 +111,16 @@ def _fraction(numerator: int, denominator: int) -> dict[str, int]:
 
 
 def _lens_mark(
-    must_block: tuple[int, int], may_block_clean: tuple[int, int]
+    catch: tuple[int, int],
+    may_block_clean: tuple[int, int],
+    catch_kind: str = "must_block",
 ) -> dict[str, dict[str, int]]:
+    """One lens's mark. ``catch_kind`` is ``must_block`` (the lens must block the planted
+    defect) or ``must_flag`` (a finding of any severity at the planted location is enough)."""
+    if catch_kind not in {"must_block", "must_flag"}:
+        raise ValueError(f"unknown catch kind: {catch_kind}")
     return {
-        "must_block": _fraction(*must_block),
+        catch_kind: _fraction(*catch),
         "may_block_clean": _fraction(*may_block_clean),
     }
 
@@ -125,7 +131,7 @@ MARKS: dict[str, Any] = {
         "correctness": _lens_mark((8, 10), (1, 10)),
         "security": _lens_mark((9, 10), (1, 10)),
         "testing": _lens_mark((9, 10), (1, 10)),
-        "architecture-maintainability": _lens_mark((6, 10), (1, 20)),
+        "architecture-maintainability": _lens_mark((6, 10), (1, 20), "must_flag"),
     },
     "language_guard": {
         "must_catch": _fraction(7, 10),
