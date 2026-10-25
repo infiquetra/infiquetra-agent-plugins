@@ -22,7 +22,7 @@
         "may_block_clean": {"numerator": 1, "denominator": 10}
       },
       "architecture-maintainability": {
-        "must_block": {"numerator": 6, "denominator": 10},
+        "must_flag": {"numerator": 6, "denominator": 10},
         "may_block_clean": {"numerator": 1, "denominator": 20}
       }
     },

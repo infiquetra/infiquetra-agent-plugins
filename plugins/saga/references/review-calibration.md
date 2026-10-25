@@ -32,7 +32,9 @@ An identifier matches `^[A-Za-z0-9][A-Za-z0-9._:/-]*$`. A sha256 is 64 lowercase
 | `security` | 9 / 10 | 1 / 10 |
 | `testing` | 9 / 10 | 1 / 10 |
 | `correctness` | 8 / 10 | 1 / 10 |
-| `architecture-maintainability` | 6 / 10 | 1 / 20 |
+| `architecture-maintainability` | 6 / 10, flagged | 1 / 20 |
+
+For `architecture-maintainability` the mark is `must_flag`, not `must_block`: the lens is flagged, not blocked. A planted architecture defect counts as caught when a finding of any severity, a note included, sits at the planted location. The lens does not have to block it. The other three lenses keep `must_block`. The operator decided this on 2026-10-25 (see the engineering journal's DECISIONS file).
 
 `language_guard` is `must_catch` 7 / 10 and `may_block_clean` 2 / 10. `repeat_run` is `may_flip` 1 / 10. `deterministic` is `identical`: the deterministic part gives the same grade every time it sees the same input.
 

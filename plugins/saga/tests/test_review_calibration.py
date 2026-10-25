@@ -223,8 +223,30 @@ def _plan_marks(text: str) -> dict[str, Any]:
 
 def test_stored_marks_equal_plan() -> None:
     parsed = _plan_marks(PLAN.read_text(encoding="utf-8"))
+    # The plan's table predates the 2026-10-25 operator decision (option A): architecture
+    # plants are flagged, not blocked. Same fraction, so only the key changes.
+    architecture = parsed["lenses"]["architecture-maintainability"]
+    architecture["must_flag"] = architecture.pop("must_block")
     assert calibration.MARKS == parsed
     assert _committed()["marks"] == parsed
+
+
+def test_architecture_mark_is_flagged_not_blocked() -> None:
+    lenses = calibration.MARKS["lenses"]
+    architecture = lenses["architecture-maintainability"]
+    assert "must_block" not in architecture
+    assert architecture["must_flag"] == {"numerator": 6, "denominator": 10}
+    assert architecture["may_block_clean"] == {"numerator": 1, "denominator": 20}
+    for lens in ("correctness", "security", "testing"):
+        assert "must_block" in lenses[lens]
+        assert "must_flag" not in lenses[lens]
+
+
+def test_marks_with_architecture_must_block_are_refused() -> None:
+    data = _committed()
+    architecture = data["marks"]["lenses"]["architecture-maintainability"]
+    architecture["must_block"] = architecture.pop("must_flag")
+    assert "not an identifier: marks" in calibration.document_problems(data)
 
 
 def test_format_refuses_an_unknown_key_and_free_text(tmp_path: Path) -> None:
