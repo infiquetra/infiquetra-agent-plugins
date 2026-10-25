@@ -5826,6 +5826,87 @@ def test_reviewer_counts_an_edit_to_a_tracked_file_at_a_clutter_path(
     }
 
 
+# Each tool cache the reviewer's checks write into the working tree, with the package files the
+# exported copy already holds, and the path that must still be refused beside it.
+_CACHE_CASES = [
+    ("ruff", {"src/app.py": "x = 1\n"}, [".ruff_cache/.gitignore", ".ruff_cache/0.16.9/1",
+     ".ruff_cache/CACHEDIR.TAG", "pkg/.ruff_cache/0.16.9/2"], "src/ruff_cache.py"),
+    ("mypy", {"src/app.py": "x = 1\n"}, [".mypy_cache/3.12/app.meta.json", "pkg/.mypy_cache/x"],
+     "src/mypy_cache.py"),
+    ("hypothesis", {"src/app.py": "x = 1\n"}, [".hypothesis/examples/ab"], "src/hypothesis.py"),
+    ("eslint", {"src/app.js": "x\n"}, [".eslintcache", "web/.eslintcache"], "src/eslintcache.js"),
+    ("tsc", {"src/app.ts": "x\n"}, ["tsconfig.tsbuildinfo", "web/app.tsbuildinfo"],
+     "src/tsbuildinfo.ts"),
+    ("vite", {"package.json": "{}\n", "web/package.json": "{}\n"},
+     ["node_modules/.vite/vitest/abc123/results.json", "web/node_modules/.vite/deps/_metadata.json"],
+     "node_modules/vite/real.js"),
+    ("node-cache", {"package.json": "{}\n"}, ["node_modules/.cache/babel-loader/aa.json"],
+     "node_modules/.cached/real.js"),
+    ("dart", {"pubspec.yaml": "name: m\n", "lib/m.dart": "int f() => 1;\n"},
+     [".dart_tool/package_config.json", ".dart_tool/test/x"], "lib/.dart_tool.dart"),
+    ("swift", {"Package.swift": "// manifest\n", "Sources/m/m.swift": "x\n"},
+     [".build/debug/m.json", ".build/arm64/debug/m.o"], "Sources/.builder/real.swift"),
+    ("cdk", {"cdk.json": "{}\n", "lib/app.ts": "x\n"}, ["cdk.out/manifest.json",
+     "cdk.out/asset/x"], "lib/cdk.out.ts"),
+]
+
+
+@pytest.mark.parametrize(("files", "ignored", "refused"), [c[1:] for c in _CACHE_CASES],
+                         ids=[c[0] for c in _CACHE_CASES])
+def test_reviewer_ignores_a_tool_cache_and_still_refuses_a_real_file_beside_it(
+    launcher: ModuleType, tmp_path: Path, files: dict[str, str], ignored: list[str], refused: str
+) -> None:
+    copy = _copy_with(tmp_path, files)
+    manifest = launcher._reviewer_manifest(copy)
+    for relative in (*ignored, refused):
+        (copy / relative).parent.mkdir(parents=True, exist_ok=True)
+        (copy / relative).write_text("written\n")
+    added = launcher.reviewer_scratch_changes(copy, manifest)["added"]
+    assert added == [refused]
+
+
+@pytest.mark.parametrize("relative", [
+    "node_modules/.vite/results.json",       # no package.json at the root of the copy
+    "docs/node_modules/.vite/results.json",  # docs/ is not a package: no package.json there
+    ".dart_tool/package_config.json",        # no pubspec.yaml
+    ".build/debug/m.o",                      # no Package.swift
+    "cdk.out/manifest.json",                 # no cdk.json
+])
+def test_reviewer_refuses_a_package_cache_name_outside_a_package_root(
+    launcher: ModuleType, tmp_path: Path, relative: str
+) -> None:
+    copy = _copy_with(tmp_path, {"src/a.py": "x = 1\n"})
+    manifest = launcher._reviewer_manifest(copy)
+    (copy / relative).parent.mkdir(parents=True, exist_ok=True)
+    (copy / relative).write_text("written\n")
+    assert launcher.reviewer_scratch_changes(copy, manifest)["added"] == [relative]
+
+
+def test_reviewer_ignores_a_link_inside_a_package_cache_and_refuses_one_elsewhere(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """SwiftPM's ``.build/debug`` is a symlink the build makes; one outside a cache stays refused."""
+    copy = _copy_with(tmp_path, {"Package.swift": "// manifest\n", "Sources/m/m.swift": "x\n"})
+    manifest = launcher._reviewer_manifest(copy)
+    (copy / ".build" / "arm64").mkdir(parents=True)
+    (copy / ".build" / "debug").symlink_to("arm64")
+    (copy / "Sources" / "link").symlink_to("m")
+    changes = launcher.reviewer_scratch_changes(copy, manifest)
+    assert changes["links"] == ["Sources/link"]
+    assert changes["added"] == []
+
+
+def test_reviewer_still_counts_a_modified_tracked_file_at_a_cache_path(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy = _copy_with(tmp_path, {"package.json": "{}\n", "node_modules/.cache/kept.json": "1\n"})
+    manifest = launcher._reviewer_manifest(copy)
+    (copy / "node_modules" / ".cache" / "kept.json").write_text("2\n")
+    assert launcher.reviewer_scratch_changes(copy, manifest)["modified"] == [
+        "node_modules/.cache/kept.json"
+    ]
+
+
 def test_reviewer_counts_a_file_the_session_writes_under_dot_claude(
     launcher: ModuleType, tmp_path: Path
 ) -> None:

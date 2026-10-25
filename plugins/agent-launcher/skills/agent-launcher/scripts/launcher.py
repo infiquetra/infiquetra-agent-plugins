@@ -2158,10 +2158,58 @@ REVIEWER_TOOLCHAIN_PARTS = (
 #: that a build writes where the head has none. They never count as a change. ``.claude/`` is not among
 #: them: Claude leaves only an empty ``.claude/.cc-writes/`` there (measured on 2.1.292), so a file
 #: under it is one the session wrote, and saga's check refuses it.
+#:
+#: Tool caches the reviewer's own checks write into the working tree are listed too.
+#: Each entry is a folder or a file name that is generated and never edited, matched whole at a
+#: path boundary, so ``src/ruff_cache.py`` and ``.ruff_cache.md`` do not match:
+#:
+#: - ``.ruff_cache/`` and ``.mypy_cache/``: ruff's and mypy's result caches, written wherever the
+#:   tool runs. ``.hypothesis/``: Hypothesis's example database, written beside the tests it runs.
+#: - ``.eslintcache``: ESLint's cache file, written by ``eslint --cache``.
+#: - ``*.tsbuildinfo``: TypeScript's incremental-build record, written by ``tsc`` when
+#:   ``incremental`` is on. A suffix, so a file merely containing the word does not match.
+#:
+#: Folders that other tools also use are matched only at a package root; see
+#: ``REVIEWER_PACKAGE_CACHES``.
 REVIEWER_SCRATCH_IGNORED = re.compile(
     r"^(pytest-of-[^/]+/|\.pytest_cache/|tmp[a-z0-9_]{8}/|target/)|(^|/)__pycache__/|\.pyc$"
     r"|(^|/)Cargo\.lock$"
+    r"|(^|/)(\.ruff_cache|\.mypy_cache|\.hypothesis)/"
+    r"|(^|/)\.eslintcache$|(^|/)[^/]+\.tsbuildinfo$"
 )
+#: Cache folders whose names other things also use, so each counts only at a package root: the
+#: folder that holds the named marker file in the exported copy. A ``node_modules/.vite/`` under a
+#: folder with no ``package.json`` is not Vite's. A folder that is not at a package root, or that
+#: has the right name in a package with no marker, is an ordinary change and is refused.
+#:
+#: - ``node_modules/.vite/``, ``node_modules/.cache/``: Vite's and Vitest's result and transform
+#:   caches, and the shared cache folder that Jest, Babel, ESLint and Prettier write when
+#:   ``find-cache-dir`` places a cache (marker ``package.json``).
+#: - ``.dart_tool/``: ``dart pub get``, ``dart analyze`` and ``dart test`` write the package
+#:   configuration and test caches there (marker ``pubspec.yaml``; measured with Dart 3.13).
+#: - ``.build/``: SwiftPM's build folder, written by ``swift build`` and ``swift test``, including a
+#:   ``debug`` symlink (marker ``Package.swift``; measured with Swift 6.4).
+#: - ``cdk.out/``: the folder ``cdk synth`` writes the synthesised templates to (marker
+#:   ``cdk.json``).
+#:
+#: A symlink inside one of these folders is ignored with it: the tools make them (SwiftPM's
+#: ``.build/debug``), and saga reads nothing under a path that is ignored. A link anywhere else is
+#: still refused.
+REVIEWER_PACKAGE_CACHES = (
+    (re.compile(r"(?:^|(?<=/))node_modules/\.(?:vite|cache)/"), "package.json"),
+    (re.compile(r"(?:^|(?<=/))\.dart_tool/"), "pubspec.yaml"),
+    (re.compile(r"(?:^|(?<=/))\.build/"), "Package.swift"),
+    (re.compile(r"(?:^|(?<=/))cdk\.out/"), "cdk.json"),
+)
+
+
+def reviewer_in_package_cache(path: str, manifest: Mapping[str, str]) -> bool:
+    """True when *path* is under a cache folder at a package root of the exported copy."""
+    for pattern, marker in REVIEWER_PACKAGE_CACHES:
+        for found in pattern.finditer(path):
+            if path[:found.start()] + marker in manifest:
+                return True
+    return False
 #: Issue #262: saga's prepare vendors the head's crates.io dependencies into the packet and
 #: names them in this file. The schema and directory rules match saga's ``review_dependencies``.
 REVIEWER_DEPENDENCIES_FILE = "dependencies.json"
@@ -3644,10 +3692,14 @@ def reviewer_scratch_changes(copy: Path, manifest: Mapping[str, str]) -> dict[st
 
     # Clutter is ignored only where it is new: a tracked file at a clutter-looking path that the
     # session modified or deleted is a change like any other.
+    def clutter(path: str) -> bool:
+        return bool(
+            REVIEWER_SCRATCH_IGNORED.search(path) or reviewer_in_package_cache(path, manifest)
+        )
+
     return {
         "added": sorted(
-            p for p in now
-            if p not in manifest and not is_link(p) and not REVIEWER_SCRATCH_IGNORED.search(p)
+            p for p in now if p not in manifest and not is_link(p) and not clutter(p)
         ),
         "modified": sorted(
             p for p in now if p in manifest and now[p] != manifest[p] and not is_link(p)
@@ -3658,6 +3710,7 @@ def reviewer_scratch_changes(copy: Path, manifest: Mapping[str, str]) -> dict[st
         "links": sorted(
             p for p in now
             if now[p].startswith("link:") and manifest.get(p) != now[p]
+            and not reviewer_in_package_cache(p, manifest)
         ),
     }
 
