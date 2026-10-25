@@ -378,6 +378,10 @@ class Adapter:
     #: Rewrites raw output before it is stored and hashed, removing what differs
     #: between two runs of the same change (timings, build order). Issue 244.
     stable_raw: Callable[[str], str] | None = None
+    #: The same rewrite when the reviewed change is known: it also gets the paths of the files the
+    #: change touches, so a report can be cut to what the findings depend on. Used instead of
+    #: ``stable_raw`` for a scan that has a change.
+    stable_raw_for_change: Callable[[str, frozenset[str]], str] | None = None
     #: A run that exits 0 without writing ``report_file`` is parsed from its
     #: console output (stdout then stderr) instead of counting as unparseable.
     report_optional: bool = False
@@ -554,13 +558,16 @@ def stable_sorted_list(text: str) -> str:
     return json.dumps(sorted_items(data), indent=2, sort_keys=True) + "\n"
 
 
-def _stable_raw(adapter: Adapter, text: str) -> str:
+def _stable_raw(adapter: Adapter, text: str, change: review_diff.Change | None = None) -> str:
     """Raw output as stored and hashed: scratch folders named stably, then the adapter's rewrite.
 
     Colour codes go first. A folder name split by an escape sequence is not a folder name to the
     scrub, and Vite colours the code frame that quotes the worktree path (issue 147).
     """
     text = _scrub(_ANSI_ESCAPE.sub("", text))
+    if adapter.stable_raw_for_change is not None and change is not None:
+        paths = frozenset(item.path for item in change.files if item.status != "deleted")
+        return adapter.stable_raw_for_change(text, paths)
     if adapter.stable_raw is not None:
         text = adapter.stable_raw(text)
     return text
@@ -1676,7 +1683,7 @@ def _once(
             gaps=parsed.gaps,
         )
     _absorb(adapter, parsed, label, degraded, items)
-    digest = store_raw(_stable_raw(adapter, result.stdout or "").encode(), context.home)
+    digest = store_raw(_stable_raw(adapter, result.stdout or "", context.change).encode(), context.home)
     hits = tuple(
         _stable_hit(_relative_hit(hit, context.root), context.root) for hit in parsed.hits
     )
@@ -1848,7 +1855,7 @@ def _scan_root(
         reason, row = parsed.gap
         degraded.append(_degraded(adapter, row, reason))
         return (), "", None, True
-    digest = store_raw(_stable_raw(adapter, result.stdout or "").encode(), context.home)
+    digest = store_raw(_stable_raw(adapter, result.stdout or "", context.change).encode(), context.home)
     hits = tuple(
         _stable_hit(_relative_hit(hit, context.root), context.root) for hit in parsed.hits
     )

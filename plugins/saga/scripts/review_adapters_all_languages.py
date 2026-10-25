@@ -116,6 +116,46 @@ def _drop_jscpd_date(data: dict[str, Any]) -> None:
         data["duplicates"] = _sorted_items(data["duplicates"])
 
 
+_JSCPD_FORMAT_SUFFIX = re.compile(r":[A-Za-z0-9_+-]+$")
+
+
+def _jscpd_touches(clone: object, changed: frozenset[str]) -> bool:
+    """True when either file of a clone is one of the changed files.
+
+    jscpd names a file by its path, with the language after a colon in some versions. The path may
+    carry a scan-root prefix, so every trailing run of its segments is tried.
+    """
+    if not isinstance(clone, dict):
+        return False
+    for side in ("firstFile", "secondFile"):
+        entry = clone.get(side)
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if not isinstance(name, str):
+            continue
+        parts = _JSCPD_FORMAT_SUFFIX.sub("", name).replace("\\", "/").split("/")
+        if any("/".join(parts[start:]) in changed for start in range(len(parts))):
+            return True
+    return False
+
+
+def _stable_jscpd_for_change(text: str, changed: frozenset[str]) -> str:
+    """The clones that touch the change's files, in canonical order, and nothing else.
+
+    jscpd finds a different number of clones on identical input on a large repository (one more or
+    fewer in a run), so a hash over its whole report moved between two prepares of one change
+    while the findings did not. The clones that involve a changed file are what the findings of
+    this review depend on. The report's totals count every clone, so they are left out too.
+    """
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if not isinstance(data, dict):
+        return _stable_jscpd(text)
+    clones = [clone for clone in data.get("duplicates") or [] if _jscpd_touches(clone, changed)]
+    return _stable_jscpd(json.dumps({"duplicates": clones}))
+
+
 def _stable_semgrep(text: str) -> str:
     return _stable_json(text, _drop_semgrep_timing)
 
@@ -491,6 +531,9 @@ def _level_map(row: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
     return tuple((str(key), str(value)) for key, value in mapping.items())
 
 
+_STABLE_RAW_FOR_CHANGE: dict[str, Callable[[str, frozenset[str]], str]] = {
+    "jscpd": _stable_jscpd_for_change,
+}
 _STABLE_RAW: dict[str, Callable[[str], str]] = {
     "semgrep-security": _stable_semgrep,
     "semgrep-saga": _stable_semgrep,
@@ -564,6 +607,7 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             level_map=_level_map(row),
             rules=_rules(row),
             stable_raw=_STABLE_RAW.get(tool_id),
+            stable_raw_for_change=_STABLE_RAW_FOR_CHANGE.get(tool_id),
         ))
     return built
 
