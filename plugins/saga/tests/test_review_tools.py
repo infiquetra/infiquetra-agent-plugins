@@ -2482,6 +2482,27 @@ def test_stable_transcript_drops_per_run_values(first: str, second: str) -> None
     assert T.stable_transcript(first) == T.stable_transcript(second)
 
 
+def test_vitest_failure_text_with_colour_and_a_temporary_config_name_hashes_once() -> None:
+    """Issue 147: Vite names its loaded config by the clock and quotes the worktree path inside
+    colour codes, so a failed run's stored text differed between two runs of one change."""
+    adapter = _stub(stable_raw=T.stable_transcript)
+
+    def failure(scratch: str, stamp: str) -> str:
+        folder = f"{tempfile.gettempdir()}/saga-review-{scratch}"
+        return (
+            f"failed to load config from {folder}/vitest.config.ts\n"
+            f"\x1b[31m{folder[:-3]}\x1b[1m{folder[-3:]}\x1b[22m/vitest.config.ts\x1b[39m\n"
+            f"Error: ENOENT {folder}/node_modules/.vite-temp/"
+            f"vitest.config.ts.timestamp-{stamp}.mjs\n"
+        )
+
+    first = T._stable_raw(adapter, failure("ab12cd34", "1792130474945-3fa9c1d2e4b5"))
+    second = T._stable_raw(adapter, failure("zz99yy88", "1792130482403-77c0de1a9b3f"))
+    assert first == second
+    assert "vitest.config.ts.timestamp.mjs" in first and "\x1b" not in first
+    assert "ab12cd34" not in first
+
+
 def test_stable_transcript_keeps_test_names_and_failures() -> None:
     text = (
         "FAILED tests/test_app.py::test_waits_5s - AssertionError: took 5s\n"

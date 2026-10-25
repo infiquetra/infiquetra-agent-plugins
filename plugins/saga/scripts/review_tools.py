@@ -541,8 +541,12 @@ def sorted_items(items: object) -> object:
 
 
 def _stable_raw(adapter: Adapter, text: str) -> str:
-    """Raw output as stored and hashed: scratch folders named stably, then the adapter's rewrite."""
-    text = _scrub(text)
+    """Raw output as stored and hashed: scratch folders named stably, then the adapter's rewrite.
+
+    Colour codes go first. A folder name split by an escape sequence is not a folder name to the
+    scrub, and Vite colours the code frame that quotes the worktree path (issue 147).
+    """
+    text = _scrub(_ANSI_ESCAPE.sub("", text))
     if adapter.stable_raw is not None:
         text = adapter.stable_raw(text)
     return text
@@ -564,6 +568,8 @@ _TRANSCRIPT_REWRITES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^(\s+)Start at\s+\S.*$"), r"\1Start at"),
     (re.compile(rf"^(\s+)Duration\s+{_NUMBER}m?s.*$"), r"\1Duration"),
     (re.compile(rf"^(\s*[✓×❯↓✗√·] .*?) {_NUMBER}m?s$"), r"\1"),
+    # Vite writes the loaded config to "vitest.config.ts.timestamp-1792130474945-3fa9c1d2e4b5.mjs".
+    (re.compile(r"\.timestamp-\d+-[0-9a-f]+\.mjs"), ".timestamp.mjs"),
     # Jest: "Time:        0.623 s, estimated 1 s", "PASS ./a.test.js (5.1 s)", "✓ adds (2 ms)".
     (re.compile(r"^Time:\s+\S.*$"), "Time:"),
     (re.compile(rf"^(\s*(?:PASS|FAIL|[✓✕○√×]) .*?) \({_NUMBER} m?s\)$"), r"\1"),
