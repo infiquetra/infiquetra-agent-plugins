@@ -1500,7 +1500,7 @@ def test_tool_env_is_allow_listed(
     assert env_seen, "no process env captured"
     allowed = {"PATH", "PATHEXT", "LANG", "LC_ALL", "LC_CTYPE", "TZ"}
     expected = {name for name in allowed if name in os.environ}
-    expected |= {"HOME", "TMPDIR", "CARGO_HOME", "RUSTUP_HOME"}
+    expected |= {"HOME", "TMPDIR", "CARGO_HOME", "RUSTUP_HOME", "PYTHONHASHSEED"}
     for env in env_seen:
         assert set(env) == expected
         assert env["HOME"] != os.environ.get("HOME")
@@ -1508,6 +1508,7 @@ def test_tool_env_is_allow_listed(
         assert Path(env["TMPDIR"]).is_absolute()
         assert env["CARGO_HOME"].startswith(str(tmp_path / "home"))
         assert env["RUSTUP_HOME"] == str(Path.home() / ".rustup")
+        assert env["PYTHONHASHSEED"] == "0"
 
 
 def _live_bin(name: str) -> None:

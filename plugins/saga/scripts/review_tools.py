@@ -540,6 +540,17 @@ def sorted_items(items: object) -> object:
     return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
 
 
+def stable_sorted_list(text: str) -> str:
+    """A JSON list of reports in canonical order. Text that is not a JSON list stays."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if not isinstance(data, list):
+        return text
+    return json.dumps(sorted_items(data), indent=2, sort_keys=True) + "\n"
+
+
 def _stable_raw(adapter: Adapter, text: str) -> str:
     """Raw output as stored and hashed: scratch folders named stably, then the adapter's rewrite.
 
@@ -1379,6 +1390,9 @@ def _tool_env(home: Path) -> tuple[dict[str, str], list[str]]:
     fresh_tmp = tempfile.mkdtemp(prefix="saga-tool-tmp-")
     env["HOME"] = fresh_home
     env["TMPDIR"] = fresh_tmp
+    # Python tools order sets and dicts of strings by a per-process hash seed. cfn-lint reported a
+    # different subset of one rule's errors on each run until the seed was fixed (issue 147).
+    env["PYTHONHASHSEED"] = "0"
     if sys.platform == "win32":
         env["TEMP"] = fresh_tmp
         env["TMP"] = fresh_tmp
