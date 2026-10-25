@@ -596,7 +596,9 @@ def _invoke_cosmic(context: ScanContext) -> list[str]:
     modules = _changed_python(context)
     if not modules:
         return []
-    toml = context.home / "cosmic-ray.toml"
+    # The config, and the session database the wrapper writes beside it, live in the scan's own
+    # folder. In the runner home the 5.8 MB session survived into the next prepare (issue 147).
+    toml = review_tools.scan_folder(context, "cosmic-ray") / "cosmic-ray.toml"
     toml.write_text(
         "\n".join([
             "[cosmic-ray]",

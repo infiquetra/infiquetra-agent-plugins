@@ -671,10 +671,8 @@ def test_muter_past_deadline_records_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(T, "MUTATION_CAP_SECONDS", -1)
-    repo = _muter_repo(tmp_path)
-    base = _commit(repo, "base")
-    (repo / "README.md").write_text("head\n", encoding="utf-8")
-    head = _commit(repo, "head")
+    monkeypatch.setattr(A, "_platform", lambda: "darwin")
+    repo, base, head = _muter_changed_repo(tmp_path)
     output = tmp_path / "out"
     runner = _Calls(base, _fixture("muter.json"))
     assert _run(
@@ -708,7 +706,7 @@ def test_muter_older_major_is_a_mismatch_that_lowers(
     assert _severity(output, "surviving-mutant") == "fix-later"
 
 
-def test_muter_timeout_leaves_timeout_with_no_partials(
+def test_muter_timeout_is_recorded_as_cap_with_no_partials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(A, "_platform", lambda: "darwin")
@@ -722,7 +720,7 @@ def test_muter_timeout_leaves_timeout_with_no_partials(
     assert _read(output, "findings.json") == []
     degraded = _degraded(output, "muter")
     assert len(degraded) == 1
-    assert degraded[0]["reason"] == "timeout"
+    assert degraded[0]["reason"] == "cap"
 
 
 def test_format_leaves_no_record(tmp_path: Path) -> None:

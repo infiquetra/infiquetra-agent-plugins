@@ -670,6 +670,66 @@ def test_an_unfinished_mutation_run_is_capped(tmp_path: Path) -> None:
     assert _severity(output, row="testing.surviving-mutant") == "fix-later"
 
 
+def test_a_mutation_tool_with_nothing_to_run_records_no_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue 147: the budget was checked before the tool said whether it had work, so a spent
+    budget recorded ``cap`` for a tool that would have run nothing, on one run and not the next."""
+    monkeypatch.setattr(T, "MUTATION_CAP_SECONDS", -1)
+    repo, base, head = _pair(tmp_path)
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="mutant", tool="mutant", mutation=True, lens="testing",
+        rows=("testing.surviving-mutant",), invoke=lambda _context: [],
+    )
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=runner,
+    ) == 0
+    assert _reasons(output) == []
+    assert all(_version(call["argv"]) for call in runner.calls)
+
+
+def test_a_mutation_tool_with_work_after_the_budget_records_cap_and_is_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(T, "MUTATION_CAP_SECONDS", -1)
+    repo, base, head = _pair(tmp_path)
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="mutant", tool="mutant", mutation=True, lens="testing",
+        rows=("testing.surviving-mutant",),
+    )
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=runner,
+    ) == 0
+    assert _reasons(output) == [("mutant", "testing.surviving-mutant", "cap")]
+    assert all(_version(call["argv"]) for call in runner.calls)
+
+
+def test_a_mutation_tool_that_times_out_records_cap(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        raise subprocess.TimeoutExpired(argv, 1)
+
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="mutant", tool="mutant", mutation=True, lens="testing",
+        rows=("testing.surviving-mutant",),
+    )
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(handler),
+    ) == 0
+    assert _reasons(output) == [("mutant", "testing.surviving-mutant", "cap")]
+
+
 def test_no_test_command_and_no_coverage_report_are_known_gaps(tmp_path: Path) -> None:
     repo, base, head = _pair(tmp_path)
     output = tmp_path / "out"

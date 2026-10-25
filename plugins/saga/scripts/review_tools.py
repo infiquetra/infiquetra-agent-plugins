@@ -284,6 +284,9 @@ class ScanContext:
     scratch: Path | None = None
     #: Private local telemetry, deliberately outside emitted records and hashes.
     diagnostics_directory: Path | None = None
+    #: Which tree this scan reads: ``head``, or ``base`` for a base-and-head comparison's first
+    #: scan. It names the scan's folders under ``scratch`` so the two never share one.
+    scan: str = "head"
 
 
 @dataclass(frozen=True)
@@ -1404,6 +1407,23 @@ def _staged_base_files(
             shutil.rmtree(directory, ignore_errors=True)
 
 
+def scan_folder(context: ScanContext, name: str) -> Path:
+    """A fresh, empty folder for one scan's own files (copies, generated config, a session).
+
+    It lives under the adapter's scratch folder, so nothing it holds outlives the adapter, and it
+    is named by the scan (``base`` or ``head``), so the two scans of a comparison never see each
+    other's files and a repeat of one scan starts empty (issue 147). A context with no scratch
+    folder, which only a direct caller builds, gets ``<home>/<name>`` emptied first.
+    """
+    if context.scratch is not None:
+        path = context.scratch / f"{name}-{context.scan}"
+    else:
+        path = context.home / name
+    _remove_tree(path)
+    path.mkdir(parents=True)
+    return path
+
+
 @contextmanager
 def _scratch() -> Iterator[Path]:
     """A fresh owner-only folder outside every scan tree, removed afterwards."""
@@ -1516,9 +1536,7 @@ def _run_adapter(
         off_pin = problem in {"version-mismatch", "version-unreadable"}
         if off_pin:
             degraded.append(_degraded(adapter, _primary_row(adapter), str(problem)))
-        if adapter.mutation and time.monotonic() >= deadline:
-            degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
-            return []
+        # The budget is checked in ``_once``, after the tool says whether it has anything to run.
         timeout = adapter.timeout_seconds
         if adapter.mutation:
             timeout = max(1, min(timeout, int(deadline - time.monotonic())))
@@ -1592,7 +1610,9 @@ def _once(
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
     diagnostic = _attempt_diagnostic(adapter, context, label, "initial", deadline)
     try:
-        result, problem, ran = _capture(adapter, context, process, env, timeout, diagnostic)
+        result, problem, ran = _capture(
+            adapter, context, process, env, timeout, diagnostic, deadline,
+        )
     except ToolGap as exc:
         if diagnostic is not None:
             diagnostic.finish("skipped", exc.reason)
@@ -1610,7 +1630,7 @@ def _once(
     if problem is not None:
         if diagnostic is not None:
             diagnostic.finish("failed", problem)
-        degraded.append(_degraded(adapter, _primary_row(adapter), problem))
+        degraded.append(_problem_entry(adapter, problem))
         return (), {}
     assert result is not None
     try:
@@ -1755,7 +1775,8 @@ def _base_and_head(
                 _strip_settings(base_root, only=_C4C_SETTINGS_NAMES)
                 _link_env(adapter, repo, base_root, base_sha, head_sha)
                 base_hits, base_digest, base_problem, base_ran = _scan_root(
-                    adapter, replace(context, repo=base_root, root=base_root), process, env,
+                    adapter, replace(context, repo=base_root, root=base_root, scan="base"),
+                    process, env,
                     timeout, "base", degraded, items,
                 )
         except ToolGap:
@@ -1845,10 +1866,13 @@ def _capture(
     env: Mapping[str, str],
     timeout: int,
     diagnostic: review_diagnostics.Attempt | None = None,
+    deadline: float | None = None,
 ) -> tuple[ProcessResult | None, str | None, bool]:
     """Run ``invoke``. jscpd is parsed from a report outside either worktree.
 
     The third value is false when ``invoke`` returned no argument vector. ``ToolGap`` propagates.
+    A mutation tool with an argument vector to run after ``deadline`` is not run and gets the
+    problem ``cap``; one with nothing to run never reaches the budget (issue 147).
     When the adapter declares ``stream`` or ``report_file``, the parsed text replaces
     stdout on the returned result, so parsing and the stored raw output read the same bytes.
     """
@@ -1862,6 +1886,8 @@ def _capture(
         argv = adapter.invoke(scan)
         if not argv:
             return None, None, False
+        if adapter.mutation and deadline is not None and time.monotonic() >= deadline:
+            return None, "cap", True
         if adapter.report_file is not None:
             # A committed report (or a symlink where the report goes) must
             # not be what gets parsed. Refuse a report that would land
@@ -2138,6 +2164,18 @@ def _degraded(adapter: Adapter, row: str, reason: str) -> dict[str, str]:
     if len(adapter.languages) == 1 and adapter.languages[0] in review_formula.LANGUAGES:
         language = adapter.languages[0]
     return _gap(lens, language, row, adapter.tool or adapter.id, reason)
+
+
+def _problem_entry(adapter: Adapter, problem: str) -> dict[str, str]:
+    """The degraded entry for a run that did not finish.
+
+    A mutation tool that ran out of time, its own or the run's shared budget, is recorded as
+    ``cap`` either way. Whether it finished inside the budget on this run or the next is timing,
+    and the two reasons used to depend on where the budget happened to run out (issue 147).
+    """
+    if adapter.mutation and problem in ("timeout", "cap"):
+        return _degraded(adapter, "testing.surviving-mutant", "cap")
+    return _degraded(adapter, _primary_row(adapter), problem)
 
 
 def _failure_raw(adapter: Adapter, result: ProcessResult, home: Path) -> str:

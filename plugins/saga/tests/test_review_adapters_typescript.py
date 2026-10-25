@@ -1062,9 +1062,11 @@ def test_stryker_survivor_on_changed_lines_blocks(tmp_path: Path) -> None:
 
 def test_stryker_past_deadline_records_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(T, "MUTATION_CAP_SECONDS", -1)
-    repo, _source = _stryker_repo(tmp_path)
+    repo, source = _stryker_repo(tmp_path)
     base = _commit(repo, "base")
-    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("a + b;", "a + b + 0;"), encoding="utf-8"
+    )
     head = _commit(repo, "head")
     output = tmp_path / "out"
     runner = _Calls(
@@ -1183,7 +1185,7 @@ def test_stryker_refuses_a_report_parent_outside_the_worktree(
     assert all("--version" in call for call in runner.calls)
 
 
-def test_stryker_killed_run_records_timeout(tmp_path: Path) -> None:
+def test_stryker_killed_run_records_cap(tmp_path: Path) -> None:
     repo, source = _stryker_repo(tmp_path)
     base = _commit(repo, "base")
     source.write_text(
@@ -1199,7 +1201,8 @@ def test_stryker_killed_run_records_timeout(tmp_path: Path) -> None:
     assert _read(output, "findings.json") == []
     degraded = _degraded(output, "stryker")
     assert len(degraded) == 1
-    assert degraded[0]["reason"] == "timeout"
+    # Issue 147: a mutation tool that runs out of time is recorded as cap, however it ran out.
+    assert degraded[0]["reason"] == "cap"
 
 
 def test_stryker_reads_the_report_file_not_stdout(tmp_path: Path) -> None:

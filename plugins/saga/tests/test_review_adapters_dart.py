@@ -545,7 +545,7 @@ def test_mutate4dart_past_deadline_records_cap(
     assert degraded[0]["reason"] == "cap"
 
 
-def test_mutate4dart_killed_run_records_timeout(tmp_path: Path) -> None:
+def test_mutate4dart_killed_run_records_cap(tmp_path: Path) -> None:
     repo, _source = _mutant_repo(tmp_path)
     base = _commit(repo, "base")
     (repo / "README.md").write_text("head\n", encoding="utf-8")
@@ -560,7 +560,7 @@ def test_mutate4dart_killed_run_records_timeout(tmp_path: Path) -> None:
     assert _read(output, "findings.json") == []
     degraded = _degraded(output, "mutate4dart")
     assert len(degraded) == 1
-    assert degraded[0]["reason"] == "timeout"
+    assert degraded[0]["reason"] == "cap"
 
 
 def _shuffle_repo(tmp_path: Path) -> tuple[Path, str, str]:

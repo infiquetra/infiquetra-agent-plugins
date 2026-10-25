@@ -132,11 +132,15 @@ class _Calls:
         *,
         base_payload: str = "{}",
         choose: Any = None,
+        keep: Path | None = None,
     ) -> None:
         self.base = base
         self.payload = payload
         self.base_payload = base_payload
         self.choose = choose
+        # Where to copy the cosmic-ray config while it exists: it lives in the adapter's scratch
+        # folder, which is removed when the adapter finishes (issue 147).
+        self.keep = keep
         self.calls: list[list[str]] = []
         self.envs: list[dict[str, str]] = []
 
@@ -147,6 +151,8 @@ class _Calls:
         assert isinstance(argv, list)
         self.calls.append(list(argv))
         self.envs.append(dict(env))
+        if self.keep is not None and "--with" in argv and "cosmic-ray==8.7.0" in argv:
+            shutil.copyfile(argv[-2], self.keep)
         version = _version_text(argv)
         if version is not None:
             return T.ProcessResult(0, version + "\n")
@@ -966,16 +972,17 @@ def test_import_linter_without_a_contract_does_not_degrade(tmp_path: Path) -> No
 
 
 def test_cosmic_ray_survivor_on_a_changed_line_blocks(tmp_path: Path) -> None:
+    kept = tmp_path / "kept-cosmic-ray.toml"
     repo, base, head = _changed(tmp_path)
     payload = json.dumps({"unfinished": False, "survivors": [{"path": "app.py", "line": 1}]})
     home = tmp_path / "home"
     output = tmp_path / "out"
     code = _run(
         repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
-        output, home, [_adapter("cosmic-ray")], _Calls(base, payload),
+        output, home, [_adapter("cosmic-ray")], _Calls(base, payload, keep=kept),
     )
     assert code == 0
-    toml = (home / "cosmic-ray.toml").read_text(encoding="utf-8")
+    toml = (kept).read_text(encoding="utf-8")
     assert base in toml
     assert "-p no:randomly" in toml
     assert _row(output, "surviving-mutant") == "testing.surviving-mutant"
@@ -983,6 +990,7 @@ def test_cosmic_ray_survivor_on_a_changed_line_blocks(tmp_path: Path) -> None:
 
 
 def test_cosmic_ray_module_path_lists_every_changed_python_file(tmp_path: Path) -> None:
+    kept = tmp_path / "kept-cosmic-ray.toml"
     repo, base, head = _repo(
         tmp_path,
         {
@@ -1002,10 +1010,10 @@ def test_cosmic_ray_module_path_lists_every_changed_python_file(tmp_path: Path) 
     home = tmp_path / "home"
     code = _run(
         repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
-        tmp_path / "out", home, [_adapter("cosmic-ray")], _Calls(base, payload),
+        tmp_path / "out", home, [_adapter("cosmic-ray")], _Calls(base, payload, keep=kept),
     )
     assert code == 0
-    toml = (home / "cosmic-ray.toml").read_text(encoding="utf-8")
+    toml = (kept).read_text(encoding="utf-8")
     assert 'module-path = ["app.py", "other.py", "pkg/nested.py"]' in toml
     assert "keep.py" not in toml
 
@@ -1342,15 +1350,16 @@ def test_pytest_socket_live_failure_is_fix_later(tmp_path: Path) -> None:
 
 
 def test_cosmic_ray_config_carries_the_distributor(tmp_path: Path) -> None:
+    kept = tmp_path / "kept-cosmic-ray.toml"
     repo, base, head = _changed(tmp_path)
     home = tmp_path / "home"
     payload = json.dumps({"unfinished": False, "survivors": []})
     code = _run(
         repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
-        tmp_path / "out", home, [_adapter("cosmic-ray")], _Calls(base, payload),
+        tmp_path / "out", home, [_adapter("cosmic-ray")], _Calls(base, payload, keep=kept),
     )
     assert code == 0
-    toml = (home / "cosmic-ray.toml").read_text(encoding="utf-8")
+    toml = (kept).read_text(encoding="utf-8")
     assert '[cosmic-ray.distributor]\nname = "local"' in toml
     assert 'module-path = ["app.py"]' in toml
     assert base in toml
@@ -1361,6 +1370,7 @@ def test_cosmic_ray_config_carries_the_distributor(tmp_path: Path) -> None:
     reason="cosmic-ray pin is not installed",
 )
 def test_cosmic_ray_exec_on_the_generated_config_exits_zero(tmp_path: Path) -> None:
+    kept = tmp_path / "kept-cosmic-ray.toml"
     repo, base, head = _repo(
         tmp_path,
         {"app.py": "def add(left, right):\n    return left\n"},
@@ -1373,10 +1383,10 @@ def test_cosmic_ray_exec_on_the_generated_config_exits_zero(tmp_path: Path) -> N
     payload = json.dumps({"unfinished": False, "survivors": []})
     code = _run(
         repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
-        tmp_path / "out", home, [_adapter("cosmic-ray")], _Calls(base, payload),
+        tmp_path / "out", home, [_adapter("cosmic-ray")], _Calls(base, payload, keep=kept),
     )
     assert code == 0
-    toml = home / "cosmic-ray.toml"
+    toml = kept
     session = home / "generated.sqlite"
     init = subprocess.run(
         ["cosmic-ray", "init", str(toml), str(session)],
@@ -1404,17 +1414,35 @@ def test_cosmic_ray_wrapper_head_is_the_current_interpreter(tmp_path: Path) -> N
     assert stripped[0] == sys.executable
 
 
-def test_cosmic_ray_generated_config_shares_the_baseline_timeout(tmp_path: Path) -> None:
+def test_cosmic_ray_leaves_nothing_in_the_runner_home(tmp_path: Path) -> None:
+    """Issue 147: the config and the 5.8 MB session database were written to the runner home and
+    survived into the next prepare."""
     repo, base, head = _changed(tmp_path)
     home = tmp_path / "home"
     payload = json.dumps({"unfinished": False, "survivors": []})
-    runner = _Calls(base, payload)
+    kept = tmp_path / "kept-cosmic-ray.toml"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
+        tmp_path / "out", home, [_adapter("cosmic-ray")], _Calls(base, payload, keep=kept),
+    )
+    assert code == 0
+    assert kept.is_file()
+    assert [path.name for path in home.rglob("*") if "cosmic" in path.name] == []
+    assert not list(home.rglob("*.sqlite"))
+
+
+def test_cosmic_ray_generated_config_shares_the_baseline_timeout(tmp_path: Path) -> None:
+    kept = tmp_path / "kept-cosmic-ray.toml"
+    repo, base, head = _changed(tmp_path)
+    home = tmp_path / "home"
+    payload = json.dumps({"unfinished": False, "survivors": []})
+    runner = _Calls(base, payload, keep=kept)
     code = _run(
         repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
         tmp_path / "out", home, [_adapter("cosmic-ray")], runner,
     )
     assert code == 0
-    toml = (home / "cosmic-ray.toml").read_text(encoding="utf-8")
+    toml = (kept).read_text(encoding="utf-8")
     assert "timeout = 300.0" in toml
     scan = next(argv for argv in runner.calls if "--with" in argv)
     assert scan[-1] == "300"
@@ -1571,6 +1599,7 @@ def test_cosmic_ray_dump_failure_marks_the_run_unfinished(tmp_path: Path) -> Non
 
 
 def test_cosmic_ray_test_command_resolves_bare_python(tmp_path: Path) -> None:
+    kept = tmp_path / "kept-cosmic-ray.toml"
     import tomllib
 
     for command in ("python -m pytest -q", "python3 -m pytest -q"):
@@ -1583,10 +1612,10 @@ def test_cosmic_ray_test_command_resolves_bare_python(tmp_path: Path) -> None:
         code = _run(
             repo, base, head, _profile(tmp_path / f"profile-{tag}.json", command),
             tmp_path / f"out-{tag}", home,
-            [_adapter("cosmic-ray")], _Calls(base, payload),
+            [_adapter("cosmic-ray")], _Calls(base, payload, keep=kept),
         )
         assert code == 0
-        with open(home / "cosmic-ray.toml", "rb") as handle:
+        with open(kept, "rb") as handle:
             written = tomllib.load(handle)["cosmic-ray"]["test-command"]
         assert written == f"{sys.executable} -m pytest -q -p no:randomly"
     passthrough = (
@@ -1604,15 +1633,16 @@ def test_cosmic_ray_test_command_resolves_bare_python(tmp_path: Path) -> None:
         code = _run(
             repo, base, head_sha, _profile(tmp_path / f"profile-{tag}.json", command),
             tmp_path / f"out-{tag}", home,
-            [_adapter("cosmic-ray")], _Calls(base, payload),
+            [_adapter("cosmic-ray")], _Calls(base, payload, keep=kept),
         )
         assert code == 0
-        with open(home / "cosmic-ray.toml", "rb") as handle:
+        with open(kept, "rb") as handle:
             written = tomllib.load(handle)["cosmic-ray"]["test-command"]
         assert written.split()[0] == head
 
 
 def test_cosmic_ray_worker_imports_pytest(tmp_path: Path) -> None:
+    kept = tmp_path / "kept-cosmic-ray.toml"
     repo, base, head = _repo(
         tmp_path,
         {"app.py": "def add(left, right):\n    return left\n"},
@@ -1625,7 +1655,7 @@ def test_cosmic_ray_worker_imports_pytest(tmp_path: Path) -> None:
     payload = json.dumps({"unfinished": False, "survivors": []})
     code = _run(
         repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
-        tmp_path / "out", home, [_adapter("cosmic-ray")], _Calls(base, payload),
+        tmp_path / "out", home, [_adapter("cosmic-ray")], _Calls(base, payload, keep=kept),
     )
     assert code == 0
     shim_dir = tmp_path / "shim"
@@ -1642,7 +1672,7 @@ def test_cosmic_ray_worker_imports_pytest(tmp_path: Path) -> None:
         STUB_OUTCOME=str(tmp_path / "outcome.txt"), STUB_COMMAND=str(seen),
         STUB_RECORD=str(tmp_path / "record.txt"),
     )
-    out = _run_wrapper(home / "cosmic-ray.toml", repo, env, "300")
+    out = _run_wrapper(kept, repo, env, "300")
     assert out["unfinished"] is False
     assert out["survivors"] == [{"path": "app.py", "line": 2}]
     assert seen.read_text(encoding="utf-8").startswith(sys.executable)
