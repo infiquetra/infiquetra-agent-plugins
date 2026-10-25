@@ -6,8 +6,8 @@
 
 **Author.** Jeff Cox
 
-**Evidence.** Running `review_command.py prepare` twice on every defect version of 20 corpus cases
-gave different packets for 17 of them, and the corpus harness stops a run at 3 such versions. In 16
+**Evidence.** Running `review_command.py prepare` twice on the same version of a branch gave
+different packets for most versions tried, across several languages. In nearly all of them
 the findings were identical and only a tool's stored raw-output hash (`raw_output` in
 `findings.json`, `grades.json` and `outcomes.json`) moved. Causes, each fixed with a test in
 `plugins/saga/tests`: knip, cfn-lint and SwiftLint list items in whatever order their file walk
@@ -17,8 +17,8 @@ folder (`_bare_rule_ids`, `review_adapters_all_languages.py`); Vite names its lo
 clock and quotes the worktree path inside colour codes, which `_stable_raw` scrubbed before
 removing them (`review_tools.py`); Jest warnings split adjacent suite blocks at random points
 (`_sorted_jest`). Two causes changed content, not just the hash: StrykerJS left
-`.stryker-tmp/sandbox-*` in the one worktree every tool shares, so knip reported 280 more unused
-files in the copy (`_TreeResidue`), and cfn-lint read a per-process hash seed and was handed
+`.stryker-tmp/sandbox-*` in the one worktree every tool shares, so knip reported hundreds of extra
+unused files (`_TreeResidue`), and cfn-lint read a per-process hash seed and was handed
 workflow files, giving false "'Resources' is a required property" findings (`PYTHONHASHSEED=0`,
 `_CFN_WRAPPER`). A mutation tool's budget check also ran before it said whether it had work, so
 cosmic-ray recorded `timeout` on one run and `cap` on the next.
@@ -26,7 +26,7 @@ cosmic-ray recorded `timeout` on one run and `cap` on the next.
 **Mechanism.** The hash is taken over the tool's text, so any ordering, clock, random folder name
 or colour code in that text moves it without any finding changing. Shared state is worse: tools
 run one after another in one worktree and one home, so what a tool saw depended on what an earlier
-tool left, and the repeat run also saw the first run's leftovers (the 5.8 MB cosmic-ray session,
+tool left, and the repeat run also saw the first run's leftovers (the cosmic-ray session database,
 the checkov copy folder). Cleaning that state touches an untrusted tree, so it must walk through
 directory descriptors opened without following links and restore files from stored blobs, not
 through `git restore`, which runs smudge filters.
