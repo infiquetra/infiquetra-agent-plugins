@@ -17,6 +17,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess  # nosec B404
 import sys
 import tempfile
@@ -3180,13 +3181,52 @@ def _link_env(
             dest.symlink_to(source, target_is_directory=source.is_dir())
 
 
+#: Git for the residue check runs with the same protections ``_worktree`` uses, and more: no hook,
+#: no fsmonitor command, and no Git LFS filter, because the tree being cleaned is untrusted.
+_RESIDUE_GIT = (
+    "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false",
+    "-c", "filter.lfs.smudge=", "-c", "filter.lfs.process=", "-c", "filter.lfs.required=false",
+)
 #: ``git status`` as the residue check reads it: NUL separated, untracked and ignored entries
-#: named once per folder, and no fsmonitor hook from the reviewed tree's configuration.
+#: named once per folder.
 _RESIDUE_STATUS = (
-    "-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z",
-    "--untracked-files=normal", "--ignored=traditional",
+    "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignored=traditional",
 )
 _RESTORE_BATCH = 200
+_DIR_FLAGS = (
+    getattr(os, "O_RDONLY", 0) | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+)
+#: Removal and restoring walk the tree through directory descriptors opened without following
+#: links. A platform without them gets no clean-up rather than a path-based one.
+_FD_SAFE = (
+    hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW") and hasattr(os, "fchmod")
+    and os.open in os.supports_dir_fd and os.unlink in os.supports_dir_fd
+    and os.rmdir in os.supports_dir_fd and os.mkdir in os.supports_dir_fd
+    and os.stat in os.supports_dir_fd and os.symlink in os.supports_dir_fd
+    and os.listdir in os.supports_fd
+)
+
+
+def _remove_at(dir_fd: int, name: str) -> None:
+    """Remove ``name`` below the open directory ``dir_fd``. A link is unlinked, never followed.
+
+    Every step is relative to a descriptor, and every directory is opened with ``O_NOFOLLOW``, so
+    a path component swapped for a symlink after it was checked fails the open instead of leading
+    out of the tree. A directory a tool left read-only is made owner-writable through its
+    descriptor first.
+    """
+    info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    if not stat.S_ISDIR(info.st_mode):
+        os.unlink(name, dir_fd=dir_fd)
+        return
+    child = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+    try:
+        os.fchmod(child, 0o700)
+        for entry in os.listdir(child):
+            _remove_at(child, entry)
+    finally:
+        os.close(child)
+    os.rmdir(name, dir_fd=dir_fd)
 
 
 class _TreeResidue:
@@ -3196,27 +3236,44 @@ class _TreeResidue:
     when it fails, and knip then reports the copy, so what a tool saw depended on what ran before
     it and on a random folder name. The state taken at construction is the baseline: the linked
     dependency folders and the settings files the runner stripped. ``clear`` removes every
-    untracked or ignored entry that is not in the baseline, never following a symlink, and
-    restores every tracked file the baseline did not already show as changed.
+    untracked or ignored entry that is not in the baseline and puts back every tracked file the
+    baseline did not already show as changed.
+
+    The worktree is untrusted, so nothing here follows a symlink and nothing leaves the worktree:
+    removal and restoring go through directory descriptors opened with ``O_NOFOLLOW``, and a
+    tracked file is rewritten from the object database (the stored blob), which runs no filter,
+    smudge or hook. ``subprocess_runner`` stops a tool's process group before it returns, so
+    nothing it started is writing while this runs. A descendant that deliberately started its own
+    session escapes that, as ``subprocess_runner`` documents; the descriptor-relative walk keeps
+    such a process from steering a removal outside the worktree, but not from re-creating files.
     """
 
     def __init__(self, root: Path) -> None:
         self.root = root
         self.root_real = os.path.realpath(root)
+        self.env = {
+            **os.environ, "GIT_LFS_SKIP_SMUDGE": "1", "GIT_LITERAL_PATHSPECS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+        }
         state = self._state()
         self.known: frozenset[str] = state[0] if state is not None else frozenset()
         self.changed: frozenset[str] = state[1] if state is not None else frozenset()
-        self.readable = state is not None
+        self.readable = state is not None and _FD_SAFE
 
-    def _state(self) -> tuple[frozenset[str], frozenset[str]] | None:
-        """``(untracked and ignored names, changed tracked names)``, or None when git declined."""
+    def _git(self, args: Sequence[str]) -> subprocess.CompletedProcess[bytes] | None:
         try:
             result = subprocess.run(  # nosec B603
-                ["git", *_RESIDUE_STATUS], cwd=self.root, capture_output=True, check=False,
+                ["git", *_RESIDUE_GIT, *args],
+                cwd=self.root, env=self.env, capture_output=True, check=False,
             )
         except OSError:
             return None
-        if result.returncode != 0:
+        return result if result.returncode == 0 else None
+
+    def _state(self) -> tuple[frozenset[str], frozenset[str]] | None:
+        """``(untracked and ignored names, changed tracked names)``, or None when git declined."""
+        result = self._git(_RESIDUE_STATUS)
+        if result is None:
             return None
         left: set[str] = set()
         changed: set[str] = set()
@@ -3244,73 +3301,102 @@ class _TreeResidue:
         if state is None:
             return
         removed = sorted(name for name in state[0] - self.known if self._remove(name))
-        edited = sorted(state[1] - self.changed)
-        restored = self._restore(edited)
+        restored = self._restore(sorted(state[1] - self.changed))
         if (removed or restored) and diagnostics_directory is not None:
             review_diagnostics.write_residue(
                 diagnostics_directory, adapter_id, removed, restored
             )
 
+    def _parts(self, name: str) -> list[str] | None:
+        parts = name.rstrip("/").split("/")
+        if not parts or any(part in ("", ".", "..") or "\0" in part for part in parts):
+            return None
+        return parts
+
+    def _open_parent(self, parts: Sequence[str], create: bool = False) -> int | None:
+        """A descriptor for the folder holding ``parts[-1]``, every step opened without following."""
+        try:
+            fd = os.open(self.root_real, _DIR_FLAGS)
+        except OSError:
+            return None
+        for part in parts[:-1]:
+            try:
+                try:
+                    child = os.open(part, _DIR_FLAGS, dir_fd=fd)
+                except FileNotFoundError:
+                    if not create:
+                        raise
+                    os.mkdir(part, 0o777, dir_fd=fd)
+                    child = os.open(part, _DIR_FLAGS, dir_fd=fd)
+            except OSError:
+                os.close(fd)
+                return None
+            os.close(fd)
+            fd = child
+        return fd
+
     def _remove(self, name: str) -> bool:
         """Delete one untracked or ignored entry inside the worktree. A symlink is unlinked."""
-        target = self.root / name.rstrip("/")
-        parent = os.path.realpath(target.parent)
-        if parent != self.root_real and not parent.startswith(self.root_real + os.sep):
+        parts = self._parts(name)
+        if parts is None:
+            return False
+        fd = self._open_parent(parts)
+        if fd is None:
             return False
         try:
-            if target.is_symlink() or not target.is_dir():
-                target.unlink()
-                return True
-            shutil.rmtree(target, ignore_errors=True)
-            if os.path.lexists(target):
-                _make_removable(target)
-                shutil.rmtree(target, ignore_errors=True)
-        except OSError:
+            _remove_at(fd, parts[-1])
+        except (OSError, RecursionError):
             return False
-        return not os.path.lexists(target)
+        finally:
+            os.close(fd)
+        return True
 
     def _restore(self, names: Sequence[str]) -> list[str]:
-        """Put tracked files the tool changed back to the reviewed commit."""
+        """Put tracked files the tool changed back to the reviewed commit, from stored blobs."""
         restored: list[str] = []
-        env = {**os.environ, "GIT_LITERAL_PATHSPECS": "1"}
         for start in range(0, len(names), _RESTORE_BATCH):
             batch = list(names[start:start + _RESTORE_BATCH])
-            # ``restore`` runs no hook, unlike a file checkout, which runs post-checkout.
-            done = _git(
-                self.root,
-                ["restore", "--source=HEAD", "--staged", "--worktree", "--", *batch],
-                env,
-            )
-            if done.returncode == 0:
-                restored.extend(batch)
+            listed = self._git(["ls-tree", "-z", "HEAD", "--", *batch])
+            if listed is None:
                 continue
-            for name in batch:  # one path git cannot restore must not hold back the rest
-                single = _git(
-                    self.root, ["restore", "--source=HEAD", "--staged", "--worktree", "--", name],
-                    env,
-                )
-                if single.returncode == 0:
+            for record in listed.stdout.split(b"\0"):
+                header, _tab, raw = record.partition(b"\t")
+                fields = header.split(b" ")
+                if not raw or len(fields) != 3 or fields[1] != b"blob":
+                    continue  # a submodule entry is not a file; nothing else changes here
+                name = os.fsdecode(raw)
+                blob = self._git(["cat-file", "blob", fields[2].decode()])
+                if blob is not None and self._write(name, fields[0], blob.stdout):
                     restored.append(name)
         return restored
 
-
-def _make_removable(path: Path) -> None:
-    """Let the owner list and delete a folder tree a tool left read-only. Symlinks stay untouched."""
-    if path.is_symlink():
-        return
-    try:
-        os.chmod(path, 0o700)
-    except OSError:
-        return
-    for directory, dirnames, _filenames in os.walk(path, followlinks=False):
-        for name in dirnames:
-            candidate = Path(directory) / name
-            if candidate.is_symlink():
-                continue
+    def _write(self, name: str, mode: bytes, data: bytes) -> bool:
+        """Write one tracked file, replacing whatever stands there. Nothing is followed."""
+        parts = self._parts(name)
+        if parts is None:
+            return False
+        fd = self._open_parent(parts, create=True)
+        if fd is None:
+            return False
+        try:
             try:
-                os.chmod(candidate, 0o700)
-            except OSError:
-                continue
+                _remove_at(fd, parts[-1])
+            except FileNotFoundError:
+                pass
+            if mode == b"120000":
+                os.symlink(os.fsdecode(data), parts[-1], dir_fd=fd)
+                return True
+            handle = os.open(
+                parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o755 if mode == b"100755" else 0o644, dir_fd=fd,
+            )
+            with os.fdopen(handle, "wb") as out:
+                out.write(data)
+            return True
+        except (OSError, RecursionError):
+            return False
+        finally:
+            os.close(fd)
 
 
 def _remove_tree(path: Path) -> None:

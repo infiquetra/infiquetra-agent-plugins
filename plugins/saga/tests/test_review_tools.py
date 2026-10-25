@@ -883,6 +883,79 @@ def test_a_tool_leaves_nothing_in_the_worktree_for_the_next_tool(tmp_path: Path)
         assert "stryker-tmp" not in (output / name).read_text(encoding="utf-8")
 
 
+def test_cleanup_restores_files_without_running_a_configured_filter(tmp_path: Path) -> None:
+    """The reviewed repository can name a filter driver in its attributes. Putting a tracked file
+    back reads the stored blob, so a smudge filter the operator configured does not run."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    flag = tmp_path / "armed"
+    log = tmp_path / "smudge.log"
+    script = tmp_path / "smudge.sh"
+    script.write_text(
+        f'#!/bin/sh\n[ -e {shlex.quote(str(flag))} ] && echo ran >> {shlex.quote(str(log))}\ncat\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    _git(repo, "config", "filter.probe.smudge", str(script))
+    _git(repo, "config", "filter.probe.clean", "cat")
+    (repo / ".gitattributes").write_text("*.dat filter=probe\n", encoding="utf-8")
+    (repo / "data.dat").write_text("one\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    seen: list[str] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if argv[0] == "first":
+            flag.write_text("armed\n", encoding="utf-8")
+            (cwd / "data.dat").write_text("changed by a tool\n", encoding="utf-8")
+        else:
+            seen.append((cwd / "data.dat").read_text(encoding="utf-8"))
+        return T.ProcessResult(0, "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
+    assert seen == ["one\n"]
+    assert not log.exists()
+
+
+def test_cleanup_removes_a_link_residue_and_never_follows_one(tmp_path: Path) -> None:
+    """A link left in the worktree is removed as a link. A path whose parent was swapped for a
+    link after the check is refused, so nothing outside the worktree is touched."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    _commit(repo, "base")
+    outside = tmp_path / "outside"
+    (outside / "inner").mkdir(parents=True)
+    (outside / "inner" / "victim.txt").write_text("keep\n", encoding="utf-8")
+    (outside / "victim.txt").write_text("keep\n", encoding="utf-8")
+    residue = T._TreeResidue(repo)
+    (repo / "link-out").symlink_to(outside, target_is_directory=True)
+    (repo / "file-link").symlink_to(outside / "victim.txt")
+    assert residue._remove("link-out") is True
+    assert residue._remove("file-link") is True
+    assert not os.path.lexists(repo / "link-out")
+    assert not os.path.lexists(repo / "file-link")
+    # The parent component is a link to a folder outside: refused, target untouched.
+    (repo / "swapped").symlink_to(outside, target_is_directory=True)
+    assert residue._remove("swapped/victim.txt") is False
+    assert residue._remove("swapped/inner") is False
+    assert residue._remove("../outside/victim.txt") is False
+    assert residue._write("swapped/victim.txt", b"100644", b"overwritten\n") is False
+    assert (outside / "victim.txt").read_text(encoding="utf-8") == "keep\n"
+    assert (outside / "inner" / "victim.txt").read_text(encoding="utf-8") == "keep\n"
+    assert os.path.islink(repo / "swapped")
+
+
 def test_the_settings_the_runner_stripped_stay_stripped_between_tools(tmp_path: Path) -> None:
     """The residue clean-up starts from the stripped tree, so it never puts a stripped file back."""
     repo = tmp_path / "repo"
