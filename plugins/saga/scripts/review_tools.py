@@ -1072,15 +1072,22 @@ def _run(
             for adapter in adapters:
                 _link_env(adapter, repo, head_root, head_sha, head_sha)
             head_languages = run_languages(head_root)
+            # What stands in the worktree now (the linked dependency folders, the stripped
+            # settings files) is what every tool starts from; whatever a tool adds or edits
+            # is undone before the next one runs.
+            residue = _TreeResidue(head_root)
             for adapter in adapters:
                 if adapter.mode == "fix" or not adapter.tool:
                     continue
-                pending.extend(_run_adapter(
-                    adapter, repo, base_sha, head_sha, head_root, change, home, profile,
-                    process, tool_env, deadline, degraded, items, base_markers,
-                    head_markers, head_languages,
-                    diagnostics_directory,
-                ))
+                try:
+                    pending.extend(_run_adapter(
+                        adapter, repo, base_sha, head_sha, head_root, change, home, profile,
+                        process, tool_env, deadline, degraded, items, base_markers,
+                        head_markers, head_languages,
+                        diagnostics_directory,
+                    ))
+                finally:
+                    residue.clear(adapter.id, diagnostics_directory)
             measurements: list[dict[str, Any]] = []
             cov_findings: list[dict[str, Any]] = []
             if framework:
@@ -3150,6 +3157,139 @@ def _link_env(
         dest = target_root / name
         if source.exists() and not os.path.lexists(dest):
             dest.symlink_to(source, target_is_directory=source.is_dir())
+
+
+#: ``git status`` as the residue check reads it: NUL separated, untracked and ignored entries
+#: named once per folder, and no fsmonitor hook from the reviewed tree's configuration.
+_RESIDUE_STATUS = (
+    "-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z",
+    "--untracked-files=normal", "--ignored=traditional",
+)
+_RESTORE_BATCH = 200
+
+
+class _TreeResidue:
+    """Undo what one tool leaves in the shared head worktree before the next tool runs.
+
+    The tools run one after another in one worktree. StrykerJS leaves ``.stryker-tmp/sandbox-*``
+    when it fails, and knip then reports the copy, so what a tool saw depended on what ran before
+    it and on a random folder name. The state taken at construction is the baseline: the linked
+    dependency folders and the settings files the runner stripped. ``clear`` removes every
+    untracked or ignored entry that is not in the baseline, never following a symlink, and
+    restores every tracked file the baseline did not already show as changed.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.root_real = os.path.realpath(root)
+        state = self._state()
+        self.known: frozenset[str] = state[0] if state is not None else frozenset()
+        self.changed: frozenset[str] = state[1] if state is not None else frozenset()
+        self.readable = state is not None
+
+    def _state(self) -> tuple[frozenset[str], frozenset[str]] | None:
+        """``(untracked and ignored names, changed tracked names)``, or None when git declined."""
+        try:
+            result = subprocess.run(  # nosec B603
+                ["git", *_RESIDUE_STATUS], cwd=self.root, capture_output=True, check=False,
+            )
+        except OSError:
+            return None
+        if result.returncode != 0:
+            return None
+        left: set[str] = set()
+        changed: set[str] = set()
+        entries = result.stdout.split(b"\0")
+        index = 0
+        while index < len(entries):
+            entry = entries[index]
+            index += 1
+            if len(entry) < 4:
+                continue
+            code, name = entry[:2], os.fsdecode(entry[3:])
+            if code[:1] in (b"R", b"C"):
+                index += 1  # a rename or copy lists its source as the next entry
+            if code in (b"??", b"!!"):
+                left.add(name)
+            else:
+                changed.add(name)
+        return frozenset(left), frozenset(changed)
+
+    def clear(self, adapter_id: str, diagnostics_directory: Path | None = None) -> None:
+        """Remove and restore what the tool that just ran left behind."""
+        if not self.readable:
+            return
+        state = self._state()
+        if state is None:
+            return
+        removed = sorted(name for name in state[0] - self.known if self._remove(name))
+        edited = sorted(state[1] - self.changed)
+        restored = self._restore(edited)
+        if (removed or restored) and diagnostics_directory is not None:
+            review_diagnostics.write_residue(
+                diagnostics_directory, adapter_id, removed, restored
+            )
+
+    def _remove(self, name: str) -> bool:
+        """Delete one untracked or ignored entry inside the worktree. A symlink is unlinked."""
+        target = self.root / name.rstrip("/")
+        parent = os.path.realpath(target.parent)
+        if parent != self.root_real and not parent.startswith(self.root_real + os.sep):
+            return False
+        try:
+            if target.is_symlink() or not target.is_dir():
+                target.unlink()
+                return True
+            shutil.rmtree(target, ignore_errors=True)
+            if os.path.lexists(target):
+                _make_removable(target)
+                shutil.rmtree(target, ignore_errors=True)
+        except OSError:
+            return False
+        return not os.path.lexists(target)
+
+    def _restore(self, names: Sequence[str]) -> list[str]:
+        """Put tracked files the tool changed back to the reviewed commit."""
+        restored: list[str] = []
+        env = {**os.environ, "GIT_LITERAL_PATHSPECS": "1"}
+        for start in range(0, len(names), _RESTORE_BATCH):
+            batch = list(names[start:start + _RESTORE_BATCH])
+            # ``restore`` runs no hook, unlike a file checkout, which runs post-checkout.
+            done = _git(
+                self.root,
+                ["restore", "--source=HEAD", "--staged", "--worktree", "--", *batch],
+                env,
+            )
+            if done.returncode == 0:
+                restored.extend(batch)
+                continue
+            for name in batch:  # one path git cannot restore must not hold back the rest
+                single = _git(
+                    self.root, ["restore", "--source=HEAD", "--staged", "--worktree", "--", name],
+                    env,
+                )
+                if single.returncode == 0:
+                    restored.append(name)
+        return restored
+
+
+def _make_removable(path: Path) -> None:
+    """Let the owner list and delete a folder tree a tool left read-only. Symlinks stay untouched."""
+    if path.is_symlink():
+        return
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        return
+    for directory, dirnames, _filenames in os.walk(path, followlinks=False):
+        for name in dirnames:
+            candidate = Path(directory) / name
+            if candidate.is_symlink():
+                continue
+            try:
+                os.chmod(candidate, 0o700)
+            except OSError:
+                continue
 
 
 def _remove_tree(path: Path) -> None:

@@ -8,6 +8,7 @@ import stat
 import sys
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import BinaryIO, Literal
@@ -151,6 +152,47 @@ def _read_owned_text(root: Path, relative: str, limit: int) -> TextSample | None
         return None
 
 
+def _private_root(root: Path) -> None:
+    """Create the diagnostics directory if needed, and refuse one that is not private."""
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = root.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o777 != 0o700:
+        raise ValueError("diagnostics directory must be a private mode-0700 directory")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise ValueError("diagnostics directory must belong to the current user")
+
+
+#: The most names one residue record lists; the counts are always exact.
+MAX_RESIDUE_NAMES = 200
+
+
+def write_residue(
+    root: Path, adapter: str, removed: Sequence[str], restored: Sequence[str],
+) -> None:
+    """Record which entries the runner removed or restored after ``adapter`` ran.
+
+    The names can reveal paths in the reviewed repository, so they live only in this private
+    directory and never in a record, a hash or a packet.
+    """
+    try:
+        _private_root(root)
+        directory = Path(tempfile.mkdtemp(prefix=f"{adapter}-residue-", dir=root))
+        body = {
+            "schema": "review_diagnostics.v1",
+            "adapter": adapter,
+            "removed_count": len(removed),
+            "removed": list(removed[:MAX_RESIDUE_NAMES]),
+            "restored_count": len(restored),
+            "restored": list(restored[:MAX_RESIDUE_NAMES]),
+        }
+        data = (json.dumps(body, indent=2, sort_keys=True) + "\n").encode()
+        descriptor = os.open(directory / "residue.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+    except (OSError, ValueError):
+        print("review diagnostics: residue record not written", file=sys.stderr)
+
+
 @dataclass(frozen=True)
 class AttemptRecord:
     schema: str
@@ -189,12 +231,7 @@ class Attempt:
         cls, root: Path, adapter: str, label: str,
         attempt: Literal["initial", "retry"], deadline: float | None,
     ) -> Attempt:
-        root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        info = root.lstat()
-        if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o777 != 0o700:
-            raise ValueError("diagnostics directory must be a private mode-0700 directory")
-        if hasattr(os, "getuid") and info.st_uid != os.getuid():
-            raise ValueError("diagnostics directory must belong to the current user")
+        _private_root(root)
         directory = Path(tempfile.mkdtemp(prefix=f"{adapter}-{attempt}-", dir=root))
         left = None if deadline is None else max(0.0, deadline - time.monotonic())
         return cls(directory, adapter, label, attempt, left)

@@ -1048,6 +1048,11 @@ def test_stryker_survivor_on_changed_lines_blocks(tmp_path: Path) -> None:
     assert "--testRunner" in argv and argv[argv.index("--testRunner") + 1] == "jest"
     assert "--reporters" in argv and argv[argv.index("--reporters") + 1] == "json"
     assert "--mutate" in argv
+    # Issue 147: the sandbox copy goes outside the worktree and is removed even after a failure.
+    assert argv[argv.index("--cleanTempDir") + 1] == "always"
+    temp = Path(argv[argv.index("--tempDirName") + 1])
+    assert temp.is_absolute() and temp.name == "stryker-tmp"
+    assert repo.resolve() not in temp.resolve().parents
     findings = _read(output, "findings.json")
     assert {finding["rule"]["ref"] for finding in findings} == {"surviving-mutant"}
     assert findings[0]["location"]["file"] == "src/example.js"

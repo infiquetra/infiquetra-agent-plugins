@@ -803,6 +803,112 @@ def test_the_environment_symlink_is_created_only_when_lockfile_blobs_match(
     assert all(linked is False for _sha, linked in observe.seen)
 
 
+def test_a_tool_leaves_nothing_in_the_worktree_for_the_next_tool(tmp_path: Path) -> None:
+    """Issue 147: StrykerJS left ``.stryker-tmp/sandbox-*`` in the shared head worktree and the
+    tools after it read the copy. Whatever one tool adds or edits is undone before the next runs."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "package-lock.json").write_text("lock\n", encoding="utf-8")
+    (repo / "tracked.txt").write_text("one\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    (repo / "node_modules").mkdir()
+    (repo / "node_modules" / "marker").write_text("dependency\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("not the worktree\n", encoding="utf-8")
+    seen: list[dict[str, Any]] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if argv[0] == "first":
+            sandbox = cwd / ".stryker-tmp" / "sandbox-AbC123"
+            sandbox.mkdir(parents=True)
+            (sandbox / "unused.ts").write_text("export const x = 1;\n", encoding="utf-8")
+            (sandbox / "locked").mkdir()
+            (sandbox / "locked" / "file").write_text("x\n", encoding="utf-8")
+            (sandbox / "locked").chmod(0o500)
+            (cwd / "stray.txt").write_text("left behind\n", encoding="utf-8")
+            (cwd / "tracked.txt").write_text("edited by a tool\n", encoding="utf-8")
+            (cwd / "README").unlink()
+            (cwd / "link-out").symlink_to(outside, target_is_directory=True)
+            (cwd / "cache").mkdir()
+            (cwd / "cache" / "link").symlink_to(outside, target_is_directory=True)
+            return T.ProcessResult(0, "scan\n")
+        seen.append({
+            "sandbox": (cwd / ".stryker-tmp").exists(),
+            "stray": (cwd / "stray.txt").exists(),
+            "link": os.path.lexists(cwd / "link-out"),
+            "cache": (cwd / "cache").exists(),
+            "tracked": (cwd / "tracked.txt").read_text(encoding="utf-8"),
+            "readme": (
+                (cwd / "README").read_text(encoding="utf-8") if (cwd / "README").exists() else None
+            ),
+            "node_modules": (cwd / "node_modules").is_symlink(),
+            "dependency": (cwd / "node_modules" / "marker").is_file(),
+        })
+        return T.ProcessResult(0, "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(
+            id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"],
+            env_dirs=("node_modules",), lockfiles=("package-lock.json",),
+        )
+
+    diagnostics = tmp_path / "diagnostics"
+    output = tmp_path / "out"
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+        diagnostics_directory=diagnostics,
+    ) == 0
+    assert seen == [{
+        "sandbox": False, "stray": False, "link": False, "cache": False,
+        "tracked": "one\n", "readme": "two\n", "node_modules": True, "dependency": True,
+    }]
+    # No link was followed, and the linked dependency folder still holds its files.
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "not the worktree\n"
+    assert (repo / "node_modules" / "marker").is_file()
+    # Removed names are logged to the diagnostics folder only, never to a record.
+    logged = [json.loads(path.read_text(encoding="utf-8")) for path in diagnostics.rglob("residue.json")]
+    assert len(logged) == 1
+    assert ".stryker-tmp/" in logged[0]["removed"]
+    assert "stray.txt" in logged[0]["removed"]
+    assert sorted(logged[0]["restored"]) == ["README", "tracked.txt"]
+    for name in _FOUR:
+        assert "stray.txt" not in (output / name).read_text(encoding="utf-8")
+        assert "stryker-tmp" not in (output / name).read_text(encoding="utf-8")
+
+
+def test_the_settings_the_runner_stripped_stay_stripped_between_tools(tmp_path: Path) -> None:
+    """The residue clean-up starts from the stripped tree, so it never puts a stripped file back."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / ".eslintrc.json").write_text("{}\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    seen: list[bool] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if not _version(argv) and argv[0] == "second":
+            seen.append((cwd / ".eslintrc.json").exists())
+        return T.ProcessResult(0, "1.0.0" if _version(argv) else "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
+    assert seen == [False]
+
+
 def test_raw_output_is_owner_only_under_the_home_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

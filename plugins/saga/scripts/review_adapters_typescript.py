@@ -566,6 +566,11 @@ def _invoke_stryker(context: ScanContext) -> list[str]:
         raise ToolGap("not-configured", "testing.surviving-mutant")
     _stage_tsconfig(context)
     argv = ["stryker", "run", "--testRunner", runner, "--reporters", "json"]
+    # The sandbox copy of the project goes to the adapter's scratch folder and is removed even
+    # after a failed run. Left in the worktree, knip and the later tools read the copy (issue 147).
+    if context.scratch is not None:
+        argv.extend(["--tempDirName", str(context.scratch / "stryker-tmp")])
+    argv.extend(["--cleanTempDir", "always"])
     staged = _stage_first_base(context, _STRYKER_CONFIGS)
     _refuse_relative_imports(staged, "testing.surviving-mutant")
     targets = _stryker_targets(context)
