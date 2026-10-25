@@ -82,12 +82,26 @@ def _bare_rule_ids(results: object) -> None:
         item["check_id"] = bare.group(0) if bare else _RENDERED_RULES.sub("saga-rules-", check_id)
 
 
+def _mask_rendered_rules(value: object) -> object:
+    """``value`` with the random rendered-rules folder name masked in every string it holds."""
+    if isinstance(value, str):
+        return _RENDERED_RULES.sub("saga-rules-", value)
+    if isinstance(value, list):
+        return [_mask_rendered_rules(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _mask_rendered_rules(item) for key, item in value.items()}
+    return value
+
+
 def _drop_semgrep_timing(data: dict[str, Any]) -> None:
     # semgrep --json always writes a top-level ``time`` object (rule parse time,
     # scanning time, peak memory); it differs on every run (issue 244).
     data.pop("time", None)
     data.pop("profiling_results", None)
     _bare_rule_ids(data.get("results"))
+    if "errors" in data:
+        # An error names the rule file it failed on, or quotes its path, so it carries the folder.
+        data["errors"] = _mask_rendered_rules(data["errors"])
     for key in ("results", "errors"):
         if key in data:
             data[key] = _sorted_items(data[key])

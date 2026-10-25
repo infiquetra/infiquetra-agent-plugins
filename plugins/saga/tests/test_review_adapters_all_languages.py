@@ -915,6 +915,18 @@ def test_semgrep_ids_naming_the_rendered_rules_folder_hash_once() -> None:
     assert first == second
     stored = json.loads(first)["results"]
     assert {item["check_id"] for item in stored} == {"saga.no-eval", "Users.me.home.saga-rules-.other.rule"}
+    def with_error(folder: str) -> str:
+        return json.dumps({"results": [], "errors": [{
+            "code": 3, "level": "warn", "type": "PartialParsing",
+            "rule_id": f"Users.me.home.{folder}.saga.no-eval",
+            "message": f"Syntax error in /Users/me/home/{folder}/rules/no-eval.yaml",
+            "spans": [{"file": f"/Users/me/home/{folder}/rules/no-eval.yaml"}],
+        }]})
+
+    assert A._stable_semgrep(with_error("saga-rules-ab12cd34")) == A._stable_semgrep(
+        with_error("saga-rules-zz99yy88")
+    )
+    assert "ab12cd34" not in A._stable_semgrep(with_error("saga-rules-ab12cd34"))
     unrelated = json.dumps({"results": [{"check_id": "python.lang.audit", "path": "a.py"}]})
     assert json.loads(A._stable_semgrep(unrelated))["results"][0]["check_id"] == "python.lang.audit"
 
