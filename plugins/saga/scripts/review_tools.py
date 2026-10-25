@@ -3290,9 +3290,10 @@ _RESIDUE_GIT = (
     "-c", "filter.lfs.smudge=", "-c", "filter.lfs.process=", "-c", "filter.lfs.required=false",
 )
 #: ``git status`` as the residue check reads it: NUL separated, untracked and ignored entries
-#: named once per folder.
+#: named once per folder, and no look inside a submodule.
 _RESIDUE_STATUS = (
     "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignored=traditional",
+    "--ignore-submodules=all",
 )
 _RESTORE_BATCH = 200
 _DIR_FLAGS = (
@@ -3344,7 +3345,13 @@ class _TreeResidue:
     The worktree is untrusted, so nothing here follows a symlink and nothing leaves the worktree:
     removal and restoring go through directory descriptors opened with ``O_NOFOLLOW``, and a
     tracked file is rewritten from the object database (the stored blob), which runs no filter,
-    smudge or hook. ``subprocess_runner`` stops a tool's process group before it returns, so
+    smudge or hook. The ``git status`` that finds the changes would run a configured clean filter
+    on a file whose size and time match the index. It runs with the system and global git
+    configuration switched off and, on git 2.40 or later, with the attributes read from the empty
+    tree (``--attr-source``), so the reviewed tree names no filter and none runs, whether the
+    driver is in the operator's global configuration or in the repository's own. On an older git
+    the repository's own configuration is still read, and a filter driver defined there can run.
+    ``subprocess_runner`` stops a tool's process group before it returns, so
     nothing it started is writing while this runs. A descendant that deliberately started its own
     session escapes that, as ``subprocess_runner`` documents; the descriptor-relative walk keeps
     such a process from steering a removal outside the worktree, but not from re-creating files.
@@ -3355,8 +3362,15 @@ class _TreeResidue:
         self.root_real = os.path.realpath(root)
         self.env = {
             **os.environ, "GIT_LFS_SKIP_SMUDGE": "1", "GIT_LITERAL_PATHSPECS": "1",
-            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_OPTIONAL_LOCKS": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
         }
+        self.prefix: tuple[str, ...] = ()
+        empty = self._git(["hash-object", "-t", "tree", os.devnull])
+        if empty is not None:
+            tree = empty.stdout.decode().strip()
+            self.prefix = ("--attr-source", tree)
+            if self._git(["status", "--porcelain=v1", "--ignore-submodules=all"]) is None:
+                self.prefix = ()  # a git before 2.40 does not take --attr-source
         state = self._state()
         self.known: frozenset[str] = state[0] if state is not None else frozenset()
         self.changed: frozenset[str] = state[1] if state is not None else frozenset()
@@ -3365,7 +3379,7 @@ class _TreeResidue:
     def _git(self, args: Sequence[str]) -> subprocess.CompletedProcess[bytes] | None:
         try:
             result = subprocess.run(  # nosec B603
-                ["git", *_RESIDUE_GIT, *args],
+                ["git", *self.prefix, *_RESIDUE_GIT, *args],
                 cwd=self.root, env=self.env, capture_output=True, check=False,
             )
         except OSError:

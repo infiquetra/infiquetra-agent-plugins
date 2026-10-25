@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
@@ -1004,6 +1005,60 @@ def test_cleanup_restores_files_without_running_a_configured_filter(tmp_path: Pa
         adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
     ) == 0
     assert seen == ["one\n"]
+    assert not log.exists()
+
+
+@pytest.mark.parametrize("where", ["global", "local"])
+def test_the_residue_check_runs_no_configured_clean_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str,
+) -> None:
+    """``git status`` runs a clean filter on a file whose size and time match the index. The
+    residue check must run none, whether the driver is in the operator's global git configuration
+    or in the repository's own."""
+    probe = subprocess.run(
+        ["git", "--attr-source", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "version"],
+        capture_output=True, check=False,
+    )
+    if probe.returncode != 0:
+        pytest.skip("git before 2.40 has no --attr-source")
+    flag = tmp_path / "armed"
+    log = tmp_path / "clean.log"
+    script = tmp_path / "clean.sh"
+    script.write_text(
+        f'#!/bin/sh\n[ -e {shlex.quote(str(flag))} ] && echo ran >> {shlex.quote(str(log))}\ncat\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    configuration = f'[filter "probe"]\n\tclean = {script}\n\tsmudge = cat\n'
+    if where == "global":
+        (tmp_path / "gitconfig").write_text(configuration, encoding="utf-8")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    repo = tmp_path / "repo"
+    _init(repo)
+    if where == "local":
+        _git(repo, "config", "filter.probe.clean", str(script))
+        _git(repo, "config", "filter.probe.smudge", "cat")
+    (repo / ".gitattributes").write_text("*.dat filter=probe\n", encoding="utf-8")
+    (repo / "data.dat").write_text("one\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if not _version(argv) and argv[0] == "first":
+            flag.write_text("armed\n", encoding="utf-8")
+            time.sleep(1.1)  # the index records the checkout time; a later file is not "clean"
+            (cwd / "data.dat").write_text("two\n", encoding="utf-8")  # same size as the original
+        return T.ProcessResult(0, "1.0.0" if _version(argv) else "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
     assert not log.exists()
 
 

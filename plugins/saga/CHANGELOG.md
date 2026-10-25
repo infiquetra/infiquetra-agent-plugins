@@ -92,7 +92,10 @@
   - After each tool the runner removes every untracked or ignored entry the tool added to the
     head worktree and restores any tracked file it changed. It never follows a symlink, never
     leaves the worktree, and keeps the linked dependency folders. It rewrites tracked files from
-    the stored blob, so no filter or hook runs. Removed names go to the private diagnostics
+    the stored blob, so no smudge filter or hook runs. The `git status` that finds the changes
+    runs with the system and global git configuration off and, on git 2.40 or later, with
+    attributes read from the empty tree, so no clean filter runs either; on an older git a
+    filter driver defined in the repository's own configuration can still run. Removed names go to the private diagnostics
     folder only. StrykerJS also gets `--cleanTempDir always`, and keeps its sandbox in the
     worktree's default `.stryker-tmp`, which the clean-up removes: Stryker links only real
     `node_modules` folders into a sandbox, so a sandbox outside the worktree cannot find the
