@@ -1415,7 +1415,7 @@ def test_cosmic_ray_wrapper_head_is_the_current_interpreter(tmp_path: Path) -> N
 
 
 def test_cosmic_ray_leaves_nothing_in_the_runner_home(tmp_path: Path) -> None:
-    """Issue 147: the config and the 5.8 MB session database were written to the runner home and
+    """Issue 147: the config and the session database were written to the runner home and
     survived into the next prepare."""
     repo, base, head = _changed(tmp_path)
     home = tmp_path / "home"
