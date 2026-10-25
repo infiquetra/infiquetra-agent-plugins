@@ -88,6 +88,17 @@ for C8 to extend.
 
 ### Fixed
 
+- `REVIEWER_SCRATCH_IGNORED` covers the tool caches a reviewer's own checks write into the
+  scratch copy, so saga's `finish` no longer refuses a review for them (it read each as an added
+  file that is not a reproduction test). Added: `.ruff_cache/`, `.mypy_cache/`, `.hypothesis/`,
+  `.eslintcache` and `*.tsbuildinfo` anywhere, matched whole at a path boundary. New
+  `REVIEWER_PACKAGE_CACHES` holds the folders other things also use, which count only at a
+  package root of the exported copy: `node_modules/.vite/` and `node_modules/.cache/`
+  (`package.json`), `.dart_tool/` (`pubspec.yaml`), `.build/` (`Package.swift`; its `debug`
+  symlink is ignored with it) and `cdk.out/` (`cdk.json`). Each entry's reason is in the code
+  comment. `ruff`, `mypy`, Dart 3.13 and Swift 6.4 were run to confirm the folders they write.
+  A real file beside a cache path, a cache name outside a package root, an edit to a tracked
+  file and a symlink elsewhere stay refused. No version bump.
 - **A Rust reviewer builds offline from the packet's vendored crates (issue #262).** When the
   packet's `dependencies.json` says saga vendored the head's Rust dependencies, and names a plain
   folder inside the packet, `launcher.py review` writes `cargo-home/config.toml` beside the copy

@@ -86,6 +86,21 @@
 
 ### Fixed
 
+- `prepare` stores only the jscpd clones that touch a changed file, as canonical sorted JSON,
+  and drops the report's totals. jscpd finds one clone more or fewer on identical input of a
+  large repository, so a hash over the whole report moved between two prepares of one change
+  while the findings did not. Parsing, and so the findings, are unchanged. A new
+  `Adapter.stable_raw_for_change` hook gives an adapter the changed paths for this.
+- `finish` no longer rejects a whole review because the reviewer's own lint and test runs left
+  a tool cache in the scratch copy. The launcher's list of paths that never count as changes
+  (the only list: saga reads the launcher's `scratch.changes` and keeps none of its own) now
+  covers `.ruff_cache/`, `.mypy_cache/`, `.hypothesis/`, `.eslintcache` and `*.tsbuildinfo`,
+  and, at a package root only, `node_modules/.vite/` and `node_modules/.cache/` (a folder with
+  a `package.json`), `.dart_tool/` (`pubspec.yaml`), SwiftPM's `.build/` (`Package.swift`) and
+  `cdk.out/` (`cdk.json`). A symlink inside one of those package caches is ignored with it
+  (SwiftPM makes `.build/debug`); a link anywhere else, a real file beside a cache path, a cache
+  name outside a package root and an edit to a tracked file are still refused. See the
+  agent-launcher changelog. No version bump.
 - Issue #147: running `prepare` twice on one change now gives the same packet, and two kinds of
   false finding go away. A review tool's stored-output hash is canonical: sorted, with volatile
   text removed, and with nothing left behind by an earlier tool.
