@@ -57,21 +57,8 @@ def _semgrep_argv(context: ScanContext) -> list[str]:
     return argv
 
 
-def _stable_json(text: str, drop: Callable[[dict[str, Any]], None]) -> str:
-    """A JSON report with its per-run fields removed, keys sorted. Text that is not JSON stays."""
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return text
-    if isinstance(data, dict):
-        drop(data)
-    return json.dumps(data, indent=2, sort_keys=True) + "\n"
-
-
-def _sorted_items(items: object) -> object:
-    if not isinstance(items, list):
-        return items
-    return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
+_stable_json = review_tools.stable_json
+_sorted_items = review_tools.sorted_items
 
 
 def _drop_semgrep_timing(data: dict[str, Any]) -> None:

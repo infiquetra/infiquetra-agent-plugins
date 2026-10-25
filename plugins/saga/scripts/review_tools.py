@@ -518,6 +518,27 @@ def _scrub(text: str, root: Path | None = None) -> str:
     return _scratch_pattern().sub(r"<tmp>/\1", text)
 
 
+def stable_json(text: str, drop: Callable[[dict[str, Any]], None]) -> str:
+    """A JSON report with its per-run fields removed, keys sorted. Text that is not JSON stays.
+
+    ``drop`` edits a top-level object in place; any other JSON document is only re-keyed.
+    """
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if isinstance(data, dict):
+        drop(data)
+    return json.dumps(data, indent=2, sort_keys=True) + "\n"
+
+
+def sorted_items(items: object) -> object:
+    """A list in canonical JSON order. Anything else is returned as it came."""
+    if not isinstance(items, list):
+        return items
+    return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
+
+
 def _stable_raw(adapter: Adapter, text: str) -> str:
     """Raw output as stored and hashed: scratch folders named stably, then the adapter's rewrite."""
     text = _scrub(text)

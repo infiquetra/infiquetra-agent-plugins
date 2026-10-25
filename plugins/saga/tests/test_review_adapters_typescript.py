@@ -1243,6 +1243,41 @@ def test_knip_unused_code_is_a_note(tmp_path: Path) -> None:
     assert _finding(output, "unused-dependency")["location"]["file"] == "package.json"
 
 
+def test_knip_runs_differing_only_in_issue_order_record_identical_bytes(tmp_path: Path) -> None:
+    """Issue 147: knip lists issues in the order its file walk finished, and the raw output hash
+    moved with it although the findings did not."""
+    repo, _source = _ts_repo(tmp_path)
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    payload = json.loads(_fixture("knip.json"))
+    payload["issues"][1]["exports"] = [{"name": "b", "line": 9}, {"name": "a", "line": 4}]
+    reordered = json.loads(json.dumps(payload))
+    reordered["issues"].reverse()
+    for issue in reordered["issues"]:
+        issue["exports"].reverse()
+    outputs = []
+    for run, document in enumerate((payload, reordered)):
+        output = tmp_path / f"out-{run}"
+        runner = _Calls(base, json.dumps(document), base_payload='{"issues": []}')
+        assert _run(
+            repo, base, head, _profile(tmp_path / "profile.json"), output,
+            tmp_path / "home", [_adapter("knip")], runner,
+        ) == 0
+        outputs.append(output)
+    assert len(_read(outputs[0], "findings.json")) == 4
+    for name in ("findings.json", "outcomes.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+    changed = json.loads(json.dumps(payload))
+    changed["issues"][0]["file"] = "src/other.js"
+    output = tmp_path / "out-changed"
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("knip")], _Calls(base, json.dumps(changed), base_payload='{"issues": []}'),
+    ) == 0
+    assert (output / "findings.json").read_bytes() != (outputs[0] / "findings.json").read_bytes()
+
+
 def test_knip_preexisting_entries_drop(tmp_path: Path) -> None:
     repo, _source = _ts_repo(tmp_path)
     base = _commit(repo, "base")

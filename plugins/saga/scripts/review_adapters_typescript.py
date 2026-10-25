@@ -10,6 +10,7 @@ import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -772,6 +773,31 @@ def _invoke_knip(context: ScanContext) -> list[str]:
     return ["knip", "--reporter", "json", "--config", str(staged)]
 
 
+def _sort_knip(data: dict[str, Any]) -> None:
+    """knip lists its issues in whatever order its file walk finished, so sort them.
+
+    Entries go by file, then by their canonical JSON, and each list inside an entry (exports,
+    types, dependencies) is sorted the same way (issue 147).
+    """
+    if "files" in data:
+        data["files"] = review_tools.sorted_items(data["files"])
+    issues = data.get("issues")
+    if not isinstance(issues, list):
+        return
+    for issue in issues:
+        if isinstance(issue, dict):
+            for key, value in issue.items():
+                issue[key] = review_tools.sorted_items(value)
+    data["issues"] = sorted(issues, key=lambda issue: (
+        str(issue.get("file") or "") if isinstance(issue, dict) else "",
+        json.dumps(issue, sort_keys=True),
+    ))
+
+
+def _stable_knip(text: str) -> str:
+    return review_tools.stable_json(text, _sort_knip)
+
+
 def _knip_name(item: object, fallback: str) -> str:
     if isinstance(item, str):
         return item
@@ -1001,7 +1027,10 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             gap_first=bool(row.get("gap_first")),
             base_files=tuple(str(item) for item in (row.get("base_files") or ())),
             local_bins=tuple(str(item) for item in (row.get("local_bins") or ())),
-            stable_raw=review_tools.stable_transcript if tool_id in _TRANSCRIPTS else None,
+            stable_raw=(
+                review_tools.stable_transcript if tool_id in _TRANSCRIPTS
+                else _stable_knip if tool_id == "knip" else None
+            ),
         ))
     return built
 
