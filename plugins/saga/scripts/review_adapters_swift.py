@@ -441,6 +441,8 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             gap_first=bool(row.get("gap_first")),
             base_files=tuple(str(item) for item in (row.get("base_files") or ())),
             local_bins=tuple(str(item) for item in (row.get("local_bins") or ())),
+            # SwiftLint lists violations in the order its file walk finished (issue 147).
+            stable_raw=review_tools.stable_sorted_list if tool_id == "swiftlint" else None,
         ))
     return built
 

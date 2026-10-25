@@ -388,6 +388,20 @@ def test_swiftlint_error_blocks_warning_fixes_later(tmp_path: Path) -> None:
     )
 
 
+def test_swiftlint_runs_differing_only_in_violation_order_hash_once() -> None:
+    """Issue 147: SwiftLint lists violations in the order its file walk finished."""
+    violations = json.loads(_fixture("swiftlint.json"))
+    assert len(violations) > 1
+    reordered = list(reversed(violations))
+    adapter = _adapter("swiftlint")
+    assert T._stable_raw(adapter, json.dumps(violations)) == T._stable_raw(
+        adapter, json.dumps(reordered)
+    )
+    assert T._stable_raw(adapter, json.dumps(violations)) != T._stable_raw(
+        adapter, json.dumps(violations[1:])
+    )
+
+
 def test_swiftlint_off_change_drops(tmp_path: Path) -> None:
     repo, _source = _lint_repo(tmp_path)
     base = _commit(repo, "base")
