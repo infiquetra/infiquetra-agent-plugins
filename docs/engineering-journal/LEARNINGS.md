@@ -1,5 +1,42 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-26
+
+### A re-run matcher that falls back to comparing a last line will fail on every runner whose last line carries a run time, so each runner you rely on needs its own parser
+
+**Author.** Jeff Cox
+
+**Evidence.** A measured TypeScript reproduction run with bun. The reviewer's reproduction test
+failed again on re-run, yet `finish` recorded `re-run-mismatch`. Bun was the
+only TypeScript runner that works inside the re-run sandbox, so every bun reproduction was lost.
+The matcher is `plugins/saga/scripts/reproduction_match.py`; the fix adds `_bun` and widens
+`normalise`. Tests: `test_bun_durations_and_scratch_paths_do_not_change_the_answer`,
+`test_bun_a_different_assertion_does_not_match`,
+`test_fallback_ignores_trailing_durations_and_absolute_path_directories`
+(`plugins/saga/tests/test_reproduction_match.py`, synthetic transcripts `bun_*.txt`).
+
+**Mechanism.** The matcher only knows runners it has a parser for. For any other output it keeps
+the last specific line and requires it word for word in the re-run. Bun's last specific line is
+`(fail) <suite> > <test> [0.85ms]`, and the duration changes on every run, as do absolute scratch
+directories in stack frames, which the old normalisation only handled at the very start of a
+line. Bun also prints the error block before its `(fail)` line, not after, so a parser that
+reads a failure's body forward from the header (as the Vitest one does) finds nothing. Bun
+repeats its `(fail)` lines in a recap after `N tests failed:`, which has to be skipped or each
+failure is read twice, the second time with no block.
+A reviewer's recording often starts after bun's file header, and a test is usually cited by its
+file path alone; a failure with no file then never fits a path-only citation, so the first fix
+still returned no match on a real recording. The bun parser now reads the file from the test file
+in the failure's own stack frame (`test_bun_bare_path_citation_*`). Bun also hides `(pass)` lines
+when it runs for an agent, so a block cannot start after the previous result line: it starts at
+the code excerpt or the `error:` line (`test_bun_agent_mode_recording_matches_a_plain_rerun_*`).
+
+**Generalizable rule.** When a runner starts being used, add its parser and a fixture for it in
+the same change; the word-for-word fallback is a safety net, not a parser. Normalise only what
+is known to vary, and only where it varies (bun's trailing time on its own result lines, the
+directories of an absolute `file:line` location), so a different test or a different assertion
+value, including one that is a path or a bracketed time, still mismatches. A shared normaliser
+widened for one runner changes every runner's answer.
+
 ## 2026-10-25
 
 ### A check that compares stored output must hash only what its findings depend on, and an ignore list must know every tool the reviewer runs

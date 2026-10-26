@@ -1,0 +1,10 @@
+bun test v1.2.0 (abcdef01)
+
+tests/add.test.ts:
+(pass) math > adds [0.40ms]
+(pass) math > ok [0.10ms]
+
+ 2 pass
+ 0 fail
+ 2 expect() calls
+Ran 2 tests across 1 files. [12.00ms]

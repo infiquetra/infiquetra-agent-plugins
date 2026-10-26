@@ -379,3 +379,268 @@ def test_excess_failure_count_fails_closed() -> None:
 def test_assertion_values_after_long_common_prefix_must_agree() -> None:
     recorded = "---- repro stdout ----\nassertion failed: " + "x" * 250 + " expected 10000\n"
     assert not M.matches(1, recorded.replace("10000", "20000"), recorded, "test.rs::repro")
+
+
+# bun test. These transcripts are synthetic: written to bun's documented output (an error block,
+# then a ``(fail) suite > name [time]`` line, then a recap), with no real project content.
+BUN = "tests/add.test.ts::math adds"
+
+
+def _bun_vary(text: str) -> str:
+    """The same run again: every duration and every scratch directory is different."""
+    text = re.sub(r"\[(\d+)\.(\d+)ms\]", lambda m: f"[{int(m[1]) + 7}.{m[2]}3ms]", text)
+    text = re.sub(r"\[(\d+)\.00ms\]", "[999.00ms]", text)
+    text = text.replace("/tmp/scratch-8f3a1c/", "/private/var/folders/aa/bb/T/scratch-77d2/")
+    return text.replace("/private/var/folders/qz/tmp.Xk29Ab/", "/home/operator/work/other/")
+
+
+@pytest.mark.parametrize(
+    ("rerun", "recorded"),
+    [
+        ("bun_two_failures", "bun_two_failures"),
+        ("bun_one_failure", "bun_two_failures"),
+        ("bun_two_failures", "bun_one_failure"),
+    ],
+)
+def test_bun_failing_the_same_way_matches(rerun: str, recorded: str) -> None:
+    assert _matches(rerun, recorded, BUN)
+    assert _matches(rerun, recorded, "tests/add.test.ts::math > adds")
+    assert _matches(rerun, recorded, "add.test.ts::math adds")
+
+
+def test_bun_reads_the_failing_tests_and_their_assertion_blocks() -> None:
+    found = {(item.file, item.name): item for item in M.failed_tests(_text("bun_two_failures"))}
+    assert set(found) == {
+        ("tests/add.test.ts", "math > adds"),
+        ("tests/add.test.ts", "math > other"),
+    }
+    adds = found[("tests/add.test.ts", "math > adds")]
+    assert any(line.startswith("error: expect(received).toBe(expected)") for line in adds.body)
+    assert "Expected: 5" in adds.body and "Received: -1" in adds.body
+    assert not any("other broke" in line for line in adds.body)
+    assert M.failed_tests(_text("bun_pass")) == []
+
+
+def test_bun_durations_and_scratch_paths_do_not_change_the_answer() -> None:
+    for fixture in ("bun_two_failures", "bun_one_failure"):
+        changed = _bun_vary(_text(fixture))
+        assert changed != _text(fixture)
+        assert M.matches(1, changed, _text("bun_two_failures"), BUN)
+        assert M.matches(1, _text("bun_two_failures"), changed, BUN)
+        assert M.matches(1, _coloured(changed), _text(fixture), BUN)
+
+
+def test_bun_a_different_failing_test_does_not_match() -> None:
+    assert not _matches("bun_two_failures", "bun_two_failures", "tests/add.test.ts::math ok")
+    assert not _matches("bun_one_failure", "bun_two_failures", "tests/add.test.ts::math other")
+    # the cited test passes in the re-run while another test fails
+    passing_cited = _text("bun_two_failures").replace("(fail) math > adds", "(pass) math > adds")
+    assert not M.matches(1, passing_cited, _text("bun_two_failures"), BUN)
+    # the re-run fails a different test than the one recorded
+    assert not M.matches(1, _text("bun_two_failures"), _text("bun_one_failure"),
+                         "tests/add.test.ts::math other")
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [("Expected: 5", "Expected: 6"), ("Received: -1", "Received: -2"),
+     ("toBe(expected)", "toEqual(expected)")],
+)
+def test_bun_a_different_assertion_does_not_match(before: str, after: str) -> None:
+    changed = _text("bun_one_failure").replace(before, after)
+    assert changed != _text("bun_one_failure")
+    assert not M.matches(1, changed, _text("bun_two_failures"), BUN)
+    assert not M.matches(1, _text("bun_two_failures"), changed, BUN)
+
+
+def test_bun_a_passing_run_does_not_match() -> None:
+    assert not M.matches(0, _text("bun_pass"), _text("bun_two_failures"), BUN)
+    # a non-zero exit with nothing failing in the output is not the recorded failure either
+    assert not M.matches(1, _text("bun_pass"), _text("bun_two_failures"), BUN)
+
+
+def test_fallback_ignores_trailing_durations_and_absolute_path_directories() -> None:
+    recorded = (
+        "(fail) math > adds [0.85ms]\n"
+        "      at <anonymous> (/tmp/scratch-8f3a1c/tests/add.test.ts:5:24)\n"
+    )
+    rerun = recorded.replace("0.85ms", "1.40ms").replace("/tmp/scratch-8f3a1c", "/var/other/dir")
+    # no known runner's failure format and no test cited: the last specific line decides
+    assert M.matches(1, rerun, recorded, "")
+    assert M.matches(1, rerun, "(fail) math > adds [0.85ms]\n", "")
+    assert M.matches(1, "(fail) math > adds [2.50s]\n", "(fail) math > adds [0.85ms]\n", "")
+    # a different failing test or a different line is still a mismatch
+    assert not M.matches(1, "(fail) math > other [0.85ms]\n", "(fail) math > adds [0.85ms]\n", "")
+    assert not M.matches(1, rerun, "(fail) math > adds [0.85ms]\n      at <anonymous> (x.ts:6:24)\n", "")
+
+
+def test_normalise_is_narrow_about_paths_and_durations() -> None:
+    assert M.normalise("at /a/b/file.ts:12:5") == "at file.ts:12:5"
+    assert M.normalise("at fn (/a/b/file.ts:12:5)") == "at fn (file.ts:12:5)"
+    assert M.normalise("(fail) math > adds [0.85ms]") == "(fail) math > adds"
+    # relative paths, URLs and values inside the assertion keep what they say
+    assert M.normalise("see ./a/b.ts and src/c.ts") == "see ./a/b.ts and src/c.ts"
+    assert M.normalise("GET http://host/a/b.ts") == "GET http://host/a/b.ts"
+    assert M.normalise("Expected: 5 [3ms] more") == "Expected: 5 [3ms] more"
+    assert M.normalise("Received: [1, 2]") == "Received: [1, 2]"
+
+
+# A bun recording with no file header, cited by its bare file path (the common case for bun).
+BUN_PATH = "lib/calc/calc.test.ts"
+BUN_PASSING = (
+    "bun test v1.2.0 (abcdef01)\n\nlib/calc/calc.test.ts:\n"
+    "(pass) calc > doubles [0.40ms]\n"
+    "\n 4 pass\n 0 fail\n 5 expect() calls\nRan 4 tests across 1 file. [12.00ms]\n"
+)
+
+
+def _headerless(name: str) -> str:
+    return _text(f"bun_headerless_{name}")
+
+
+def test_bun_headerless_failure_takes_its_file_from_its_own_stack_frame() -> None:
+    (found,) = M.failed_tests(_headerless("recorded"))
+    assert found.name == "calc > doubles"
+    assert found.file is not None and found.file.endswith("lib/calc/calc.test.ts")
+
+
+@pytest.mark.parametrize("rerun", ["recorded", "rerun"])
+@pytest.mark.parametrize("recorded", ["recorded", "rerun"])
+def test_bun_bare_path_citation_matches_identical_output_with_or_without_the_summary(
+    rerun: str, recorded: str,
+) -> None:
+    assert M.matches(1, _headerless(rerun), _headerless(recorded), BUN_PATH)
+
+
+def test_bun_bare_path_citation_ignores_a_changed_duration() -> None:
+    changed = _headerless("rerun").replace("[0.50ms]", "[7.31ms]").replace("[12.00ms]", "[91.20ms]")
+    assert changed != _headerless("rerun")
+    assert M.matches(1, changed, _headerless("recorded"), BUN_PATH)
+    assert M.matches(1, _headerless("recorded"), changed, BUN_PATH)
+
+
+def test_bun_bare_path_citation_ignores_a_changed_scratch_path() -> None:
+    changed = _headerless("rerun").replace(
+        "/abs/scratch/run-0001/copy/", "/private/var/folders/zz/T/other-9/copy/",
+    )
+    assert changed != _headerless("rerun")
+    assert M.matches(1, changed, _headerless("recorded"), BUN_PATH)
+    assert M.matches(1, _headerless("recorded"), changed, BUN_PATH)
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [("Received: 9", "Received: 10"), ("Expected: 8", "Expected: 7"),
+     ("error: double(4) came out", "error: double(4) never came out")],
+)
+def test_bun_bare_path_citation_with_a_different_assertion_does_not_match(
+    before: str, after: str,
+) -> None:
+    changed = _headerless("rerun").replace(before, after)
+    assert changed != _headerless("rerun")
+    assert not M.matches(1, changed, _headerless("recorded"), BUN_PATH)
+
+
+def test_bun_bare_path_citation_of_another_file_or_a_passing_run_does_not_match() -> None:
+    assert not M.matches(1, _headerless("rerun"), _headerless("recorded"), "lib/other/other.test.ts")
+    assert not M.matches(0, BUN_PASSING, _headerless("recorded"), BUN_PATH)
+    assert not M.matches(1, BUN_PASSING, _headerless("recorded"), BUN_PATH)
+    assert not M.matches(0, _headerless("rerun"), _headerless("recorded"), BUN_PATH)
+
+
+def test_bun_agent_mode_recording_matches_a_plain_rerun_with_earlier_console_output() -> None:
+    """bun hides ``(pass)`` lines for an agent, so a reviewer records without them."""
+    block = _headerless("recorded")
+    recorded = "log from an earlier test\nsecond log line\n" + block
+    rerun = (
+        "bun test v1.3.0 (abcdef01)\n\nlib/calc/calc.test.ts:\n"
+        "log from an earlier test\nsecond log line\n"
+        "(pass) calc > passes [0.10ms]\n" + block
+        + "\n 3 pass\n 1 fail\n 5 expect() calls\nRan 4 tests across 1 file. [12.00ms]\n"
+    )
+    assert "(pass)" not in recorded
+    assert M.matches(1, rerun, recorded, BUN_PATH)
+    assert M.matches(1, recorded, rerun, BUN_PATH)
+    assert not M.matches(1, rerun.replace("Received: 9", "Received: 5"), recorded, BUN_PATH)
+
+
+def test_bun_parsing_a_very_long_line_is_bounded() -> None:
+    import time
+
+    long_line = "at " + "(a.test.ts " * 40_000
+    text = _headerless("recorded").replace(
+        "      at <anonymous> (/abs/scratch", long_line + "\n      at <anonymous> (/abs/scratch",
+    )
+    started = time.monotonic()
+    assert M.matches(1, text, _headerless("recorded"), BUN_PATH) in {True, False}
+    for line in ("at " + "(" * 390_000, "(fail) " + " " * 390_000, " " * 390_000 + "x.test.ts:"):
+        M.failed_tests(line + "\n(fail) calc > doubles\n")
+        M.normalise(line)
+    assert time.monotonic() - started < 5
+
+
+def test_bun_a_result_name_keeps_a_bracket_that_is_not_a_time() -> None:
+    names = [item.name for item in M.failed_tests("error: x\n(fail) calc > adds [1, 2] [0.5ms]\n")]
+    assert names == ["calc > adds [1, 2]"]
+    names = [item.name for item in M.failed_tests("error: x\n(fail) calc > adds [1, 2]\n")]
+    assert names == ["calc > adds [1, 2]"]
+
+
+def test_bun_a_line_ending_in_a_colon_is_not_a_file_header_unless_it_names_a_test_file() -> None:
+    text = "notes.js:\n  console output\nerror: boom\n(fail) calc > doubles\n"
+    (found,) = M.failed_tests(text)
+    assert found.file is None
+    text = "lib/calc/calc.test.ts:\nerror: boom\n(fail) calc > doubles\n"
+    (found,) = M.failed_tests(text)
+    assert found.file == "lib/calc/calc.test.ts"
+
+
+# The shared normalisation must not make two different failures equal in any runner.
+_PYTEST = (
+    "=== FAILURES ===\n___ test_save ___\n\n    def test_save():\n"
+    ">       assert False\nE       AssertionError: {message}\n\ntest_save.py:2: AssertionError\n"
+    "=== short test summary info ===\nFAILED test_save.py::test_save - AssertionError: {message}\n"
+)
+_VITEST = (
+    " FAIL  save.test.js > saves\nAssertionError: expected '{path}' to be '{other}' "
+    "// Object.is equality\n \u276f save.test.js:4:39\n"
+)
+_BUN = (
+    "error: expect(received).toBe(expected)\n\nExpected: \"{path}\"\nReceived: \"{other}\"\n\n"
+    "      at <anonymous> (/abs/dir/save.test.ts:4:9)\n(fail) save > saves [0.50ms]\n"
+)
+_PAIRS = [
+    ("resolved /srv/data/out.csv", "resolved /srv/other/out.csv"),
+    ("GET /api/v1/users.json", "GET /api/v2/users.json"),
+    ("PosixPath('/tmp/x/id_rsa.pub')", "PosixPath('/etc/x/id_rsa.pub')"),
+    ("/var/www/../../etc/passwd.bak", "/var/www/etc/passwd.bak"),
+    ("got [30s]", "got [45s]"),
+    ("got [5m]", "got [10m]"),
+]
+
+
+@pytest.mark.parametrize(("first", "second"), _PAIRS)
+def test_values_that_differ_only_in_a_path_or_a_bracketed_time_stay_different(
+    first: str, second: str,
+) -> None:
+    assert M.normalise(first) != M.normalise(second)
+    assert not M.matches(1, f"AssertionError: {first}\n", f"AssertionError: {second}\n", "")
+    one, two = (_PYTEST.format(message=text) for text in (first, second))
+    assert M.matches(1, one, one, "test_save.py::test_save")
+    assert not M.matches(1, one, two, "test_save.py::test_save")
+    assert not M.matches(1, two, one, "test_save.py::test_save")
+
+
+def test_vitest_expected_and_received_differing_only_in_directory_do_not_match() -> None:
+    one = _VITEST.format(path="/srv/data/out.csv", other="/etc/a/out.csv")
+    two = _VITEST.format(path="/srv/data/out.csv", other="/etc/b/out.csv")
+    assert M.matches(1, one, one, "save.test.js::saves")
+    assert not M.matches(1, one, two, "save.test.js::saves")
+
+
+def test_bun_expected_and_received_differing_only_in_directory_do_not_match() -> None:
+    one = _BUN.format(path="/srv/a/out.csv", other="/srv/b/out.csv")
+    two = _BUN.format(path="/srv/a/out.csv", other="/srv/c/out.csv")
+    cited = "save.test.ts::save saves"
+    assert M.matches(1, one, one, cited)
+    assert not M.matches(1, one, two, cited)
