@@ -28,8 +28,11 @@ of first. A name like `.build/` or `node_modules/.cache/` is only a cache at a p
 those entries check for the package's marker file in the exported copy; a Swift build also makes
 a `debug` symlink inside `.build/`, which the link rule would otherwise still refuse. For the
 hash, a tool whose own output is unstable cannot be made canonical by sorting: the report's total
-counts every clone, and the clone set itself varies. The only stable part is the part the
-findings read, which for jscpd is the clones that touch a changed file.
+counts every clone, and the clone set itself varies. The stable part is the part the
+findings read. For jscpd that is the clones that touch a changed file plus the clones behind a
+kept finding: the tool is compared base against head, so a clone between two unchanged files
+that is new in head is a finding too, and a first version that kept only changed-file clones
+stored a report without the clone its own finding pointed at.
 
 **Generalizable rule.** Put one authority behind each "does this count" decision and extend it
 when a new tool is allowed to run; anchor every ignore entry to a marker so it cannot swallow a

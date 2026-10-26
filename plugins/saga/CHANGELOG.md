@@ -86,11 +86,14 @@
 
 ### Fixed
 
-- `prepare` stores only the jscpd clones that touch a changed file, as canonical sorted JSON,
-  and drops the report's totals. jscpd finds one clone more or fewer on identical input of a
-  large repository, so a hash over the whole report moved between two prepares of one change
-  while the findings did not. Parsing, and so the findings, are unchanged. A new
-  `Adapter.stable_raw_for_change` hook gives an adapter the changed paths for this.
+- `prepare` stores only the jscpd clones that touch a changed file or stand behind a kept
+  finding, as canonical sorted JSON, and drops the report's totals. jscpd finds one clone more or
+  fewer on identical input of a large repository, so a hash over the whole report moved between
+  two prepares of one change while the findings did not. jscpd is compared base against head,
+  so a clone between two unchanged files that is new in head is a finding; its clone is kept in
+  the stored report (matched on the hit's anchor), and the stored copy is made after the kept
+  hits are known. Parsing, and so the findings, are unchanged. A new
+  `Adapter.stable_raw_for_change` hook gives an adapter the changed paths and the kept anchors.
 - `finish` no longer rejects a whole review because the reviewer's own lint and test runs left
   a tool cache in the scratch copy. The launcher's list of paths that never count as changes
   (the only list: saga reads the launcher's `scratch.changes` and keeps none of its own) now

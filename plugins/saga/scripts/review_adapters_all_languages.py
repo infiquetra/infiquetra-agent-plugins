@@ -119,11 +119,25 @@ def _drop_jscpd_date(data: dict[str, Any]) -> None:
 _JSCPD_FORMAT_SUFFIX = re.compile(r":[A-Za-z0-9_+-]+$")
 
 
+def _jscpd_path(name: str) -> str:
+    """A clone's file path: the language suffix some jscpd versions add is dropped."""
+    return _JSCPD_FORMAT_SUFFIX.sub("", name).replace("\\", "/")
+
+
+def _jscpd_anchor(clone: dict[str, Any]) -> str:
+    """The anchor ``_parse_jscpd`` gives this clone's hit: a hash of the two file names."""
+    first = clone.get("firstFile") if isinstance(clone.get("firstFile"), dict) else {}
+    second = clone.get("secondFile") if isinstance(clone.get("secondFile"), dict) else {}
+    names = f"{first.get('name') or '.'}\n{second.get('name') or '.'}"
+    return hashlib.sha256(names.encode()).hexdigest()[:16]
+
+
 def _jscpd_touches(clone: object, changed: frozenset[str]) -> bool:
     """True when either file of a clone is one of the changed files.
 
-    jscpd names a file by its path, with the language after a colon in some versions. The path may
-    carry a scan-root prefix, so every trailing run of its segments is tried.
+    The path must equal a changed path. Only when it starts with one of saga's own scratch
+    folders (a scan root given as an absolute path) is that prefix dropped and the rest compared,
+    so a changed ``src/a.ts`` does not pull in the clones of ``pkg/src/a.ts``.
     """
     if not isinstance(clone, dict):
         return False
@@ -132,28 +146,38 @@ def _jscpd_touches(clone: object, changed: frozenset[str]) -> bool:
         name = entry.get("name") if isinstance(entry, dict) else None
         if not isinstance(name, str):
             continue
-        parts = _JSCPD_FORMAT_SUFFIX.sub("", name).replace("\\", "/").split("/")
-        if any("/".join(parts[start:]) in changed for start in range(len(parts))):
+        path = _jscpd_path(name)
+        if path in changed:
             return True
+        prefix = review_tools._scratch_pattern().match(path)
+        if prefix is not None and path[prefix.end():].startswith("/"):
+            if path[prefix.end() + 1:] in changed:
+                return True
     return False
 
 
-def _stable_jscpd_for_change(text: str, changed: frozenset[str]) -> str:
-    """The clones that touch the change's files, in canonical order, and nothing else.
+def _jscpd_for_change(text: str, changed: frozenset[str], anchors: frozenset[str]) -> str:
+    """The clones that touch a changed file or stand behind a kept hit, and nothing else.
 
-    jscpd finds a different number of clones on identical input on a large repository (one more or
+    jscpd finds a different number of clones on identical input of a large repository (one more or
     fewer in a run), so a hash over its whole report moved between two prepares of one change
-    while the findings did not. The clones that involve a changed file are what the findings of
-    this review depend on. The report's totals count every clone, so they are left out too.
+    while the findings did not. A clone behind a kept hit has to be in the stored copy, or the
+    finding's proof would not hold it: jscpd is compared base against head, so a clone between two
+    unchanged files that is new in head becomes a finding. The report's totals count every clone,
+    so they are left out.
     """
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         return text
     if not isinstance(data, dict):
-        return _stable_jscpd(text)
-    clones = [clone for clone in data.get("duplicates") or [] if _jscpd_touches(clone, changed)]
-    return _stable_jscpd(json.dumps({"duplicates": clones}))
+        return text
+    clones = [
+        clone for clone in data.get("duplicates") or []
+        if isinstance(clone, dict)
+        and (_jscpd_touches(clone, changed) or _jscpd_anchor(clone) in anchors)
+    ]
+    return json.dumps({"duplicates": clones})
 
 
 def _stable_semgrep(text: str) -> str:
@@ -531,8 +555,8 @@ def _level_map(row: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
     return tuple((str(key), str(value)) for key, value in mapping.items())
 
 
-_STABLE_RAW_FOR_CHANGE: dict[str, Callable[[str, frozenset[str]], str]] = {
-    "jscpd": _stable_jscpd_for_change,
+_STABLE_RAW_FOR_CHANGE: dict[str, Callable[[str, frozenset[str], frozenset[str]], str]] = {
+    "jscpd": _jscpd_for_change,
 }
 _STABLE_RAW: dict[str, Callable[[str], str]] = {
     "semgrep-security": _stable_semgrep,
