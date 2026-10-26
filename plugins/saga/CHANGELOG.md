@@ -97,13 +97,16 @@
 - `finish` no longer rejects a whole review because the reviewer's own lint and test runs left
   a tool cache in the scratch copy. The launcher's list of paths that never count as changes
   (the only list: saga reads the launcher's `scratch.changes` and keeps none of its own) now
-  covers `.ruff_cache/`, `.mypy_cache/`, `.hypothesis/`, `.eslintcache` and `*.tsbuildinfo`,
-  and, at a package root only, `node_modules/.vite/` and `node_modules/.cache/` (a folder with
-  a `package.json`), `.dart_tool/` (`pubspec.yaml`), SwiftPM's `.build/` (`Package.swift`) and
-  `cdk.out/` (`cdk.json`). A symlink inside one of those package caches is ignored with it
-  (SwiftPM makes `.build/debug`); a link anywhere else, a real file beside a cache path, a cache
-  name outside a package root and an edit to a tracked file are still refused. See the
-  agent-launcher changelog. No version bump.
+  covers `.pytest_cache/` at any depth, `.ruff_cache/`, `.mypy_cache/`, `.hypothesis/`,
+  `.eslintcache` and `*.tsbuildinfo`, and, at a package root only and only when new,
+  `node_modules/.vite/` and `node_modules/.cache/`, `coverage/` and `.nyc_output/` (a folder with
+  a `package.json`), `.coverage` (the root of the copy or beside a Python project file),
+  `.dart_tool/` and `pubspec.lock` (`pubspec.yaml`), SwiftPM's `.build/` and `Package.resolved`
+  (`Package.swift`) and `cdk.out/` (`cdk.json`). A new symlink inside one of those package
+  caches is ignored with it (SwiftPM makes `.build/debug`); a symlink that replaces or retargets
+  a tracked path, a link anywhere else, a real file beside a cache path, a cache name outside a
+  package root and an edit to a tracked file are still refused. See the agent-launcher
+  changelog. No version bump.
 - Issue #147: running `prepare` twice on one change now gives the same packet, and two kinds of
   false finding go away. A review tool's stored-output hash is canonical: sorted, with volatile
   text removed, and with nothing left behind by an earlier tool.
