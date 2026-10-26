@@ -353,7 +353,8 @@ def test_startup_a_sandboxed_command_keeps_the_allow_list_and_the_toolchain_runs
     ).split()
     names = {n for n in out if n.isupper() or n == "_"} - {"PWD", "SHLVL", "OLDPWD", "_"}
     # Only allow-list names reach it (bash may set SHELL and TERM itself), and each one set does.
-    assert names <= set(launcher.REVIEWER_ENVIRONMENT_ALLOWED)
+    # TEMP and TMP are the prefix's own, both naming the reviewer's temp folder.
+    assert names <= set(launcher.REVIEWER_ENVIRONMENT_ALLOWED) | {"TEMP", "TMP"}
     assert {n for n in launcher.REVIEWER_ENVIRONMENT_ALLOWED if n in env} <= names
     assert "3" in out and "git-ok" in out
 
@@ -615,6 +616,123 @@ def test_tmpdir_a_claude_launch_writes_there_and_the_scratch_changes_do_not_show
     assert result["scratch"]["changes"] == {
         "added": [], "modified": [], "deleted": [], "links": []
     }
+
+
+def _claude_sandbox_temp(tmp_path: Path) -> Path:
+    """Stand in for Claude's sandbox temp folder: it exists, and the reviewer may not write it."""
+    folder = tmp_path / "claude-sandbox-temp"
+    folder.mkdir(mode=0o500)
+    return folder
+
+
+def _as_claude_2_1_311(command: str, sandbox_temp: Path) -> str:
+    """The command string Claude Code 2.1.308 to 2.1.311 hands the prefix for a sandboxed
+    command: it exports its own sandbox temp folder as TMPDIR before running the command
+    (read from the 2.1.311 executable and seen through a logging prefix, 2026-10-26)."""
+    return f"export TMPDIR={shlex.quote(str(sandbox_temp))} && eval {shlex.quote(command)}"
+
+
+GETTEMPDIR = f"{shlex.quote(sys.executable)} -c 'import tempfile; print(tempfile.gettempdir())'"
+
+
+@NOT_ROOT
+def test_tmpdir_python_s_temp_folder_is_the_reviewer_s_after_claude_exports_its_own(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    sandbox_temp = _claude_sandbox_temp(tmp_path)
+    env = _startup_env(tmp_path, **extra)
+    shown = _run_like_claude(
+        _as_claude_2_1_311(f'echo "$TMPDIR"; {GETTEMPDIR}', sandbox_temp), env, copy
+    ).split()
+    temp = launcher.reviewer_claude_temp_dir(copy)
+    # Claude's TMPDIR wins over the prefix's, and Python skips it because it is not writable.
+    assert shown == [str(sandbox_temp), str(temp)]
+    # The control: without TEMP and TMP, Python moves past the reviewer's folder to the system
+    # roots (which the real sandbox denies, leaving the working directory, the copy).
+    control = _run_like_claude(
+        _as_claude_2_1_311(f"unset TEMP TMP; {GETTEMPDIR}", sandbox_temp), env, copy
+    ).strip()
+    assert control and control != str(temp)
+
+
+@NOT_ROOT
+def test_tmpdir_a_pytest_tmp_path_test_leaves_nothing_in_the_copy(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    package = copy / "plugins" / "example"
+    (package / "tests").mkdir(parents=True)
+    manifest = launcher._reviewer_manifest(copy)
+    (package / "tests" / "test_repro.py").write_text(
+        "def test_writes(tmp_path):\n    (tmp_path / 'registry.json').write_text('{}')\n"
+    )
+    run = (f"cd plugins/example && {shlex.quote(sys.executable)} -m pytest -q "
+           "-p no:cacheprovider tests/test_repro.py > /dev/null; echo $?")
+    env = _startup_env(tmp_path, **extra)
+    assert _run_like_claude(
+        _as_claude_2_1_311(run, _claude_sandbox_temp(tmp_path)), env, copy
+    ).strip() == "0"
+    assert launcher.reviewer_scratch_changes(copy, manifest) == {
+        "added": ["plugins/example/tests/test_repro.py"], "modified": [], "deleted": [],
+        "links": [],
+    }
+    assert any(launcher.reviewer_claude_temp_dir(copy).glob("pytest-of-*/pytest-current"))
+
+
+def _pytest_tree(launcher: ModuleType, copy: Path, below: str) -> Path:
+    """What pytest's ``tmp_path`` leaves when its temp root is *below* in the copy."""
+    base = copy / below / "pytest-of-user"
+    run = base / "pytest-0"
+    (run / "test_x0").mkdir(parents=True)
+    (run / "test_x0" / "registry.json").write_text("{}\n")
+    (base / "pytest-current").symlink_to(run.resolve())
+    (run / "test_xcurrent").symlink_to((run / "test_x0").resolve())
+    return base
+
+
+@pytest.mark.parametrize("below", [".", "plugins/example"])
+def test_scratch_pytest_s_tree_and_its_current_links_are_clutter_at_any_depth(
+    launcher: ModuleType, tmp_path: Path, below: str
+) -> None:
+    copy = tmp_path / "copy"
+    (copy / "plugins" / "example").mkdir(parents=True)
+    manifest = launcher._reviewer_manifest(copy)
+    _pytest_tree(launcher, copy, below)
+    cache = copy / "plugins" / "example" / "deep" / "__pycache__"
+    cache.mkdir(parents=True)
+    (cache / "mod.cpython-312.pyc").write_bytes(b"\0")
+    assert launcher.reviewer_scratch_changes(copy, manifest) == {
+        "added": [], "modified": [], "deleted": [], "links": []
+    }
+
+
+def test_scratch_a_link_the_session_makes_is_still_reported_even_in_pytest_s_tree(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy = tmp_path / "copy"
+    copy.mkdir()
+    manifest = launcher._reviewer_manifest(copy)
+    base = _pytest_tree(launcher, copy, "plugins/example")
+    run = base / "pytest-0"
+    # Named like pytest's links, but pointing elsewhere: never pytest's.
+    (run / "test_ycurrent").symlink_to(tmp_path)
+    (run / "test_zcurrent").symlink_to("../../../../secret")
+    (run / "test_wcurrent").symlink_to(copy / "test_w0")
+    (base / "pytest-1").mkdir()
+    (base / "pytest-1" / "notes").symlink_to(run)
+    (copy / "pytest-current").symlink_to("pytest-0")
+    (copy / "plugins" / "example" / "data").symlink_to("/")
+    assert launcher.reviewer_scratch_changes(copy, manifest)["links"] == [
+        "plugins/example/data",
+        "plugins/example/pytest-of-user/pytest-0/test_wcurrent",
+        "plugins/example/pytest-of-user/pytest-0/test_ycurrent",
+        "plugins/example/pytest-of-user/pytest-0/test_zcurrent",
+        "plugins/example/pytest-of-user/pytest-1/notes",
+        "pytest-current",
+    ]
 
 
 @NOT_ROOT

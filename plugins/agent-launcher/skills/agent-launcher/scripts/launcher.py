@@ -27,7 +27,7 @@ import time
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -2167,6 +2167,10 @@ REVIEWER_TOOLCHAIN_PARTS = (
 #: that the session edits or deletes is a change like any other.
 #:
 #: - ``.pytest_cache/`` at any depth: ``cd pkg && pytest`` writes ``pkg/.pytest_cache/``.
+#: - ``pytest-of-<user>/`` at any depth: pytest's ``tmp_path`` tree, which lands in the folder a
+#:   test ran from when Python's ``tempfile`` falls back to the working directory. Its
+#:   ``current`` links are matched by ``REVIEWER_PYTEST_LINK``. ``__pycache__/`` and ``*.pyc`` are
+#:   ignored at any depth as well.
 #: - ``.ruff_cache/`` and ``.mypy_cache/``: ruff's and mypy's result caches, written wherever the
 #:   tool runs. ``.hypothesis/``: Hypothesis's example database, written beside the tests it runs.
 #: - ``.eslintcache``: ESLint's cache file, written by ``eslint --cache``.
@@ -2176,10 +2180,17 @@ REVIEWER_TOOLCHAIN_PARTS = (
 #: Entries that other things also use are matched only at a package root; see
 #: ``REVIEWER_PACKAGE_CACHES``.
 REVIEWER_SCRATCH_IGNORED = re.compile(
-    r"^(pytest-of-[^/]+/|tmp[a-z0-9_]{8}/|target/)|(^|/)\.pytest_cache/|(^|/)__pycache__/|\.pyc$"
+    r"^(tmp[a-z0-9_]{8}/|target/)|(^|/)pytest-of-[^/]+/"
+    r"|(^|/)\.pytest_cache/|(^|/)__pycache__/|\.pyc$"
     r"|(^|/)Cargo\.lock$"
     r"|(^|/)(\.ruff_cache|\.mypy_cache|\.hypothesis)/"
     r"|(^|/)\.eslintcache$|(^|/)[^/]+\.tsbuildinfo$"
+)
+#: The links pytest makes in its ``tmp_path`` tree, at any depth: ``pytest-current`` beside the
+#: numbered runs, and ``<test>current`` inside a run, each pointing at a numbered folder beside
+#: it (see :func:`reviewer_pytest_link`). Every other link the session makes is still reported.
+REVIEWER_PYTEST_LINK = re.compile(
+    r"(?:^|/)pytest-of-[^/]+/(?:(?P<run>pytest-)current|pytest-[0-9]+/(?P<test>[^/]+)current)$"
 )
 #: Entries whose names other things also use, so each counts only at a package root: the folder
 #: that holds one of the named marker files in the exported copy (or, where noted, the root of the
@@ -2545,8 +2556,14 @@ def reviewer_claude_shell_script(
             raise ValueError(f"{name!r} is not a variable name")
     kept = " ".join(f'${{{n}+"{n}=${n}"}}' for n in names)
     if temp is not None:
-        # Last, so it wins over the TMPDIR the allow-list passed on.
-        kept += f" TMPDIR={shlex.quote(str(temp))}"
+        # Last, so it wins over the TMPDIR the allow-list passed on. Claude's own command string
+        # then exports TMPDIR again, to its sandbox temp folder under a root the reviewer's
+        # settings deny (REVIEWER_TEMP_ROOTS_ALWAYS); measured on Claude Code 2.1.308 to 2.1.311.
+        # Python's tempfile tries TMPDIR, then TEMP, then TMP, then the system roots, and falls
+        # back to the working directory, the scratch copy, when none is writable. TEMP and TMP
+        # name the reviewer's folder too, so Python's temp files land there however TMPDIR ends.
+        quoted_temp = shlex.quote(str(temp))
+        kept += f" TMPDIR={quoted_temp} TEMP={quoted_temp} TMP={quoted_temp}"
     if python_env is not None:
         # Sandboxed commands only: the launcher's environment, whose bin holds just python3 and
         # python, first on PATH. The vendor process's own PATH is never changed.
@@ -3810,6 +3827,29 @@ def reviewer_export_head(repo: Path, head: str, copy: Path) -> dict[str, str]:
     return _reviewer_manifest(copy)
 
 
+def reviewer_pytest_link(copy: Path, path: str, value: str) -> bool:
+    """Whether *path*, a new link whose manifest *value* is ``link:<target>``, is one pytest made.
+
+    It must sit in a ``pytest-of-<user>/`` tree (``REVIEWER_PYTEST_LINK``) and point at a folder
+    beside it named as pytest numbers them: ``pytest-current`` at ``pytest-<n>``, and
+    ``<test>current`` at ``<test><n>``. pytest writes the target as an absolute path; a bare name
+    is accepted too. A link pointing anywhere else is the session's, and is reported.
+    """
+    match = REVIEWER_PYTEST_LINK.search(path)
+    if match is None or not value.startswith("link:"):
+        return False
+    stem = match.group("run") or match.group("test")
+    target = value[len("link:"):]
+    parent = PurePosixPath(path).parent
+    if "/" in target:
+        candidate = PurePosixPath(target)
+        folders = {PurePosixPath(base.as_posix()) / parent for base in (copy, copy.resolve())}
+        if not candidate.is_absolute() or candidate.parent not in folders:
+            return False
+        target = candidate.name
+    return re.fullmatch(re.escape(stem) + r"[0-9]+", target) is not None
+
+
 def reviewer_scratch_changes(copy: Path, manifest: Mapping[str, str]) -> dict[str, list[str]]:
     """The files added, modified and deleted in the copy since the export, minus tool clutter."""
     now = _reviewer_manifest(copy)
@@ -3838,6 +3878,7 @@ def reviewer_scratch_changes(copy: Path, manifest: Mapping[str, str]) -> dict[st
             p for p in now
             if now[p].startswith("link:") and manifest.get(p) != now[p]
             and not (p not in manifest and reviewer_in_package_cache(p, manifest))
+            and not (p not in manifest and reviewer_pytest_link(copy, p, now[p]))
         ),
     }
 

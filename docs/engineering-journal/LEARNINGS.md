@@ -2,6 +2,35 @@
 
 ## 2026-10-26
 
+### A shell prefix cannot have the last word on a variable the vendor sets inside the command
+
+**Author.** Jeff Cox
+
+**Evidence.** In a measurement run under the Claude reviewer, saga's `finish` refused reviews
+whose Python reproduction tests used pytest's `tmp_path`. The reasons named
+`pytest-of-<user>/.../<test>current (symlink)` and files under `pytest-of-<user>/`, once below a
+subfolder of the scratch copy. The shell prefix in
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`
+(`reviewer_claude_shell_script`) set `TMPDIR` to the reviewer's folder beside the copy. A logging
+prefix run live under Claude Code 2.1.311 showed the command string it receives:
+`... && export TMPDIR=/tmp/claude-<uid> && ... && eval '<command>'`. The same export is in the
+2.1.308 executable. The reviewer's settings deny writes under `/tmp`, so Python's `tempfile`
+skipped `TMPDIR` and the system roots and returned the working directory.
+
+**Mechanism.** The prefix sets the environment before Claude's own command string runs, so any
+variable that string exports wins. Python's `tempfile` checks that a candidate is writable and
+tries `TMPDIR`, `TEMP`, `TMP`, the system roots and finally the current folder. The fix sets
+`TEMP` and `TMP` to the reviewer's folder too, so Python lands there whatever `TMPDIR` ends up as.
+`pytest-of-<user>/` is now ignored at any depth, and pytest's own `current` links inside it no
+longer count as links the session made. The existing tests had emulated the 2.1.296 command form,
+which had no export, so they could not see this. Finish's re-run passes an argument list, not a
+command string, and its `TMPDIR` (inside the re-run's own folder) is writable, so it was not
+affected.
+
+**Generalizable rule.** When a wrapper sets an environment variable for commands a vendor
+builds, test it against the vendor's real command string, and prefer a fallback the consumer
+already honours over relying on being the last writer.
+
 ### A reviewer that is only told to "try a test" locates harms but seldom proves them
 
 **Author.** Jeff Cox
