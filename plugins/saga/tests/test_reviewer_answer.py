@@ -161,14 +161,18 @@ def test_prompt_names_every_runner_the_matcher_reads() -> None:
 def test_prompt_states_the_rules_finish_applies_to_a_reproduction() -> None:
     text = " ".join(_section("What saga's re-run accepts").split())
     command = A.reproduction_argv
-    for refused in ("sh -c", "env", "NAME=value"):
+    # With the backticks: bare "env" is also a prefix of "environment".
+    for refused in ("`sh -c`", "no `env`", "`NAME=value`"):
         assert refused in text
     assert command("sh -c 'pytest'") is None and command("env X=1 pytest") is None
     assert command("X=1 pytest") is None and command("python3 -m pytest t.py") is not None
-    assert f"{_load('review_command').RERUN_TIMEOUT} seconds" in text
-    assert "no network" in text and "umask 022" in text
-    for qualifying in ("`test`, `tests`, `spec` or `__tests__`", "`test_*`", "`*.spec.*`"):
-        assert qualifying in text
+    review_command = _load("review_command")
+    assert f"{review_command.RERUN_TIMEOUT} seconds" in text
+    assert f"umask {review_command.RERUN_UMASK:03o}" in text
+    assert "no network" in text and "clean copy" in text
+    qualifying = " ".join(_section("Reproduce what you believe").split())
+    for rule in ("`test`, `tests`, `spec` or `__tests__`", "`test_*`", "`*_test.*`", "`*.spec.*`"):
+        assert rule in qualifying
     assert "duration" in text and "absolute path" in text and "process ID" in text
     assert "temporary path" in text and "whole failure block" in text
 
@@ -193,8 +197,23 @@ def test_prompt_gives_a_recipe_for_every_language_it_covers() -> None:
         "Documentation (Markdown)", "Infrastructure code (CDK)", "Dart and Swift",
     ):
         assert f"**{label}:**" in text
-    for command in ("python3 -m pytest", "bun test", "/bin/bash", "dart test", "swift test --filter"):
+    text = " ".join(text.split())
+    for command in ("python3 -m pytest", "python3 -m unittest", "bun test", "dart test",
+                    "swift test --filter", "bash --noprofile --norc -eo pipefail"):
         assert command in text
+    # The reproduction must run the code as it really runs, never under a pinned host shell, and
+    # a CI security claim may only substitute what the trigger lets an outside party supply.
+    assert "/bin/bash" not in text
+    assert "the host shell's version" in text
+    assert "the inputs it really receives" in text
+    assert "name that event and the expression's source in `trigger`" in text
+    assert "matrix entries, literal `env`, secrets or outputs of trusted steps" in text
+    assert "`misleads-a-person`, which never blocks" in text
+    assert "referenced path" not in text
+    assert "`<name>_test.swift` or `test_<name>.swift`" in text
+    assert "use `bun test`, not Vitest or Jest" in " ".join(
+        _section("What saga's re-run accepts").split()
+    )
 
 
 def test_prompt_requires_one_open_search_within_its_cap() -> None:

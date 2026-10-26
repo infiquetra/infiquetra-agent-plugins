@@ -26,7 +26,20 @@ clean changes from being blocked, the fix had to raise how often reviewers try a
 stopped, not loosen what counts as proof: the test must run the code under review, and a test that
 only reads or parses its source text is not a reproduction.
 
-**Generalizable rule.** When a gate accepts only a mechanically re-checked proof, tell the prover
+A first draft of the recipes had two ways to manufacture a block, found in review. The CI workflow
+recipe let a reviewer substitute any "attacker-chosen" value into an expression, which turns a
+maintainer-only input or a repository-fixed matrix entry into a reproduced
+`security-boundary-crossed`, a consequence that always blocks; a quote that merely breaks a script
+does the same for `break-in-supported-use`. The recipe now exercises the script with the inputs it
+really receives, allows a security claim to substitute only what the trigger lets an outside party
+supply, and names that event and the expression's source in `trigger`. The shell recipes also had
+`/bin/bash` pinned, and the finish sandbox's `/bin/bash` is 3.2.57, so a feature from bash 4 fails
+there and looks like a harm. A Markdown recipe that checked a referenced path ran no code, which
+contradicts the rule that a test must execute the code under review.
+
+**Generalizable rule.** A recipe that tells a prover what input to supply must also say who can
+supply it, and must run the code the way it runs in normal use; otherwise it teaches the prover to
+manufacture the proof. When a gate accepts only a mechanically re-checked proof, tell the prover
 exactly what the checker accepts, with one short recipe per language, and make every "could not
 prove" carry a named reason, so a miss can be traced to a tooling gap, not guessed at.
 ### Dependencies handed to a sandbox must never be found by name, and their installer's output is untrusted
