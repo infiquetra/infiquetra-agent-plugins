@@ -18,6 +18,9 @@ wheels concurrently, so the last writer wins. Each wheel's `RECORD` still lists 
 shipped, so the clash is visible afterwards. `_resolve_overlaps` finds paths that more than one
 `RECORD` lists, keeps the copy from the distribution whose normalized name sorts last, takes it
 from an install of that distribution alone, and records only the names under `overlaps`.
+uv rewrites each installed `RECORD` to list the files it wrote, so a `.dist-info` folder whose
+files another `RECORD` lists was shipped inside a wheel and is not trusted. Paths are compared
+case-folded, because two spellings collide on a case-insensitive disk.
 `RECORD` comes from the wheel, so a malformed row is skipped, never an error, and a shared path
 that is not a plain file on both sides, or a copy that fails, stops the install as
 `overlap-unresolved` so nothing is left half-written.

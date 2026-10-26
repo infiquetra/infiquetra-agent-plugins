@@ -28,8 +28,12 @@
   lists it keeps the copy from the distribution whose normalized name sorts last, taken from an
   install of that distribution alone. `dependencies.json` records each such set under
   `overlaps` (the names, the one kept, the rule `name-sorts-last` and a count of files, nothing
-  else). A copy that cannot be taken stops the install with the new reason
-  `overlap-unresolved`. A test installs two fake wheels sharing a file in both orders and
+  else). Paths are compared case-folded and Unicode-normalized, and only `.dist-info` folders uv
+  made for an installed distribution are read, so a wheel cannot plant a `RECORD` that claims
+  files. A copy that cannot be taken, or a path two distributions spell differently (whose folder
+  spelling on a case-insensitive disk would depend on install order), stops the install with the
+  new reason `overlap-unresolved`. The single-distribution reinstall counts toward the same 2 GiB
+  limit as the install. A test installs two fake wheels sharing a file in both orders and
   requires byte-identical packets.
 - The reproduction matcher reads `bun test` output. A bun run that failed the same test the same
   way used to be recorded as `re-run-mismatch`, because the last-line fallback compared the

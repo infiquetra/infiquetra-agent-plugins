@@ -859,9 +859,68 @@ def test_a_malformed_record_row_is_skipped_never_an_error(tmp_path: Path) -> Non
     broken = site / "broken-1.0.dist-info"
     broken.mkdir()
     (broken / "RECORD").write_bytes(b"\xff\xfe not text\nshared/x.py,,\n")
-    assert D._claims(site) == {"shared/x.py": ["alpha", "zeta"]}
-    for row in ([], [""], ["."], ["a\0b"], [None]):
+    assert D._claims(site) == {"shared/x.py": D._Overlap(("shared/x.py",), ("alpha", "zeta"))}
+    for row in ([], [""], ["."], ["a\0b"], [None], ["x.dist-info/RECORD"]):
         assert D._record_path(row) is None
+    # Only the step that tells uv's own folders from shipped ones reads .dist-info rows.
+    assert D._record_path(["x.dist-info/RECORD"], dist_info=True) == "x.dist-info/RECORD"
+
+
+def _site_with_records(site: Path, records: dict[str, str]) -> Path:
+    for folder, text in records.items():
+        (site / folder).mkdir(parents=True)
+        (site / folder / "RECORD").write_text(text, "utf-8")
+    return site
+
+
+def test_two_spellings_of_one_path_are_one_overlap(tmp_path: Path) -> None:
+    nfd = "cafe\u0301/x.py"
+    site = _site_with_records(tmp_path / "site", {
+        "alpha-1.0.dist-info": f"Foo/x.py,,\n{nfd},,\n",
+        "zeta-1.0.dist-info": "foo/x.py,,\ncaf\u00e9/x.py,,\n",
+    })
+    assert D._claims(site) == {
+        "caf\u00e9/x.py": D._Overlap(tuple(sorted(["caf\u00e9/x.py", nfd])), ("alpha", "zeta")),
+        "foo/x.py": D._Overlap(("Foo/x.py", "foo/x.py"), ("alpha", "zeta")),
+    }
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_wheels_that_ship_one_path_in_two_cases_stop_the_install_in_either_order(
+    tmp_path: Path, reverse: bool,
+) -> None:
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST, reverse=reverse,
+                ships={"inertdep": {"Shared/x.py": "A = 1\n"},
+                       "otherdep": {"shared/x.py": "B = 1\n"}})
+    record, packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"] == {"state": "not-installed", "reason": "overlap-unresolved"}
+    assert not (packet / D.PYTHON_DIRECTORY).exists()
+
+
+def test_a_dist_info_folder_a_wheel_ships_cannot_claim_a_file(tmp_path: Path) -> None:
+    fake = "inertdep/__init__.py,,\nsharedpkg/__init__.py,,\n"
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST, ships={"inertdep": {
+        # Named for an installed distribution, and for one that is not installed at all.
+        "otherdep-9.0.dist-info/RECORD": fake, "zzz_injected-1.0.dist-info/RECORD": fake,
+    }})
+    record, packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"]["state"] == "installed"
+    assert "overlaps" not in record["python"]
+    site = packet / D.PYTHON_DIRECTORY
+    assert (site / "zzz_injected-1.0.dist-info" / "RECORD").is_file()
+    assert D._claims(site) == {}
+
+
+def test_the_overlap_install_counts_toward_the_byte_limit(tmp_path: Path) -> None:
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST, shared=frozenset({"inertdep", "otherdep"}))
+    record, _packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"]["overlaps"]
+    installs = [argv for argv in uv.raw if argv[argv.index("--") + 1:][1:3] == ["pip", "install"]]
+    overlap = next(argv for argv in installs
+                   if Path(argv[argv.index("--target") + 1]).name == "overlap")
+    watched = [Path(argv) for flag, argv in zip(overlap, overlap[1:]) if flag == "--watch"]
+    assert Path(overlap[overlap.index("--target") + 1]) in watched
+    assert any(path.as_posix().endswith(D.PYTHON_DIRECTORY) for path in watched)
 
 
 class _Reshaped(FakeUv):
@@ -880,10 +939,15 @@ class _Reshaped(FakeUv):
                 (shared / "inside").write_text("x\n", "utf-8")
             elif self.shape == "symlink":
                 shared.symlink_to(target.parent / "elsewhere")
+            elif self.shape == "linked-folder":
+                # A folder above the file is a link to another folder inside the install.
+                shared.write_text("loser\n", "utf-8")
+                (target / "sharedpkg").rename(target / "sharedpkg_real")
+                (target / "sharedpkg").symlink_to(target / "sharedpkg_real")
         return result
 
 
-@pytest.mark.parametrize("shape", ["directory", "symlink"])
+@pytest.mark.parametrize("shape", ["directory", "symlink", "linked-folder"])
 def test_an_overlap_whose_destination_is_not_a_plain_file_stops_the_install(
     tmp_path: Path, shape: str,
 ) -> None:

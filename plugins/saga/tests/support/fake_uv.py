@@ -48,7 +48,8 @@ class FakeUv:
     ``uv pip install --target`` writes each requested package as a module, unless it is in
     *sdist_only*, which fails the way uv does for a package with no wheel. Each package in
     *shared* also ships ``sharedpkg/__init__.py``, with its own name in it, and every package
-    gets a ``RECORD`` as a wheel's ``.dist-info`` has. Packages install in the requirements
+    gets a ``RECORD`` listing every file written, as uv rewrites it. *ships* adds files to a
+    package, by package name. Packages install in the requirements
     file's order, or the reverse with *reverse*, and a later one overwrites a shared file, as
     uv's parallel install may. ``pytest`` gets a
     ``.pth`` back to this run's own pytest, so a re-run can start it. Every requirements file
@@ -58,9 +59,11 @@ class FakeUv:
     def __init__(self, *, exported: str = "", compiled: str = "",
                  sdist_only: frozenset[str] = frozenset(), names: tuple[str, ...] = (),
                  real_git: bool = False, fail_install: str = "",
-                 shared: frozenset[str] = frozenset(), reverse: bool = False) -> None:
+                 shared: frozenset[str] = frozenset(), reverse: bool = False,
+                 ships: dict[str, dict[str, str]] | None = None) -> None:
         self.exported, self.compiled, self.sdist_only = exported, compiled, sdist_only
-        self.shared, self.reverse = shared, reverse
+        self.shared, self.reverse, self.ships = shared, reverse, ships or {}
+        self.raw: list[list[str]] = []
         self.names = names
         self.real_git = real_git
         self.fail_install = fail_install
@@ -87,6 +90,7 @@ class FakeUv:
         if argv[:2] == ["git", "cat-file"]:
             return Result(1)
         command = unwrap(argv)
+        self.raw.append(list(argv))
         self.calls.append({"argv": command, "cwd": Path(cwd), "env": dict(env)})
         assert command[0] == "uv", command
         for index, part in enumerate(command[:-1]):
@@ -153,6 +157,7 @@ class FakeUv:
                 files[f"{name.replace('-', '_')}/__init__.py"] = "def two():\n    return 2\n"
             if name in self.shared:
                 files["sharedpkg/__init__.py"] = f"SHIPPED_BY = {name!r}\n"
+            files.update(self.ships.get(name, {}))
             rows = []
             for relative, text in files.items():
                 path = target / "bin" / name if relative.startswith("../") else target / relative

@@ -44,8 +44,9 @@ import sys
 import tempfile
 import time
 import tomllib
+import unicodedata
 from datetime import datetime, timezone
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -785,7 +786,9 @@ def _install_python(
             if interpreter is None or version is None:
                 raise _PythonFailure("python3-missing")
             env = _uv_env(work)
-            uv = _Uv(runner, work, env, [target, work / "home", work / "tmp"], deadline)
+            # The retry and overlap installs count toward the same byte limit as the target.
+            uv = _Uv(runner, work, env, [target, work / "home", work / "tmp", work / "trial",
+                                         work / "overlap"], deadline)
             dropped: dict[str, int] = {}
             if "uv.lock" in inputs:
                 exported = uv.run(
@@ -1130,15 +1133,34 @@ def _install_into(
             "-r", str(requirements)], "install-failed")
 
 
-def _claims(target: Path) -> dict[str, list[str]]:
-    """Each file in *target* that more than one installed distribution's ``RECORD`` lists, and
-    those distributions' normalized names, sorted.
+@dataclass(frozen=True)
+class _Overlap:
+    """Files more than one installed distribution ships at one path, compared case-folded."""
 
-    Paths outside *target* (console scripts under ``../``), under ``bin`` and inside a
-    ``.dist-info`` folder are never shared and are skipped. A ``RECORD`` that is a symlink or
-    cannot be read is skipped as a whole.
+    #: Each spelling of the path the ``RECORD`` files use; more than one means a case or Unicode
+    #: form clash, whose folder spelling on a case-insensitive disk depends on install order.
+    spellings: tuple[str, ...]
+    #: The distributions' normalized names, sorted.
+    names: tuple[str, ...]
+
+
+def _fold(path: str) -> str:
+    """*path* as a case-insensitive, normalization-insensitive disk sees it."""
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFD", path).casefold())
+
+
+def _claims(target: Path, installed: Collection[str] | None = None) -> dict[str, _Overlap]:
+    """Each path in *target* that more than one installed distribution's ``RECORD`` lists, by
+    its folded form (:func:`_fold`), so ``Foo/x.py`` and ``foo/x.py`` count as one.
+
+    Only ``.dist-info`` folders uv made for an installed distribution are read: uv rewrites
+    each ``RECORD`` to list the files it actually wrote, so a folder whose files another
+    ``RECORD`` lists came inside a wheel and is skipped, and with *installed* so is one whose
+    name is not among them. Paths outside *target* (console scripts under ``../``), under
+    ``bin`` and inside a ``.dist-info`` folder are never shared. A ``RECORD`` that is a symlink
+    or cannot be read is skipped as a whole, and so is a malformed row.
     """
-    claimed: dict[str, set[str]] = {}
+    records: dict[str, tuple[str, list[str]]] = {}
     for info in sorted(target.glob("*.dist-info")):
         record = info / "RECORD"
         name = _normalize(info.name[: -len(".dist-info")].rpartition("-")[0])
@@ -1149,19 +1171,35 @@ def _claims(target: Path) -> dict[str, list[str]]:
                 rows = list(csv.reader(handle))
         except (OSError, UnicodeDecodeError, csv.Error):
             continue
-        for row in rows:
-            path = _record_path(row)
-            if path is not None:
-                claimed.setdefault(path, set()).add(name)
-    return {path: sorted(names) for path, names in sorted(claimed.items()) if len(names) > 1}
+        paths = [path for row in rows if (path := _record_path(row, dist_info=True))]
+        records[info.name] = (name, paths)
+    shipped = {
+        _fold(PurePosixPath(path).parts[0])
+        for folder, (_name, paths) in records.items() for path in paths
+        if _fold(PurePosixPath(path).parts[0]) != _fold(folder)
+        and PurePosixPath(path).parts[0].endswith(".dist-info")
+    }
+    claimed: dict[str, dict[str, set[str]]] = {}
+    for folder, (name, paths) in records.items():
+        if _fold(folder) in shipped or (installed is not None and name not in installed):
+            continue
+        for path in paths:
+            if not PurePosixPath(path).parts[0].endswith(".dist-info"):
+                claimed.setdefault(_fold(path), {}).setdefault(path, set()).add(name)
+    found: dict[str, _Overlap] = {}
+    for key, spellings in sorted(claimed.items()):
+        names = sorted(set().union(*spellings.values()))
+        if len(names) > 1:
+            found[key] = _Overlap(tuple(sorted(spellings)), tuple(names))
+    return found
 
 
-def _record_path(row: Sequence[Any]) -> str | None:
+def _record_path(row: Sequence[Any], dist_info: bool = False) -> str | None:
     """The relative path a ``RECORD`` row names inside the install, or ``None`` to skip the row.
 
     ``RECORD`` comes from the wheel, so it is untrusted: an empty, absolute, ``.``/``..`` or NUL
-    path, a path under ``bin`` or a ``.dist-info`` folder, and anything else malformed is
-    skipped, never an error.
+    path, a path under ``bin``, a path inside a ``.dist-info`` folder unless *dist_info*, and
+    anything else malformed is skipped, never an error.
     """
     try:
         text = row[0] if row else ""
@@ -1170,7 +1208,7 @@ def _record_path(row: Sequence[Any]) -> str | None:
         path = PurePosixPath(text)
         parts = path.parts
         if (not parts or path.is_absolute() or ".." in parts or "." in parts
-                or parts[0] == "bin" or parts[0].endswith(".dist-info")):
+                or parts[0] == "bin" or (parts[0].endswith(".dist-info") and not dist_info)):
             return None
         return path.as_posix()
     except (TypeError, ValueError, IndexError):
@@ -1187,16 +1225,20 @@ def _resolve_overlaps(
     last (:data:`OVERLAP_RULE`), taken from an install of that distribution alone. Returns one
     note per set of distributions that share files: their names, the one kept, the rule and how
     many files, and nothing else from the packages. A shared file that cannot be taken from
-    that install stops the Python install (``overlap-unresolved``).
+    that install, or one the distributions spell differently only by case or Unicode form,
+    stops the Python install (``overlap-unresolved``).
     """
-    claims = _claims(target)
+    claims = _claims(target, frozenset(entries))
     if not claims:
         return []
     by_winner: dict[str, list[str]] = {}
     groups: dict[tuple[str, ...], int] = {}
-    for path, names in claims.items():
-        by_winner.setdefault(names[-1], []).append(path)
-        groups[tuple(names)] = groups.get(tuple(names), 0) + 1
+    for overlap in claims.values():
+        if len(overlap.spellings) > 1:
+            # Which spelling of a folder a case-insensitive disk keeps depends on install order.
+            raise _PythonFailure("overlap-unresolved")
+        by_winner.setdefault(overlap.names[-1], []).append(overlap.spellings[0])
+        groups[overlap.names] = groups.get(overlap.names, 0) + 1
     trial = work / "overlap"
     for winner, paths in sorted(by_winner.items()):
         if winner not in entries:
