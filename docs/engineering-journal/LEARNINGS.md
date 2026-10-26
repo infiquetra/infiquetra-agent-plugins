@@ -2,6 +2,43 @@
 
 ## 2026-10-25
 
+### A check that compares stored output must hash only what its findings depend on, and an ignore list must know every tool the reviewer runs
+
+**Author.** Jeff Cox
+
+**Evidence.** Two separate failures in a private measurement run. (1) `finish` refused whole
+reviews with `scratch.changes: .ruff_cache/.gitignore (added) is not a reproduction test` and, for
+a TypeScript repository, `node_modules/.vite/vitest/<hash>/results.json (added)`. The rule is in
+`reviewer_answer.py` (`_check_scratch`), but it only reads the `changes` object the launcher
+writes, and the launcher decides what is clutter in one place:
+`REVIEWER_SCRATCH_IGNORED` in `plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`.
+It knew Python temp folders, pytest caches, bytecode and cargo's `target/`, and nothing the
+reviewer's lint and type checks write. (2) jscpd reported a clone count that changed by one or
+two between six runs over one unchanged checkout of a large repository. The findings did not move, but the stored raw
+output (and its hash in `proof.raw_output`) did, so two prepares of one version differed.
+Tests: `test_reviewer_ignores_a_tool_cache_and_still_refuses_a_real_file_beside_it`,
+`test_reviewer_refuses_a_package_cache_name_outside_a_package_root`
+(`plugins/agent-launcher/tests/test_launcher_contract.py`) and
+`test_jscpd_reports_differing_only_in_clones_outside_the_change_hash_once`
+(`plugins/saga/tests/test_review_adapters_all_languages.py`).
+
+**Mechanism.** An ignore list of generated paths grows by one entry every time a new tool runs in
+the tree, so the list has to follow the tools the reviewer can run, not the ones someone thought
+of first. A name like `.build/` or `node_modules/.cache/` is only a cache at a package root, so
+those entries check for the package's marker file in the exported copy; a Swift build also makes
+a `debug` symlink inside `.build/`, which the link rule would otherwise still refuse. For the
+hash, a tool whose own output is unstable cannot be made canonical by sorting: the report's total
+counts every clone, and the clone set itself varies. The stable part is the part the
+findings read. For jscpd that is the clones that touch a changed file plus the clones behind a
+kept finding: the tool is compared base against head, so a clone between two unchanged files
+that is new in head is a finding too, and a first version that kept only changed-file clones
+stored a report without the clone its own finding pointed at.
+
+**Generalizable rule.** Put one authority behind each "does this count" decision and extend it
+when a new tool is allowed to run; anchor every ignore entry to a marker so it cannot swallow a
+real file. When a tool's output varies on identical input, hash the subset the findings depend
+on and leave the rest out.
+
 ### A review tool's stored-output hash must be canonical: sort, scrub volatile text, leave no residue between tools
 
 **Author.** Jeff Cox

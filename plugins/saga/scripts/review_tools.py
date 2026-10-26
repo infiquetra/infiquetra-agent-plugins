@@ -378,6 +378,11 @@ class Adapter:
     #: Rewrites raw output before it is stored and hashed, removing what differs
     #: between two runs of the same change (timings, build order). Issue 244.
     stable_raw: Callable[[str], str] | None = None
+    #: Cuts a report to what its findings depend on, before the scratch scrub and ``stable_raw``
+    #: run: it gets the report, the paths of the files the change touches, and the anchors of the
+    #: hits the review kept, and returns the report with only the entries that touch a changed
+    #: file or stand behind a kept hit. A report that could not be read is returned as it came.
+    stable_raw_for_change: Callable[[str, frozenset[str], frozenset[str]], str] | None = None
     #: A run that exits 0 without writing ``report_file`` is parsed from its
     #: console output (stdout then stderr) instead of counting as unparseable.
     report_optional: bool = False
@@ -554,13 +559,22 @@ def stable_sorted_list(text: str) -> str:
     return json.dumps(sorted_items(data), indent=2, sort_keys=True) + "\n"
 
 
-def _stable_raw(adapter: Adapter, text: str) -> str:
+def _stable_raw(
+    adapter: Adapter, text: str, change: review_diff.Change | None = None,
+    anchors: frozenset[str] = frozenset(),
+) -> str:
     """Raw output as stored and hashed: scratch folders named stably, then the adapter's rewrite.
 
     Colour codes go first. A folder name split by an escape sequence is not a folder name to the
-    scrub, and Vite colours the code frame that quotes the worktree path (issue 147).
+    scrub, and Vite colours the code frame that quotes the worktree path (issue 147). An adapter
+    that cuts its report to the change (``stable_raw_for_change``) does so on the text as the tool
+    wrote it, because the anchors of the kept hits were made from those names.
     """
-    text = _scrub(_ANSI_ESCAPE.sub("", text))
+    text = _ANSI_ESCAPE.sub("", text)
+    if adapter.stable_raw_for_change is not None and change is not None:
+        paths = frozenset(item.path for item in change.files if item.status != "deleted")
+        text = adapter.stable_raw_for_change(text, paths, anchors)
+    text = _scrub(text)
     if adapter.stable_raw is not None:
         text = adapter.stable_raw(text)
     return text
@@ -1676,7 +1690,10 @@ def _once(
             gaps=parsed.gaps,
         )
     _absorb(adapter, parsed, label, degraded, items)
-    digest = store_raw(_stable_raw(adapter, result.stdout or "").encode(), context.home)
+    anchors = frozenset(hit.anchor for hit in parsed.hits)
+    digest = store_raw(
+        _stable_raw(adapter, result.stdout or "", context.change, anchors).encode(), context.home,
+    )
     hits = tuple(
         _stable_hit(_relative_hit(hit, context.root), context.root) for hit in parsed.hits
     )
@@ -1801,9 +1818,10 @@ def _base_and_head(
     else:
         base_hits, base_ran = cached
     try:
+        head_raw: list[str] = []
         head_hits, head_digest, head_problem, head_ran = _scan_root(
             adapter, replace(context, repo=head_root, root=head_root), process, env, timeout,
-            "head", degraded, items,
+            "head", degraded, items, head_raw,
         )
     except ToolGap as exc:
         degraded.append(_degraded(adapter, exc.row, exc.reason))
@@ -1819,6 +1837,12 @@ def _base_and_head(
         degraded.append(_degraded(adapter, _primary_row(adapter), "lockfile-removed"))
     base_ids = {_identity(adapter, hit) for hit in base_hits}
     kept = tuple(hit for hit in head_hits if _identity(adapter, hit) not in base_ids)
+    if head_raw:
+        # The stored report holds every entry behind a kept hit, so a finding's proof is there.
+        digest = store_raw(_stable_raw(
+            adapter, head_raw[0], context.change, frozenset(hit.anchor for hit in kept),
+        ).encode(), context.home)
+        return kept, {"head": digest}
     return kept, {"head": head_digest}
 
 
@@ -1831,7 +1855,10 @@ def _scan_root(
     label: str,
     degraded: list[dict[str, str]],
     items: list[Mapping[str, Any]],
+    raw_sink: list[str] | None = None,
 ) -> tuple[tuple[Hit, ...], str, str | None, bool]:
+    """One scan. With a ``raw_sink`` the stored copy is left to the caller, which appends the
+    report to the sink: an adapter that cuts its report to the kept hits needs them first."""
     result, problem, ran = _capture(adapter, context, process, env, timeout)
     if not ran:
         return (), "", None, False
@@ -1848,7 +1875,13 @@ def _scan_root(
         reason, row = parsed.gap
         degraded.append(_degraded(adapter, row, reason))
         return (), "", None, True
-    digest = store_raw(_stable_raw(adapter, result.stdout or "").encode(), context.home)
+    if raw_sink is not None and adapter.stable_raw_for_change is not None:
+        raw_sink.append(result.stdout or "")
+        digest = ""
+    else:
+        digest = store_raw(
+            _stable_raw(adapter, result.stdout or "", context.change).encode(), context.home,
+        )
     hits = tuple(
         _stable_hit(_relative_hit(hit, context.root), context.root) for hit in parsed.hits
     )

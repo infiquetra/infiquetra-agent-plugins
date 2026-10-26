@@ -8,6 +8,7 @@ import shlex
 from dataclasses import replace
 import socket
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -929,6 +930,122 @@ def test_semgrep_ids_naming_the_rendered_rules_folder_hash_once() -> None:
     assert "ab12cd34" not in A._stable_semgrep(with_error("saga-rules-ab12cd34"))
     unrelated = json.dumps({"results": [{"check_id": "python.lang.audit", "path": "a.py"}]})
     assert json.loads(A._stable_semgrep(unrelated))["results"][0]["check_id"] == "python.lang.audit"
+
+
+def _jscpd_clone(first: str, second: str, lines: int = 8) -> dict[str, Any]:
+    return {
+        "lines": lines, "tokens": 60,
+        "firstFile": {"name": f"{first}:python", "start": 10},
+        "secondFile": {"name": f"{second}:python", "start": 4},
+    }
+
+
+def _jscpd_digest_text(report: dict[str, Any], *changed: str) -> str:
+    files = tuple(T.review_diff.FileChange(path, "modified", frozenset({1})) for path in changed)
+    return T._stable_raw(_adapter("jscpd"), json.dumps(report), T.review_diff.Change(files))
+
+
+def test_jscpd_reports_differing_only_in_clones_outside_the_change_hash_once() -> None:
+    """jscpd finds one clone more or fewer on identical input of a large repository, and its
+    totals move with it. Only the clones that touch a changed file are hashed."""
+    inside = _jscpd_clone("src/app.py", "lib/other.py")
+    outside = _jscpd_clone("docs/a.py", "docs/b.py")
+    extra = _jscpd_clone("docs/c.py", "docs/d.py")
+    first = {"duplicates": [outside, inside], "statistics": {"total": {"clones": 2}}}
+    second = {"duplicates": [extra, inside, outside], "statistics": {"total": {"clones": 3}}}
+    assert _jscpd_digest_text(first, "src/app.py") == _jscpd_digest_text(second, "src/app.py")
+
+
+def test_jscpd_reports_differing_in_a_clone_touching_a_changed_file_hash_twice() -> None:
+    inside = _jscpd_clone("src/app.py", "lib/other.py")
+    moved = _jscpd_clone("src/app.py", "lib/third.py")
+    other = _jscpd_clone("docs/a.py", "docs/b.py")
+    assert _jscpd_digest_text({"duplicates": [inside, other]}, "src/app.py") != (
+        _jscpd_digest_text({"duplicates": [moved, other]}, "src/app.py")
+    )
+    assert _jscpd_digest_text({"duplicates": [inside]}, "src/app.py") != (
+        _jscpd_digest_text({"duplicates": [inside, moved]}, "src/app.py")
+    )
+    # The same report cut to a different change keeps different clones.
+    assert _jscpd_digest_text({"duplicates": [inside, other]}, "src/app.py") != (
+        _jscpd_digest_text({"duplicates": [inside, other]}, "docs/a.py")
+    )
+
+
+def test_a_jscpd_finding_between_unchanged_files_keeps_its_clone_in_the_stored_report(
+    tmp_path: Path,
+) -> None:
+    """jscpd is compared base against head, so a clone between two unchanged files that is new in
+    head is a finding. The stored report must hold it, or the finding's proof points at nothing."""
+    repo, base, head = _changed_app(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {"jscpd": {"version": "1.0.0"}})
+    new_in_head = _jscpd_clone("docs/a.py", "docs/b.py")
+    in_both = _jscpd_clone("docs/c.py", "docs/d.py")
+    touching = _jscpd_clone("src/app.py", "docs/e.py")
+
+    class Calls(_Calls):
+        def __call__(self, argv: list[str], **kwargs: Any) -> Any:
+            if "--version" in argv:
+                return T.ProcessResult(0, "1.0.0\n")
+            at_base = _git(Path(kwargs["cwd"]), "rev-parse", "HEAD") == self.base
+            clones = [in_both] if at_base else [new_in_head, in_both, touching]
+            report_dir = Path(argv[argv.index("--output") + 1])
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "jscpd-report.json").write_text(
+                json.dumps({"duplicates": clones, "statistics": {"total": {"clones": 9}}}),
+                encoding="utf-8",
+            )
+            return T.ProcessResult(0, "")
+
+    home = tmp_path / "home"
+    output = tmp_path / "out"
+    assert _run(
+        repo, base, head, profile, output, home, [_adapter("jscpd")], Calls(base, ""),
+    ) == 0
+    findings = _read(output, "findings.json")
+    statements = sorted(item["statement"] for item in findings)
+    assert len(statements) == 2 and any("docs/a.py" in text for text in statements)
+    digests = {item["proof"]["raw_output"] for item in findings}
+    assert len(digests) == 1
+    stored = json.loads((home / ".saga" / "review-output" / digests.pop()).read_text())
+    names = sorted(
+        (clone["firstFile"]["name"], clone["secondFile"]["name"]) for clone in stored["duplicates"]
+    )
+    # Both findings' clones are there; the clone that is in base as well and touches no changed
+    # file is not.
+    assert names == [("docs/a.py:python", "docs/b.py:python"),
+                     ("src/app.py:python", "docs/e.py:python")]
+
+
+def test_jscpd_clones_of_a_file_with_the_same_tail_are_not_the_changed_file() -> None:
+    nested = _jscpd_clone("pkg/src/app.py", "pkg/src/other.py")
+    mine = _jscpd_clone("src/app.py", "src/other.py")
+    stored = _jscpd_digest_text({"duplicates": [nested, mine]}, "src/app.py")
+    names = [clone["firstFile"]["name"] for clone in json.loads(stored)["duplicates"]]
+    assert names == ["src/app.py:python"]
+    # A scan root given as an absolute path under a saga scratch folder is still understood.
+    rooted = _jscpd_clone(f"{tempfile.gettempdir()}/saga-review-ab12cd34/src/app.py", "x/y.py")
+    assert "src/app.py" in _jscpd_digest_text({"duplicates": [rooted]}, "src/app.py")
+
+
+def test_jscpd_runs_with_a_flaky_clone_outside_the_change_record_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    repo, base, head = _changed_app(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {"jscpd": {"version": "1.0.0"}})
+    inside = _jscpd_clone("src/app.py", "src/b.py")
+    below_threshold = _jscpd_clone("docs/a.py", "docs/b.py", lines=2)
+    outputs = []
+    for run, clones in enumerate(([inside], [below_threshold, inside])):
+        report = json.dumps({"duplicates": clones, "statistics": {"total": {"clones": run}}})
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, profile, output, tmp_path / "home",
+            [_adapter("jscpd")], _Calls(base, report),
+        ) == 0
+        outputs.append(output)
+    assert _read(outputs[0], "findings.json")
+    _packets_match(*outputs)
 
 
 def test_jscpd_runs_differing_only_in_detection_date_record_identical_bytes(
