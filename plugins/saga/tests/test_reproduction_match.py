@@ -391,7 +391,7 @@ def _bun_vary(text: str) -> str:
     text = re.sub(r"\[(\d+)\.(\d+)ms\]", lambda m: f"[{int(m[1]) + 7}.{m[2]}3ms]", text)
     text = re.sub(r"\[(\d+)\.00ms\]", "[999.00ms]", text)
     text = text.replace("/tmp/scratch-8f3a1c/", "/private/var/folders/aa/bb/T/scratch-77d2/")
-    return text.replace("/private/var/folders/qz/tmp.Xk29Ab/", "/home/runner/work/other/")
+    return text.replace("/private/var/folders/qz/tmp.Xk29Ab/", "/home/operator/work/other/")
 
 
 @pytest.mark.parametrize(
