@@ -23,6 +23,10 @@ line. Bun also prints the error block before its `(fail)` line, not after, so a 
 reads a failure's body forward from the header (as the Vitest one does) finds nothing. Bun
 repeats its `(fail)` lines in a recap after `N tests failed:`, which has to be skipped or each
 failure is read twice, the second time with no block.
+A reviewer's recording often starts after bun's file header, and a test is usually cited by its
+file path alone; a failure with no file then never fits a path-only citation, so the first fix
+still returned no match on a real recording. The bun parser now reads the file from the test file
+in the failure's own stack frame (`test_bun_bare_path_citation_*`).
 
 **Generalizable rule.** When a runner starts being used, add its parser and a fixture for it in
 the same change; the word-for-word fallback is a safety net, not a parser. Normalise only what

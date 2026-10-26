@@ -330,12 +330,19 @@ def _vitest(lines: list[str], budget: _Budget) -> list[Failure]:
     return failures
 
 
+_BUN_TEST_FRAME = re.compile(
+    r"\bat (?:.*? \()?(\S+?\.(?:test|spec)\.[cm]?[jt]sx?):\d+:\d+\)?\s*$"
+)
+
+
 def _bun(lines: list[str], budget: _Budget) -> list[Failure]:
     """bun test prints a failure's error block first, then its ``(fail) suite > name [time]`` line.
 
     The block is every line since the previous test result or file header. Newer bun repeats the
     failing ``(fail)`` lines in a recap after ``N tests failed:``; the recap has no block, so it
-    is skipped.
+    is skipped. Bun prints a file header only before a file's first result, and a recording may
+    start after it, so a failure with no header takes its file from the test file named in its own
+    stack frame (``at <anonymous> (/dir/file.test.ts:12:5)``).
     """
     failures = []
     file: str | None = None
@@ -355,7 +362,11 @@ def _bun(lines: list[str], budget: _Budget) -> list[Failure]:
             if not recap:
                 body = tuple(lines[start:index])
                 budget.retain(len(body))
-                failures.append(Failure(file, failed.group(1), body))
+                where = file
+                if where is None:
+                    frames = (_BUN_TEST_FRAME.search(line) for line in body)
+                    where = next((m.group(1) for m in frames if m), None)
+                failures.append(Failure(where, failed.group(1), body))
             start = index + 1
     return failures
 

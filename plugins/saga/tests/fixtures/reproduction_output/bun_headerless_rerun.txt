@@ -1,0 +1,19 @@
+363 |     app.get('/a/b', (c) => c.text('B'))
+364 | 
+365 |     const res = await app.request('http://localhost/a/b')
+366 | 
+367 |     expect(await res.text()).toBe('B')
+368 |     expect(spy.mock.calls.length, 'spy ran on /a/b despite skip(/a/*)').toBe(0)
+                                                                          ^
+error: spy ran on /a/b despite skip(/a/*)
+
+Expected: 0
+Received: 1
+
+      at <anonymous> (/abs/scratch/run-1234/copy/src/x/index.test.ts:368:103)
+(fail) skip with wildcard path > Should skip for paths under a wildcard [0.85ms]
+
+ 16 pass
+ 1 fail
+ 52 expect() calls
+Ran 17 tests across 1 file. [43.00ms]

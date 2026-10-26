@@ -483,3 +483,66 @@ def test_normalise_is_narrow_about_paths_and_durations() -> None:
     assert M.normalise("GET http://host/a/b.ts") == "GET http://host/a/b.ts"
     assert M.normalise("Expected: 5 [3ms] more") == "Expected: 5 [3ms] more"
     assert M.normalise("Received: [1, 2]") == "Received: [1, 2]"
+
+
+# A bun recording with no file header, cited by its bare file path (the common case for bun).
+BUN_PATH = "src/x/index.test.ts"
+BUN_PASSING = (
+    "bun test v1.2.0 (abcdef01)\n\nsrc/x/index.test.ts:\n"
+    "(pass) skip with wildcard path > Should skip for paths under a wildcard [0.40ms]\n"
+    "\n 17 pass\n 0 fail\n 52 expect() calls\nRan 17 tests across 1 file. [43.00ms]\n"
+)
+
+
+def _headerless(name: str) -> str:
+    return _text(f"bun_headerless_{name}")
+
+
+def test_bun_headerless_failure_takes_its_file_from_its_own_stack_frame() -> None:
+    (found,) = M.failed_tests(_headerless("recorded"))
+    assert found.name == "skip with wildcard path > Should skip for paths under a wildcard"
+    assert found.file is not None and found.file.endswith("src/x/index.test.ts")
+
+
+@pytest.mark.parametrize("rerun", ["recorded", "rerun"])
+@pytest.mark.parametrize("recorded", ["recorded", "rerun"])
+def test_bun_bare_path_citation_matches_identical_output_with_or_without_the_summary(
+    rerun: str, recorded: str,
+) -> None:
+    assert M.matches(1, _headerless(rerun), _headerless(recorded), BUN_PATH)
+
+
+def test_bun_bare_path_citation_ignores_a_changed_duration() -> None:
+    changed = _headerless("rerun").replace("[0.85ms]", "[7.31ms]").replace("[43.00ms]", "[91.20ms]")
+    assert changed != _headerless("rerun")
+    assert M.matches(1, changed, _headerless("recorded"), BUN_PATH)
+    assert M.matches(1, _headerless("recorded"), changed, BUN_PATH)
+
+
+def test_bun_bare_path_citation_ignores_a_changed_scratch_path() -> None:
+    changed = _headerless("rerun").replace(
+        "/abs/scratch/run-1234/copy/", "/private/var/folders/zz/T/other-9/copy/",
+    )
+    assert changed != _headerless("rerun")
+    assert M.matches(1, changed, _headerless("recorded"), BUN_PATH)
+    assert M.matches(1, _headerless("recorded"), changed, BUN_PATH)
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [("Received: 1", "Received: 2"), ("Expected: 0", "Expected: 3"),
+     ("error: spy ran on", "error: spy never ran on")],
+)
+def test_bun_bare_path_citation_with_a_different_assertion_does_not_match(
+    before: str, after: str,
+) -> None:
+    changed = _headerless("rerun").replace(before, after)
+    assert changed != _headerless("rerun")
+    assert not M.matches(1, changed, _headerless("recorded"), BUN_PATH)
+
+
+def test_bun_bare_path_citation_of_another_file_or_a_passing_run_does_not_match() -> None:
+    assert not M.matches(1, _headerless("rerun"), _headerless("recorded"), "src/y/other.test.ts")
+    assert not M.matches(0, BUN_PASSING, _headerless("recorded"), BUN_PATH)
+    assert not M.matches(1, BUN_PASSING, _headerless("recorded"), BUN_PATH)
+    assert not M.matches(0, _headerless("rerun"), _headerless("recorded"), BUN_PATH)
