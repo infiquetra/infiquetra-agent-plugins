@@ -21,6 +21,16 @@
 
 ### Fixed
 
+- A repeat `prepare` of the same head gives the same Python packages when two wheels ship the
+  same file. uv installs wheels in parallel, so which copy of a shared file was left in
+  `dependencies/python/site-packages` depended on timing, and two prepares could differ. Prepare
+  now reads every installed distribution's `RECORD`, and for each file more than one of them
+  lists it keeps the copy from the distribution whose normalized name sorts last, taken from an
+  install of that distribution alone. `dependencies.json` records each such set under
+  `overlaps` (the names, the one kept, the rule `name-sorts-last` and a count of files, nothing
+  else). A copy that cannot be taken stops the install with the new reason
+  `overlap-unresolved`. A test installs two fake wheels sharing a file in both orders and
+  requires byte-identical packets.
 - The reproduction matcher reads `bun test` output. A bun run that failed the same test the same
   way used to be recorded as `re-run-mismatch`, because the last-line fallback compared the
   `(fail) ... [0.85ms]` line with its duration and an absolute scratch path in a stack frame.

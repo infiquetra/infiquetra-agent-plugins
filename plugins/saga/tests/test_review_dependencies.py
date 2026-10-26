@@ -790,6 +790,63 @@ def test_a_locked_head_gets_its_packages_and_pytest_and_no_interpreter_or_script
     assert install[install.index("--link-mode") + 1] == expected
 
 
+def _shared_install(tmp_path: Path, reverse: bool) -> tuple[dict[str, Any], Path]:
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST,
+                shared=frozenset({"inertdep", "otherdep"}), reverse=reverse)
+    return _python(tmp_path / ("reverse" if reverse else "forward"), uv, _LOCKED)
+
+
+def test_a_file_two_wheels_ship_is_the_same_whatever_order_they_install_in(
+    tmp_path: Path,
+) -> None:
+    forward, forward_packet = _shared_install(tmp_path, reverse=False)
+    backward, backward_packet = _shared_install(tmp_path, reverse=True)
+    assert _packet_contents(forward_packet) == _packet_contents(backward_packet)
+    shared = forward_packet / D.PYTHON_DIRECTORY / "sharedpkg" / "__init__.py"
+    # The distribution whose name sorts last keeps its copy.
+    assert shared.read_text(encoding="utf-8") == "SHIPPED_BY = 'otherdep'\n"
+    note = [{"names": ["inertdep", "otherdep"], "kept": "otherdep", "rule": "name-sorts-last",
+             "files": 1}]
+    assert forward["python"]["overlaps"] == backward["python"]["overlaps"] == note
+    assert forward["python"]["state"] == "installed"
+    assert str(tmp_path) not in json.dumps(forward) and "sharedpkg" not in json.dumps(forward)
+
+
+def test_without_the_overlap_rule_the_two_orders_differ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control: the fake really does leave the last installed copy behind."""
+    monkeypatch.setattr(D, "_resolve_overlaps", lambda *args: [])
+    _record, forward = _shared_install(tmp_path, reverse=False)
+    _record, backward = _shared_install(tmp_path, reverse=True)
+    assert _packet_contents(forward) != _packet_contents(backward)
+
+
+def test_a_head_whose_wheels_share_no_file_gets_no_overlap_note(tmp_path: Path) -> None:
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST)
+    record, _packet = _python(tmp_path, uv, _LOCKED)
+    assert "overlaps" not in record["python"]
+    installs = [call for call in uv.calls if call["argv"][1:3] == ["pip", "install"]]
+    assert len(installs) == 1
+
+
+def test_an_overlap_the_kept_distribution_does_not_ship_alone_stops_the_install(
+    tmp_path: Path,
+) -> None:
+    class Lying(FakeUv):
+        def _install(self, command: list[str]) -> Any:
+            result = super()._install(command)
+            target = Path(command[command.index("--target") + 1])
+            if target.name == "overlap":
+                (target / "sharedpkg" / "__init__.py").unlink()
+            return result
+
+    uv = Lying(exported=_EXPORTED, compiled=_PYTEST, shared=frozenset({"inertdep", "otherdep"}))
+    record, packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"] == {"state": "not-installed", "reason": "overlap-unresolved"}
+    assert not (packet / D.PYTHON_DIRECTORY).exists()
+
+
 def test_a_lock_that_declares_pytest_installs_no_second_one(tmp_path: Path) -> None:
     uv = FakeUv(exported=_EXPORTED + _PYTEST)
     record, _packet = _python(tmp_path, uv, _LOCKED)

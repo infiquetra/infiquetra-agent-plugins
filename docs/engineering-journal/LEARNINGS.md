@@ -2,6 +2,27 @@
 
 ## 2026-10-26
 
+### An installer that writes wheels in parallel makes a shared file's contents a race
+
+**Author.** Jeff Cox
+
+**Evidence.** Two prepares of the same head, in a measurement run, gave packets that differed
+in one file under `dependencies/python/site-packages`. Two of the head's wheels shipped that
+same path with different contents. Prepare installs with one `uv pip install --target`
+transaction (`plugins/saga/scripts/review_dependencies.py`, `_install_set`). Installing two
+hand-made wheels that share a file with real uv into one `--target` keeps one wheel's copy with
+nothing to say which, and the harness stops a run when packets differ.
+
+**Mechanism.** `--target` has no installed-files database to refuse a clash, and uv unpacks
+wheels concurrently, so the last writer wins. Each wheel's `RECORD` still lists every path it
+shipped, so the clash is visible afterwards. `_resolve_overlaps` finds paths that more than one
+`RECORD` lists, keeps the copy from the distribution whose normalized name sorts last, takes it
+from an install of that distribution alone, and records only the names under `overlaps`.
+
+**Generalizable rule.** When an output must be reproducible, look for every place where two
+inputs can write the same location, and decide the winner by a fixed rule rather than by
+install or completion order.
+
 ### A shell prefix cannot have the last word on a variable the vendor sets inside the command
 
 **Author.** Jeff Cox
