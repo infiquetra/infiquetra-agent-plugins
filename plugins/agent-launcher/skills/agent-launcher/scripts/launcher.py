@@ -2159,9 +2159,11 @@ REVIEWER_TOOLCHAIN_PARTS = (
 #: them: Claude leaves only an empty ``.claude/.cc-writes/`` there (measured on 2.1.292), so a file
 #: under it is one the session wrote, and saga's check refuses it.
 #:
-#: Tool caches the reviewer's own checks write into the working tree are listed too.
-#: Each entry is a folder or a file name that is generated and never edited, matched whole at a
-#: path boundary, so ``src/ruff_cache.py`` and ``.ruff_cache.md`` do not match:
+#: Tool caches the reviewer's own checks write into the working tree are listed too. Each entry is
+#: a folder or a file name that is generated and never edited, matched whole at a path boundary,
+#: so ``src/ruff_cache.py`` and ``.ruff_cache.md`` do not match. An entry counts only for a path
+#: that is new: the ignore applies to the ``added`` list, so a tracked file at one of these paths
+#: that the session edits or deletes is a change like any other.
 #:
 #: - ``.pytest_cache/`` at any depth: ``cd pkg && pytest`` writes ``pkg/.pytest_cache/``.
 #: - ``.ruff_cache/`` and ``.mypy_cache/``: ruff's and mypy's result caches, written wherever the
@@ -2170,7 +2172,7 @@ REVIEWER_TOOLCHAIN_PARTS = (
 #: - ``*.tsbuildinfo``: TypeScript's incremental-build record, written by ``tsc`` when
 #:   ``incremental`` is on. A suffix, so a file merely containing the word does not match.
 #:
-#: Folders that other tools also use are matched only at a package root; see
+#: Entries that other things also use are matched only at a package root; see
 #: ``REVIEWER_PACKAGE_CACHES``.
 REVIEWER_SCRATCH_IGNORED = re.compile(
     r"^(pytest-of-[^/]+/|tmp[a-z0-9_]{8}/|target/)|(^|/)\.pytest_cache/|(^|/)__pycache__/|\.pyc$"
@@ -2178,37 +2180,43 @@ REVIEWER_SCRATCH_IGNORED = re.compile(
     r"|(^|/)(\.ruff_cache|\.mypy_cache|\.hypothesis)/"
     r"|(^|/)\.eslintcache$|(^|/)[^/]+\.tsbuildinfo$"
 )
-#: Cache folders whose names other things also use, so each counts only at a package root: the
-#: folder that holds the named marker file in the exported copy. A ``node_modules/.vite/`` under a
-#: folder with no ``package.json`` is not Vite's. A folder that is not at a package root, or that
-#: has the right name in a package with no marker, is an ordinary change and is refused.
+#: Entries whose names other things also use, so each counts only at a package root: the folder
+#: that holds one of the named marker files in the exported copy (or, where noted, the root of the
+#: copy itself). Under a folder with no marker, or in a different place, the same name is an
+#: ordinary change and is refused. Like the list above they apply to new paths only.
 #:
 #: - ``node_modules/.vite/``, ``node_modules/.cache/``: Vite's and Vitest's result and transform
 #:   caches, and the shared cache folder that Jest, Babel, ESLint and Prettier write when
 #:   ``find-cache-dir`` places a cache (marker ``package.json``).
 #: - ``.dart_tool/``: ``dart pub get``, ``dart analyze`` and ``dart test`` write the package
 #:   configuration and test caches there (marker ``pubspec.yaml``; measured with Dart 3.13).
+#:   ``pubspec.lock`` is what ``dart pub get`` and ``dart run`` write when the package does not
+#:   track one, beside ``pubspec.yaml``.
 #: - ``.build/``: SwiftPM's build folder, written by ``swift build`` and ``swift test``, including a
-#:   ``debug`` symlink (marker ``Package.swift``; measured with Swift 6.4).
+#:   ``debug`` symlink (marker ``Package.swift``; measured with Swift 6.4). ``Package.resolved``
+#:   is what SwiftPM writes beside ``Package.swift`` when it resolves dependencies.
 #: - ``cdk.out/``: the folder ``cdk synth`` writes the synthesised templates to (marker
 #:   ``cdk.json``).
 #:
-#: A new symlink inside one of these folders is ignored with it: the tools make them (SwiftPM's
+#: A new symlink inside one of the folders is ignored with it: the tools make them (SwiftPM's
 #: ``.build/debug``), and saga reads nothing under a path that is ignored. A symlink that replaces
 #: or retargets a tracked path is never ignored, and a link anywhere else is still refused.
 REVIEWER_PACKAGE_CACHES = (
-    (re.compile(r"(?:^|(?<=/))node_modules/\.(?:vite|cache)/"), "package.json"),
-    (re.compile(r"(?:^|(?<=/))\.dart_tool/"), "pubspec.yaml"),
-    (re.compile(r"(?:^|(?<=/))\.build/"), "Package.swift"),
-    (re.compile(r"(?:^|(?<=/))cdk\.out/"), "cdk.json"),
+    (re.compile(r"(?:^|(?<=/))node_modules/\.(?:vite|cache)/"), ("package.json",), False),
+    (re.compile(r"(?:^|(?<=/))\.dart_tool/"), ("pubspec.yaml",), False),
+    (re.compile(r"(?:^|(?<=/))pubspec\.lock$"), ("pubspec.yaml",), False),
+    (re.compile(r"(?:^|(?<=/))\.build/"), ("Package.swift",), False),
+    (re.compile(r"(?:^|(?<=/))Package\.resolved$"), ("Package.swift",), False),
+    (re.compile(r"(?:^|(?<=/))cdk\.out/"), ("cdk.json",), False),
 )
 
 
 def reviewer_in_package_cache(path: str, manifest: Mapping[str, str]) -> bool:
-    """True when *path* is under a cache folder at a package root of the exported copy."""
-    for pattern, marker in REVIEWER_PACKAGE_CACHES:
+    """True when *path* is a cache entry at a package root of the exported copy."""
+    for pattern, markers, root_of_copy in REVIEWER_PACKAGE_CACHES:
         for found in pattern.finditer(path):
-            if path[:found.start()] + marker in manifest:
+            root = path[:found.start()]
+            if (root_of_copy and not root) or any(root + marker in manifest for marker in markers):
                 return True
     return False
 #: Issue #262: saga's prepare vendors the head's crates.io dependencies into the packet and

@@ -5851,6 +5851,10 @@ _CACHE_CASES = [
     ("pytest-subfolder", {"pkg/test_a.py": "x\n"},
      [".pytest_cache/.gitignore", "pkg/.pytest_cache/.gitignore", "a/b/.pytest_cache/v/c"],
      "pkg/pytest_cache.py"),
+    ("dart-lock", {"pubspec.yaml": "name: m\n", "app/pubspec.yaml": "name: a\n"},
+     ["pubspec.lock", "app/pubspec.lock"], "lib/pubspec.lock.dart"),
+    ("swift-resolved", {"Package.swift": "// manifest\n"}, ["Package.resolved"],
+     "Sources/Package.resolved.swift"),
 ]
 
 
@@ -5916,6 +5920,33 @@ def test_reviewer_counts_a_tracked_file_swapped_for_a_link_inside_a_package_cach
     (copy / ".build" / "debug").symlink_to("/")
     changes = launcher.reviewer_scratch_changes(copy, manifest)
     assert changes["links"] == [".build/debug", "node_modules/.cache/kept.json"]
+
+
+@pytest.mark.parametrize(("name", "files"), [
+    ("pubspec.lock", {"pubspec.yaml": "name: m\n", "pubspec.lock": "locked\n"}),
+    ("Package.resolved", {"Package.swift": "x\n", "Package.resolved": "locked\n"}),
+])
+def test_reviewer_still_counts_an_edit_to_a_tracked_file_at_a_generated_path(
+    launcher: ModuleType, tmp_path: Path, name: str, files: dict[str, str]
+) -> None:
+    copy = _copy_with(tmp_path, files)
+    manifest = launcher._reviewer_manifest(copy)
+    (copy / name).write_text("edited\n")
+    changes = launcher.reviewer_scratch_changes(copy, manifest)
+    assert changes["modified"] == [name] and changes["added"] == []
+
+
+def test_reviewer_refuses_generated_names_outside_their_package_root(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """A lock file with no marker beside it is an ordinary added file."""
+    copy = _copy_with(tmp_path, {"src/a.py": "x = 1\n"})
+    manifest = launcher._reviewer_manifest(copy)
+    names = ["pubspec.lock", "Package.resolved"]
+    for relative in names:
+        (copy / relative).parent.mkdir(parents=True, exist_ok=True)
+        (copy / relative).write_text("written\n")
+    assert launcher.reviewer_scratch_changes(copy, manifest)["added"] == sorted(names)
 
 
 def test_reviewer_still_counts_a_modified_tracked_file_at_a_cache_path(
