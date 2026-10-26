@@ -2,6 +2,34 @@
 
 ## 2026-10-26
 
+### A reviewer that is only told to "try a test" locates harms but seldom proves them
+
+**Author.** Jeff Cox
+
+**Evidence.** The reproduction guidance in `plugins/saga/references/targeted-reviewer-prompt.md`
+said "When you believe a finding, try to show it with a test", listed no runner that `finish` can
+read, and gave a recipe only for Rust inline tests and a pytest example. In a measurement outside
+Rust, reviewers usually found the planted defects but rarely proved them. Some could not import a
+dependency (fixed separately: an offline Python environment, and the matcher now reads
+`bun test`), and the rest either never tried or gave no reason. The prompt now states the stakes,
+lists what `finish` accepts, gives a short recipe per language and asks a traced harm to name its
+blocker. Tests: `test_prompt_names_every_runner_the_matcher_reads` and its neighbours in
+`plugins/saga/tests/test_reviewer_answer.py`.
+
+**Mechanism.** The severity row `judged.harm-reproduced` lets a correctness or security finding
+block only when `finish` re-runs the reviewer's test and sees the same failure. A reviewer that does
+not know this, or does not know which commands and runners the re-run can use, rationally settles
+for a trace, which is capped at fix later. A trace that gives no reason is indistinguishable from
+a reviewer that did not try, so neither the operator nor a later prompt change can tell a tooling
+gap from a skipped step. Because the precision rule (only a reproduction blocks) is what keeps
+clean changes from being blocked, the fix had to raise how often reviewers try and say why they
+stopped, not loosen what counts as proof: the test must run the code under review, and a test that
+only reads or parses its source text is not a reproduction.
+
+**Generalizable rule.** When a gate accepts only a mechanically re-checked proof, tell the prover
+exactly what the checker accepts, with one short recipe per language, and make every "could not
+prove" carry a named reason, so a miss can be traced to a tooling gap, not guessed at.
+
 ### A regex exclusion that backtracks can drop out for a whole file, with no error
 
 **Author.** Jeff Cox
