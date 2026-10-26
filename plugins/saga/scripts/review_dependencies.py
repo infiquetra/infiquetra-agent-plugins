@@ -30,6 +30,7 @@ Run as a script, this module is that watcher: ``review_dependencies.py --limit N
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -43,11 +44,12 @@ import sys
 import tempfile
 import time
 import tomllib
+import unicodedata
 from datetime import datetime, timezone
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 SCHEMA = "saga.review_dependencies.v1"
@@ -677,7 +679,11 @@ REASONS = frozenset({
     "no-wheel", "not-found", "network", "unresolvable", "install-failed", "timeout",
     "size-limit", "uv-missing", "python3-missing", "export-failed", "symlinked-input",
     "lock-without-pyproject", "subfolder-project", "nothing-installed", "head-export",
+    "overlap-unresolved",
 })
+#: The one rule for a file that more than one installed distribution ships: the copy from the
+#: distribution whose normalized name sorts last is kept, whatever order uv installed them in.
+OVERLAP_RULE = "name-sorts-last"
 #: The uv commands' own flags: no configuration file is read and nothing is printed but errors.
 _UV_QUIET = ("--quiet", "--no-config")
 _PYTHON_ENV_FLAGS = {"UV_PYTHON_DOWNLOADS": "never", "UV_NO_PROGRESS": "1"}
@@ -780,7 +786,9 @@ def _install_python(
             if interpreter is None or version is None:
                 raise _PythonFailure("python3-missing")
             env = _uv_env(work)
-            uv = _Uv(runner, work, env, [target, work / "home", work / "tmp"], deadline)
+            # The retry and overlap installs count toward the same byte limit as the target.
+            uv = _Uv(runner, work, env, [target, work / "home", work / "tmp", work / "trial",
+                                         work / "overlap"], deadline)
             dropped: dict[str, int] = {}
             if "uv.lock" in inputs:
                 exported = uv.run(
@@ -818,11 +826,13 @@ def _install_python(
                 entries = _plain_entries(resolved.splitlines(), {}, hashes=True)
             missing = unresolved + _install_set(uv, interpreter, target, entries, work)
             missing.sort(key=lambda item: item["name"])
+            overlaps = _resolve_overlaps(uv, interpreter, target, entries, work)
             _tidy(target)
             packages = _installed(target)
             if not packages:
                 raise _PythonFailure("nothing-installed")
             requirements = "".join(f"{entries[name]}\n" for name in sorted(entries))
+            note = {"overlaps": overlaps} if overlaps else {}
             return {
                 "state": "partial" if missing else "installed",
                 "directory": PYTHON_DIRECTORY,
@@ -833,6 +843,7 @@ def _install_python(
                 "missing": missing,
                 "dropped": dict(sorted(dropped.items())),
                 "requirements_sha256": hashlib.sha256(requirements.encode("utf-8")).hexdigest(),
+                **note,
             }
         except _PythonFailure as exc:
             _remove(target)
@@ -1081,11 +1092,7 @@ def _install_set(
     *target*. Returns the entries left out, with a fixed reason, sorted by name.
     """
     def install(names: Sequence[str], into: Path) -> None:
-        requirements = _write(work / "requirements.txt",
-                              "".join(f"{entries[name]}\n" for name in names))
-        uv.run(["uv", "pip", "install", *_UV_QUIET, "--python", python, "--target", str(into),
-                "--link-mode", _LINK_MODE, "--no-deps", "--no-build", "--require-hashes",
-                "-r", str(requirements)], "install-failed")
+        _install_into(uv, python, into, entries, names, work)
 
     names = sorted(entries)
     try:
@@ -1112,6 +1119,195 @@ def _install_set(
     if good:
         install(good, target)
     return missing
+
+
+def _install_into(
+    uv: _Uv, python: str, into: Path, entries: Mapping[str, str], names: Sequence[str],
+    work: Path,
+) -> None:
+    """One ``uv pip install --target`` of *names* from *entries*, hashes required, no builds."""
+    requirements = _write(work / "requirements.txt",
+                          "".join(f"{entries[name]}\n" for name in names))
+    uv.run(["uv", "pip", "install", *_UV_QUIET, "--python", python, "--target", str(into),
+            "--link-mode", _LINK_MODE, "--no-deps", "--no-build", "--require-hashes",
+            "-r", str(requirements)], "install-failed")
+
+
+@dataclass(frozen=True)
+class _Overlap:
+    """Files more than one installed distribution ships at one path, compared case-folded."""
+
+    #: Each spelling of the path the ``RECORD`` files use; more than one means a case or Unicode
+    #: form clash, whose folder spelling on a case-insensitive disk depends on install order.
+    spellings: tuple[str, ...]
+    #: The distributions' normalized names, sorted.
+    names: tuple[str, ...]
+
+
+def _fold(path: str) -> str:
+    """*path* as a case-insensitive, normalization-insensitive disk sees it."""
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFD", path).casefold())
+
+
+_PIN = re.compile(r"==\s*([A-Za-z0-9.!+_-]+)")
+
+
+def _same_version(pinned: str, folder: str) -> bool:
+    """Whether a requirement's pinned version and a ``.dist-info`` folder's name the same one,
+    ignoring case and the ``-``/``_``/``.`` separators PEP 440 treats alike."""
+    def canon(text: str) -> str:
+        return re.sub(r"[-_.]+", ".", text.strip().lower())
+
+    return canon(pinned) == canon(folder)
+
+
+def _claims(target: Path, entries: Mapping[str, str]) -> dict[str, _Overlap]:
+    """Each path in *target* that more than one installed distribution's ``RECORD`` lists, by
+    its folded form (:func:`_fold`), so ``Foo/x.py`` and ``foo/x.py`` count as one.
+
+    Which ``.dist-info`` folders are real is decided only from *entries*, the requirements uv
+    installed: a folder must be named ``<name>-<version>`` for one of them, with its pinned
+    version, one folder per name, and hold a readable ``RECORD`` that is not a symlink. uv
+    rewrites each ``RECORD`` to list the files it wrote. Any other ``.dist-info`` folder, or a
+    ``RECORD`` that lists a path inside a ``.dist-info`` folder other than its own, means a wheel
+    shipped files there, and stops the install (``overlap-unresolved``); such a folder is never
+    merely skipped. Paths outside *target* (console scripts under ``../``) and under ``bin`` are
+    never shared, and a malformed row is skipped.
+    """
+    records: dict[str, tuple[str, list[str]]] = {}
+    if not target.is_dir() or target.is_symlink():
+        return {}
+    for info in sorted(target.iterdir(), key=lambda path: path.name):
+        if not _fold(info.name).endswith(".dist-info"):
+            continue
+        raw, _sep, version = info.name[: -len(".dist-info")].rpartition("-")
+        name = _normalize(raw)
+        pinned = _PIN.search(entries.get(name, ""))
+        record = info / "RECORD"
+        if (not raw or name not in entries or name in records or info.is_symlink()
+                or not info.is_dir() or record.is_symlink() or not record.is_file()
+                or (pinned is not None and not _same_version(pinned.group(1), version))):
+            raise _PythonFailure("overlap-unresolved")
+        try:
+            with record.open(encoding="utf-8", newline="") as handle:
+                rows = list(csv.reader(handle))
+        except (OSError, UnicodeDecodeError, csv.Error):
+            raise _PythonFailure("overlap-unresolved") from None
+        paths = [path for row in rows if (path := _record_path(row, dist_info=True))]
+        records[name] = (_fold(info.name), paths)
+    claimed: dict[str, dict[str, set[str]]] = {}
+    for name, (own, paths) in records.items():
+        for path in paths:
+            first = _fold(PurePosixPath(path).parts[0])
+            if first.endswith(".dist-info"):
+                if first != own:
+                    raise _PythonFailure("overlap-unresolved")
+                continue
+            claimed.setdefault(_fold(path), {}).setdefault(path, set()).add(name)
+    found: dict[str, _Overlap] = {}
+    for key, spellings in sorted(claimed.items()):
+        names = sorted(set().union(*spellings.values()))
+        if len(names) > 1:
+            found[key] = _Overlap(tuple(sorted(spellings)), tuple(names))
+    return found
+
+
+def _record_path(row: Sequence[Any], dist_info: bool = False) -> str | None:
+    """The relative path a ``RECORD`` row names inside the install, or ``None`` to skip the row.
+
+    ``RECORD`` comes from the wheel, so it is untrusted: an empty, absolute, ``.``/``..`` or NUL
+    path, a path under ``bin``, a path inside a ``.dist-info`` folder unless *dist_info*, and
+    anything else malformed is skipped, never an error.
+    """
+    try:
+        text = row[0] if row else ""
+        if not isinstance(text, str) or not text or "\0" in text or "\\" in text:
+            return None
+        path = PurePosixPath(text)
+        parts = path.parts
+        if (not parts or path.is_absolute() or ".." in parts or "." in parts
+                or _fold(parts[0]) == "bin"
+                or (_fold(parts[0]).endswith(".dist-info") and not dist_info)):
+            return None
+        return path.as_posix()
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _resolve_overlaps(
+    uv: _Uv, python: str, target: Path, entries: Mapping[str, str], work: Path,
+) -> list[dict[str, Any]]:
+    """Make every file that two installed distributions ship the same on every prepare.
+
+    uv installs wheels in parallel, so which copy of a shared file is left depends on timing.
+    Each such file is replaced by the copy from the distribution whose normalized name sorts
+    last (:data:`OVERLAP_RULE`), taken from an install of that distribution alone. Returns one
+    note per set of distributions that share files: their names, the one kept, the rule and how
+    many files, and nothing else from the packages. A shared file that cannot be taken from
+    that install, or one the distributions spell differently only by case or Unicode form,
+    stops the Python install (``overlap-unresolved``).
+    """
+    claims = _claims(target, entries)
+    if not claims:
+        return []
+    by_winner: dict[str, list[str]] = {}
+    groups: dict[tuple[str, ...], int] = {}
+    for overlap in claims.values():
+        if len(overlap.spellings) > 1:
+            # Which spelling of a folder a case-insensitive disk keeps depends on install order.
+            raise _PythonFailure("overlap-unresolved")
+        by_winner.setdefault(overlap.names[-1], []).append(overlap.spellings[0])
+        groups[overlap.names] = groups.get(overlap.names, 0) + 1
+    trial = work / "overlap"
+    for winner, paths in sorted(by_winner.items()):
+        if winner not in entries:
+            raise _PythonFailure("overlap-unresolved")
+        _remove(trial)
+        try:
+            _install_into(uv, python, trial, entries, [winner], work)
+            for path in paths:
+                parts = PurePosixPath(path).parts
+                _replace_file(trial, trial.joinpath(*parts), target, target.joinpath(*parts))
+        finally:
+            _remove(trial)
+    return [{"names": list(names), "kept": names[-1], "rule": OVERLAP_RULE, "files": count}
+            for names, count in sorted(groups.items())]
+
+
+def _replace_file(source: Path, origin: Path, target: Path, destination: Path) -> None:
+    """Replace *destination* in *target* with *origin* from *source*, or stop the install.
+
+    Both must be regular files, not symlinks, reached through real folders inside their roots;
+    *destination* may also be missing. Any other shape, or any error while copying, is
+    ``overlap-unresolved``; the caller then removes the whole install.
+    """
+    try:
+        if (_through_link(source, origin) or origin.is_symlink() or not origin.is_file()
+                or not origin.resolve().is_relative_to(source.resolve())):
+            raise _PythonFailure("overlap-unresolved")
+        if _through_link(target, destination.parent) or destination.is_symlink() or (
+                destination.exists() and not destination.is_file()):
+            raise _PythonFailure("overlap-unresolved")
+        if not destination.resolve().is_relative_to(target.resolve()):
+            raise _PythonFailure("overlap-unresolved")
+        destination.unlink(missing_ok=True)
+        shutil.copyfile(origin, destination, follow_symlinks=False)
+        shutil.copymode(origin, destination, follow_symlinks=False)
+    except OSError:
+        raise _PythonFailure("overlap-unresolved") from None
+
+
+def _through_link(root: Path, path: Path) -> bool:
+    """True when *path*, or a folder between *root* and it, is a symlink or missing, or when
+    *path* is not below *root* at all."""
+    if path != root and root not in path.parents:
+        return True
+    cursor = path
+    while cursor != root:
+        if cursor.is_symlink() or (cursor != path and not cursor.is_dir()):
+            return True
+        cursor = cursor.parent
+    return False
 
 
 def _tidy(target: Path) -> None:

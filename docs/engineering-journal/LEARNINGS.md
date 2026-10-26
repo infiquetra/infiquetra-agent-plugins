@@ -2,6 +2,67 @@
 
 ## 2026-10-26
 
+### An installer that writes wheels in parallel makes a shared file's contents a race
+
+**Author.** Jeff Cox
+
+**Evidence.** Two prepares of the same head, in a measurement run, gave packets that differed
+in one file under `dependencies/python/site-packages`. Two of the head's wheels shipped that
+same path with different contents. Prepare installs with one `uv pip install --target`
+transaction (`plugins/saga/scripts/review_dependencies.py`, `_install_set`). Installing two
+hand-made wheels that share a file with real uv into one `--target` keeps one wheel's copy with
+nothing to say which, and the harness stops a run when packets differ.
+
+**Mechanism.** `--target` has no installed-files database to refuse a clash, and uv unpacks
+wheels concurrently, so the last writer wins. Each wheel's `RECORD` still lists every path it
+shipped, so the clash is visible afterwards. `_resolve_overlaps` finds paths that more than one
+`RECORD` lists, keeps the copy from the distribution whose normalized name sorts last, takes it
+from an install of that distribution alone, and records only the names under `overlaps`.
+Which `.dist-info` folders are real is decided only from the requirements uv installed (name
+and pinned version), never from another package's `RECORD`, so one wheel cannot hide another's
+folder; any other folder, or a `RECORD` listing files in another `.dist-info` folder, stops the
+install. Paths and suffixes are compared case-folded, because two spellings collide on a
+case-insensitive disk.
+`RECORD` comes from the wheel, so a malformed row is skipped, never an error, and a shared path
+that is not a plain file on both sides, or a copy that fails, stops the install as
+`overlap-unresolved` so nothing is left half-written.
+
+**Generalizable rule.** When an output must be reproducible, look for every place where two
+inputs can write the same location, and decide the winner by a fixed rule rather than by
+install or completion order.
+
+### A shell prefix cannot have the last word on a variable the vendor sets inside the command
+
+**Author.** Jeff Cox
+
+**Evidence.** In a measurement run under the Claude reviewer, saga's `finish` refused reviews
+whose Python reproduction tests used pytest's `tmp_path`. The reasons named
+`pytest-of-<user>/.../<test>current (symlink)` and files under `pytest-of-<user>/`, once below a
+subfolder of the scratch copy. The shell prefix in
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`
+(`reviewer_claude_shell_script`) set `TMPDIR` to the reviewer's folder beside the copy. A logging
+prefix run live under Claude Code 2.1.311 showed the command string it receives:
+`... && export TMPDIR=/tmp/claude-<uid> && ... && eval '<command>'`. The same export is in the
+2.1.308 executable. The reviewer's settings deny writes under `/tmp`, so Python's `tempfile`
+skipped `TMPDIR` and the system roots and returned the working directory.
+
+**Mechanism.** The prefix sets the environment before Claude's own command string runs, so any
+variable that string exports wins. Python's `tempfile` checks that a candidate is writable and
+tries `TMPDIR`, `TEMP`, `TMP`, the system roots and finally the current folder. The fix sets
+`TEMP` and `TMP` to the reviewer's folder too, so Python lands there whatever `TMPDIR` ends up as.
+This fixes Python only: Node, Go, Rust and `mktemp` read `TMPDIR` alone, so in the reviewer
+sandbox their temp writes still fail (they do not fall back into the copy); finish's re-run
+gives them a writable one. The follow-up is queued in `QUEUED.md`.
+`pytest-of-<user>/` is now ignored at any depth, and pytest's own `current` links inside it no
+longer count as links the session made. The existing tests had emulated the 2.1.296 command form,
+which had no export, so they could not see this. Finish's re-run passes an argument list, not a
+command string, and its `TMPDIR` (inside the re-run's own folder) is writable, so it was not
+affected.
+
+**Generalizable rule.** When a wrapper sets an environment variable for commands a vendor
+builds, test it against the vendor's real command string, and prefer a fallback the consumer
+already honours over relying on being the last writer.
+
 ### A reviewer that is only told to "try a test" locates harms but seldom proves them
 
 **Author.** Jeff Cox

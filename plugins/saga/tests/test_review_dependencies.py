@@ -790,6 +790,241 @@ def test_a_locked_head_gets_its_packages_and_pytest_and_no_interpreter_or_script
     assert install[install.index("--link-mode") + 1] == expected
 
 
+def _shared_install(tmp_path: Path, reverse: bool) -> tuple[dict[str, Any], Path]:
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST,
+                shared=frozenset({"inertdep", "otherdep"}), reverse=reverse)
+    return _python(tmp_path / ("reverse" if reverse else "forward"), uv, _LOCKED)
+
+
+def test_a_file_two_wheels_ship_is_the_same_whatever_order_they_install_in(
+    tmp_path: Path,
+) -> None:
+    forward, forward_packet = _shared_install(tmp_path, reverse=False)
+    backward, backward_packet = _shared_install(tmp_path, reverse=True)
+    assert _packet_contents(forward_packet) == _packet_contents(backward_packet)
+    shared = forward_packet / D.PYTHON_DIRECTORY / "sharedpkg" / "__init__.py"
+    # The distribution whose name sorts last keeps its copy.
+    assert shared.read_text(encoding="utf-8") == "SHIPPED_BY = 'otherdep'\n"
+    note = [{"names": ["inertdep", "otherdep"], "kept": "otherdep", "rule": "name-sorts-last",
+             "files": 1}]
+    assert forward["python"]["overlaps"] == backward["python"]["overlaps"] == note
+    assert forward["python"]["state"] == "installed"
+    assert str(tmp_path) not in json.dumps(forward) and "sharedpkg" not in json.dumps(forward)
+
+
+def test_without_the_overlap_rule_the_two_orders_differ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control: the fake really does leave the last installed copy behind."""
+    monkeypatch.setattr(D, "_resolve_overlaps", lambda *args: [])
+    _record, forward = _shared_install(tmp_path, reverse=False)
+    _record, backward = _shared_install(tmp_path, reverse=True)
+    assert _packet_contents(forward) != _packet_contents(backward)
+
+
+def test_a_head_whose_wheels_share_no_file_gets_no_overlap_note(tmp_path: Path) -> None:
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST)
+    record, _packet = _python(tmp_path, uv, _LOCKED)
+    assert "overlaps" not in record["python"]
+    installs = [call for call in uv.calls if call["argv"][1:3] == ["pip", "install"]]
+    assert len(installs) == 1
+
+
+def test_an_overlap_the_kept_distribution_does_not_ship_alone_stops_the_install(
+    tmp_path: Path,
+) -> None:
+    class Lying(FakeUv):
+        def _install(self, command: list[str]) -> Any:
+            result = super()._install(command)
+            target = Path(command[command.index("--target") + 1])
+            if target.name == "overlap":
+                (target / "sharedpkg" / "__init__.py").unlink()
+            return result
+
+    uv = Lying(exported=_EXPORTED, compiled=_PYTEST, shared=frozenset({"inertdep", "otherdep"}))
+    record, packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"] == {"state": "not-installed", "reason": "overlap-unresolved"}
+    assert not (packet / D.PYTHON_DIRECTORY).exists()
+
+
+_TWO = {"alpha": "alpha==1.0 --hash=sha256:" + "aa" * 32,
+        "zeta": "zeta==1.0 --hash=sha256:" + "bb" * 32}
+
+
+def test_a_malformed_record_row_is_skipped_never_an_error(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    for name in ("alpha", "zeta"):
+        info = site / f"{name}-1.0.dist-info"
+        info.mkdir(parents=True)
+        (info / "RECORD").write_text(
+            '"",,\n.,,\n./,,\n/etc/passwd,,\n../outside,,\nbin/tool,,\nBIN/tool,,\na/../b,,\n'
+            'back\\slash,,\n\n,\n'
+            f"{name}-1.0.dist-info/METADATA,,\n{name.upper()}-1.0.DIST-INFO/WHEEL,,\n"
+            "shared/x.py,sha256=abc,1\n", "utf-8")
+    assert D._claims(site, _TWO) == {
+        "shared/x.py": D._Overlap(("shared/x.py",), ("alpha", "zeta"))}
+    for row in ([], [""], ["."], ["a\0b"], [None], ["x.dist-info/RECORD"],
+                ["X.DIST-INFO/RECORD"], ["X.Dist-Info/RECORD"], ["BIN/tool"]):
+        assert D._record_path(row) is None
+    # Only the check of which folder a row lands in reads .dist-info rows.
+    assert D._record_path(["X.DIST-INFO/RECORD"], dist_info=True) == "X.DIST-INFO/RECORD"
+
+
+def _site_with_records(site: Path, records: dict[str, str]) -> Path:
+    for folder, text in records.items():
+        (site / folder).mkdir(parents=True, exist_ok=True)
+        (site / folder / "RECORD").write_text(text, "utf-8")
+    return site
+
+
+@pytest.mark.parametrize("records", [
+    # A distribution's RECORD lists a file in another distribution's .dist-info folder.
+    {"alpha-1.0.dist-info": "zeta-1.0.dist-info/RECORD,,\n",
+     "zeta-1.0.dist-info": "z.py,,\n"},
+    # The same, spelled in upper case.
+    {"alpha-1.0.dist-info": "ZETA-1.0.DIST-INFO/RECORD,,\n",
+     "zeta-1.0.dist-info": "z.py,,\n"},
+    # A folder no installed requirement names, in either case.
+    {"alpha-1.0.dist-info": "a.py,,\n", "planted-1.0.dist-info": "a.py,,\n"},
+    {"alpha-1.0.dist-info": "a.py,,\n", "PLANTED-1.0.DIST-INFO": "a.py,,\n"},
+    # A folder for an installed name at another version, and a second folder for one name.
+    {"alpha-1.0.dist-info": "a.py,,\n", "zeta-9.0.dist-info": "a.py,,\n"},
+    {"alpha-1.0.dist-info": "a.py,,\n", "ALPHA-1.0.dist-info": "a.py,,\n"},
+], ids=["other-folder", "other-folder-upper", "planted", "planted-upper", "wrong-version",
+        "twice"])
+def test_a_dist_info_folder_not_uv_s_own_stops_the_install(
+    tmp_path: Path, records: dict[str, str],
+) -> None:
+    site = _site_with_records(tmp_path / "site", records)
+    if len(list(site.iterdir())) < len(records):
+        pytest.skip("this file system folds case, so the two folders are one")
+    with pytest.raises(D._PythonFailure, match="overlap-unresolved"):
+        D._claims(site, _TWO)
+
+
+def test_an_unreadable_record_stops_the_install(tmp_path: Path) -> None:
+    site = _site_with_records(tmp_path / "site", {"alpha-1.0.dist-info": "a.py,,\n"})
+    (site / "alpha-1.0.dist-info" / "RECORD").write_bytes(b"\xff\xfe not text\n")
+    with pytest.raises(D._PythonFailure, match="overlap-unresolved"):
+        D._claims(site, _TWO)
+
+
+def test_two_spellings_of_one_path_are_one_overlap(tmp_path: Path) -> None:
+    nfd = "cafe\u0301/x.py"
+    site = _site_with_records(tmp_path / "site", {
+        "alpha-1.0.dist-info": f"Foo/x.py,,\n{nfd},,\n",
+        "zeta-1.0.dist-info": "foo/x.py,,\ncaf\u00e9/x.py,,\n",
+    })
+    assert D._claims(site, _TWO) == {
+        "caf\u00e9/x.py": D._Overlap(tuple(sorted(["caf\u00e9/x.py", nfd])), ("alpha", "zeta")),
+        "foo/x.py": D._Overlap(("Foo/x.py", "foo/x.py"), ("alpha", "zeta")),
+    }
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_wheels_that_ship_one_path_in_two_cases_stop_the_install_in_either_order(
+    tmp_path: Path, reverse: bool,
+) -> None:
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST, reverse=reverse,
+                ships={"inertdep": {"Shared/x.py": "A = 1\n"},
+                       "otherdep": {"shared/x.py": "B = 1\n"}})
+    record, packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"] == {"state": "not-installed", "reason": "overlap-unresolved"}
+    assert not (packet / D.PYTHON_DIRECTORY).exists()
+
+
+@pytest.mark.parametrize("planted", [
+    "otherdep-2.0.0.dist-info/extra.txt",  # another installed distribution's own folder
+    "otherdep-9.0.dist-info/RECORD",  # an installed name at another version
+    "zzz_injected-1.0.dist-info/RECORD",  # a name that is not installed
+    "ZZZ_INJECTED-1.0.DIST-INFO/RECORD",  # the same, in upper case
+])
+def test_a_wheel_that_ships_into_a_dist_info_folder_stops_the_install(
+    tmp_path: Path, planted: str,
+) -> None:
+    fake = "inertdep/__init__.py,,\nsharedpkg/__init__.py,,\n"
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST, ships={"inertdep": {planted: fake}})
+    record, packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"] == {"state": "not-installed", "reason": "overlap-unresolved"}
+    assert not (packet / D.PYTHON_DIRECTORY).exists()
+
+
+def test_the_overlap_install_counts_toward_the_byte_limit(tmp_path: Path) -> None:
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST, shared=frozenset({"inertdep", "otherdep"}))
+    record, _packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"]["overlaps"]
+    installs = [argv for argv in uv.raw if argv[argv.index("--") + 1:][1:3] == ["pip", "install"]]
+    overlap = next(argv for argv in installs
+                   if Path(argv[argv.index("--target") + 1]).name == "overlap")
+    watched = [Path(argv) for flag, argv in zip(overlap, overlap[1:]) if flag == "--watch"]
+    assert Path(overlap[overlap.index("--target") + 1]) in watched
+    assert any(path.as_posix().endswith(D.PYTHON_DIRECTORY) for path in watched)
+
+
+class _Reshaped(FakeUv):
+    """After the main install, turns the shared file into *shape*, or fails the copy."""
+
+    shape = "directory"
+
+    def _install(self, command: list[str]) -> Any:
+        result = super()._install(command)
+        target = Path(command[command.index("--target") + 1])
+        shared = target / "sharedpkg" / "__init__.py"
+        if target.name != "overlap" and shared.exists():
+            shared.unlink()
+            if self.shape == "directory":
+                shared.mkdir()
+                (shared / "inside").write_text("x\n", "utf-8")
+            elif self.shape == "symlink":
+                shared.symlink_to(target.parent / "elsewhere")
+            elif self.shape == "linked-folder":
+                # A folder above the file is a link to another folder inside the install.
+                shared.write_text("loser\n", "utf-8")
+                (target / "sharedpkg").rename(target / "sharedpkg_real")
+                (target / "sharedpkg").symlink_to(target / "sharedpkg_real")
+        return result
+
+
+@pytest.mark.parametrize("shape", ["directory", "symlink", "linked-folder"])
+def test_an_overlap_whose_destination_is_not_a_plain_file_stops_the_install(
+    tmp_path: Path, shape: str,
+) -> None:
+    uv = _Reshaped(exported=_EXPORTED, compiled=_PYTEST,
+                   shared=frozenset({"inertdep", "otherdep"}))
+    uv.shape = shape
+    elsewhere = tmp_path / "packet" / "dependencies" / "python" / "elsewhere"
+    record, packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"] == {"state": "not-installed", "reason": "overlap-unresolved"}
+    assert not (packet / D.PYTHON_DIRECTORY).exists() and not elsewhere.exists()
+
+
+def test_an_error_while_copying_an_overlap_stops_the_install_and_leaves_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(D.shutil, "copyfile", broken)
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST, shared=frozenset({"inertdep", "otherdep"}))
+    record, packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"] == {"state": "not-installed", "reason": "overlap-unresolved"}
+    assert not (packet / D.PYTHON_DIRECTORY).exists()
+
+
+def test_an_overlap_origin_outside_the_lone_install_is_refused(tmp_path: Path) -> None:
+    source, target = tmp_path / "source", tmp_path / "target"
+    (source / "pkg").mkdir(parents=True)
+    (target / "pkg").mkdir(parents=True)
+    (tmp_path / "secret").write_text("secret\n", "utf-8")
+    (source / "pkg" / "x.py").symlink_to(tmp_path / "secret")
+    (target / "pkg" / "x.py").write_text("kept\n", "utf-8")
+    with pytest.raises(D._PythonFailure, match="overlap-unresolved"):
+        D._replace_file(source, source / "pkg" / "x.py", target, target / "pkg" / "x.py")
+    with pytest.raises(D._PythonFailure, match="overlap-unresolved"):
+        D._replace_file(source, tmp_path / "secret", target, target / "pkg" / "x.py")
+    assert (target / "pkg" / "x.py").read_text(encoding="utf-8") == "kept\n"
+
+
 def test_a_lock_that_declares_pytest_installs_no_second_one(tmp_path: Path) -> None:
     uv = FakeUv(exported=_EXPORTED + _PYTEST)
     record, _packet = _python(tmp_path, uv, _LOCKED)

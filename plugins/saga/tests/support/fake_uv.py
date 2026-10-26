@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
 import re
 import subprocess
@@ -44,15 +46,24 @@ class FakeUv:
     symlink), or runs for real when *real_git*; uv is faked, offline.
 
     ``uv pip install --target`` writes each requested package as a module, unless it is in
-    *sdist_only*, which fails the way uv does for a package with no wheel. ``pytest`` gets a
+    *sdist_only*, which fails the way uv does for a package with no wheel. Each package in
+    *shared* also ships ``sharedpkg/__init__.py``, with its own name in it, and every package
+    gets a ``RECORD`` listing every file written, as uv rewrites it. *ships* adds files to a
+    package, by package name. Packages install in the requirements
+    file's order, or the reverse with *reverse*, and a later one overwrites a shared file, as
+    uv's parallel install may. ``pytest`` gets a
     ``.pth`` back to this run's own pytest, so a re-run can start it. Every requirements file
     uv is given is kept in ``inputs``.
     """
 
     def __init__(self, *, exported: str = "", compiled: str = "",
                  sdist_only: frozenset[str] = frozenset(), names: tuple[str, ...] = (),
-                 real_git: bool = False, fail_install: str = "") -> None:
+                 real_git: bool = False, fail_install: str = "",
+                 shared: frozenset[str] = frozenset(), reverse: bool = False,
+                 ships: dict[str, dict[str, str]] | None = None) -> None:
         self.exported, self.compiled, self.sdist_only = exported, compiled, sdist_only
+        self.shared, self.reverse, self.ships = shared, reverse, ships or {}
+        self.raw: list[list[str]] = []
         self.names = names
         self.real_git = real_git
         self.fail_install = fail_install
@@ -79,6 +90,7 @@ class FakeUv:
         if argv[:2] == ["git", "cat-file"]:
             return Result(1)
         command = unwrap(argv)
+        self.raw.append(list(argv))
         self.calls.append({"argv": command, "cwd": Path(cwd), "env": dict(env)})
         assert command[0] == "uv", command
         for index, part in enumerate(command[:-1]):
@@ -129,20 +141,31 @@ class FakeUv:
         target.mkdir(parents=True, exist_ok=True)
         (target / ".lock").write_text("", encoding="utf-8")
         (target / "bin").mkdir(exist_ok=True)
-        for entry in entries:
+        for entry in (reversed(entries) if self.reverse else entries):
             name, version = entry.split("==")
             info = target / f"{name.replace('-', '_')}-{version}.dist-info"
-            info.mkdir()
-            (info / "METADATA").write_text(f"Name: {name}\nVersion: {version}\n", "utf-8")
-            # A console script, as a wheel would install: it must never stay in the packet.
-            (target / "bin" / name).write_text("#!/bin/sh\nexit 0\n", "utf-8")
+            info.mkdir(exist_ok=True)
+            files = {f"{info.name}/METADATA": f"Name: {name}\nVersion: {version}\n",
+                     # A console script, as a wheel would install: never kept in the packet.
+                     f"../../bin/{name}": "#!/bin/sh\nexit 0\n"}
             if name == "pytest":
                 import pytest as running  # noqa: PLC0415
 
-                (target / "saga_test_pytest.pth").write_text(
-                    f"{Path(running.__file__).resolve().parent.parent}\n", encoding="utf-8")
+                files["saga_test_pytest.pth"] = (
+                    f"{Path(running.__file__).resolve().parent.parent}\n")
             else:
-                package = target / name.replace("-", "_")
-                package.mkdir()
-                (package / "__init__.py").write_text("def two():\n    return 2\n", "utf-8")
+                files[f"{name.replace('-', '_')}/__init__.py"] = "def two():\n    return 2\n"
+            if name in self.shared:
+                files["sharedpkg/__init__.py"] = f"SHIPPED_BY = {name!r}\n"
+            files.update(self.ships.get(name, {}))
+            rows = []
+            for relative, text in files.items():
+                path = target / "bin" / name if relative.startswith("../") else target / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, "utf-8")
+                digest = base64.urlsafe_b64encode(
+                    hashlib.sha256(text.encode()).digest()).rstrip(b"=").decode()
+                rows.append(f"{relative},sha256={digest},{len(text.encode())}\n")
+            rows.append(f"{info.name}/RECORD,,\n")
+            (info / "RECORD").write_text("".join(rows), "utf-8")
         return Result(0)

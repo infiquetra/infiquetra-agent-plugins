@@ -1,5 +1,31 @@
 # Queued work - infiquetra-agent-plugins
 
+## 2026-10-26 reviewer temp folder follow-up
+
+### Give the Claude reviewer's non-Python tools a writable TMPDIR
+
+**Priority.** P2. Deferred from the PR #291 repair pass.
+
+**What it is.** The shell prefix sets `TEMP` and `TMP` to the reviewer's temp folder, which fixes
+Python's `tempfile` only. Claude Code's command string exports its own sandbox temp folder as
+`TMPDIR`, which the reviewer's settings deny, so Node, Go, Rust and `mktemp` still see an
+unwritable `TMPDIR` in the reviewer sandbox. Their temp writes fail rather than land in the copy,
+but a reproduction that needs a temp file fails in the reviewer and passes in finish's re-run,
+which gives its commands a writable `TMPDIR`.
+
+**Why deferred.** Making `TMPDIR` itself win means either rewriting Claude's command string,
+which is fragile, or pointing Claude's own temp root somewhere writable. The 2.1.311 executable
+says `CLAUDE_CODE_TMPDIR` moves that root, but that a path longer than about 30 bytes makes
+child processes fall back to the default; one try with the reviewer's long folder path left
+`TMPDIR` unchanged. A short path was not measured. The settings' sandbox temp behaviour was
+last measured on Claude Code 2.1.292 (2026-10-06) and may be stale.
+
+**Revisit when.** A reviewer reproduction in a language other than Python fails for want of a
+temp folder, or before the next Claude reviewer probe record: re-measure `CLAUDE_CODE_TMPDIR`
+with a short private path on the current Claude Code.
+
+**Refs.** [Learning](LEARNINGS.md#a-shell-prefix-cannot-have-the-last-word-on-a-variable-the-vendor-sets-inside-the-command).
+
 ## 2026-10-14 review follow-up
 
 ### Muse stage command and observation hooks (ARCH-4)

@@ -97,6 +97,20 @@ for C8 to extend.
 
 ### Fixed
 
+- **Python's temp files no longer land in the Claude reviewer's scratch copy.** Claude Code
+  (seen live on 2.1.311, and in the 2.1.308 executable) exports its own sandbox temp folder as
+  `TMPDIR` inside every sandboxed command string, after the shell prefix has set the reviewer's,
+  and the reviewer's settings deny writes there. Python's `tempfile` then skipped `TMPDIR` and the denied system
+  roots and fell back to the working directory, so a test using pytest's `tmp_path` wrote a
+  `pytest-of-<user>/` tree, with `current` symlinks, into the copy, and saga's `finish` refused the
+  review. The prefix now also sets `TEMP` and `TMP` to the reviewer's temp folder, which Python
+  tries next. This fixes Python only: Node, Go, Rust and `mktemp` read `TMPDIR` alone, so in the
+  reviewer sandbox their temp writes still fail (they do not land in the copy); finish's re-run
+  gives them a writable `TMPDIR`. A live run under Claude Code 2.1.311 shows `tempfile.gettempdir()` resolving to the
+  folder beside the copy and a `tmp_path` test leaving nothing in the copy. As defence in depth,
+  `pytest-of-<user>/` is ignored at any depth (it was root only), and a new link inside it counts
+  as clutter only when it is one of pytest's own `current` links pointing at a numbered folder
+  beside it. Every other link the session makes is still reported.
 - `REVIEWER_SCRATCH_IGNORED` covers the tool caches a reviewer's own checks write into the
   scratch copy, so saga's `finish` no longer refuses a review for them (it read each as an added
   file that is not a reproduction test). Added: `.pytest_cache/` at any depth (it was root
