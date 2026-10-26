@@ -1,5 +1,36 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-26
+
+### Isolating a linter from the repository's config also removes the repository's test conventions
+
+**Author.** Jeff Cox
+
+**Evidence.** In a private measurement run, every clean change that added tests and was wrongly
+blocked in its own lens was blocked by ruff findings with rule `S101` ("use of `assert`") in the
+added test files, mapped to `correctness.tool-error` at severity `blocks`; one change carried
+hundreds of them. The mapping is `family_map` in `plugins/saga/references/review-tools.yaml`
+(`S: error`) read by `_parse_ruff` in `plugins/saga/scripts/review_adapters_python.py`, and the
+rule was selected because `_invoke_ruff` runs `ruff check --isolated --select ALL`. Tests:
+`test_ruff_ignores_assert_in_test_paths_by_per_file_patterns_anchored_at_the_root`,
+`test_live_ruff_flags_assert_in_source_but_not_in_test_files` and
+`test_ruff_bandit_rules_are_security_leads_that_fix_later_never_blocks`
+(`plugins/saga/tests/test_review_adapters_python.py`).
+
+**Mechanism.** `--isolated` is right for a reviewed tree that is untrusted: a settings file in the
+change must not be able to switch rules off. It also drops the per-file ignores that nearly every
+Python repository sets for tests, and `--select ALL` turns on a family (flake8-bandit) whose rules
+are written for production code, where `assert` is stripped under `python -O`. The tool's own
+level then decides blocking, and a family that is only a lead (bandit) was given the level of a
+proven error. Passing the convention inline (`--config` with per-file ignores anchored at the scan
+root) keeps the isolation and restores the convention; the `S` family goes to the row that
+bandit's own MEDIUM and LOW findings use, which fixes later.
+
+**Generalizable rule.** When a check isolates a tool from the repository's configuration, pass
+back the conventions that configuration would have supplied (here, "asserts are fine in tests"),
+and give a rule family that only suggests a lead the row of a lead, not the row of a proven
+defect.
+
 ## 2026-10-25
 
 ### A check that compares stored output must hash only what its findings depend on, and an ignore list must know every tool the reviewer runs

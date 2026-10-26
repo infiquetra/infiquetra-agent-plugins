@@ -86,6 +86,17 @@
 
 ### Fixed
 
+- `ruff-lint` no longer blocks a clean change for the `assert` statements in its test files.
+  Saga runs ruff with `--isolated --select ALL`, so the reviewed repository's own per-file
+  ignores never applied and `S101` ("use of `assert`", a flake8-bandit rule) fired on every test.
+  The invocation now passes an inline `--config` that ignores `S101` for `test_*.py`,
+  `*_test.py`, `conftest.py` and anything under a `tests` or `test` folder, each pattern anchored
+  at the scan root (a root that sits under a folder named `tests` does not turn every file into a
+  test file). The whole `S` family now goes to `security.scanner-medium-low` (fix later), the row
+  bandit's own MEDIUM and LOW findings use, in place of `correctness.tool-error` (blocks): a
+  bandit rule is a lead for a security look, not a proven correctness error, and ruff reports no
+  severity to call one HIGH. `family_map` in `review-tools.yaml` gives the `S` family the level
+  `security`. No version bump.
 - `prepare` stores only the jscpd clones that touch a changed file or stand behind a kept
   finding, as canonical sorted JSON, and drops the report's totals. jscpd finds one clone more or
   fewer on identical input of a large repository, so a hash over the whole report moved between

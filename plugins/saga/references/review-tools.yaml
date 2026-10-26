@@ -262,7 +262,8 @@ tools:
     runtime_loaded: true
     languages: [python]
     lens: correctness
-    purpose: All ruff rules, isolated, with noqa ignored. The family map sets the level.
+    purpose: All ruff rules, isolated, with noqa ignored, and S101 ignored in test files. The family map sets the level;
+      the S family is a security lead and goes to security.scanner-medium-low.
     install: Install ruff on the operator machine. This card does not install it.
     default_version: "0.15.18"
     version_args: ["--version"]
@@ -272,7 +273,7 @@ tools:
     family_map:
       F: error
       B: error
-      S: error
+      S: security
       C4: warning
       UP: warning
       SIM: warning

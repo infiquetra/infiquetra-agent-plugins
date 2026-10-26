@@ -756,6 +756,72 @@ def test_ruff_families_map_to_error_warning_and_style(tmp_path: Path) -> None:
     _valid(output)
 
 
+def test_ruff_bandit_rules_are_security_leads_that_fix_later_never_blocks(
+    tmp_path: Path,
+) -> None:
+    """The S family is a lead for a security look, not a proven correctness error: it was mapped to
+    ``correctness.tool-error`` and blocked a change for every use of a rule like S607."""
+    repo, base, head = _changed(tmp_path)
+    payload = json.dumps([
+        {
+            "code": code, "message": code, "filename": "app.py",
+            "location": {"row": 1}, "end_location": {"row": 1},
+        }
+        for code in ("S101", "S607", "S603", "F401")
+    ])
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("ruff-lint")], _Calls(base, payload),
+    )
+    assert code == 0
+    for rule in ("S101", "S607", "S603"):
+        assert _row(output, rule) == "security.scanner-medium-low"
+        assert _severity(output, rule) == "fix-later"
+    assert _severity(output, "F401") == "blocks"
+    _valid(output)
+
+
+def test_ruff_ignores_assert_in_test_paths_by_per_file_patterns_anchored_at_the_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "tests" / "work[1]"
+    root.mkdir(parents=True)
+    argv = _adapter("ruff-lint").invoke(T.ScanContext(root, root, tmp_path))
+    inner = argv[argv.index("--") + 1:]
+    config = inner[inner.index("--config") + 1]
+    assert "--isolated" in inner and inner[-1] == str(root)
+    escaped = f"{tmp_path.as_posix()}/tests/work\\\\[1\\\\]"
+    for pattern in ("**/test_*.py", "**/*_test.py", "**/conftest.py", "**/tests/**", "**/test/**"):
+        assert f'"{escaped}/{pattern}" = ["S101"]' in config
+    # Nothing else is ignored, and the config is valid TOML for ruff's own parser.
+    import tomllib
+
+    table = tomllib.loads(config)["lint"]["per-file-ignores"]
+    assert all(value == ["S101"] for value in table.values())
+    assert len(table) == 5
+
+
+@pytest.mark.skipif(shutil.which("ruff") is None, reason="ruff is not installed")
+def test_live_ruff_flags_assert_in_source_but_not_in_test_files(tmp_path: Path) -> None:
+    root = tmp_path / "tests-parent" / "repo"
+    for name in (
+        "src/app.py", "src/test_app.py", "src/app_test.py", "src/conftest.py", "tests/unit/x.py",
+        "test/y.py", "docs/testing.py", "tests_like/z.py",
+    ):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("assert 1 == 1\n", encoding="utf-8")
+    argv = _adapter("ruff-lint").invoke(T.ScanContext(root, root, tmp_path))
+    inner = argv[argv.index("--") + 1:]
+    ruff = ["ruff", *inner[inner.index("check"):]]
+    done = subprocess.run(ruff, capture_output=True, text=True, check=False)
+    found = {
+        Path(item["filename"]).relative_to(root).as_posix()
+        for item in json.loads(done.stdout) if item["code"] == "S101"
+    }
+    assert found == {"src/app.py", "docs/testing.py", "tests_like/z.py"}
+
+
 def test_ruff_isolated_selects_all_and_ignores_a_decoy(tmp_path: Path) -> None:
     repo, base, head = _repo(
         tmp_path,
