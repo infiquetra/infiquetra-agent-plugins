@@ -8,8 +8,9 @@
   way used to be recorded as `re-run-mismatch`, because the last-line fallback compared the
   `(fail) ... [0.85ms]` line with its duration and an absolute scratch path in a stack frame.
   `reproduction_match.py` now has a bun parser (the `(fail) suite > test` line plus the error
-  block before it), and the fallback drops a trailing bracketed duration and the directories of
-  an absolute file path anywhere in a line. A different failing test or assertion still
+  block before it), and the shared normalisation drops bun's trailing duration on `(fail)` and `(pass)` lines and
+  the directories of an absolute `file:line` location anywhere in a line. Paths without a line
+  number and brackets on other lines are compared as written. A different failing test or assertion still
   mismatches.
 
 ## [1.3.3] - 2026-10-14

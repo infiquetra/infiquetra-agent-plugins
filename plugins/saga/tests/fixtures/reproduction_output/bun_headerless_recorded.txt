@@ -1,14 +1,11 @@
-363 |     app.get('/a/b', (c) => c.text('B'))
-364 | 
-365 |     const res = await app.request('http://localhost/a/b')
-366 | 
-367 |     expect(await res.text()).toBe('B')
-368 |     expect(spy.mock.calls.length, 'spy ran on /a/b despite skip(/a/*)').toBe(0)
-                                                                          ^
-error: spy ran on /a/b despite skip(/a/*)
+21 |   test("doubles", () => {
+22 |     const result = double(4)
+23 |     expect(result, 'double(4) came out wrong').toBe(8)
+                                                       ^
+error: double(4) came out wrong
 
-Expected: 0
-Received: 1
+Expected: 8
+Received: 9
 
-      at <anonymous> (/abs/scratch/run-1234/copy/src/x/index.test.ts:368:103)
-(fail) skip with wildcard path > Should skip for paths under a wildcard [0.85ms]
+      at <anonymous> (/abs/scratch/run-0001/copy/lib/calc/calc.test.ts:23:44)
+(fail) calc > doubles [0.50ms]

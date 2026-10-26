@@ -30,7 +30,7 @@ tests/more.test.ts:
 (fail) math > adds [0.85ms]
 (fail) math > other [0.31ms]
 
- 15 pass
+ 7 pass
  2 fail
- 17 expect() calls
-Ran 17 tests across 2 files. [123.00ms]
+ 9 expect() calls
+Ran 9 tests across 2 files. [64.00ms]
