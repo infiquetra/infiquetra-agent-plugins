@@ -1,0 +1,16 @@
+21 |   test("doubles", () => {
+22 |     const result = double(4)
+23 |     expect(result, 'double(4) came out wrong').toBe(8)
+                                                       ^
+error: double(4) came out wrong
+
+Expected: 8
+Received: 9
+
+      at <anonymous> (/abs/scratch/run-0001/copy/lib/calc/calc.test.ts:23:44)
+(fail) calc > doubles [0.50ms]
+
+ 3 pass
+ 1 fail
+ 5 expect() calls
+Ran 4 tests across 1 file. [12.00ms]

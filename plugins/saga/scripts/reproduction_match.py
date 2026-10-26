@@ -11,11 +11,14 @@ the recorded failure line is looked for in that test's own failure block.
 Both sides are compared after ignoring runner metadata that changes between runs. Assertion
 values, including numbers, durations and placeholders, remain part of the failure cause.
 
-The matcher recognises these runners, each from output captured from the real runner: cargo test
-and cargo nextest, pytest, unittest, Vitest, Jest, go test, dart test, and swift test (XCTest and
-Swift Testing). Output it does not recognise falls back to the older rule: the recorded failure
-line has to appear in the re-run, and a test id written as ``file::name`` has to appear word for
-word.
+The matcher recognises these runners. All but bun test were read from output captured from the
+real runner: cargo test and cargo nextest, pytest, unittest, Vitest, Jest, go test, dart test, and
+swift test (XCTest and Swift Testing). bun test is read from its documented ``(fail) suite > name``
+lines and the error block printed before each. Output it does not recognise falls back to the
+older rule: the recorded failure line has to appear in the re-run, and a test id written as
+``file::name`` has to appear word for word. Both sides of that comparison drop the directories
+of an absolute ``/dir/file.ext:line`` location anywhere in a line, and bun's trailing ``[0.85ms]``
+on a ``(fail)`` or ``(pass)`` line.
 """
 
 from __future__ import annotations
@@ -28,6 +31,17 @@ _ANSI = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\([A-Za-z0-9]|\][^\x07\x1b]{0,
 _THREAD_ID = re.compile(r"(thread '[^']*') \(\d+\)")
 _DART_CLOCK = re.compile(r"^\d+:\d\d(?::\d\d)? [+~-]\d+(?: [+~-]\d+)*: ")
 _ABSOLUTE_LOCATION = re.compile(r"^(?:/[\w.+@~-]+)+/([\w.+@~-]+:\d+(?::\d+)?:)")
+# An absolute path that ends in a source location (``/dir/file.ts:12:5``), anywhere in a line: the
+# directories are scratch space that differs between runs, so only ``file:line[:column]`` is kept.
+# A path with no line number (``/srv/data/out.csv``) may be part of an assertion value and is left
+# alone. A leading word character, colon, dot, slash, tilde or dash means this is not the start of
+# a path (a URL, a relative path).
+_ABSOLUTE_FILE = re.compile(
+    r"(?<![\w:./~-])(?:/[\w.+@~-]+)+/([\w+@~-][\w.+@~-]*\.\w+(?::\d+){1,2})"
+)
+# bun's run time, ``[0.85ms]``, at the end of a ``(fail)`` or ``(pass)`` result line only.
+_BUN_DURATION = re.compile(r"\[\d+(?:\.\d+)?(?:ms|s|m|us|\u00b5s|ns)\]$")
+_BUN_RESULT_LINE = ("(fail) ", "(pass) ")
 _PID_FILENAME = re.compile(r"(\b[\w.-]+-test-)(?:\d{5,}|<pid>)(?=[\"'/\s])")
 _BLANKS = re.compile(r"\s+")
 _DOTTED = re.compile(r"\w+(?:\.\w+)+")
@@ -50,6 +64,8 @@ _GENERIC_PREFIXES = (
     "stdout ", "stderr ",
     # pytest and unittest
     "collected ", "rootdir:", "platform ", "plugins:", "configfile:", "Ran ", "FAILED (",
+    # bun test
+    "bun test v", "(pass) ", "(skip) ", "(todo) ",
     # Vitest and Jest
     "Test Files", "Tests ", "Tests:", "Test Suites:", "Snapshots:", "Time:", "Duration",
     "Start at", "RUN ", "Ran all test suites",
@@ -68,6 +84,8 @@ _GENERIC_PATTERNS = (
     re.compile(r"^--- (?:FAIL|PASS|SKIP): "),
     re.compile(r"^Test Case '.*' (?:started|passed|failed)"),
     re.compile(r"^(?:FAILED|ERROR) \S+::"),
+    re.compile(r"^\d+ (?:pass|fail|skip|todo|expect\(\) calls)$"),
+    re.compile(r"^\d+ tests? failed:$"),
     re.compile(r"^[\w./-]+\.(?:py|rs)\s+[.FEsxX]+(?: +\[ *\d+%\])?$"),
 )
 
@@ -86,6 +104,13 @@ def strip_ansi(text: str) -> str:
     return _ANSI.sub("", text)
 
 
+def _without_bun_duration(text: str) -> str:
+    """Drop a trailing ``[0.85ms]`` (a number and a time unit); keep any other bracket."""
+    text = text.rstrip()
+    found = _BUN_DURATION.search(text)
+    return text[: found.start()].rstrip() if found else text
+
+
 def normalise(line: str) -> str:
     """Remove identified metadata, preserving values in the assertion itself."""
     line = _THREAD_ID.sub(r"\1", line)
@@ -94,6 +119,9 @@ def normalise(line: str) -> str:
     line = re.sub(r"(object at )0x[0-9a-fA-F]+", r"\g<1>0xADDR", line)
     line = _DART_CLOCK.sub("", line.strip())
     line = _ABSOLUTE_LOCATION.sub(r"\1", line)
+    line = _ABSOLUTE_FILE.sub(r"\1", line)
+    if line.startswith(_BUN_RESULT_LINE):
+        line = _without_bun_duration(line)
     return _BLANKS.sub(" ", line).strip()
 
 
@@ -316,6 +344,73 @@ def _vitest(lines: list[str], budget: _Budget) -> list[Failure]:
     return failures
 
 
+_BUN_TEST_PATH = r"[^()\s]+[._](?:test|spec)\.[cm]?[jt]sx?"
+_BUN_FILE_HEADER = re.compile(rf"({_BUN_TEST_PATH}):$")
+_BUN_PAREN_FRAME = re.compile(rf"\(({_BUN_TEST_PATH}):\d+:\d+\)$")
+_BUN_BARE_FRAME = re.compile(rf"at ({_BUN_TEST_PATH}):\d+:\d+$")
+_BUN_EXCERPT = re.compile(r"\s*\d+ \| ")
+_BUN_LINE_LIMIT = 2_000
+
+
+def _bun_frame_file(line: str) -> str | None:
+    """The test file in a stack frame such as ``at <anonymous> (/dir/a.test.ts:12:5)``."""
+    text = line.strip()
+    if len(text) > _BUN_LINE_LIMIT or not text.startswith("at "):
+        return None
+    found = _BUN_PAREN_FRAME.search(text) or _BUN_BARE_FRAME.match(text)
+    return found.group(1) if found else None
+
+
+def _bun_block(lines: list[str], start: int, end: int) -> tuple[str, ...]:
+    """A failure's block: from its code excerpt, or else its ``error:`` line, up to its result.
+
+    Output a passing test printed before the block is not part of it. bun hides ``(pass)`` lines
+    when it runs for an agent, so a block cannot be told from earlier output by the result line
+    before it.
+    """
+    for first in range(start, end):
+        if _BUN_EXCERPT.match(lines[first]):
+            return tuple(lines[first:end])
+    for first in range(start, end):
+        if lines[first].lstrip().startswith("error:"):
+            return tuple(lines[first:end])
+    return tuple(lines[start:end])
+
+
+def _bun(lines: list[str], budget: _Budget) -> list[Failure]:
+    """bun test prints a failure's error block first, then its ``(fail) suite > name [time]`` line.
+
+    The block starts at the failure's code excerpt (see ``_bun_block``). Newer bun repeats the
+    failing ``(fail)`` lines in a recap after ``N tests failed:``; the recap has no block, so it
+    is skipped. Bun prints a file header only before a file's first result, and a recording may
+    start after it, so a failure with no header takes its file from the test file named in its own
+    stack frame (``at <anonymous> (/dir/file.test.ts:12:5)``).
+    """
+    failures = []
+    file: str | None = None
+    start = 0
+    recap = False
+    for index, raw in enumerate(lines):
+        recap = recap or bool(re.match(r"\s*\d+ tests? failed:\s*$", raw))
+        header = _BUN_FILE_HEADER.match(raw.rstrip()) if len(raw) <= _BUN_LINE_LIMIT else None
+        if header:
+            file, start = header.group(1), index + 1
+            continue
+        if raw.startswith(("(pass) ", "(skip) ", "(todo) ")):
+            start = index + 1
+            continue
+        if raw.startswith("(fail) "):
+            if not recap:
+                body = _bun_block(lines, start, index)
+                budget.retain(len(body))
+                where = file
+                if where is None:
+                    where = next((f for f in map(_bun_frame_file, body) if f), None)
+                failures.append(Failure(where, _without_bun_duration(raw[7:]), body))
+            start = index + 1
+    return failures
+
+
 def _jest(lines: list[str], budget: _Budget) -> list[Failure]:
     failures = []
     file: str | None = None
@@ -396,7 +491,7 @@ def _swift(lines: list[str], budget: _Budget) -> list[Failure]:
 
 
 _RUNNERS: tuple[Callable[[list[str], _Budget], list[Failure]], ...] = (
-    _cargo, _pytest, _unittest, _vitest, _jest, _go, _dart, _swift,
+    _cargo, _pytest, _unittest, _vitest, _bun, _jest, _go, _dart, _swift,
 )
 
 
