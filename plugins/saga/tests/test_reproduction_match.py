@@ -379,3 +379,107 @@ def test_excess_failure_count_fails_closed() -> None:
 def test_assertion_values_after_long_common_prefix_must_agree() -> None:
     recorded = "---- repro stdout ----\nassertion failed: " + "x" * 250 + " expected 10000\n"
     assert not M.matches(1, recorded.replace("10000", "20000"), recorded, "test.rs::repro")
+
+
+# bun test. These transcripts are synthetic: written to bun's documented output (an error block,
+# then a ``(fail) suite > name [time]`` line, then a recap), with no real project content.
+BUN = "tests/add.test.ts::math adds"
+
+
+def _bun_vary(text: str) -> str:
+    """The same run again: every duration and every scratch directory is different."""
+    text = re.sub(r"\[(\d+)\.(\d+)ms\]", lambda m: f"[{int(m[1]) + 7}.{m[2]}3ms]", text)
+    text = re.sub(r"\[(\d+)\.00ms\]", "[999.00ms]", text)
+    text = text.replace("/tmp/scratch-8f3a1c/", "/private/var/folders/aa/bb/T/scratch-77d2/")
+    return text.replace("/private/var/folders/qz/tmp.Xk29Ab/", "/home/runner/work/other/")
+
+
+@pytest.mark.parametrize(
+    ("rerun", "recorded"),
+    [
+        ("bun_two_failures", "bun_two_failures"),
+        ("bun_one_failure", "bun_two_failures"),
+        ("bun_two_failures", "bun_one_failure"),
+    ],
+)
+def test_bun_failing_the_same_way_matches(rerun: str, recorded: str) -> None:
+    assert _matches(rerun, recorded, BUN)
+    assert _matches(rerun, recorded, "tests/add.test.ts::math > adds")
+    assert _matches(rerun, recorded, "add.test.ts::math adds")
+
+
+def test_bun_reads_the_failing_tests_and_their_assertion_blocks() -> None:
+    found = {(item.file, item.name): item for item in M.failed_tests(_text("bun_two_failures"))}
+    assert set(found) == {
+        ("tests/add.test.ts", "math > adds"),
+        ("tests/add.test.ts", "math > other"),
+    }
+    adds = found[("tests/add.test.ts", "math > adds")]
+    assert any(line.startswith("error: expect(received).toBe(expected)") for line in adds.body)
+    assert "Expected: 5" in adds.body and "Received: -1" in adds.body
+    assert not any("other broke" in line for line in adds.body)
+    assert M.failed_tests(_text("bun_pass")) == []
+
+
+def test_bun_durations_and_scratch_paths_do_not_change_the_answer() -> None:
+    for fixture in ("bun_two_failures", "bun_one_failure"):
+        changed = _bun_vary(_text(fixture))
+        assert changed != _text(fixture)
+        assert M.matches(1, changed, _text("bun_two_failures"), BUN)
+        assert M.matches(1, _text("bun_two_failures"), changed, BUN)
+        assert M.matches(1, _coloured(changed), _text(fixture), BUN)
+
+
+def test_bun_a_different_failing_test_does_not_match() -> None:
+    assert not _matches("bun_two_failures", "bun_two_failures", "tests/add.test.ts::math ok")
+    assert not _matches("bun_one_failure", "bun_two_failures", "tests/add.test.ts::math other")
+    # the cited test passes in the re-run while another test fails
+    passing_cited = _text("bun_two_failures").replace("(fail) math > adds", "(pass) math > adds")
+    assert not M.matches(1, passing_cited, _text("bun_two_failures"), BUN)
+    # the re-run fails a different test than the one recorded
+    assert not M.matches(1, _text("bun_two_failures"), _text("bun_one_failure"),
+                         "tests/add.test.ts::math other")
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [("Expected: 5", "Expected: 6"), ("Received: -1", "Received: -2"),
+     ("toBe(expected)", "toEqual(expected)")],
+)
+def test_bun_a_different_assertion_does_not_match(before: str, after: str) -> None:
+    changed = _text("bun_one_failure").replace(before, after)
+    assert changed != _text("bun_one_failure")
+    assert not M.matches(1, changed, _text("bun_two_failures"), BUN)
+    assert not M.matches(1, _text("bun_two_failures"), changed, BUN)
+
+
+def test_bun_a_passing_run_does_not_match() -> None:
+    assert not M.matches(0, _text("bun_pass"), _text("bun_two_failures"), BUN)
+    # a non-zero exit with nothing failing in the output is not the recorded failure either
+    assert not M.matches(1, _text("bun_pass"), _text("bun_two_failures"), BUN)
+
+
+def test_fallback_ignores_trailing_durations_and_absolute_path_directories() -> None:
+    recorded = (
+        "(fail) math > adds [0.85ms]\n"
+        "      at <anonymous> (/tmp/scratch-8f3a1c/tests/add.test.ts:5:24)\n"
+    )
+    rerun = recorded.replace("0.85ms", "1.40ms").replace("/tmp/scratch-8f3a1c", "/var/other/dir")
+    # no known runner's failure format and no test cited: the last specific line decides
+    assert M.matches(1, rerun, recorded, "")
+    assert M.matches(1, rerun, "(fail) math > adds [0.85ms]\n", "")
+    assert M.matches(1, "(fail) math > adds [2.50s]\n", "(fail) math > adds [0.85ms]\n", "")
+    # a different failing test or a different line is still a mismatch
+    assert not M.matches(1, "(fail) math > other [0.85ms]\n", "(fail) math > adds [0.85ms]\n", "")
+    assert not M.matches(1, rerun, "(fail) math > adds [0.85ms]\n      at <anonymous> (x.ts:6:24)\n", "")
+
+
+def test_normalise_is_narrow_about_paths_and_durations() -> None:
+    assert M.normalise("at /a/b/file.ts:12:5") == "at file.ts:12:5"
+    assert M.normalise("at fn (/a/b/file.ts:12:5)") == "at fn (file.ts:12:5)"
+    assert M.normalise("(fail) math > adds [0.85ms]") == "(fail) math > adds"
+    # relative paths, URLs and values inside the assertion keep what they say
+    assert M.normalise("see ./a/b.ts and src/c.ts") == "see ./a/b.ts and src/c.ts"
+    assert M.normalise("GET http://host/a/b.ts") == "GET http://host/a/b.ts"
+    assert M.normalise("Expected: 5 [3ms] more") == "Expected: 5 [3ms] more"
+    assert M.normalise("Received: [1, 2]") == "Received: [1, 2]"

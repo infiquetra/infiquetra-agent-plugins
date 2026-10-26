@@ -11,11 +11,13 @@ the recorded failure line is looked for in that test's own failure block.
 Both sides are compared after ignoring runner metadata that changes between runs. Assertion
 values, including numbers, durations and placeholders, remain part of the failure cause.
 
-The matcher recognises these runners, each from output captured from the real runner: cargo test
-and cargo nextest, pytest, unittest, Vitest, Jest, go test, dart test, and swift test (XCTest and
-Swift Testing). Output it does not recognise falls back to the older rule: the recorded failure
-line has to appear in the re-run, and a test id written as ``file::name`` has to appear word for
-word.
+The matcher recognises these runners. All but bun test were read from output captured from the
+real runner: cargo test and cargo nextest, pytest, unittest, Vitest, Jest, go test, dart test, and
+swift test (XCTest and Swift Testing). bun test is read from its documented ``(fail) suite > name``
+lines and the error block printed before each. Output it does not recognise falls back to the
+older rule: the recorded failure line has to appear in the re-run, and a test id written as
+``file::name`` has to appear word for word. Both sides of that comparison drop a trailing
+bracketed run time and the directories of an absolute file path anywhere in a line.
 """
 
 from __future__ import annotations
@@ -28,6 +30,12 @@ _ANSI = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\([A-Za-z0-9]|\][^\x07\x1b]{0,
 _THREAD_ID = re.compile(r"(thread '[^']*') \(\d+\)")
 _DART_CLOCK = re.compile(r"^\d+:\d\d(?::\d\d)? [+~-]\d+(?: [+~-]\d+)*: ")
 _ABSOLUTE_LOCATION = re.compile(r"^(?:/[\w.+@~-]+)+/([\w.+@~-]+:\d+(?::\d+)?:)")
+# An absolute path to a file, anywhere in a line: the directories are scratch space that differs
+# between runs, so only the file name and any :line:column are kept. A leading word character,
+# colon, dot, slash, tilde or dash means this is not the start of a path (a URL, a relative path).
+_ABSOLUTE_FILE = re.compile(r"(?<![\w:./~-])(?:/[\w.+@~-]+)+/([\w+@~-][\w.+@~-]*\.\w+(?::\d+){0,2})")
+# A trailing bracketed run time such as ``[0.85ms]`` or ``[1.2s]``.
+_BRACKET_DURATION = re.compile(r"\s*\[\d+(?:\.\d+)?\s*(?:ms|s|m|us|\u00b5s|ns)\]\s*$")
 _PID_FILENAME = re.compile(r"(\b[\w.-]+-test-)(?:\d{5,}|<pid>)(?=[\"'/\s])")
 _BLANKS = re.compile(r"\s+")
 _DOTTED = re.compile(r"\w+(?:\.\w+)+")
@@ -50,6 +58,8 @@ _GENERIC_PREFIXES = (
     "stdout ", "stderr ",
     # pytest and unittest
     "collected ", "rootdir:", "platform ", "plugins:", "configfile:", "Ran ", "FAILED (",
+    # bun test
+    "bun test v", "(pass) ", "(skip) ", "(todo) ",
     # Vitest and Jest
     "Test Files", "Tests ", "Tests:", "Test Suites:", "Snapshots:", "Time:", "Duration",
     "Start at", "RUN ", "Ran all test suites",
@@ -68,6 +78,8 @@ _GENERIC_PATTERNS = (
     re.compile(r"^--- (?:FAIL|PASS|SKIP): "),
     re.compile(r"^Test Case '.*' (?:started|passed|failed)"),
     re.compile(r"^(?:FAILED|ERROR) \S+::"),
+    re.compile(r"^\d+ (?:pass|fail|skip|todo|expect\(\) calls)$"),
+    re.compile(r"^\d+ tests? failed:$"),
     re.compile(r"^[\w./-]+\.(?:py|rs)\s+[.FEsxX]+(?: +\[ *\d+%\])?$"),
 )
 
@@ -94,6 +106,8 @@ def normalise(line: str) -> str:
     line = re.sub(r"(object at )0x[0-9a-fA-F]+", r"\g<1>0xADDR", line)
     line = _DART_CLOCK.sub("", line.strip())
     line = _ABSOLUTE_LOCATION.sub(r"\1", line)
+    line = _ABSOLUTE_FILE.sub(r"\1", line)
+    line = _BRACKET_DURATION.sub("", line)
     return _BLANKS.sub(" ", line).strip()
 
 
@@ -316,6 +330,36 @@ def _vitest(lines: list[str], budget: _Budget) -> list[Failure]:
     return failures
 
 
+def _bun(lines: list[str], budget: _Budget) -> list[Failure]:
+    """bun test prints a failure's error block first, then its ``(fail) suite > name [time]`` line.
+
+    The block is every line since the previous test result or file header. Newer bun repeats the
+    failing ``(fail)`` lines in a recap after ``N tests failed:``; the recap has no block, so it
+    is skipped.
+    """
+    failures = []
+    file: str | None = None
+    start = 0
+    recap = False
+    for index, raw in enumerate(lines):
+        recap = recap or bool(re.match(r"\s*\d+ tests? failed:\s*$", raw))
+        header = re.match(r"(\S+\.[cm]?[jt]sx?):\s*$", raw)
+        if header:
+            file, start = header.group(1), index + 1
+            continue
+        if re.match(r"\((?:pass|skip|todo)\) ", raw):
+            start = index + 1
+            continue
+        failed = re.match(r"\(fail\) (.+?)(?:\s+\[[^\]]*\])?\s*$", raw)
+        if failed:
+            if not recap:
+                body = tuple(lines[start:index])
+                budget.retain(len(body))
+                failures.append(Failure(file, failed.group(1), body))
+            start = index + 1
+    return failures
+
+
 def _jest(lines: list[str], budget: _Budget) -> list[Failure]:
     failures = []
     file: str | None = None
@@ -396,7 +440,7 @@ def _swift(lines: list[str], budget: _Budget) -> list[Failure]:
 
 
 _RUNNERS: tuple[Callable[[list[str], _Budget], list[Failure]], ...] = (
-    _cargo, _pytest, _unittest, _vitest, _jest, _go, _dart, _swift,
+    _cargo, _pytest, _unittest, _vitest, _bun, _jest, _go, _dart, _swift,
 )
 
 
