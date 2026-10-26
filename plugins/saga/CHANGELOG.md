@@ -86,6 +86,14 @@
 
 ### Fixed
 
+- The `saga.silent-skip` rule (`correctness.pattern.silent-skip`, blocks) no longer matches a
+  `continue` that comes straight after a call recording the item into a report collection
+  (`errors.append(...)`, `problems.add(...)`, `failures.push(...)` and the same for findings,
+  warnings, issues, violations, diagnostics, skipped, rejected and mismatch names, with the call
+  spread over up to twelve lines). Such a `continue` is traced, not silent. The exclusion is
+  written without blank-line or possessive forms because Semgrep's regex engine stopped applying
+  a longer form to files of a few thousand lines. A `continue` after any other statement is still
+  matched. No version bump.
 - `ruff-lint` no longer blocks a clean change for the `assert` statements in its test files.
   Saga runs ruff with `--isolated --select ALL`, so the reviewed repository's own per-file
   ignores never applied and `S101` ("use of `assert`", a flake8-bandit rule) fired on every test.

@@ -226,6 +226,56 @@ def test_semgrep_rule_tests_pass_without_network() -> None:
     assert passed == total == str(len(RULE_TABLE)), combined
 
 
+def test_silent_skip_ignores_a_continue_after_a_recorded_error_in_a_large_file(
+    tmp_path: Path,
+) -> None:
+    """A ``continue`` straight after ``errors.append(...)`` is traced, not silent. The first form of
+    the exclusion stopped applying once the scanned file grew past a couple of thousand lines, so
+    the check runs over a large file as well as the small rule fixtures."""
+    binary = _semgrep_or_skip()
+    unit = '''\
+def check_{n}(names, known, report):
+    errors = []
+    for name in names:
+        if name not in known:
+            errors.append(
+                f"{{name}} names nothing that is known, "
+                "so it is reported"
+            )
+            continue
+        if not name:
+            errors.append(f"{{name}} is empty")
+            continue
+        store(name)
+    for name, dests in known.items():
+        if len(dests) != 1:
+            continue
+        report.errors.extend(
+            _compare(
+                name,
+                dests,
+            )
+        )
+    return errors
+
+
+'''
+    target = tmp_path / "big.py"
+    target.write_text("".join(unit.format(n=n) for n in range(160)), encoding="utf-8")
+    assert target.read_text(encoding="utf-8").count("\n") > 3000
+    proc = subprocess.run(
+        [binary, "scan", "--metrics=off", "--disable-version-check", "-q",
+         "--config", str(RULES / "silent-skip.yaml"), "--json", str(target)],
+        capture_output=True, text=True, timeout=300, cwd=REPO_ROOT,
+        env={**os.environ, "SEMGREP_ENABLE_VERSION_CHECK": "0"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    found = json.loads(proc.stdout)
+    assert found["errors"] == []
+    # Every ``continue`` is a guard or follows a recorded error, so the rule reports none.
+    assert found["results"] == []
+
+
 def _git(repo: Path, *args: str) -> str:
     proc = subprocess.run(
         ["git", *args], cwd=repo, check=True, capture_output=True, text=True

@@ -44,3 +44,32 @@ def import_rows_default_branch(rows):
         else:
             # ok: saga.silent-skip
             continue
+
+
+def check_names(names, known):
+    errors = []
+    for name in names:
+        if name not in known:
+            errors.append(
+                f"{name} names nothing that is known, "
+                "so it is reported"
+            )
+            # ok: saga.silent-skip
+            continue
+        if not name:
+            errors.append(f"{name} is empty")
+            # ok: saga.silent-skip
+            continue
+        store(name)
+    return errors
+
+
+def collect_rows(rows):
+    seen = []
+    for row in rows:
+        cleaned = clean(row)
+        if not valid(cleaned):
+            seen.append(cleaned)
+            # ruleid: saga.silent-skip
+            continue
+        store(cleaned)

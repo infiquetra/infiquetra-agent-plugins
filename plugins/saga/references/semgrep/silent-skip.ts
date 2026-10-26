@@ -42,3 +42,32 @@ function importRowsGuardLine(rows: Row[]): void {
     store(row);
   }
 }
+
+function checkNames(names: string[], known: Set<string>): string[] {
+  const errors: string[] = [];
+  for (const name of names) {
+    if (!known.has(name)) {
+      errors.push(
+        `${name} names nothing that is known, ` +
+        "so it is reported"
+      );
+      // ok: saga.silent-skip
+      continue;
+    }
+    store(name);
+  }
+  return errors;
+}
+
+function collectRows(rows: Row[]): void {
+  const seen: Row[] = [];
+  for (const row of rows) {
+    const cleaned = clean(row);
+    if (!valid(cleaned)) {
+      seen.push(cleaned);
+      // ruleid: saga.silent-skip
+      continue;
+    }
+    store(cleaned);
+  }
+}

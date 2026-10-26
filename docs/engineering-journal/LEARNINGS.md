@@ -2,6 +2,32 @@
 
 ## 2026-10-26
 
+### A regex exclusion that works on a fixture can stop applying on a real file
+
+**Author.** Jeff Cox
+
+**Evidence.** The `saga.silent-skip` Semgrep rule (`plugins/saga/references/semgrep/silent-skip.yaml`)
+blocked changes at two `continue` statements that each followed `errors.append(...)`, a recorded
+error rather than a silent skip. The rule's trace exclusion only looked at the line before the
+`continue`, and the word `errors` is not the word `error`. A first exclusion that spanned the
+multi-line call passed `semgrep --test` and a small file, yet reported the same sites on the
+real file of a few thousand lines; Semgrep reported no error. Bisecting the file by prefix found
+the flip at one added line, and removing the blank-line alternative and keeping the repetition
+bounded (`{0,12}`) made the exclusion apply to the whole file. Tests: the
+new `ok` and `ruleid` cases in `silent-skip.py` and `silent-skip.ts`, and
+`test_silent_skip_ignores_a_continue_after_a_recorded_error_in_a_large_file`
+(`plugins/saga/tests/test_pattern_checks.py`).
+
+**Mechanism.** `pattern-not-regex` removes a match only when Semgrep's regex engine returns the
+negative match. When the engine gives up on a pattern (this one, with a repeated group that
+contains a back-reference and an alternative that can match an empty line), it returns nothing
+and the exclusion silently disappears, so the finding survives. Small fixtures never reach the
+limit.
+
+**Generalizable rule.** Test a regex-based exclusion on a real file of production size as well
+as on rule fixtures, keep repetitions bounded, and prefer fewer alternatives in a pattern that
+uses a back-reference.
+
 ### Isolating a linter from the repository's config also removes the repository's test conventions
 
 **Author.** Jeff Cox
