@@ -1,0 +1,36 @@
+bun test v1.2.0 (abcdef01)
+
+tests/add.test.ts:
+1 | import { describe, expect, test } from "bun:test";
+2 | import { add } from "../src/add";
+3 | describe("math", () => {
+4 |   test("adds", () => {
+5 |     expect(add(2, 3)).toBe(5);
+                          ^
+error: expect(received).toBe(expected)
+
+Expected: 5
+Received: -1
+
+      at <anonymous> (/tmp/scratch-8f3a1c/tests/add.test.ts:5:24)
+(fail) math > adds [0.85ms]
+(pass) math > ok [0.10ms]
+6 |   test("other", () => {
+7 |     throw new Error("other broke");
+              ^
+error: other broke
+      at <anonymous> (/tmp/scratch-8f3a1c/tests/add.test.ts:7:11)
+(fail) math > other [0.31ms]
+
+tests/more.test.ts:
+(pass) more > first [0.05ms]
+(pass) more > second [0.04ms]
+
+2 tests failed:
+(fail) math > adds [0.85ms]
+(fail) math > other [0.31ms]
+
+ 7 pass
+ 2 fail
+ 9 expect() calls
+Ran 9 tests across 2 files. [64.00ms]
