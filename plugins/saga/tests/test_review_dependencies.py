@@ -847,30 +847,66 @@ def test_an_overlap_the_kept_distribution_does_not_ship_alone_stops_the_install(
     assert not (packet / D.PYTHON_DIRECTORY).exists()
 
 
+_TWO = {"alpha": "alpha==1.0 --hash=sha256:" + "aa" * 32,
+        "zeta": "zeta==1.0 --hash=sha256:" + "bb" * 32}
+
+
 def test_a_malformed_record_row_is_skipped_never_an_error(tmp_path: Path) -> None:
     site = tmp_path / "site"
     for name in ("alpha", "zeta"):
         info = site / f"{name}-1.0.dist-info"
         info.mkdir(parents=True)
         (info / "RECORD").write_text(
-            '"",,\n.,,\n./,,\n/etc/passwd,,\n../outside,,\nbin/tool,,\na/../b,,\n'
+            '"",,\n.,,\n./,,\n/etc/passwd,,\n../outside,,\nbin/tool,,\nBIN/tool,,\na/../b,,\n'
             'back\\slash,,\n\n,\n'
-            f"{name}-1.0.dist-info/METADATA,,\nshared/x.py,sha256=abc,1\n", "utf-8")
-    broken = site / "broken-1.0.dist-info"
-    broken.mkdir()
-    (broken / "RECORD").write_bytes(b"\xff\xfe not text\nshared/x.py,,\n")
-    assert D._claims(site) == {"shared/x.py": D._Overlap(("shared/x.py",), ("alpha", "zeta"))}
-    for row in ([], [""], ["."], ["a\0b"], [None], ["x.dist-info/RECORD"]):
+            f"{name}-1.0.dist-info/METADATA,,\n{name.upper()}-1.0.DIST-INFO/WHEEL,,\n"
+            "shared/x.py,sha256=abc,1\n", "utf-8")
+    assert D._claims(site, _TWO) == {
+        "shared/x.py": D._Overlap(("shared/x.py",), ("alpha", "zeta"))}
+    for row in ([], [""], ["."], ["a\0b"], [None], ["x.dist-info/RECORD"],
+                ["X.DIST-INFO/RECORD"], ["X.Dist-Info/RECORD"], ["BIN/tool"]):
         assert D._record_path(row) is None
-    # Only the step that tells uv's own folders from shipped ones reads .dist-info rows.
-    assert D._record_path(["x.dist-info/RECORD"], dist_info=True) == "x.dist-info/RECORD"
+    # Only the check of which folder a row lands in reads .dist-info rows.
+    assert D._record_path(["X.DIST-INFO/RECORD"], dist_info=True) == "X.DIST-INFO/RECORD"
 
 
 def _site_with_records(site: Path, records: dict[str, str]) -> Path:
     for folder, text in records.items():
-        (site / folder).mkdir(parents=True)
+        (site / folder).mkdir(parents=True, exist_ok=True)
         (site / folder / "RECORD").write_text(text, "utf-8")
     return site
+
+
+@pytest.mark.parametrize("records", [
+    # A distribution's RECORD lists a file in another distribution's .dist-info folder.
+    {"alpha-1.0.dist-info": "zeta-1.0.dist-info/RECORD,,\n",
+     "zeta-1.0.dist-info": "z.py,,\n"},
+    # The same, spelled in upper case.
+    {"alpha-1.0.dist-info": "ZETA-1.0.DIST-INFO/RECORD,,\n",
+     "zeta-1.0.dist-info": "z.py,,\n"},
+    # A folder no installed requirement names, in either case.
+    {"alpha-1.0.dist-info": "a.py,,\n", "planted-1.0.dist-info": "a.py,,\n"},
+    {"alpha-1.0.dist-info": "a.py,,\n", "PLANTED-1.0.DIST-INFO": "a.py,,\n"},
+    # A folder for an installed name at another version, and a second folder for one name.
+    {"alpha-1.0.dist-info": "a.py,,\n", "zeta-9.0.dist-info": "a.py,,\n"},
+    {"alpha-1.0.dist-info": "a.py,,\n", "ALPHA-1.0.dist-info": "a.py,,\n"},
+], ids=["other-folder", "other-folder-upper", "planted", "planted-upper", "wrong-version",
+        "twice"])
+def test_a_dist_info_folder_not_uv_s_own_stops_the_install(
+    tmp_path: Path, records: dict[str, str],
+) -> None:
+    site = _site_with_records(tmp_path / "site", records)
+    if len(list(site.iterdir())) < len(records):
+        pytest.skip("this file system folds case, so the two folders are one")
+    with pytest.raises(D._PythonFailure, match="overlap-unresolved"):
+        D._claims(site, _TWO)
+
+
+def test_an_unreadable_record_stops_the_install(tmp_path: Path) -> None:
+    site = _site_with_records(tmp_path / "site", {"alpha-1.0.dist-info": "a.py,,\n"})
+    (site / "alpha-1.0.dist-info" / "RECORD").write_bytes(b"\xff\xfe not text\n")
+    with pytest.raises(D._PythonFailure, match="overlap-unresolved"):
+        D._claims(site, _TWO)
 
 
 def test_two_spellings_of_one_path_are_one_overlap(tmp_path: Path) -> None:
@@ -879,7 +915,7 @@ def test_two_spellings_of_one_path_are_one_overlap(tmp_path: Path) -> None:
         "alpha-1.0.dist-info": f"Foo/x.py,,\n{nfd},,\n",
         "zeta-1.0.dist-info": "foo/x.py,,\ncaf\u00e9/x.py,,\n",
     })
-    assert D._claims(site) == {
+    assert D._claims(site, _TWO) == {
         "caf\u00e9/x.py": D._Overlap(tuple(sorted(["caf\u00e9/x.py", nfd])), ("alpha", "zeta")),
         "foo/x.py": D._Overlap(("Foo/x.py", "foo/x.py"), ("alpha", "zeta")),
     }
@@ -897,18 +933,20 @@ def test_wheels_that_ship_one_path_in_two_cases_stop_the_install_in_either_order
     assert not (packet / D.PYTHON_DIRECTORY).exists()
 
 
-def test_a_dist_info_folder_a_wheel_ships_cannot_claim_a_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize("planted", [
+    "otherdep-2.0.0.dist-info/extra.txt",  # another installed distribution's own folder
+    "otherdep-9.0.dist-info/RECORD",  # an installed name at another version
+    "zzz_injected-1.0.dist-info/RECORD",  # a name that is not installed
+    "ZZZ_INJECTED-1.0.DIST-INFO/RECORD",  # the same, in upper case
+])
+def test_a_wheel_that_ships_into_a_dist_info_folder_stops_the_install(
+    tmp_path: Path, planted: str,
+) -> None:
     fake = "inertdep/__init__.py,,\nsharedpkg/__init__.py,,\n"
-    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST, ships={"inertdep": {
-        # Named for an installed distribution, and for one that is not installed at all.
-        "otherdep-9.0.dist-info/RECORD": fake, "zzz_injected-1.0.dist-info/RECORD": fake,
-    }})
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST, ships={"inertdep": {planted: fake}})
     record, packet = _python(tmp_path, uv, _LOCKED)
-    assert record["python"]["state"] == "installed"
-    assert "overlaps" not in record["python"]
-    site = packet / D.PYTHON_DIRECTORY
-    assert (site / "zzz_injected-1.0.dist-info" / "RECORD").is_file()
-    assert D._claims(site) == {}
+    assert record["python"] == {"state": "not-installed", "reason": "overlap-unresolved"}
+    assert not (packet / D.PYTHON_DIRECTORY).exists()
 
 
 def test_the_overlap_install_counts_toward_the_byte_limit(tmp_path: Path) -> None:

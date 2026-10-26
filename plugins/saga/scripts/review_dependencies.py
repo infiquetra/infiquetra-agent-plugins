@@ -46,7 +46,7 @@ import time
 import tomllib
 import unicodedata
 from datetime import datetime, timezone
-from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -1149,43 +1149,61 @@ def _fold(path: str) -> str:
     return unicodedata.normalize("NFC", unicodedata.normalize("NFD", path).casefold())
 
 
-def _claims(target: Path, installed: Collection[str] | None = None) -> dict[str, _Overlap]:
+_PIN = re.compile(r"==\s*([A-Za-z0-9.!+_-]+)")
+
+
+def _same_version(pinned: str, folder: str) -> bool:
+    """Whether a requirement's pinned version and a ``.dist-info`` folder's name the same one,
+    ignoring case and the ``-``/``_``/``.`` separators PEP 440 treats alike."""
+    def canon(text: str) -> str:
+        return re.sub(r"[-_.]+", ".", text.strip().lower())
+
+    return canon(pinned) == canon(folder)
+
+
+def _claims(target: Path, entries: Mapping[str, str]) -> dict[str, _Overlap]:
     """Each path in *target* that more than one installed distribution's ``RECORD`` lists, by
     its folded form (:func:`_fold`), so ``Foo/x.py`` and ``foo/x.py`` count as one.
 
-    Only ``.dist-info`` folders uv made for an installed distribution are read: uv rewrites
-    each ``RECORD`` to list the files it actually wrote, so a folder whose files another
-    ``RECORD`` lists came inside a wheel and is skipped, and with *installed* so is one whose
-    name is not among them. Paths outside *target* (console scripts under ``../``), under
-    ``bin`` and inside a ``.dist-info`` folder are never shared. A ``RECORD`` that is a symlink
-    or cannot be read is skipped as a whole, and so is a malformed row.
+    Which ``.dist-info`` folders are real is decided only from *entries*, the requirements uv
+    installed: a folder must be named ``<name>-<version>`` for one of them, with its pinned
+    version, one folder per name, and hold a readable ``RECORD`` that is not a symlink. uv
+    rewrites each ``RECORD`` to list the files it wrote. Any other ``.dist-info`` folder, or a
+    ``RECORD`` that lists a path inside a ``.dist-info`` folder other than its own, means a wheel
+    shipped files there, and stops the install (``overlap-unresolved``); such a folder is never
+    merely skipped. Paths outside *target* (console scripts under ``../``) and under ``bin`` are
+    never shared, and a malformed row is skipped.
     """
     records: dict[str, tuple[str, list[str]]] = {}
-    for info in sorted(target.glob("*.dist-info")):
-        record = info / "RECORD"
-        name = _normalize(info.name[: -len(".dist-info")].rpartition("-")[0])
-        if not name or info.is_symlink() or record.is_symlink() or not record.is_file():
+    if not target.is_dir() or target.is_symlink():
+        return {}
+    for info in sorted(target.iterdir(), key=lambda path: path.name):
+        if not _fold(info.name).endswith(".dist-info"):
             continue
+        raw, _sep, version = info.name[: -len(".dist-info")].rpartition("-")
+        name = _normalize(raw)
+        pinned = _PIN.search(entries.get(name, ""))
+        record = info / "RECORD"
+        if (not raw or name not in entries or name in records or info.is_symlink()
+                or not info.is_dir() or record.is_symlink() or not record.is_file()
+                or (pinned is not None and not _same_version(pinned.group(1), version))):
+            raise _PythonFailure("overlap-unresolved")
         try:
             with record.open(encoding="utf-8", newline="") as handle:
                 rows = list(csv.reader(handle))
         except (OSError, UnicodeDecodeError, csv.Error):
-            continue
+            raise _PythonFailure("overlap-unresolved") from None
         paths = [path for row in rows if (path := _record_path(row, dist_info=True))]
-        records[info.name] = (name, paths)
-    shipped = {
-        _fold(PurePosixPath(path).parts[0])
-        for folder, (_name, paths) in records.items() for path in paths
-        if _fold(PurePosixPath(path).parts[0]) != _fold(folder)
-        and PurePosixPath(path).parts[0].endswith(".dist-info")
-    }
+        records[name] = (_fold(info.name), paths)
     claimed: dict[str, dict[str, set[str]]] = {}
-    for folder, (name, paths) in records.items():
-        if _fold(folder) in shipped or (installed is not None and name not in installed):
-            continue
+    for name, (own, paths) in records.items():
         for path in paths:
-            if not PurePosixPath(path).parts[0].endswith(".dist-info"):
-                claimed.setdefault(_fold(path), {}).setdefault(path, set()).add(name)
+            first = _fold(PurePosixPath(path).parts[0])
+            if first.endswith(".dist-info"):
+                if first != own:
+                    raise _PythonFailure("overlap-unresolved")
+                continue
+            claimed.setdefault(_fold(path), {}).setdefault(path, set()).add(name)
     found: dict[str, _Overlap] = {}
     for key, spellings in sorted(claimed.items()):
         names = sorted(set().union(*spellings.values()))
@@ -1208,7 +1226,8 @@ def _record_path(row: Sequence[Any], dist_info: bool = False) -> str | None:
         path = PurePosixPath(text)
         parts = path.parts
         if (not parts or path.is_absolute() or ".." in parts or "." in parts
-                or parts[0] == "bin" or (parts[0].endswith(".dist-info") and not dist_info)):
+                or _fold(parts[0]) == "bin"
+                or (_fold(parts[0]).endswith(".dist-info") and not dist_info)):
             return None
         return path.as_posix()
     except (TypeError, ValueError, IndexError):
@@ -1228,7 +1247,7 @@ def _resolve_overlaps(
     that install, or one the distributions spell differently only by case or Unicode form,
     stops the Python install (``overlap-unresolved``).
     """
-    claims = _claims(target, frozenset(entries))
+    claims = _claims(target, entries)
     if not claims:
         return []
     by_winner: dict[str, list[str]] = {}

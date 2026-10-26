@@ -144,7 +144,7 @@ class FakeUv:
         for entry in (reversed(entries) if self.reverse else entries):
             name, version = entry.split("==")
             info = target / f"{name.replace('-', '_')}-{version}.dist-info"
-            info.mkdir()
+            info.mkdir(exist_ok=True)
             files = {f"{info.name}/METADATA": f"Name: {name}\nVersion: {version}\n",
                      # A console script, as a wheel would install: never kept in the packet.
                      f"../../bin/{name}": "#!/bin/sh\nexit 0\n"}
