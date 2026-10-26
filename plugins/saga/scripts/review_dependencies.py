@@ -1150,15 +1150,31 @@ def _claims(target: Path) -> dict[str, list[str]]:
         except (OSError, UnicodeDecodeError, csv.Error):
             continue
         for row in rows:
-            if not row or not row[0]:
-                continue
-            path = PurePosixPath(row[0])
-            parts = path.parts
-            if (path.is_absolute() or ".." in parts or "." in parts or parts[0] == "bin"
-                    or parts[0].endswith(".dist-info")):
-                continue
-            claimed.setdefault(path.as_posix(), set()).add(name)
+            path = _record_path(row)
+            if path is not None:
+                claimed.setdefault(path, set()).add(name)
     return {path: sorted(names) for path, names in sorted(claimed.items()) if len(names) > 1}
+
+
+def _record_path(row: Sequence[Any]) -> str | None:
+    """The relative path a ``RECORD`` row names inside the install, or ``None`` to skip the row.
+
+    ``RECORD`` comes from the wheel, so it is untrusted: an empty, absolute, ``.``/``..`` or NUL
+    path, a path under ``bin`` or a ``.dist-info`` folder, and anything else malformed is
+    skipped, never an error.
+    """
+    try:
+        text = row[0] if row else ""
+        if not isinstance(text, str) or not text or "\0" in text or "\\" in text:
+            return None
+        path = PurePosixPath(text)
+        parts = path.parts
+        if (not parts or path.is_absolute() or ".." in parts or "." in parts
+                or parts[0] == "bin" or parts[0].endswith(".dist-info")):
+            return None
+        return path.as_posix()
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 def _resolve_overlaps(
@@ -1190,21 +1206,41 @@ def _resolve_overlaps(
             _install_into(uv, python, trial, entries, [winner], work)
             for path in paths:
                 parts = PurePosixPath(path).parts
-                origin, destination = trial.joinpath(*parts), target.joinpath(*parts)
-                if (origin.is_symlink() or not origin.is_file()
-                        or _through_link(target, destination)):
-                    raise _PythonFailure("overlap-unresolved")
-                destination.unlink(missing_ok=True)
-                shutil.copyfile(origin, destination)
-                shutil.copymode(origin, destination)
+                _replace_file(trial, trial.joinpath(*parts), target, target.joinpath(*parts))
         finally:
             _remove(trial)
     return [{"names": list(names), "kept": names[-1], "rule": OVERLAP_RULE, "files": count}
             for names, count in sorted(groups.items())]
 
 
+def _replace_file(source: Path, origin: Path, target: Path, destination: Path) -> None:
+    """Replace *destination* in *target* with *origin* from *source*, or stop the install.
+
+    Both must be regular files, not symlinks, reached through real folders inside their roots;
+    *destination* may also be missing. Any other shape, or any error while copying, is
+    ``overlap-unresolved``; the caller then removes the whole install.
+    """
+    try:
+        if (_through_link(source, origin) or origin.is_symlink() or not origin.is_file()
+                or not origin.resolve().is_relative_to(source.resolve())):
+            raise _PythonFailure("overlap-unresolved")
+        if _through_link(target, destination.parent) or destination.is_symlink() or (
+                destination.exists() and not destination.is_file()):
+            raise _PythonFailure("overlap-unresolved")
+        if not destination.resolve().is_relative_to(target.resolve()):
+            raise _PythonFailure("overlap-unresolved")
+        destination.unlink(missing_ok=True)
+        shutil.copyfile(origin, destination, follow_symlinks=False)
+        shutil.copymode(origin, destination, follow_symlinks=False)
+    except OSError:
+        raise _PythonFailure("overlap-unresolved") from None
+
+
 def _through_link(root: Path, path: Path) -> bool:
-    """True when *path*, or a folder between *root* and it, is a symlink or missing."""
+    """True when *path*, or a folder between *root* and it, is a symlink or missing, or when
+    *path* is not below *root* at all."""
+    if path != root and root not in path.parents:
+        return True
     cursor = path
     while cursor != root:
         if cursor.is_symlink() or (cursor != path and not cursor.is_dir()):

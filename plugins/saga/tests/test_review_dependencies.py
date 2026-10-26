@@ -847,6 +847,82 @@ def test_an_overlap_the_kept_distribution_does_not_ship_alone_stops_the_install(
     assert not (packet / D.PYTHON_DIRECTORY).exists()
 
 
+def test_a_malformed_record_row_is_skipped_never_an_error(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    for name in ("alpha", "zeta"):
+        info = site / f"{name}-1.0.dist-info"
+        info.mkdir(parents=True)
+        (info / "RECORD").write_text(
+            '"",,\n.,,\n./,,\n/etc/passwd,,\n../outside,,\nbin/tool,,\na/../b,,\n'
+            'back\\slash,,\n\n,\n'
+            f"{name}-1.0.dist-info/METADATA,,\nshared/x.py,sha256=abc,1\n", "utf-8")
+    broken = site / "broken-1.0.dist-info"
+    broken.mkdir()
+    (broken / "RECORD").write_bytes(b"\xff\xfe not text\nshared/x.py,,\n")
+    assert D._claims(site) == {"shared/x.py": ["alpha", "zeta"]}
+    for row in ([], [""], ["."], ["a\0b"], [None]):
+        assert D._record_path(row) is None
+
+
+class _Reshaped(FakeUv):
+    """After the main install, turns the shared file into *shape*, or fails the copy."""
+
+    shape = "directory"
+
+    def _install(self, command: list[str]) -> Any:
+        result = super()._install(command)
+        target = Path(command[command.index("--target") + 1])
+        shared = target / "sharedpkg" / "__init__.py"
+        if target.name != "overlap" and shared.exists():
+            shared.unlink()
+            if self.shape == "directory":
+                shared.mkdir()
+                (shared / "inside").write_text("x\n", "utf-8")
+            elif self.shape == "symlink":
+                shared.symlink_to(target.parent / "elsewhere")
+        return result
+
+
+@pytest.mark.parametrize("shape", ["directory", "symlink"])
+def test_an_overlap_whose_destination_is_not_a_plain_file_stops_the_install(
+    tmp_path: Path, shape: str,
+) -> None:
+    uv = _Reshaped(exported=_EXPORTED, compiled=_PYTEST,
+                   shared=frozenset({"inertdep", "otherdep"}))
+    uv.shape = shape
+    elsewhere = tmp_path / "packet" / "dependencies" / "python" / "elsewhere"
+    record, packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"] == {"state": "not-installed", "reason": "overlap-unresolved"}
+    assert not (packet / D.PYTHON_DIRECTORY).exists() and not elsewhere.exists()
+
+
+def test_an_error_while_copying_an_overlap_stops_the_install_and_leaves_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(D.shutil, "copyfile", broken)
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST, shared=frozenset({"inertdep", "otherdep"}))
+    record, packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"] == {"state": "not-installed", "reason": "overlap-unresolved"}
+    assert not (packet / D.PYTHON_DIRECTORY).exists()
+
+
+def test_an_overlap_origin_outside_the_lone_install_is_refused(tmp_path: Path) -> None:
+    source, target = tmp_path / "source", tmp_path / "target"
+    (source / "pkg").mkdir(parents=True)
+    (target / "pkg").mkdir(parents=True)
+    (tmp_path / "secret").write_text("secret\n", "utf-8")
+    (source / "pkg" / "x.py").symlink_to(tmp_path / "secret")
+    (target / "pkg" / "x.py").write_text("kept\n", "utf-8")
+    with pytest.raises(D._PythonFailure, match="overlap-unresolved"):
+        D._replace_file(source, source / "pkg" / "x.py", target, target / "pkg" / "x.py")
+    with pytest.raises(D._PythonFailure, match="overlap-unresolved"):
+        D._replace_file(source, tmp_path / "secret", target, target / "pkg" / "x.py")
+    assert (target / "pkg" / "x.py").read_text(encoding="utf-8") == "kept\n"
+
+
 def test_a_lock_that_declares_pytest_installs_no_second_one(tmp_path: Path) -> None:
     uv = FakeUv(exported=_EXPORTED + _PYTEST)
     record, _packet = _python(tmp_path, uv, _LOCKED)

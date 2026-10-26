@@ -18,6 +18,9 @@ wheels concurrently, so the last writer wins. Each wheel's `RECORD` still lists 
 shipped, so the clash is visible afterwards. `_resolve_overlaps` finds paths that more than one
 `RECORD` lists, keeps the copy from the distribution whose normalized name sorts last, takes it
 from an install of that distribution alone, and records only the names under `overlaps`.
+`RECORD` comes from the wheel, so a malformed row is skipped, never an error, and a shared path
+that is not a plain file on both sides, or a copy that fails, stops the install as
+`overlap-unresolved` so nothing is left half-written.
 
 **Generalizable rule.** When an output must be reproducible, look for every place where two
 inputs can write the same location, and decide the winner by a fixed rule rather than by
