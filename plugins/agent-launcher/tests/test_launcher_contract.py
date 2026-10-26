@@ -5848,6 +5848,9 @@ _CACHE_CASES = [
      [".build/debug/m.json", ".build/arm64/debug/m.o"], "Sources/.builder/real.swift"),
     ("cdk", {"cdk.json": "{}\n", "lib/app.ts": "x\n"}, ["cdk.out/manifest.json",
      "cdk.out/asset/x"], "lib/cdk.out.ts"),
+    ("pytest-subfolder", {"pkg/test_a.py": "x\n"},
+     [".pytest_cache/.gitignore", "pkg/.pytest_cache/.gitignore", "a/b/.pytest_cache/v/c"],
+     "pkg/pytest_cache.py"),
 ]
 
 

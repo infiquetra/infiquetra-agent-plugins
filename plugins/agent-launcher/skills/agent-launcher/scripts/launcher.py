@@ -2163,6 +2163,7 @@ REVIEWER_TOOLCHAIN_PARTS = (
 #: Each entry is a folder or a file name that is generated and never edited, matched whole at a
 #: path boundary, so ``src/ruff_cache.py`` and ``.ruff_cache.md`` do not match:
 #:
+#: - ``.pytest_cache/`` at any depth: ``cd pkg && pytest`` writes ``pkg/.pytest_cache/``.
 #: - ``.ruff_cache/`` and ``.mypy_cache/``: ruff's and mypy's result caches, written wherever the
 #:   tool runs. ``.hypothesis/``: Hypothesis's example database, written beside the tests it runs.
 #: - ``.eslintcache``: ESLint's cache file, written by ``eslint --cache``.
@@ -2172,7 +2173,7 @@ REVIEWER_TOOLCHAIN_PARTS = (
 #: Folders that other tools also use are matched only at a package root; see
 #: ``REVIEWER_PACKAGE_CACHES``.
 REVIEWER_SCRATCH_IGNORED = re.compile(
-    r"^(pytest-of-[^/]+/|\.pytest_cache/|tmp[a-z0-9_]{8}/|target/)|(^|/)__pycache__/|\.pyc$"
+    r"^(pytest-of-[^/]+/|tmp[a-z0-9_]{8}/|target/)|(^|/)\.pytest_cache/|(^|/)__pycache__/|\.pyc$"
     r"|(^|/)Cargo\.lock$"
     r"|(^|/)(\.ruff_cache|\.mypy_cache|\.hypothesis)/"
     r"|(^|/)\.eslintcache$|(^|/)[^/]+\.tsbuildinfo$"
