@@ -2,6 +2,33 @@
 
 ## 2026-10-26
 
+### A traced harm must name its blocker
+
+**Decision.** Author: Jeff Cox. The targeted reviewer prompt
+(`plugins/saga/references/targeted-reviewer-prompt.md`) tells a reviewer to attempt a reproduction
+for every correctness or security finding it believes, unless that is clearly impossible. When such
+a finding stays `traced`, the first `proof.steps` entry begins with `Blocker:` and says what
+specifically stopped the reproduction ("dependency X is not importable", "no runner for Y here",
+"needs network"). The rule lives in the prompt only. The answer schema, `reviewer_answer.py` and
+the severity formula are unchanged, so a traced finding without a blocker is still accepted and
+still capped at fix later. The prompt also keeps the precision guard: the test must execute the code
+under review, and a test that only reads, greps or parses the change's source text is not a
+reproduction.
+
+**Rationale.** The first step of a traced proof is already required to exist and is free text, so a
+named blocker needs no new field. Reviewers that stopped without a reason could not be told apart
+from reviewers that never tried, which hid whether a missed proof was a tooling gap or a skipped
+step.
+
+**Rejected alternatives.** A new optional `blocker` field on a traced proof: a schema, validator
+and test change for something free text carries today. Having the checker refuse a traced harm
+with no blocker: it would discard a whole answer over a missing sentence. Letting a traced harm
+block when its blocker is credible: it would break the rule that keeps clean changes from being
+blocked.
+
+**Revisit when.** Reviewers' traced harm findings still carry no `Blocker:` entry often enough that
+the operator cannot sort tooling gaps from skipped steps. Then add the optional `blocker` field and
+a checker warning, not a refusal.
 ### A Python review packet carries plain site-packages; the reviewer and the re-run each add a python-only environment
 
 **Decision.** Saga's review prepare installs a Python head's dependencies into a plain

@@ -2,6 +2,46 @@
 
 ## 2026-10-26
 
+### A reviewer that is only told to "try a test" locates harms but seldom proves them
+
+**Author.** Jeff Cox
+
+**Evidence.** The reproduction guidance in `plugins/saga/references/targeted-reviewer-prompt.md`
+said "When you believe a finding, try to show it with a test", listed no runner that `finish` can
+read, and gave a recipe only for Rust inline tests and a pytest example. In a measurement outside
+Rust, reviewers usually found the planted defects but rarely proved them. Some could not import a
+dependency (fixed separately: an offline Python environment, and the matcher now reads
+`bun test`), and the rest either never tried or gave no reason. The prompt now states the stakes,
+lists what `finish` accepts, gives a short recipe per language and asks a traced harm to name its
+blocker. Tests: `test_prompt_names_every_runner_the_matcher_reads` and its neighbours in
+`plugins/saga/tests/test_reviewer_answer.py`.
+
+**Mechanism.** The severity row `judged.harm-reproduced` lets a correctness or security finding
+block only when `finish` re-runs the reviewer's test and sees the same failure. A reviewer that does
+not know this, or does not know which commands and runners the re-run can use, rationally settles
+for a trace, which is capped at fix later. A trace that gives no reason is indistinguishable from
+a reviewer that did not try, so neither the operator nor a later prompt change can tell a tooling
+gap from a skipped step. Because the precision rule (only a reproduction blocks) is what keeps
+clean changes from being blocked, the fix had to raise how often reviewers try and say why they
+stopped, not loosen what counts as proof: the test must run the code under review, and a test that
+only reads or parses its source text is not a reproduction.
+
+A first draft of the recipes had two ways to manufacture a block, found in review. The CI workflow
+recipe let a reviewer substitute any "attacker-chosen" value into an expression, which turns a
+maintainer-only input or a repository-fixed matrix entry into a reproduced
+`security-boundary-crossed`, a consequence that always blocks; a quote that merely breaks a script
+does the same for `break-in-supported-use`. The recipe now exercises the script with the inputs it
+really receives, allows a security claim to substitute only what the trigger lets an outside party
+supply, and names that event and the expression's source in `trigger`. The shell recipes also had
+`/bin/bash` pinned, and the finish sandbox's `/bin/bash` is 3.2.57, so a feature from bash 4 fails
+there and looks like a harm. A Markdown recipe that checked a referenced path ran no code, which
+contradicts the rule that a test must execute the code under review.
+
+**Generalizable rule.** A recipe that tells a prover what input to supply must also say who can
+supply it, and must run the code the way it runs in normal use; otherwise it teaches the prover to
+manufacture the proof. When a gate accepts only a mechanically re-checked proof, tell the prover
+exactly what the checker accepts, with one short recipe per language, and make every "could not
+prove" carry a named reason, so a miss can be traced to a tooling gap, not guessed at.
 ### Dependencies handed to a sandbox must never be found by name, and their installer's output is untrusted
 
 **Author.** Jeff Cox

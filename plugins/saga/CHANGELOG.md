@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Changed
+
+- The targeted reviewer prompt's reproduction guidance is rewritten so reviewers prove real harms
+  in every language, not only Rust. It states that a correctness or security finding can block only
+  when reproduced, asks for a reproduction attempt on every harm finding believed, and keeps the
+  rule that the test must execute the code under review. A new list gives what `finish` accepts
+  (command form, test file location and naming, the 120 second limit, no network, the runners the
+  matcher reads, and failure messages free of durations, paths and process ids). Short generic
+  recipes cover Python, TypeScript and JavaScript, Rust, shell scripts, CI workflow files,
+  Markdown, CDK, Dart and Swift. The recipes run code the way it runs in normal use (no pinned
+  `/bin/bash`), a CI security claim substitutes only a value the workflow's trigger lets an outside
+  party supply and names that event in `trigger`, a Markdown claim counts only when a documented
+  command runs, and Dart and Swift name a blocker unless the toolchain and package allow a run. A
+  harm finding that stays `traced` begins its first `proof.steps` entry with `Blocker:` and names what stopped the reproduction. No schema,
+  validator or severity change. A test keeps the prompt's runner list equal to the runners in
+  `reproduction_match.py`.
+
 ### Fixed
 
 - The reproduction matcher reads `bun test` output. A bun run that failed the same test the same
