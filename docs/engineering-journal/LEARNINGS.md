@@ -3,66 +3,6 @@
 ## 2026-10-26
 
 ### Dependencies handed to a sandbox must never be found by name, and their installer's output is untrusted
-### A regex exclusion that backtracks can drop out for a whole file, with no error
-
-**Author.** Jeff Cox
-
-**Evidence.** The `saga.silent-skip` Semgrep rule (`plugins/saga/references/semgrep/silent-skip.yaml`)
-blocked changes at `continue` statements that each followed `errors.append(...)`, a recorded
-error rather than a silent skip. The rule's trace exclusion only looked at the line before the
-`continue`, and the word `errors` is not the word `error`. A first exclusion that spanned the
-multi-line call passed `semgrep --test` and small files, yet reported the same sites on a real
-script of a few thousand lines; Semgrep reported no error. The review found the cause: a file
-that held one long recorded call (twelve lines) with no `continue` after it made the exclusion
-vanish for every other recorded-error `continue` in that file. The fix is one token,
-`\1[ \t]+\S[^\n]*` in place of `\1[ \t]+[^\n]*`. Tests: the new `ok` and `ruleid` cases in
-`silent-skip.py` and `silent-skip.ts`, `test_silent_skip_ignores_a_continue_after_a_recorded_error_in_a_large_file`
-and `test_silent_skip_exclusion_does_not_backtrack_on_a_long_recorded_call`
-(`plugins/saga/tests/test_pattern_checks.py`).
-
-**Mechanism.** In `\1[ \t]+[^\n]*` the indent match `[ \t]+` and the rest of the line `[^\n]*`
-can both take the same spaces, so when a recorded call is not followed by a `continue` the engine
-tries every way to split the spaces of every line, and the work grows exponentially with the
-length of the call (measured with Python's `re`: seconds at eight lines, minutes at ten). Semgrep
-stops the match when that work gets too large and treats it as no match, so the exclusion
-silently disappears and the finding survives. Small fixtures never reach the limit, and nothing
-reports that a pattern gave up. An earlier explanation here, a blank-line alternative, was wrong:
-bounding the repeat and dropping that alternative only moved the failing case.
-
-**Generalizable rule.** In a regex exclusion, make every repeated alternative start with a
-character the next one cannot also take (here `\S` after the indent), and test it with a long
-input that does not match, not only with one that does. A pattern that gives up produces no
-error, so a test that expects the exclusion to hold in a file that also holds the slow shape is
-the only signal.
-
-### Isolating a linter from the repository's config also removes the repository's test conventions
-
-**Author.** Jeff Cox
-
-**Evidence.** In a private measurement run, every clean change that added tests and was wrongly
-blocked in its own lens was blocked by ruff findings with rule `S101` ("use of `assert`") in the
-added test files, mapped to `correctness.tool-error` at severity `blocks`. The mapping is `family_map` in `plugins/saga/references/review-tools.yaml`
-(`S: error`) read by `_parse_ruff` in `plugins/saga/scripts/review_adapters_python.py`, and the
-rule was selected because `_invoke_ruff` runs `ruff check --isolated --select ALL`. Tests:
-`test_ruff_ignores_assert_in_test_paths_by_per_file_patterns_anchored_at_the_root`,
-`test_live_ruff_flags_assert_in_source_but_not_in_test_files` and
-`test_ruff_bandit_rules_are_security_leads_that_fix_later_never_blocks`
-(`plugins/saga/tests/test_review_adapters_python.py`).
-
-**Mechanism.** `--isolated` is right for a reviewed tree that is untrusted: a settings file in the
-change must not be able to switch rules off. It also drops the per-file ignores that nearly every
-Python repository sets for tests, and `--select ALL` turns on a family (flake8-bandit) whose rules
-are written for production code, where `assert` is stripped under `python -O`. The tool's own
-level then decides blocking, and a family that is only a lead (bandit) was given the level of a
-proven error. Passing the convention inline (`--config` with per-file ignores anchored at the scan
-root) keeps the isolation and restores the convention; the `S` family goes to the row that
-bandit's own MEDIUM and LOW findings use, which fixes later.
-
-**Generalizable rule.** When a check isolates a tool from the repository's configuration, pass
-back the conventions that configuration would have supplied (here, "asserts are fine in tests"),
-and give a rule family that only suggests a lead the row of a lead, not the row of a proven
-defect.
-### A re-run matcher that falls back to comparing a last line will fail on every runner whose last line carries a run time, so each runner you rely on needs its own parser
 
 **Author.** Jeff Cox
 
@@ -126,6 +66,100 @@ without uv's cache, which can hide a start of the interpreter.
 folder you wrote that holds the names you chose. Resolve your own helpers to absolute paths
 first. Pass a tool only data, never its option language. Record only fixed reason words from
 its output. Test the "runs no code" claim with every cache turned off.
+
+### A regex exclusion that backtracks can drop out for a whole file, with no error
+
+**Author.** Jeff Cox
+
+**Evidence.** The `saga.silent-skip` Semgrep rule (`plugins/saga/references/semgrep/silent-skip.yaml`)
+blocked changes at `continue` statements that each followed `errors.append(...)`, a recorded
+error rather than a silent skip. The rule's trace exclusion only looked at the line before the
+`continue`, and the word `errors` is not the word `error`. A first exclusion that spanned the
+multi-line call passed `semgrep --test` and small files, yet reported the same sites on a real
+script of a few thousand lines; Semgrep reported no error. The review found the cause: a file
+that held one long recorded call (twelve lines) with no `continue` after it made the exclusion
+vanish for every other recorded-error `continue` in that file. The fix is one token,
+`\1[ \t]+\S[^\n]*` in place of `\1[ \t]+[^\n]*`. Tests: the new `ok` and `ruleid` cases in
+`silent-skip.py` and `silent-skip.ts`, `test_silent_skip_ignores_a_continue_after_a_recorded_error_in_a_large_file`
+and `test_silent_skip_exclusion_does_not_backtrack_on_a_long_recorded_call`
+(`plugins/saga/tests/test_pattern_checks.py`).
+
+**Mechanism.** In `\1[ \t]+[^\n]*` the indent match `[ \t]+` and the rest of the line `[^\n]*`
+can both take the same spaces, so when a recorded call is not followed by a `continue` the engine
+tries every way to split the spaces of every line, and the work grows exponentially with the
+length of the call (measured with Python's `re`: seconds at eight lines, minutes at ten). Semgrep
+stops the match when that work gets too large and treats it as no match, so the exclusion
+silently disappears and the finding survives. Small fixtures never reach the limit, and nothing
+reports that a pattern gave up. An earlier explanation here, a blank-line alternative, was wrong:
+bounding the repeat and dropping that alternative only moved the failing case.
+
+**Generalizable rule.** In a regex exclusion, make every repeated alternative start with a
+character the next one cannot also take (here `\S` after the indent), and test it with a long
+input that does not match, not only with one that does. A pattern that gives up produces no
+error, so a test that expects the exclusion to hold in a file that also holds the slow shape is
+the only signal.
+
+### Isolating a linter from the repository's config also removes the repository's test conventions
+
+**Author.** Jeff Cox
+
+**Evidence.** In a private measurement run, every clean change that added tests and was wrongly
+blocked in its own lens was blocked by ruff findings with rule `S101` ("use of `assert`") in the
+added test files, mapped to `correctness.tool-error` at severity `blocks`. The mapping is `family_map` in `plugins/saga/references/review-tools.yaml`
+(`S: error`) read by `_parse_ruff` in `plugins/saga/scripts/review_adapters_python.py`, and the
+rule was selected because `_invoke_ruff` runs `ruff check --isolated --select ALL`. Tests:
+`test_ruff_ignores_assert_in_test_paths_by_per_file_patterns_anchored_at_the_root`,
+`test_live_ruff_flags_assert_in_source_but_not_in_test_files` and
+`test_ruff_bandit_rules_are_security_leads_that_fix_later_never_blocks`
+(`plugins/saga/tests/test_review_adapters_python.py`).
+
+**Mechanism.** `--isolated` is right for a reviewed tree that is untrusted: a settings file in the
+change must not be able to switch rules off. It also drops the per-file ignores that nearly every
+Python repository sets for tests, and `--select ALL` turns on a family (flake8-bandit) whose rules
+are written for production code, where `assert` is stripped under `python -O`. The tool's own
+level then decides blocking, and a family that is only a lead (bandit) was given the level of a
+proven error. Passing the convention inline (`--config` with per-file ignores anchored at the scan
+root) keeps the isolation and restores the convention; the `S` family goes to the row that
+bandit's own MEDIUM and LOW findings use, which fixes later.
+
+**Generalizable rule.** When a check isolates a tool from the repository's configuration, pass
+back the conventions that configuration would have supplied (here, "asserts are fine in tests"),
+and give a rule family that only suggests a lead the row of a lead, not the row of a proven
+defect.
+### A re-run matcher that falls back to comparing a last line will fail on every runner whose last line carries a run time, so each runner you rely on needs its own parser
+
+**Author.** Jeff Cox
+
+**Evidence.** A measured TypeScript reproduction run with bun. The reviewer's reproduction test
+failed again on re-run, yet `finish` recorded `re-run-mismatch`. Bun was the
+only TypeScript runner that works inside the re-run sandbox, so every bun reproduction was lost.
+The matcher is `plugins/saga/scripts/reproduction_match.py`; the fix adds `_bun` and widens
+`normalise`. Tests: `test_bun_durations_and_scratch_paths_do_not_change_the_answer`,
+`test_bun_a_different_assertion_does_not_match`,
+`test_fallback_ignores_trailing_durations_and_absolute_path_directories`
+(`plugins/saga/tests/test_reproduction_match.py`, synthetic transcripts `bun_*.txt`).
+
+**Mechanism.** The matcher only knows runners it has a parser for. For any other output it keeps
+the last specific line and requires it word for word in the re-run. Bun's last specific line is
+`(fail) <suite> > <test> [0.85ms]`, and the duration changes on every run, as do absolute scratch
+directories in stack frames, which the old normalisation only handled at the very start of a
+line. Bun also prints the error block before its `(fail)` line, not after, so a parser that
+reads a failure's body forward from the header (as the Vitest one does) finds nothing. Bun
+repeats its `(fail)` lines in a recap after `N tests failed:`, which has to be skipped or each
+failure is read twice, the second time with no block.
+A reviewer's recording often starts after bun's file header, and a test is usually cited by its
+file path alone; a failure with no file then never fits a path-only citation, so the first fix
+still returned no match on a real recording. The bun parser now reads the file from the test file
+in the failure's own stack frame (`test_bun_bare_path_citation_*`). Bun also hides `(pass)` lines
+when it runs for an agent, so a block cannot start after the previous result line: it starts at
+the code excerpt or the `error:` line (`test_bun_agent_mode_recording_matches_a_plain_rerun_*`).
+
+**Generalizable rule.** When a runner starts being used, add its parser and a fixture for it in
+the same change; the word-for-word fallback is a safety net, not a parser. Normalise only what
+is known to vary, and only where it varies (bun's trailing time on its own result lines, the
+directories of an absolute `file:line` location), so a different test or a different assertion
+value, including one that is a path or a bracketed time, still mismatches. A shared normaliser
+widened for one runner changes every runner's answer.
 
 ## 2026-10-25
 

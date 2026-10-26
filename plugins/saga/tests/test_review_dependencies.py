@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -832,6 +833,8 @@ def test_requirements_reach_uv_only_as_plain_lines(tmp_path: Path) -> None:
             "evil @ https://127.0.0.1:9/evil.whl\nlocal @ file:///etc/passwd\n./folder\n"
             "inertdep>=1.0 ; python_version >= '3.8'  # a comment\n"
             "otherdep[extra]==2.0\n"
+            "six ; python_version > '3' -r token\n"
+            "six2 ; python_version > '3' --index-url evil\n"
         ),
     }
     compiled = (f"inertdep==1.0.0 \\\n    {_HASH_A}\notherdep==2.0.0 \\\n    {_HASH_A}\n"
@@ -840,11 +843,12 @@ def test_requirements_reach_uv_only_as_plain_lines(tmp_path: Path) -> None:
     record, _packet = _python(tmp_path, uv, tree)
     entry = record["python"]
     assert entry["state"] == "installed"
-    assert entry["dropped"] == {"options": 5, "references": 3}
+    assert entry["dropped"] == {"options": 5, "references": 3, "unparsed": 2}
     given = "".join(uv.inputs)
     for word in ("127.0.0.1", str(secret), "inert-example-token", "file:", "-r", "--index"):
         assert word not in given, word
     assert "inertdep>=1.0 ; python_version >= '3.8'" in given
+    assert "six" not in given and "evil" not in given
     assert "otherdep[extra]==2.0" in given
     for call in uv.calls:
         assert not any(str(secret) in part for part in call["argv"])
@@ -922,6 +926,72 @@ def test_a_python_project_only_in_a_subfolder_is_recorded(tmp_path: Path) -> Non
     assert record["python"] == {"state": "not-installed", "reason": "subfolder-project",
                                 "projects": ["tools"]}
     assert uv.calls == []
+
+
+@pytest.mark.parametrize("line", [
+    "six ; python_version > '3' -r token",
+    "six2 ; python_version > '3' --index-url evil",
+    "six3 ; os_name == 'posix' -c /etc/passwd",
+    "six4 ; unknown_variable == '1'",
+    "six5 ;",
+])
+def test_a_marker_that_is_not_marker_grammar_drops_the_line(line: str) -> None:
+    dropped: dict[str, int] = {}
+    assert D._plain(line, dropped, hashes=False) is None
+    assert sum(dropped.values()) == 1, dropped
+
+
+@pytest.mark.parametrize("line", [
+    "inertdep>=1.0 ; python_version >= '3.8'",
+    "a==1 ; (sys_platform == 'linux' and extra == \"x\") or python_full_version < '3.10'",
+    "b[x,y]~=2.1 ; platform_machine not in 'arm64 aarch64'",
+])
+def test_a_real_marker_keeps_the_line(line: str) -> None:
+    assert D._plain(line, {}, hashes=False) is not None
+
+
+def test_only_safe_subfolder_names_reach_the_record(tmp_path: Path) -> None:
+    """Folder names come from the reviewed repository; one with a newline or a control
+    character is left out, and the list is capped."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@example.com"],
+                 ["config", "user.name", "t"]):
+        subprocess.run(["git", *args], cwd=repo, check=True)
+    names = ["tools", "evil\nline", "bell\x07name", "esc\x1b[31m", "quote\"d",
+             *[f"pkg{n:02d}" for n in range(30)]]
+    for name in names:
+        (repo / name).mkdir()
+        (repo / name / "pyproject.toml").write_text("[project]\n", "utf-8")
+    (repo / "README.md").write_text("x\n", "utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "head"], cwd=repo, check=True)
+
+    def runner(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+               umask: int | None = None) -> Any:
+        proc = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
+                              timeout=timeout, check=False)
+        return _Result(proc.returncode, proc.stdout, proc.stderr)
+
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    entry = D._python_entry(runner, repo, "HEAD", packet, _export_from({}))
+    assert entry is not None and entry["reason"] == "subfolder-project"
+    projects = entry["projects"]
+    assert len(projects) == 20
+    assert projects[0] == "pkg00" and "tools" not in projects[:19]
+    for name in projects:
+        assert re.fullmatch(r"[A-Za-z0-9._/-]{1,100}", name), name
+    text = json.dumps(entry)
+    for bad in ("evil", "bell", "esc", "quote"):
+        assert bad not in text
+
+
+def test_only_unsafe_subfolder_names_still_record_a_subfolder_project(tmp_path: Path) -> None:
+    uv = FakeUv()
+    record, _packet = _python(tmp_path, uv, {"README.md": "x\n", "bell\x07/pyproject.toml": "x"})
+    assert record["python"] == {"state": "not-installed", "reason": "subfolder-project",
+                                "projects": []}
 
 
 def test_a_head_without_python_files_gets_no_python_entry(tmp_path: Path) -> None:

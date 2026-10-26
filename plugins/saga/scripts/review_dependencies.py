@@ -654,8 +654,22 @@ _PLAIN = re.compile(
     r"^(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
     r"(?P<extras>\s*\[[A-Za-z0-9._,\s-]*\])?"
     r"(?P<spec>\s*(?:\(\s*)?(?:(?:===|==|!=|~=|<=|>=|<|>)\s*[A-Za-z0-9.*+!_-]+\s*,?\s*)*(?:\))?)"
-    r"(?P<marker>\s*;\s*[A-Za-z0-9_.'\"<>=!~\s()-]*)?$"
+    r"(?P<marker>\s*;(?P<expression>.*))?$"
 )
+#: A marker, token by token (PEP 508): quoted strings, the marker variables, ``and``, ``or``,
+#: ``in``, ``not``, comparison operators and parentheses. Anything else, an unquoted ``-r`` or
+#: ``--index-url`` included, refuses the line, so uv never reads it as an option.
+_MARKER_TOKEN = re.compile(
+    r"\s*(?:'[^'\\\n]*'|\"[^\"\\\n]*\"|===|==|!=|~=|<=|>=|<|>|\(|\)|[A-Za-z_][A-Za-z0-9_.]*)"
+)
+_MARKER_WORDS = frozenset({
+    "and", "or", "in", "not", "extra", "python_version", "python_full_version", "os_name",
+    "sys_platform", "platform_release", "platform_system", "platform_version",
+    "platform_machine", "platform_python_implementation", "implementation_name",
+    "implementation_version", "os.name", "sys.platform", "platform.version",
+    "platform.machine", "platform.python_implementation", "python_implementation",
+    "dependency_groups", "extras",
+})
 _HASH = re.compile(r"--hash=(sha256:[0-9a-f]{64})")
 #: The fixed reasons recorded in ``dependencies.json``. uv's own words never reach the packet:
 #: its output can repeat whatever a requirement or an index sent it.
@@ -699,14 +713,25 @@ def _python_inputs(names: Mapping[str, str]) -> list[str]:
     return sorted(name for name in names if name in _PYTHON_FILES or _REQUIREMENTS.match(name))
 
 
-def _subfolder_projects(runner: Process, repo: Path, head: str) -> list[str]:
-    """Folders below the root that hold a Python project's declaring file."""
+#: A folder name the record may repeat. Names come from the reviewed repository, so anything
+#: else (a newline, a control character, a quote, an overlong name) is left out, not cleaned.
+_RECORDED_FOLDER = re.compile(r"[A-Za-z0-9._/-]{1,100}")
+_MAX_RECORDED_FOLDERS = 20
+
+
+def _subfolder_projects(runner: Process, repo: Path, head: str) -> list[str] | None:
+    """Folders below the root that hold a Python project's declaring file, as many as
+    :data:`_MAX_RECORDED_FOLDERS`, each one matching :data:`_RECORDED_FOLDER`; ``None`` when
+    there is no such folder at all (an empty list when there are only unsafe names)."""
     folders = set()
     for path in _tree(runner, repo, head, recursive=True):
         folder, _sep, name = path.rpartition("/")
         if folder and (name in _PYTHON_FILES or _REQUIREMENTS.match(name)):
             folders.add(folder)
-    return sorted(folders)[:20]
+    if not folders:
+        return None
+    safe = sorted(folder for folder in folders if _RECORDED_FOLDER.fullmatch(folder))
+    return safe[:_MAX_RECORDED_FOLDERS]
 
 
 def _python_entry(
@@ -717,7 +742,7 @@ def _python_entry(
     inputs = _python_inputs(root)
     if not inputs:
         projects = _subfolder_projects(runner, repo, head)
-        if projects:
+        if projects is not None:
             return {"state": "not-installed", "reason": "subfolder-project", "projects": projects}
         return None
     if any(root[name] == "120000" for name in inputs):
@@ -943,13 +968,32 @@ def _plain(line: str, dropped: dict[str, int], hashes: bool) -> tuple[str, str] 
         dropped["references"] = dropped.get("references", 0) + 1
         return None
     match = _PLAIN.match(body)
-    if match is None or "--hash" in body:
+    if match is None or "--hash" in body or not _marker_ok(match.group("expression")):
         dropped["unparsed"] = dropped.get("unparsed", 0) + 1
         return None
     text = " ".join(body.split())
     if found:
         text += "".join(f" --hash={item}" for item in found)
     return _normalize(match.group("name")), text
+
+
+def _marker_ok(expression: str | None) -> bool:
+    """True when *expression* (the text after ``;``) is made only of marker tokens."""
+    if expression is None:
+        return True
+    position, tokens = 0, 0
+    while position < len(expression):
+        if not expression[position:].strip():
+            break
+        found = _MARKER_TOKEN.match(expression, position)
+        if found is None:
+            return False
+        token = found.group(0).strip()
+        if token[0].isalpha() or token[0] == "_":
+            if token not in _MARKER_WORDS:
+                return False
+        position, tokens = found.end(), tokens + 1
+    return tokens > 0
 
 
 def _plain_entries(lines: Sequence[str], dropped: dict[str, int], hashes: bool) -> dict[str, str]:
