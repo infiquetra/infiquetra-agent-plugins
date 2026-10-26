@@ -1125,6 +1125,22 @@ def test_profile_write_pins_are_version_only(tmp_path: Path, capsys: pytest.Capt
         _public.semgrep = "semgrep 1.2.3\n"  # type: ignore[attr-defined]
 
 
+@pytest.mark.parametrize("marker,content", [("cdk.json", "{}\n"), ("template.yaml", "Resources: {}\n")])
+def test_profile_write_pins_cloudformation_tools(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], marker: str, content: str
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / marker).write_text(content, encoding="utf-8")
+
+    code, _out, err = _write(repo, BASICS, capsys, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS))
+
+    assert code == 0, err
+    pins = json.loads((repo / ".saga-profile.json").read_text(encoding="utf-8"))["review_tools"]["pins"]
+    assert pins["checkov"] == {"version": "3.3.25"}
+    assert pins["cfn-lint"] == {"version": "1.57.2"}
+
+
 def test_profile_write_visibility(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

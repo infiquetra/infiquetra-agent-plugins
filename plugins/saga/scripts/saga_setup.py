@@ -124,7 +124,10 @@ def _at_least(found: str, minimum: str) -> bool:
 
 #: One detection for setup and the review runner, so a tool setup never pinned
 #: never runs (issue 253).
-detect_languages = review_tools.detect_languages
+def detect_languages(root: Path) -> list[str]:
+    """Return setup languages using the same file set as review adapters."""
+    found = review_tools.run_languages(root)
+    return [language for language in review_tools.review_formula.LANGUAGES if language in found]
 
 
 def load_extensions(path: Path | None = None) -> dict[str, Any]:
