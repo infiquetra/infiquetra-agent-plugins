@@ -1,5 +1,43 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-26
+
+### A virtual environment travels in a review packet only when it is relocatable and installed by copy
+
+**Author.** Jeff Cox
+
+**Evidence.** Saga's prepare now installs a Python head's dependencies into
+`<packet>/dependencies/python` (`_install_python` in `plugins/saga/scripts/review_dependencies.py`).
+The packet is written in a temporary staging folder and then moved, and two prepares must write
+the same bytes. Measured with uv 0.13.4: `uv venv --relocatable` writes no path of its own folder
+into `pyvenv.cfg`, the activation scripts or the console scripts (they find their interpreter
+relative to themselves), so two environments built in different folders compare equal
+(`diff -r --no-dereference`); the one stray file is uv's empty `.lock`, mode 0666, which prepare
+deletes. `uv pip install --target` was the other candidate and was dropped: its console scripts
+carry the interpreter's absolute path, and a folder on `PYTHONPATH` sits ahead of the standard
+library and never runs `.pth` files. Under `sandbox-exec`, `python3 -m pytest` from the environment
+imported its dependency and a write into `site-packages` failed with "Operation not permitted".
+Tests: `test_prepare_twice_on_a_python_change_writes_identical_packets`,
+`test_live_the_confined_rerun_imports_from_the_environment_and_cannot_write_it`
+(`plugins/saga/tests/test_review_command.py`) and the opt-in
+`test_live_uv_installs_a_lock_twice_identically_and_sets_aside_an_sdist`
+(`plugins/saga/tests/test_review_dependencies.py`, `SAGA_TEST_LIVE_UV=1`).
+
+**Mechanism.** A virtual environment is found by the `pyvenv.cfg` beside its interpreter, so it
+works from wherever the folder lands, as long as nothing inside names the folder. The defaults
+that break that are the scripts' shebangs (fixed by `--relocatable`) and hard links into uv's
+cache (fixed by `--link-mode copy`, which also stops a later write to the cache from changing the
+packet). Putting the environment's `bin` first on `PATH` makes `python3` its interpreter in the
+reviewer's sandbox and in finish's re-run alike, so the recorded command needs no path. A
+resolve that is not pinned by a lock repeats only when it is bounded in time: `--exclude-newer`
+at the head's commit time. `uv pip compile --no-build` stops at the first package without a
+wheel, and an override with a marker that never holds (`name ; python_version < '0'`) removes that
+package so the resolve can go on.
+
+**Generalizable rule.** Before shipping a directory inside a content-hashed artifact, build it
+twice in two different folders and diff the trees; every absolute path or link into a shared
+cache it holds is a determinism bug and, usually, a relocation bug too.
+
 ## 2026-10-25
 
 ### A check that compares stored output must hash only what its findings depend on, and an ignore list must know every tool the reviewer runs

@@ -2106,6 +2106,7 @@ REVIEWER_ENVIRONMENT_ALLOWED = (
     "CARGO_NET_OFFLINE",  # issue #262: cargo never tries the network it is denied
     "RUSTUP_HOME",  # issue #262: a rustup proxy finds its toolchains
     "RUSTUP_TOOLCHAIN",  # issue #262: the operator's toolchain choice, when set
+    "VIRTUAL_ENV",  # the packet's Python environment, set only by the launcher
 )
 #: Credential files and directories. The sandbox blocks the whole home directory, so this list no
 #: longer feeds ``denyRead``. It feeds the permission layer's ``Read`` deny rules, and the check
@@ -2613,6 +2614,57 @@ def reviewer_packet_vendor(packet: Path) -> Path | None:
     if not cursor.is_dir() or not _reviewer_inside(cursor, packet):
         return None
     return cursor.resolve()
+
+
+def reviewer_packet_python(packet: Path) -> Path | None:
+    """The packet's Python environment, or ``None`` when there is none to trust.
+
+    Saga's prepare installs the head's Python dependencies into a virtual environment in the
+    packet. The entry counts only when it says ``installed`` or ``partial`` and names a relative
+    directory inside the packet, with no symlink along the way, holding ``pyvenv.cfg`` and
+    ``bin/``. The rules match saga's ``review_dependencies.python_environment``.
+    """
+    try:
+        data = json.loads((packet / REVIEWER_DEPENDENCIES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("schema") != REVIEWER_DEPENDENCIES_SCHEMA:
+        return None
+    entry = data.get("python")
+    if not isinstance(entry, dict) or entry.get("state") not in ("installed", "partial"):
+        return None
+    relative = entry.get("directory")
+    if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
+        return None
+    parts = Path(relative).parts
+    if any(part in ("", ".", "..") for part in parts) or packet.is_symlink():
+        return None
+    cursor = packet
+    for part in parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return None
+    if not cursor.is_dir() or not _reviewer_inside(cursor, packet):
+        return None
+    marker, scripts = cursor / "pyvenv.cfg", cursor / "bin"
+    if marker.is_symlink() or not marker.is_file() or scripts.is_symlink() or not scripts.is_dir():
+        return None
+    return cursor.resolve()
+
+
+def reviewer_offline_python(session_env: dict[str, str], venv: Path | None) -> None:
+    """Put the packet's Python environment *venv* first on the session's ``PATH``.
+
+    ``python3`` is then its interpreter, as it is in saga's re-run, so the reviewer's command
+    replays unchanged. The operator's own ``VIRTUAL_ENV`` never reaches the reviewer.
+    """
+    session_env.pop("VIRTUAL_ENV", None)
+    if venv is None:
+        return
+    session_env["VIRTUAL_ENV"] = str(venv)
+    session_env["PATH"] = os.pathsep.join(
+        [str(venv / "bin")] + ([session_env["PATH"]] if session_env.get("PATH") else [])
+    )
 
 
 def reviewer_cargo_config(vendor: Path | None, source: str = REVIEWER_VENDORED_SOURCE) -> str:
@@ -4070,6 +4122,10 @@ def reviewer_launch(
         if problem:
             raise ReviewerRefused(f"the {label} cannot be allowed back inside the blocked home: "
                                   f"{problem}")
+    # Before the toolchain is read, so ``python3`` is the environment's interpreter and the
+    # install it links to is what comes back when that install lives under home.
+    venv = reviewer_packet_python(request.packet)
+    reviewer_offline_python(session_env, venv)
     toolchain, dropped = reviewer_toolchain_paths(session_env)
     reviewer_export_head(request.repo, request.head, copy)
     withheld = reviewer_withhold_untrusted(
@@ -4085,7 +4141,9 @@ def reviewer_launch(
          "reason": "the reviewer's read-only cargo home, offline (issue #262)"},
     ] + ([{"path": str(vendor),
            "reason": "the packet's vendored Rust dependencies, read-only (issue #262)"}]
-         if vendor is not None else [])
+         if vendor is not None else []) + ([{"path": str(venv),
+           "reason": "the packet's Python environment, first on PATH, read-only"}]
+         if venv is not None else [])
     settings_path, extra_env = recipe.materialize(
         recipe.settings(
             copy, request.packet, session_env, toolchain=toolchain,

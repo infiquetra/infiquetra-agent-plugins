@@ -1,5 +1,46 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-26
+
+### A Python review packet carries a relocatable virtual environment, put first on PATH
+
+**Decision.** Saga's review prepare installs a Python head's dependencies into a relocatable
+virtual environment inside the packet (`dependencies/python`, built by `uv venv --relocatable`
+on the operator's `python3`), with prebuilt wheels only (`uv pip install --no-deps --no-build
+--require-hashes --link-mode copy`). The inputs are the frozen `uv.lock` with every group and
+extra, or `pyproject.toml` and `requirements*.txt` resolved with `--exclude-newer` at the head's
+commit time, plus pytest when nothing declares it; the project itself is not installed. A package
+without a wheel is set aside and listed under `missing` (`partial`); any other failure is
+`not-installed`; neither stops prepare. agent-launcher's reviewer and saga's finish re-run put the
+environment's `bin` first on `PATH` and set `VIRTUAL_ENV`, so the recorded command stays
+`python3 -m pytest ...`; both read the folder and never write it. prepare uses the operator's uv
+cache for downloads.
+
+**Rationale.** Reviewers gave up reproducing Python findings because the sandbox held only what
+the operator's global Python happened to have. The environment has to be identical in the
+reviewer's sandbox and in finish's re-run, the command has to stay a direct program with no path
+that could differ between the two, and two prepares have to write the same bytes. A relocatable
+environment selected through `PATH` meets all three with no mapping step in finish.
+
+**Rejected alternatives.**
+- `uv pip install --target` plus `PYTHONPATH`: the folder sits ahead of the standard library, so
+  a dependency named like a standard module shadows it; `.pth` files never run; console scripts
+  carry an absolute interpreter path; and the operator's global packages still leak in.
+- A virtual environment at an absolute path the reviewer calls by name: the path would be in the
+  recorded command, so finish would have to map it, and the packet's location would enter hashed
+  content.
+- Building the environment at review and at finish time instead of in prepare: both run without
+  network, and two separate installs are not guaranteed to match.
+- Allowing sdist builds: a build runs the package's own code during prepare, outside any sandbox.
+- A fresh uv cache per prepare, as the Rust fetch uses a fresh cargo home: every prepare would
+  download every wheel again. Hash checking and copying out of the cache already keep the packet
+  independent of it.
+
+**Revisit when.** A measurement run shows Python reproductions still failing for a missing
+package that has a wheel, a reviewed project needs its own package installed (import roots
+other than the working directory), prepare time per Python head becomes a measured problem, or
+a head needs a private package index that the fresh `HOME` and `--no-config` hide.
+
 ## 2026-10-25
 
 ### Architecture-maintainability planted defects are flagged, not blocked (option A)

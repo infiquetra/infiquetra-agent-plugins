@@ -185,17 +185,22 @@ def child_environment(scratch: Path) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class Offline:
-    """What a re-run adds to build offline from the packet's dependencies (issue 262).
+    """What a re-run adds to work offline from the packet's dependencies (issue 262).
 
     *cargo* is the cargo home's shim, which passes its configuration as ``--config`` so a commit's
     own ``.cargo/config.toml`` cannot replace crates.io first; ``None`` when no cargo was found.
+    *python* is the packet's Python environment, whose ``bin`` comes first on ``PATH``.
     """
 
     env: Mapping[str, str]
     reads: tuple[Path, ...]
     cargo: Path | None = None
-    #: Paths the re-run may read and map as code: the real cargo's folder and rustup's toolchains.
+    #: Paths the re-run may read and map as code: the real cargo's folder and rustup's toolchains,
+    #: and the Python environment with its interpreter's install.
     toolchain: tuple[Path, ...] = ()
+    #: True when the packet vendored Rust sources and ``env`` points cargo at them.
+    rust: bool = False
+    python: Path | None = None
 
     def argv(self, argv: list[str]) -> list[str]:
         """*argv*, with a ``cargo`` command, by name or by path, run through the shim."""
@@ -206,22 +211,37 @@ class Offline:
 
 @contextmanager
 def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
-    """A cargo home pointing at the packet's vendored crates, for the re-runs; ``None`` without."""
+    """The packet's dependencies for the re-runs: a cargo home pointing at the vendored crates,
+    the Python environment first on ``PATH``, both or neither (``None``)."""
     vendor = review_dependencies.rust_vendor(packet)
-    if vendor is None:
+    venv = review_dependencies.python_environment(packet)
+    if vendor is None and venv is None:
         yield None
+        return
+    env: dict[str, str] = {}
+    reads: tuple[Path, ...] = ()
+    toolchain: tuple[Path, ...] = ()
+    path = os.environ.get("PATH", "")
+    if venv is not None:
+        # Read and mapped, never written: a wheel's compiled extension loads from it.
+        env.update(review_dependencies.python_env(venv, path))
+        path = env["PATH"]
+        toolchain += review_dependencies.python_toolchain(venv)
+    if vendor is None:
+        yield Offline(env=env, reads=reads, toolchain=toolchain, python=venv)
         return
     home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
     try:
         cargo = shutil.which("cargo")
         shim = review_dependencies.write_cargo_home(home, vendor, cargo)
-        env = {"CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true",
-               **review_dependencies.rustup_env()}
+        env.update({"CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true",
+                    **review_dependencies.rustup_env()})
         if shim is not None:
             # A cargo that another command starts finds the shim first, too.
-            env["PATH"] = os.pathsep.join([str(shim.parent), os.environ.get("PATH", "")])
-        yield Offline(env=env, reads=(vendor, home), cargo=shim,
-                      toolchain=review_dependencies.toolchain_paths(cargo))
+            env["PATH"] = os.pathsep.join([str(shim.parent), path])
+        yield Offline(env=env, reads=(*reads, vendor, home), cargo=shim,
+                      toolchain=(*review_dependencies.toolchain_paths(cargo), *toolchain),
+                      rust=True, python=venv)
     finally:
         shutil.rmtree(home, ignore_errors=True)
 
@@ -1006,11 +1026,12 @@ def _rerun_one(
         env.update(offline.env)
         reads, toolchain = offline.reads, offline.toolchain
         argv = offline.argv(argv)
-    elif Path(argv[0]).name in _RUST_COMMANDS:
+    if (offline is None or not offline.rust) and Path(argv[0]).name in _RUST_COMMANDS:
         # Without vendored crates a Rust re-run still needs rustup's toolchain (issue 262).
         env.update(review_dependencies.rustup_env())
         # By name on the operator's PATH: a folder in the reviewer's command is never trusted.
-        toolchain = review_dependencies.toolchain_paths(shutil.which(Path(argv[0]).name))
+        toolchain = (*toolchain,
+                     *review_dependencies.toolchain_paths(shutil.which(Path(argv[0]).name)))
     try:
         if confine is not None:
             ran = confine(argv, scratch, env, scratch)
@@ -1557,7 +1578,8 @@ def _publish(staging: Path, out: Path) -> None:
     try:
         staging.rename(out)
     except OSError:
-        shutil.copytree(staging, out)
+        # A Python environment's interpreter is a symlink to the operator's; keep it one.
+        shutil.copytree(staging, out, symlinks=True)
 
 
 def _copy_check_modules(staging: Path) -> None:

@@ -11,6 +11,11 @@ for C8 to extend.
 
 ### Added
 
+- **The reviewer's `python3` is the packet's Python environment.** When saga's
+  `dependencies.json` names an `installed` or `partial` Python environment inside the packet,
+  the launch puts its `bin` first on the session's `PATH` (after the cargo shim), sets
+  `VIRTUAL_ENV`, and allows the folder back for reading and names it in `denyWrite`.
+  `VIRTUAL_ENV` joins the variable allow-list; the operator's own value is always removed first.
 - Issue #162: the implementer, standard-repair implementer, and expert-repair implementer prompts
   tell the builder to read `plugins/saga/references/question-banks/policy-questions.json` and store
   one declaration per question with `builder_record.py write` before the build loop.

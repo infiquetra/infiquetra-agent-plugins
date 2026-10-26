@@ -1631,6 +1631,94 @@ def test_offline_a_symlinked_dependency_folder_is_ignored(
     assert launcher.reviewer_packet_vendor(packet) is None
 
 
+def _python_packet(launcher: ModuleType, tmp_path: Path, entry: Any = None) -> Path:
+    """A packet whose ``dependencies.json`` names saga's Python environment."""
+    packet = tmp_path / "packet"
+    venv = packet / "dependencies" / "python"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /usr/bin\n", "utf-8")
+    record = {
+        "schema": launcher.REVIEWER_DEPENDENCIES_SCHEMA,
+        "python": entry if entry is not None
+        else {"state": "installed", "directory": "dependencies/python"},
+    }
+    (packet / "dependencies.json").write_text(json.dumps(record), "utf-8")
+    return packet
+
+
+def test_offline_the_reviewer_s_python3_is_the_packet_s_environment_read_only(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    packet = _python_packet(launcher, tmp_path)
+    venv = (packet / "dependencies" / "python").resolve()
+    result, settings, env = _launch_with(
+        launcher, repo, head, tmp_path, packet, VIRTUAL_ENV=str(tmp_path / "operator-venv"),
+    )
+    assert env["VIRTUAL_ENV"] == str(venv)
+    parts = env["PATH"].split(os.pathsep)
+    assert str(venv / "bin") in parts
+    # Only the cargo home's shim may come before it, as in saga's re-run.
+    assert parts.index(str(venv / "bin")) <= 1
+    filesystem = settings["sandbox"]["filesystem"]
+    assert str(venv) in filesystem["allowRead"]
+    assert str(venv) in filesystem["denyWrite"], "read-only is stated, not implied"
+    denied = {item["name"] for item in settings["sandbox"]["credentials"]["envVars"]}
+    assert "VIRTUAL_ENV" not in denied and "PATH" not in denied
+    reads = {item["path"]: item["reason"] for item in result["sandbox_reads"]["allowed"]}
+    assert "Python environment" in reads[str(venv)]
+
+
+def test_offline_the_operator_s_virtual_env_never_reaches_the_reviewer(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    packet = _vendored_packet(launcher, tmp_path)
+    operator = str(tmp_path / "operator-venv")
+    _result, _settings, env = _launch_with(
+        launcher, repo, head, tmp_path, packet, VIRTUAL_ENV=operator,
+    )
+    assert "VIRTUAL_ENV" not in env
+    assert not any(part.startswith(operator) for part in env["PATH"].split(os.pathsep))
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"state": "not-installed", "reason": "x"},
+        {"state": "installed", "directory": "/etc"},
+        {"state": "installed", "directory": "../elsewhere"},
+        {"state": "installed", "directory": "dependencies/missing"},
+    ],
+)
+def test_offline_an_untrustworthy_python_entry_is_ignored(
+    launcher: ModuleType, tmp_path: Path, entry: Any
+) -> None:
+    packet = _python_packet(launcher, tmp_path, entry)
+    assert launcher.reviewer_packet_python(packet) is None
+    session_env = {"PATH": "/usr/bin", "VIRTUAL_ENV": "/elsewhere"}
+    launcher.reviewer_offline_python(session_env, None)
+    assert session_env == {"PATH": "/usr/bin"}
+
+
+def test_offline_a_python_entry_holds_a_virtual_environment(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    packet = _python_packet(launcher, tmp_path, {"state": "partial",
+                                                 "directory": "dependencies/python"})
+    assert launcher.reviewer_packet_python(packet) == (
+        packet / "dependencies" / "python").resolve()
+    (packet / "dependencies" / "python" / "pyvenv.cfg").unlink()
+    assert launcher.reviewer_packet_python(packet) is None
+
+
+def test_offline_the_shell_prefix_passes_the_virtual_env(launcher: ModuleType, tmp_path: Path) -> None:
+    script = launcher.reviewer_claude_shell_script(tmp_path / "sentinel", "token")
+    assert '${VIRTUAL_ENV+"VIRTUAL_ENV=$VIRTUAL_ENV"}' in script
+    assert "VIRTUAL_ENV" in launcher.REVIEWER_ENVIRONMENT_ALLOWED
+    assert "PYTHONPATH" not in launcher.REVIEWER_ENVIRONMENT_ALLOWED
+
+
 def test_offline_the_shell_prefix_passes_the_cargo_variables_to_sandboxed_commands(
     launcher: ModuleType, tmp_path: Path
 ) -> None:

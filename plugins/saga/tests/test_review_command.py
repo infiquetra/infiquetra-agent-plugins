@@ -3057,6 +3057,236 @@ def test_live_a_commit_s_own_source_replacement_cannot_outrank_the_rerun_s(
     assert "returned 99" in plain.stdout + plain.stderr, plain.stdout + plain.stderr
 
 
+# --- Python dependencies: a virtual environment in the packet --------------------------------------
+
+
+def _load_fake_uv() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "saga_tests_fake_uv", Path(__file__).resolve().parent / "support" / "fake_uv.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_UV = _load_fake_uv()
+
+
+class _UvRunner(_Runner):
+    """git for real, the stub tool's fixed scan, and the fake uv behind the fetch watcher."""
+
+    def __init__(self, **fake: Any) -> None:
+        super().__init__()
+        self.uv = _UV.FakeUv(real_git=True, **fake)
+
+    def __call__(
+        self, argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+        umask: int | None = None,
+    ) -> Any:
+        if argv[:2] == [sys.executable, "-I"] and "--" in argv:
+            return self.uv(argv, cwd=cwd, env=env, timeout=timeout, shell=shell)
+        return super().__call__(argv, cwd=cwd, env=env, timeout=timeout, shell=shell)
+
+
+def _python_change(tmp: Path) -> tuple[Path, str, str]:
+    """A locked Python project whose head changes the function a dependency's value feeds."""
+    repo = tmp / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "example"\nversion = "0.1.0"\ndependencies = ["inertdep"]\n',
+        encoding="utf-8",
+    )
+    (repo / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nFOUR\nfive\n", encoding="utf-8")
+    return repo, base, _commit(repo, "head")
+
+
+def _python_packet(
+    tmp: Path, name: str = "packet", change: tuple[Path, str, str] | None = None,
+) -> tuple[Path, _UvRunner]:
+    repo, base, head = change or _python_change(tmp)
+    home = tmp / "home"
+    home.mkdir(exist_ok=True)
+    runner = _UvRunner(exported=_UV.EXPORTED, compiled=_UV.PYTEST)
+    out = tmp / name
+    code, err = _prepare(
+        repo, base, head, _profile(tmp / "outside"), _builder(tmp / "builder.json"), out, home,
+        runner, start=4,
+    )
+    assert code == 0, err
+    return out, runner
+
+
+def _dependency_test(scratch: Path) -> dict[str, list[str]]:
+    (scratch / "tests").mkdir(parents=True)
+    (scratch / "tests" / "test_dep.py").write_text(
+        "import inertdep\n\n\ndef test_dep():\n"
+        "    if inertdep.two() != 3:\n"
+        "        raise AssertionError(f'inertdep returned {inertdep.two()}')\n",
+        encoding="utf-8",
+    )
+    return {"added": ["tests/test_dep.py"], "modified": [], "deleted": []}
+
+
+def _dependency_finding() -> dict[str, Any]:
+    finding = _finding("The dependency's value is used unchanged.", key="dependency")
+    finding["proof"] = {
+        "test": "tests/test_dep.py::test_dep",
+        "command": "python3 -m pytest tests/test_dep.py -q -p no:cacheprovider",
+        "output": "AssertionError: inertdep returned 2",
+    }
+    return finding
+
+
+class _RunConfine:
+    """Runs the re-run for real with the environment finish built, without the sandbox, so the
+    test holds on a machine with no confinement helper; the live test below adds the sandbox."""
+
+    def __init__(self) -> None:
+        self.runs: list[dict[str, Any]] = []
+
+    def __call__(self, argv: list[str], cwd: Path, env: dict[str, str], _scratch: Path) -> Any:
+        proc = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
+                              timeout=C.RERUN_TIMEOUT, check=False)
+        self.runs.append({"argv": list(argv), "env": dict(env), "code": proc.returncode,
+                          "output": proc.stdout + proc.stderr})
+        return T.ProcessResult(proc.returncode, proc.stdout, proc.stderr)
+
+
+def test_prepare_installs_a_locked_python_head_and_the_reproduction_imports_it_at_finish(
+    tmp_path: Path,
+) -> None:
+    packet, runner = _python_packet(tmp_path)
+    record = _read(packet / "dependencies.json")
+    assert record["python"]["state"] == "installed"
+    assert record["python"]["directory"] == "dependencies/python"
+    assert "rust" not in record
+    venv = _DEPS.python_environment(packet)
+    assert venv == (packet / "dependencies" / "python").resolve()
+    assert any(call["argv"][1] == "export" for call in runner.uv.calls)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch = tmp_path / "scratch"
+    changes = _dependency_test(scratch)
+    confine = _RunConfine()
+    code, err = _finish(
+        packet, [(_answer([_dependency_finding()]), _result(scratch, changes))], home, runner,
+        ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    rerun = confine.runs[0]
+    assert rerun["argv"][:3] == ["python3", "-m", "pytest"], "the command is replayed unchanged"
+    assert rerun["env"]["PATH"].split(os.pathsep)[0] == str(venv / "bin")
+    assert rerun["env"]["VIRTUAL_ENV"] == str(venv)
+    assert "inertdep returned 2" in rerun["output"], rerun["output"]
+    run = _read(packet / "review-run.json")
+    stored = next(item for item in run["findings"] if item["source"]["kind"] == "llm")
+    assert stored["evidence"] == "reproduced", run["degraded_inputs"]
+
+
+def test_prepare_twice_on_a_python_change_writes_identical_packets(tmp_path: Path) -> None:
+    """Issue 244's rule for the environment: other staging folders, the same packet bytes."""
+    change = _python_change(tmp_path)
+    packets = [_python_packet(tmp_path, f"packet-{n}", change)[0] for n in (1, 2)]
+    contents = [{
+        path.relative_to(packet).as_posix(): (
+            os.readlink(path) if path.is_symlink() else path.read_bytes()
+        )
+        for path in sorted(packet.rglob("*")) if path.is_symlink() or path.is_file()
+    } for packet in packets]
+    assert contents[0] == contents[1]
+    assert "dependencies/python/pyvenv.cfg" in contents[0]
+    assert not any(str(tmp_path).encode() in value for value in contents[0].values()
+                   if isinstance(value, bytes) and not value.startswith(b"{\n  \"base\""))
+
+
+def test_prepare_on_a_change_without_python_files_runs_no_uv(tmp_path: Path) -> None:
+    repo, base, head = _repo(tmp_path, function=False)
+    (tmp_path / "home").mkdir()
+    runner = _UvRunner()
+    out = tmp_path / "packet"
+    code, err = _prepare(
+        repo, base, head, _profile(tmp_path / "outside"), _builder(tmp_path / "builder.json"),
+        out, tmp_path / "home", runner, start=4,
+    )
+    assert code == 0, err
+    assert _read(out / "dependencies.json") == {"schema": _DEPS.SCHEMA}
+    assert runner.uv.calls == [] and not (out / "dependencies").exists()
+
+
+def test_finish_without_a_python_environment_leaves_path_alone(tmp_path: Path) -> None:
+    _repo_path, packet, runner = _repro_packet(tmp_path)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    confine = _OfflineConfine()
+    code, err = _finish(
+        packet, [(_answer([_finding("A retry returns the new number.")]), _result(scratch, changes))],
+        home, runner, ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    assert "VIRTUAL_ENV" not in confine.envs[0]
+    assert confine.envs[0]["PATH"] == os.environ["PATH"]
+
+
+def test_the_python_environment_is_read_and_mapped_never_written(tmp_path: Path) -> None:
+    packet, _runner = _python_packet(tmp_path)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None and offline.python is not None and not offline.rust
+        venv = str(offline.python)
+        profile = C._seatbelt(scratch, ["python3"], offline.reads, offline.toolchain)
+        command = C._bwrap(scratch, ["python3"], (*offline.reads, *offline.toolchain))
+    lines = profile.splitlines()
+    assert f'(allow file-read* (subpath "{venv}"))' in lines
+    assert f'(allow file-map-executable (subpath "{venv}"))' in lines
+    assert not any("file-write" in line and venv in line for line in lines)
+    index = command.index(venv)
+    assert command[index - 1] == "--ro-bind"
+    assert not any(part == "--bind" and command[i + 1] == venv
+                   for i, part in enumerate(command[:-1]))
+
+
+def test_a_cargo_rerun_beside_a_python_environment_still_gets_rustup(tmp_path: Path) -> None:
+    offline = C.Offline(env={"PATH": "/venv/bin"}, reads=(), python=tmp_path)
+    assert not offline.rust
+    assert offline.argv(["cargo", "test"]) == ["cargo", "test"]
+
+
+@pytest.mark.skipif(C.platform_helper() is None, reason="no reproduction helper on this platform")
+def test_live_the_confined_rerun_imports_from_the_environment_and_cannot_write_it(
+    tmp_path: Path,
+) -> None:
+    packet, _runner = _python_packet(tmp_path)
+    scratch = tmp_path / "scratch"
+    (scratch / "tmp").mkdir(parents=True)
+    (scratch / "check.py").write_text(
+        "import inertdep\nraise SystemExit(f'inertdep returned {inertdep.two()}')\n",
+        encoding="utf-8",
+    )
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None and offline.python is not None
+        site = next(offline.python.glob("lib/python*/site-packages"))
+        env = {**C.child_environment(scratch), **offline.env}
+
+        def run(argv: list[str]) -> Any:
+            return C.run_confined(argv, scratch, env, scratch, runner=_exec_runner(),
+                                  timeout=60, reads=offline.reads, toolchain=offline.toolchain)
+
+        imported = run(["python3", "check.py"])
+        touched = run(["/usr/bin/touch", str(site / "planted")])
+        rewritten = run(["python3", "-c",
+                         "import inertdep, pathlib; pathlib.Path(inertdep.__file__).write_text('')"])
+    assert "inertdep returned 2" in imported.stdout + imported.stderr, imported.stderr
+    assert touched.code != 0 and not (site / "planted").exists()
+    assert rewritten.code != 0
+    assert (site / "inertdep" / "__init__.py").read_text("utf-8").startswith("def two")
+
+
 # --- prepare bundles the reviewer self-check (preflight contract) -------------------------------
 
 
