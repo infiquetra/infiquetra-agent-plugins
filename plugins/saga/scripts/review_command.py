@@ -189,7 +189,8 @@ class Offline:
 
     *cargo* is the cargo home's shim, which passes its configuration as ``--config`` so a commit's
     own ``.cargo/config.toml`` cannot replace crates.io first; ``None`` when no cargo was found.
-    *python* is the packet's Python environment, whose ``bin`` comes first on ``PATH``.
+    *python* is a saga-written environment over the packet's Python packages; its ``bin``, which
+    holds only ``python3`` and ``python``, comes first on ``PATH``.
     """
 
     env: Mapping[str, str]
@@ -200,6 +201,7 @@ class Offline:
     toolchain: tuple[Path, ...] = ()
     #: True when the packet vendored Rust sources and ``env`` points cargo at them.
     rust: bool = False
+    #: The saga-written Python environment over the packet's packages, when there is one.
     python: Path | None = None
 
     def argv(self, argv: list[str]) -> list[str]:
@@ -212,38 +214,49 @@ class Offline:
 @contextmanager
 def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
     """The packet's dependencies for the re-runs: a cargo home pointing at the vendored crates,
-    the Python environment first on ``PATH``, both or neither (``None``)."""
+    a saga-written Python environment over the packet's packages, both or neither (``None``)."""
     vendor = review_dependencies.rust_vendor(packet)
-    venv = review_dependencies.python_environment(packet)
-    if vendor is None and venv is None:
+    deps = review_dependencies.python_environment(packet)
+    python = shutil.which("python3") if deps is not None else None
+    if vendor is None and python is None:
         yield None
         return
-    env: dict[str, str] = {}
-    reads: tuple[Path, ...] = ()
-    toolchain: tuple[Path, ...] = ()
-    path = os.environ.get("PATH", "")
-    if venv is not None:
-        # Read and mapped, never written: a wheel's compiled extension loads from it.
-        env.update(review_dependencies.python_env(venv, path))
-        path = env["PATH"]
-        toolchain += review_dependencies.python_toolchain(venv)
-    if vendor is None:
-        yield Offline(env=env, reads=reads, toolchain=toolchain, python=venv)
-        return
-    home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
+    temporary: list[Path] = []
     try:
+        env: dict[str, str] = {}
+        reads: tuple[Path, ...] = ()
+        toolchain: tuple[Path, ...] = ()
+        path = os.environ.get("PATH", "")
+        shim: Path | None = None
+        if deps is not None and python is not None:
+            # Only ``python3`` and ``python``, linked to the operator's interpreter, ever go on
+            # the re-run's PATH: nothing in the packet can be found by name.
+            folder = Path(tempfile.mkdtemp(prefix="saga-review-python-"))
+            temporary.append(folder)
+            shim = review_dependencies.write_python_shim(folder / "env", deps, python)
+            if shim is not None:
+                env.update(review_dependencies.python_shim_env(shim, path))
+                path = env["PATH"]
+                toolchain += review_dependencies.python_toolchain(shim, deps)
+        if vendor is None:
+            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim)
+                   if shim is not None else None)
+            return
+        home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
+        temporary.append(home)
         cargo = shutil.which("cargo")
-        shim = review_dependencies.write_cargo_home(home, vendor, cargo)
+        shim_cargo = review_dependencies.write_cargo_home(home, vendor, cargo)
         env.update({"CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true",
                     **review_dependencies.rustup_env()})
-        if shim is not None:
+        if shim_cargo is not None:
             # A cargo that another command starts finds the shim first, too.
-            env["PATH"] = os.pathsep.join([str(shim.parent), path])
-        yield Offline(env=env, reads=(*reads, vendor, home), cargo=shim,
+            env["PATH"] = os.pathsep.join([str(shim_cargo.parent), path])
+        yield Offline(env=env, reads=(*reads, vendor, home), cargo=shim_cargo,
                       toolchain=(*review_dependencies.toolchain_paths(cargo), *toolchain),
-                      rust=True, python=venv)
+                      rust=True, python=shim)
     finally:
-        shutil.rmtree(home, ignore_errors=True)
+        for folder in temporary:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 def run_confined(
@@ -1797,7 +1810,10 @@ def _seatbelt(
 
 
 def _bwrap(scratch: Path, argv: Sequence[str], reads: Sequence[Path] = ()) -> list[str]:
-    command = ["bwrap", "--unshare-net"]
+    # By absolute path on the operator's PATH: the re-run's own PATH starts with folders the
+    # re-run is given, and the helper must never be looked up there.
+    helper = shutil.which("bwrap", path=os.environ.get("PATH", "")) or "/usr/bin/bwrap"
+    command = [str(Path(helper).resolve()), "--unshare-net"]
     for prefix in ("/usr", "/bin", "/lib", "/lib64", "/opt", "/etc"):
         if Path(prefix).exists():
             command.extend(["--ro-bind", prefix, prefix])

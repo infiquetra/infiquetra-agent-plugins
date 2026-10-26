@@ -26,15 +26,18 @@
 ### Added
 
 - A Python head's dependencies, installed once in prepare for the reviewer and the re-run.
-  When the head has a root `uv.lock`, `pyproject.toml` or `requirements*.txt`, prepare builds a
-  relocatable virtual environment at `<packet>/dependencies/python` on the operator's `python3`
-  and installs prebuilt wheels only (`--no-build`, hashes required): the frozen lock with every
-  group and extra, or what the files declare resolved as of the head's commit time, plus pytest
-  when nothing declares it. A package with no wheel is listed as `missing` and the entry is
-  `partial`; any other failure is `not-installed`, never fatal. `dependencies.json` gains the
-  `python` entry. finish's re-run puts the environment's `bin` first on `PATH`, sets
-  `VIRTUAL_ENV`, and reads and maps it without write access, so `python3 -m pytest ...` replays
-  with the reviewer's dependencies. Two prepares of one head write the same bytes.
+  When the head has a root `uv.lock`, `pyproject.toml` or `requirements*.txt`, prepare installs
+  prebuilt wheels only (`uv pip install --target --no-build --require-hashes`) into a plain
+  `<packet>/dependencies/python/site-packages` against the operator's `python3`: the frozen lock
+  with every workspace package, group and extra, or what the files declare (read by saga and
+  passed to uv as plain requirement lines only) resolved as of the head's commit time, plus pytest
+  when nothing declares it. The packet holds no interpreter and no console script, and no
+  interpreter starts over the installed packages during prepare. A package with no wheel is
+  listed as `missing`; every recorded reason is a fixed word. finish's re-run writes its own
+  environment whose `bin` holds only `python3` and `python`, puts it first on the confined
+  command's `PATH`, and reads the packages without write access. `bwrap` is started by absolute
+  path. Two prepares of one head write the same bytes. `review_dependencies.py` joins the
+  calibration fingerprint.
 - `finish` writes `consequence-picks.json` beside `review-run.json`, one entry per reproduced
   finding, so a run can tell why a finding's Jev consequence is null: Jev's own value and
   confidence when it answered below the confidence floor or off the closed list, the request

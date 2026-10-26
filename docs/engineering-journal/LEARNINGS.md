@@ -2,75 +2,70 @@
 
 ## 2026-10-26
 
-### A virtual environment travels in a review packet only when it is relocatable and installed by copy
+### Dependencies handed to a sandbox must never be found by name, and their installer's output is untrusted
 
 **Author.** Jeff Cox
 
-**Evidence.** Saga's prepare now installs a Python head's dependencies into
-`<packet>/dependencies/python` (`_install_python` in `plugins/saga/scripts/review_dependencies.py`).
-The packet is written in a temporary staging folder and then moved, and two prepares must write
-the same bytes. Measured with uv 0.13.4: `uv venv --relocatable` writes no path of its own folder
-into `pyvenv.cfg`, the activation scripts or the console scripts (they find their interpreter
-relative to themselves), so two environments built in different folders compare equal
-(`diff -r --no-dereference`); the one stray file is uv's empty `.lock`, mode 0666, which prepare
-deletes. `uv pip install --target` was the other candidate and was dropped: its console scripts
-carry the interpreter's absolute path, and a folder on `PYTHONPATH` sits ahead of the standard
-library and never runs `.pth` files. Under `sandbox-exec`, `python3 -m pytest` from the environment
-imported its dependency and a write into `site-packages` failed with "Operation not permitted".
-Tests: `test_prepare_twice_on_a_python_change_writes_identical_packets`,
-`test_live_the_confined_rerun_imports_from_the_environment_and_cannot_write_it`
-(`plugins/saga/tests/test_review_command.py`) and the opt-in
-`test_live_uv_installs_a_lock_twice_identically_and_sets_aside_an_sdist`
-(`plugins/saga/tests/test_review_dependencies.py`, `SAGA_TEST_LIVE_UV=1`).
+**Evidence.** The first version of Saga's Python dependency install (PR #289, commit `79ddb02`)
+built a relocatable virtual environment in the review packet and put its `bin` first on `PATH`.
+An independent review then confirmed, against real uv, four ways out:
 
-**Mechanism.** A virtual environment is found by the `pyvenv.cfg` beside its interpreter, so it
-works from wherever the folder lands, as long as nothing inside names the folder. The defaults
-that break that are the scripts' shebangs (fixed by `--relocatable`) and hard links into uv's
-cache (fixed by `--link-mode copy`, which also stops a later write to the cache from changing the
-packet). Putting the environment's `bin` first on `PATH` makes `python3` its interpreter in the
-reviewer's sandbox and in finish's re-run alike, so the recorded command needs no path. A
-resolve that is not pinned by a lock repeats only when it is bounded in time: `--exclude-newer`
-at the head's commit time. `uv pip compile --no-build` stops at the first package without a
-wheel, and an override with a marker that never holds (`name ; python_version < '0'`) removes that
-package so the resolve can go on.
+- **The vendor binary could be replaced.** A locked wheel with console scripts named `claude` and
+  `git` landed in that `bin`, and the launcher had prepended it to the vendor process's own
+  `PATH`. The vendor process starts `claude` by bare name, outside the sandbox and with its
+  sign-in.
+- **The sandbox helper could be replaced on Linux.** Finish looked `bwrap` up by bare name in an
+  environment whose `PATH` began with that same `bin`.
+- **A requirements file could send an operator file to a server.** `--index-url` plus
+  `-r <absolute path>` sent a local token file to a chosen server as a package name, and uv's
+  `cause:` line then copied the token into `dependencies.json`.
+- **A `.pth` file could run outside the sandbox.** Each retry started the packet environment's
+  interpreter, which runs any `.pth` a wheel installed. Only uv's interpreter cache hid this:
+  with `UV_NO_CACHE=1` it ran.
 
-**Generalizable rule.** Before shipping a directory inside a content-hashed artifact, build it
-twice in two different folders and diff the trees; every absolute path or link into a shared
-cache it holds is a determinism bug and, usually, a relocation bug too.
-### A re-run matcher that falls back to comparing a last line will fail on every runner whose last line carries a run time, so each runner you rely on needs its own parser
+The repair, and the tests that cover each point:
 
-**Author.** Jeff Cox
+- **Install.** `uv pip install --target` against the operator's interpreter, into a plain
+  `site-packages`: the packet holds no interpreter and no `bin`.
+- **Run.** Finish and the launcher write their own small environment whose `bin` holds only
+  `python3` and `python`. It is given to sandboxed commands only; the launcher passes it through
+  the Claude shell prefix.
+- **Helper lookup.** `bwrap` is started by absolute path.
+- **Requirements.** Saga reads them itself and passes uv only plain requirement lines.
+- **Recorded reasons.** Only fixed words.
 
-**Evidence.** A measured TypeScript reproduction run with bun. The reviewer's reproduction test
-failed again on re-run, yet `finish` recorded `re-run-mismatch`. Bun was the
-only TypeScript runner that works inside the re-run sandbox, so every bun reproduction was lost.
-The matcher is `plugins/saga/scripts/reproduction_match.py`; the fix adds `_bun` and widens
-`normalise`. Tests: `test_bun_durations_and_scratch_paths_do_not_change_the_answer`,
-`test_bun_a_different_assertion_does_not_match`,
-`test_fallback_ignores_trailing_durations_and_absolute_path_directories`
-(`plugins/saga/tests/test_reproduction_match.py`, synthetic transcripts `bun_*.txt`).
+Tests:
 
-**Mechanism.** The matcher only knows runners it has a parser for. For any other output it keeps
-the last specific line and requires it word for word in the re-run. Bun's last specific line is
-`(fail) <suite> > <test> [0.85ms]`, and the duration changes on every run, as do absolute scratch
-directories in stack frames, which the old normalisation only handled at the very start of a
-line. Bun also prints the error block before its `(fail)` line, not after, so a parser that
-reads a failure's body forward from the header (as the Vitest one does) finds nothing. Bun
-repeats its `(fail)` lines in a recap after `N tests failed:`, which has to be skipped or each
-failure is read twice, the second time with no block.
-A reviewer's recording often starts after bun's file header, and a test is usually cited by its
-file path alone; a failure with no file then never fits a path-only citation, so the first fix
-still returned no match on a real recording. The bun parser now reads the file from the test file
-in the failure's own stack frame (`test_bun_bare_path_citation_*`). Bun also hides `(pass)` lines
-when it runs for an agent, so a block cannot start after the previous result line: it starts at
-the code excerpt or the `error:` line (`test_bun_agent_mode_recording_matches_a_plain_rerun_*`).
+- `plugins/agent-launcher/tests/test_launcher_reviewer.py`:
+  `test_offline_a_wheel_s_scripts_never_reach_the_vendor_process_s_path`.
+- `plugins/saga/tests/test_review_command.py`:
+  `test_the_bwrap_helper_is_found_on_the_operator_s_path_never_the_re_run_s`.
+- `plugins/saga/tests/test_review_dependencies.py`:
+  - `test_requirements_reach_uv_only_as_plain_lines`;
+  - `test_uv_s_own_words_never_reach_the_record`;
+  - `test_live_no_pth_file_runs_during_prepare_even_without_uv_s_cache`, which uses real uv and
+    a hand-written wheel.
 
-**Generalizable rule.** When a runner starts being used, add its parser and a fixture for it in
-the same change; the word-for-word fallback is a safety net, not a parser. Normalise only what
-is known to vary, and only where it varies (bun's trailing time on its own result lines, the
-directories of an absolute `file:line` location), so a different test or a different assertion
-value, including one that is a path or a bracketed time, still mismatches. A shared normaliser
-widened for one runner changes every runner's answer.
+Two earlier measurements still stand. With uv 0.13.4, `--target` output is byte-identical
+between two folders once the empty `.lock` file and `bin/` are removed. A symlink to a virtual
+environment's interpreter placed in another folder does not select that environment: Python
+looks for `pyvenv.cfg` beside the path it was started by. A small environment with its own
+`pyvenv.cfg` and a `site-packages` link does select it.
+
+**Mechanism.** Anything that sits first on a `PATH` stands in for every program name, not just
+the one it was meant for. A folder that a third party's package fills is such a folder. So a
+dependency's folder may be read, but never searched for programs: the only name added to a
+`PATH` belongs to a folder Saga wrote, holding exactly the names Saga chose. Any helper that has
+to start before that `PATH` takes effect is resolved to an absolute path first. An installer is
+an interpreter of its inputs: a requirements file is a command language (`-r`, `--index-url`),
+and the installer's error text repeats what it read. Both have to be cut down to data before
+uv sees them and after uv answers. Finally, "never runs code during prepare" has to hold
+without uv's cache, which can hide a start of the interpreter.
+
+**Generalizable rule.** When handing third-party files to a sandbox, put on `PATH` only a
+folder you wrote that holds the names you chose. Resolve your own helpers to absolute paths
+first. Pass a tool only data, never its option language. Record only fixed reason words from
+its output. Test the "runs no code" claim with every cache turned off.
 
 ## 2026-10-25
 

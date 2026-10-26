@@ -2528,7 +2528,9 @@ def reviewer_claude_temp_dir(copy: Path) -> Path:
     return copy.resolve().parent / "tmp"
 
 
-def reviewer_claude_shell_script(sentinel: Path, token: str, temp: Path | None = None) -> str:
+def reviewer_claude_shell_script(
+    sentinel: Path, token: str, temp: Path | None = None, python_env: Path | None = None
+) -> str:
     """The prefix: outside the sandbox it runs the command as given; inside, on the allow-list.
 
     The sentinel holds *token*. Only a process outside the sandbox can read it, so anything else,
@@ -2545,6 +2547,12 @@ def reviewer_claude_shell_script(sentinel: Path, token: str, temp: Path | None =
     if temp is not None:
         # Last, so it wins over the TMPDIR the allow-list passed on.
         kept += f" TMPDIR={shlex.quote(str(temp))}"
+    if python_env is not None:
+        # Sandboxed commands only: the launcher's environment, whose bin holds just python3 and
+        # python, first on PATH. The vendor process's own PATH is never changed.
+        quoted = shlex.quote(str(python_env))
+        kept += f' VIRTUAL_ENV={quoted} PATH={shlex.quote(str(python_env / "bin"))}:"${{PATH-}}"'
+
     read = f"/bin/cat {shlex.quote(str(sentinel))} 2>/dev/null"
     return (
         "#!/bin/sh\n"
@@ -2579,7 +2587,11 @@ def reviewer_claude_materialize(
     prefix.parent.mkdir(parents=True, exist_ok=True)
     temp.mkdir(exist_ok=True)
     temp.chmod(0o700)
-    prefix.write_text(reviewer_claude_shell_script(sentinel, token, temp), "utf-8")
+    python_env = reviewer_python_env_dir(root)
+    prefix.write_text(reviewer_claude_shell_script(
+        sentinel, token, temp,
+        python_env if (python_env / "pyvenv.cfg").is_file() else None,
+    ), "utf-8")
     prefix.chmod(0o755)
     return path, {REVIEWER_SHELL_PREFIX: str(prefix)}
 
@@ -2616,13 +2628,15 @@ def reviewer_packet_vendor(packet: Path) -> Path | None:
     return cursor.resolve()
 
 
-def reviewer_packet_python(packet: Path) -> Path | None:
-    """The packet's Python environment, or ``None`` when there is none to trust.
+def reviewer_packet_python(packet: Path) -> tuple[Path, str] | None:
+    """The packet's Python packages and the interpreter version they were installed for, or
+    ``None`` when there are none to trust.
 
-    Saga's prepare installs the head's Python dependencies into a virtual environment in the
-    packet. The entry counts only when it says ``installed`` or ``partial`` and names a relative
-    directory inside the packet, with no symlink along the way, holding ``pyvenv.cfg`` and
-    ``bin/``. The rules match saga's ``review_dependencies.python_environment``.
+    Saga's prepare installs the head's Python dependencies into a plain ``site-packages`` folder
+    in the packet: no interpreter, no ``bin``. The entry counts only when it says ``installed``
+    or ``partial``, records a ``major.minor.micro`` version, and names a relative directory
+    inside the packet with no symlink along the way. The rules match saga's
+    ``review_dependencies.python_environment``.
     """
     try:
         data = json.loads((packet / REVIEWER_DEPENDENCIES_FILE).read_text(encoding="utf-8"))
@@ -2632,6 +2646,10 @@ def reviewer_packet_python(packet: Path) -> Path | None:
         return None
     entry = data.get("python")
     if not isinstance(entry, dict) or entry.get("state") not in ("installed", "partial"):
+        return None
+    interpreter = entry.get("interpreter")
+    version = interpreter.get("version") if isinstance(interpreter, dict) else None
+    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
         return None
     relative = entry.get("directory")
     if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
@@ -2646,25 +2664,63 @@ def reviewer_packet_python(packet: Path) -> Path | None:
             return None
     if not cursor.is_dir() or not _reviewer_inside(cursor, packet):
         return None
-    marker, scripts = cursor / "pyvenv.cfg", cursor / "bin"
-    if marker.is_symlink() or not marker.is_file() or scripts.is_symlink() or not scripts.is_dir():
-        return None
-    return cursor.resolve()
+    return cursor.resolve(), version
 
 
-def reviewer_offline_python(session_env: dict[str, str], venv: Path | None) -> None:
-    """Put the packet's Python environment *venv* first on the session's ``PATH``.
+def reviewer_python_env_dir(root: Path) -> Path:
+    """Where the launcher writes the reviewer's Python environment: beside the copy."""
+    return root / "python-env"
 
-    ``python3`` is then its interpreter, as it is in saga's re-run, so the reviewer's command
-    replays unchanged. The operator's own ``VIRTUAL_ENV`` never reaches the reviewer.
+
+def reviewer_python_env(
+    root: Path, packages: tuple[Path, str] | None, env: Mapping[str, str]
+) -> Path | None:
+    """Write the reviewer's own virtual environment over the packet's packages.
+
+    Its ``bin`` holds only ``python3`` and ``python``, links to the ``python3`` the session's
+    ``PATH`` finds; ``lib/pythonX.Y/site-packages`` links to the packet's folder. Nothing from the
+    packet is ever put on a ``PATH``, and the vendor's own process never sees this one: only the
+    shell prefix gives it to sandboxed commands (:func:`reviewer_claude_shell_script`). ``None``
+    when there are no packages, no ``python3``, or that interpreter's major and minor version are
+    not the ones the packages were installed for.
     """
-    session_env.pop("VIRTUAL_ENV", None)
-    if venv is None:
-        return
-    session_env["VIRTUAL_ENV"] = str(venv)
-    session_env["PATH"] = os.pathsep.join(
-        [str(venv / "bin")] + ([session_env["PATH"]] if session_env.get("PATH") else [])
+    if packages is None:
+        return None
+    site, version = packages
+    found = shutil.which("python3", path=env.get("PATH", ""))
+    if not found:
+        return None
+    try:
+        proc = subprocess.run(
+            [found, "-I", "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"],
+            capture_output=True, text=True, timeout=30, check=False,
+            env={"PATH": "/usr/bin:/bin"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    actual = proc.stdout.strip()
+    minor = ".".join(version.split(".")[:2])
+    if proc.returncode != 0 or ".".join(actual.split(".")[:2]) != minor:
+        return None
+    real = Path(os.path.realpath(found))
+    directory = reviewer_python_env_dir(root)
+    (directory / "bin").mkdir(parents=True, exist_ok=True)
+    lib = directory / "lib" / f"python{minor}"
+    lib.mkdir(parents=True, exist_ok=True)
+    (directory / "pyvenv.cfg").write_text(
+        f"home = {real.parent}\ninclude-system-site-packages = false\nversion = {actual}\n",
+        "utf-8",
     )
+    for name in ("python3", "python"):
+        (directory / "bin" / name).symlink_to(real)
+    (lib / "site-packages").symlink_to(site)
+    return directory
+
+
+def reviewer_offline_python(session_env: dict[str, str]) -> None:
+    """Keep the operator's own ``VIRTUAL_ENV`` from the reviewer; the session's ``PATH`` is never
+    changed for Python, so the vendor binary and git are found where they always are."""
+    session_env.pop("VIRTUAL_ENV", None)
 
 
 def reviewer_cargo_config(vendor: Path | None, source: str = REVIEWER_VENDORED_SOURCE) -> str:
@@ -4122,10 +4178,7 @@ def reviewer_launch(
         if problem:
             raise ReviewerRefused(f"the {label} cannot be allowed back inside the blocked home: "
                                   f"{problem}")
-    # Before the toolchain is read, so ``python3`` is the environment's interpreter and the
-    # install it links to is what comes back when that install lives under home.
-    venv = reviewer_packet_python(request.packet)
-    reviewer_offline_python(session_env, venv)
+    reviewer_offline_python(session_env)
     toolchain, dropped = reviewer_toolchain_paths(session_env)
     reviewer_export_head(request.repo, request.head, copy)
     withheld = reviewer_withhold_untrusted(
@@ -4134,6 +4187,8 @@ def reviewer_launch(
     # Issue #262: cargo builds offline from the packet's vendored crates, through a read-only
     # cargo home beside the copy and the shim in it.
     vendor = reviewer_packet_vendor(request.packet)
+    packages = reviewer_packet_python(request.packet)
+    python_env = reviewer_python_env(root, packages, session_env)
     cargo_home = reviewer_cargo_home(root, vendor, session_env)
     reviewer_offline_cargo(session_env, cargo_home)
     dependency_reads = [
@@ -4141,9 +4196,13 @@ def reviewer_launch(
          "reason": "the reviewer's read-only cargo home, offline (issue #262)"},
     ] + ([{"path": str(vendor),
            "reason": "the packet's vendored Rust dependencies, read-only (issue #262)"}]
-         if vendor is not None else []) + ([{"path": str(venv),
-           "reason": "the packet's Python environment, first on PATH, read-only"}]
-         if venv is not None else [])
+         if vendor is not None else []) + ([
+        {"path": str(python_env.resolve()),
+         "reason": "the reviewer's Python environment beside the copy, read-only; its bin holds "
+                   "only python3 and python"},
+        {"path": str(packages[0]) if packages else "",
+         "reason": "the packet's installed Python packages, read-only"},
+    ] if python_env is not None and packages is not None else [])
     settings_path, extra_env = recipe.materialize(
         recipe.settings(
             copy, request.packet, session_env, toolchain=toolchain,

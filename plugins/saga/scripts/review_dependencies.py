@@ -12,14 +12,16 @@ alternate-registry sources, and runs with a fresh ``HOME``, ``TMPDIR`` and ``CAR
 operator variable beyond the allow-list. A watcher stops it once its folders pass
 ``FETCH_MAX_BYTES``. ``dependencies.json`` in the packet says what happened.
 
-For Python (a root ``uv.lock``, ``pyproject.toml`` or ``requirements*.txt``), uv builds a
-relocatable virtual environment at ``<packet>/dependencies/python`` on the operator's ``python3``
-and installs prebuilt wheels into it, never building one, so no build script runs: the frozen lock
-with every group and extra when there is one, otherwise what the files declare, resolved as of
-the head's commit time. pytest is added when nothing declares it. The project itself is not
-installed. A package without a wheel is recorded as missing, not fatal. The reviewer and the
-re-run put the environment's ``bin`` first on ``PATH``, so ``python3`` is its interpreter, and
-read it without writing it.
+For Python (a root ``uv.lock``, ``pyproject.toml`` or ``requirements*.txt``), uv installs prebuilt
+wheels into a plain ``<packet>/dependencies/python/site-packages`` with ``--target`` against the
+operator's ``python3``, never building one and never starting an interpreter over what it
+installed: the frozen lock with every package, group and extra when there is one, otherwise what
+the files declare, read by saga and passed to uv only as plain ``name[extras] specifier ; marker``
+lines, resolved as of the head's commit time. pytest is added when nothing declares it. The packet
+holds no interpreter and no console scripts. A package without a wheel is recorded as missing, and
+every reason recorded is a fixed word, never uv's output. The reviewer and the re-run each write
+their own small environment whose ``bin`` holds only ``python3`` and ``python`` and whose
+``site-packages`` is the packet's folder, read-only, and give it to sandboxed commands only.
 
 Run as a script, this module is that watcher: ``review_dependencies.py --limit N --seconds S
 --watch PATH ... -- cargo ...``.
@@ -44,13 +46,14 @@ import tomllib
 from datetime import datetime, timezone
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 SCHEMA = "saga.review_dependencies.v1"
 FILE = "dependencies.json"
 RUST_DIRECTORY = "dependencies/rust"
-PYTHON_DIRECTORY = "dependencies/python"
+PYTHON_DIRECTORY = "dependencies/python/site-packages"
 FETCH_TIMEOUT = 600
 #: The time the whole Python install may take, across every uv command it runs, including the
 #: one-package-at-a-time retry after a failed install.
@@ -123,6 +126,11 @@ Export = Callable[[Path], bool]
 class NotFetched(Exception):
     """The dependencies were not fetched, for the reason given."""
 
+    def __init__(self, message: str, output: str = "") -> None:
+        super().__init__(message)
+        #: The failed command's output, for the caller to classify; never written anywhere.
+        self.output = output
+
 
 def fetch(runner: Process, repo: Path, head: str, packet: Path, export: Export) -> dict[str, Any]:
     """Fetch the head's dependencies into *packet* and return ``dependencies.json``'s content.
@@ -132,9 +140,9 @@ def fetch(runner: Process, repo: Path, head: str, packet: Path, export: Export) 
     record: dict[str, Any] = {"schema": SCHEMA}
     if _has_file(runner, repo, head, "Cargo.toml"):
         record["rust"] = _fetch_rust(runner, packet, export)
-    names = _root_names(runner, repo, head)
-    if _python_inputs(names):
-        record["python"] = _install_python(runner, repo, head, packet, export, names)
+    python = _python_entry(runner, repo, head, packet, export)
+    if python is not None:
+        record["python"] = python
     return record
 
 
@@ -147,43 +155,94 @@ def rust_vendor(packet: Path) -> Path | None:
     return _packet_directory(packet, "rust", frozenset({"fetched"}))
 
 
-def python_environment(packet: Path) -> Path | None:
-    """The packet's Python environment, or ``None`` when there is none to trust.
+def python_environment(packet: Path) -> PythonDependencies | None:
+    """The packet's installed Python packages, or ``None`` when there are none to trust.
 
-    The entry counts when it says ``installed`` or ``partial`` and names a relative directory
-    inside the packet, with no symlink along the way, that holds ``pyvenv.cfg`` and ``bin/``.
+    The entry counts when it says ``installed`` or ``partial``, records the interpreter version
+    it was installed for, and names a relative directory inside the packet, with no symlink along
+    the way. The directory is a plain ``site-packages``: the packet holds no interpreter and no
+    ``bin``, so nothing a wheel installs can be found by name on a ``PATH``.
     """
-    venv = _packet_directory(packet, "python", PYTHON_USABLE)
-    if venv is None:
+    site = _packet_directory(packet, "python", PYTHON_USABLE)
+    if site is None:
         return None
-    marker, scripts = venv / "pyvenv.cfg", venv / "bin"
-    if marker.is_symlink() or not marker.is_file() or scripts.is_symlink() or not scripts.is_dir():
+    try:
+        entry = json.loads((packet / FILE).read_text(encoding="utf-8"))["python"]
+        version = str(entry["interpreter"]["version"])
+    except (OSError, ValueError, KeyError, TypeError):
         return None
-    return venv
+    if re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
+        return None
+    return PythonDependencies(site=site, version=version)
 
 
-def python_env(venv: Path, path: str | None = None) -> dict[str, str]:
-    """What puts *venv* in front: its ``bin`` first on ``PATH``, and ``VIRTUAL_ENV``.
+@dataclass(frozen=True)
+class PythonDependencies:
+    """A packet's ``site-packages`` and the interpreter version its wheels were chosen for."""
 
-    ``python3 -m pytest`` then starts the environment's interpreter, so a reviewer's command and
-    the re-run's are the same words, wherever the packet is.
+    site: Path
+    version: str
+
+    @property
+    def minor(self) -> str:
+        return ".".join(self.version.split(".")[:2])
+
+
+def interpreter_version(python: str) -> str | None:
+    """*python*'s ``major.minor.micro``, asked of the interpreter itself in isolated mode."""
+    try:
+        proc = subprocess.run(  # nosec B603
+            [python, "-I", "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"],
+            capture_output=True, text=True, timeout=30, check=False, env={"PATH": "/usr/bin:/bin"},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    version = proc.stdout.strip()
+    return version if proc.returncode == 0 and re.fullmatch(r"\d+\.\d+\.\d+", version) else None
+
+
+def write_python_shim(directory: Path, deps: PythonDependencies, python: str) -> Path | None:
+    """A virtual environment in *directory* that saga writes and owns, over the packet's packages.
+
+    ``bin`` holds only ``python3`` and ``python``, links to *python* (the operator's interpreter,
+    found on the operator's ``PATH``), and ``lib/pythonX.Y/site-packages`` links to the packet's
+    folder, so its ``.pth`` files and import order are a normal environment's. Nothing in the
+    packet is ever put on a ``PATH``. Returns the environment, or ``None`` when *python*'s
+    major and minor version are not the ones the packages were installed for.
     """
+    version = interpreter_version(python)
+    if version is None or ".".join(version.split(".")[:2]) != deps.minor:
+        return None
+    real = Path(os.path.realpath(python))
+    (directory / "bin").mkdir(parents=True, exist_ok=True)
+    lib = directory / "lib" / f"python{deps.minor}"
+    lib.mkdir(parents=True, exist_ok=True)
+    (directory / "pyvenv.cfg").write_text(
+        f"home = {real.parent}\ninclude-system-site-packages = false\nversion = {version}\n",
+        encoding="utf-8",
+    )
+    for name in ("python3", "python"):
+        (directory / "bin" / name).symlink_to(real)
+    (lib / "site-packages").symlink_to(deps.site.resolve())
+    return directory
+
+
+def python_shim_env(shim: Path, path: str | None = None) -> dict[str, str]:
+    """The shim's ``bin`` first on ``PATH``, and ``VIRTUAL_ENV``: for sandboxed commands only."""
     rest = os.environ.get("PATH", "") if path is None else path
     return {
-        "PATH": os.pathsep.join([str(venv / "bin"), *([rest] if rest else [])]),
-        "VIRTUAL_ENV": str(venv),
+        "PATH": os.pathsep.join([str(shim / "bin"), *([rest] if rest else [])]),
+        "VIRTUAL_ENV": str(shim),
     }
 
 
-def python_toolchain(venv: Path) -> tuple[Path, ...]:
-    """What a confined ``python3`` from *venv* must read and map: the environment, and the
-    ``bin`` and ``lib`` of the install its interpreter links to, minus any :func:`read_problem`.
-
-    The environment is mapped as code because a wheel's compiled extension is loaded from it.
-    """
-    paths = [venv]
+def python_toolchain(shim: Path, deps: PythonDependencies) -> tuple[Path, ...]:
+    """What a confined ``python3`` from *shim* must read and map: the shim, the packet's
+    packages (compiled extensions load from there), and the ``bin`` and ``lib`` of the install
+    the interpreter belongs to, minus any :func:`read_problem`."""
+    paths = [shim, deps.site.resolve()]
     try:
-        real = (venv / "bin" / "python3").resolve(strict=True)
+        real = (shim / "bin" / "python3").resolve(strict=True)
     except OSError:
         real = None
     if real is not None:
@@ -521,7 +580,7 @@ def _cargo(
 def _watched(
     runner: Process, argv: list[str], label: str, cwd: Path, env: Mapping[str, str],
     watched: list[Path], *, seconds: float = FETCH_TIMEOUT, missing: str | None = None,
-    timed_out: str | None = None, scrub: Callable[[str], str] = lambda text: text,
+    timed_out: str | None = None,
 ) -> Any:
     """Run *argv* under the watcher, which stops it past *seconds* or the byte limit.
 
@@ -548,19 +607,15 @@ def _watched(
     if result.code == MISSING_EXIT and marked:
         raise NotFetched(missing)
     if result.code != 0:
-        raise NotFetched(f"{label} exited {result.code}{_detail(result, scrub)}")
+        raise NotFetched(f"{label} exited {result.code}{_detail(result)}",
+                         output=f"{result.stdout or ''}{result.stderr or ''}")
     return result
 
 
-def _detail(result: Any, scrub: Callable[[str], str]) -> str:
-    """The line of a failed command's output that says why: uv's ``cause:``, else the last."""
-    lines = [line.strip() for line in (result.stderr or result.stdout or "").strip().splitlines()]
-    lines = [line for line in lines if line]
-    if not lines:
-        return ""
-    cause = next((line for line in lines if line.startswith("cause:")), None)
-    chosen = cause[len("cause:"):].strip() if cause else lines[-1]
-    return f": {scrub(chosen)[:200]}"
+def _detail(result: Any) -> str:
+    """The last line of a failed cargo command's output, which says why."""
+    lines = (result.stderr or result.stdout or "").strip().splitlines()
+    return f": {lines[-1][:200]}" if lines else ""
 
 
 def _has_file(runner: Process, repo: Path, head: str, name: str) -> bool:
@@ -593,36 +648,96 @@ def _remove(path: Path) -> None:
 #: A root file that makes the head a Python project. ``requirements*.txt`` is matched by pattern.
 _PYTHON_FILES = ("uv.lock", "pyproject.toml")
 _REQUIREMENTS = re.compile(r"^requirements[^/]*\.txt$")
-_REQUIREMENT_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)")
-#: An editable or local line in a requirements file: it names the project or a folder, which
-#: would have to be built.
-_LOCAL_LINE = re.compile(r"^(-e|--editable)(\s|=)|^(\.|/|file:)")
-#: The uv commands' own flags: no configuration file is read, the interpreter is never
-#: downloaded, and nothing is built.
+#: The one shape of requirement uv is given: ``name[extras] specifiers ; marker``. No option,
+#: no URL, no ``@`` direct reference, no path: nothing that names a file, an index or a host.
+_PLAIN = re.compile(
+    r"^(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
+    r"(?P<extras>\s*\[[A-Za-z0-9._,\s-]*\])?"
+    r"(?P<spec>\s*(?:\(\s*)?(?:(?:===|==|!=|~=|<=|>=|<|>)\s*[A-Za-z0-9.*+!_-]+\s*,?\s*)*(?:\))?)"
+    r"(?P<marker>\s*;\s*[A-Za-z0-9_.'\"<>=!~\s()-]*)?$"
+)
+_HASH = re.compile(r"--hash=(sha256:[0-9a-f]{64})")
+#: The fixed reasons recorded in ``dependencies.json``. uv's own words never reach the packet:
+#: its output can repeat whatever a requirement or an index sent it.
+REASONS = frozenset({
+    "no-wheel", "not-found", "network", "unresolvable", "install-failed", "timeout",
+    "size-limit", "uv-missing", "python3-missing", "export-failed", "symlinked-input",
+    "lock-without-pyproject", "subfolder-project", "nothing-installed", "head-export",
+})
+#: The uv commands' own flags: no configuration file is read and nothing is printed but errors.
 _UV_QUIET = ("--quiet", "--no-config")
 _PYTHON_ENV_FLAGS = {"UV_PYTHON_DOWNLOADS": "never", "UV_NO_PROGRESS": "1"}
+#: How many packages without a wheel a resolve may set aside before it gives up.
+_MAX_SET_ASIDE = 25
+_NO_WHEEL = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*)(?:==\S+)? has no usable wheels")
+_NETWORK = re.compile(
+    r"Failed to fetch|error sending request|dns error|Connection refused|connection reset|"
+    r"tcp connect error|operation timed out|Could not connect|network", re.IGNORECASE)
+_NOT_FOUND = re.compile(r"not found in the package registry|was not found in|"
+                        r"no versions of|not found in the provided", re.IGNORECASE)
+#: Where wheels are copied from uv's cache: an APFS clone on macOS shares blocks until written,
+#: and is a separate file, so the packet stays independent of the cache.
+_LINK_MODE = "clone" if sys.platform == "darwin" else "copy"
 
 
-def _root_names(runner: Process, repo: Path, head: str) -> frozenset[str]:
-    """The names at the root of the head's tree."""
-    result = runner(
-        ["git", "ls-tree", "--name-only", head], cwd=repo, env=dict(os.environ), timeout=60,
-        shell=False,
-    )
+def _tree(runner: Process, repo: Path, head: str, recursive: bool = False) -> dict[str, str]:
+    """The head's paths (root only, or every path) and their git modes."""
+    argv = ["git", "ls-tree", *(["-r"] if recursive else []), head]
+    result = runner(argv, cwd=repo, env=dict(os.environ), timeout=60, shell=False)
     if result.code != 0:
-        return frozenset()
-    return frozenset(line for line in (result.stdout or "").splitlines() if line)
+        return {}
+    found: dict[str, str] = {}
+    for line in (result.stdout or "").splitlines():
+        meta, _tab, name = line.partition("\t")
+        if name:
+            found[name] = meta.split(" ")[0]
+    return found
 
 
-def _python_inputs(names: frozenset[str]) -> list[str]:
+def _python_inputs(names: Mapping[str, str]) -> list[str]:
     """The root files that declare the head's Python dependencies, sorted."""
-    return sorted(
-        name for name in names if name in _PYTHON_FILES or _REQUIREMENTS.match(name)
-    )
+    return sorted(name for name in names if name in _PYTHON_FILES or _REQUIREMENTS.match(name))
+
+
+def _subfolder_projects(runner: Process, repo: Path, head: str) -> list[str]:
+    """Folders below the root that hold a Python project's declaring file."""
+    folders = set()
+    for path in _tree(runner, repo, head, recursive=True):
+        folder, _sep, name = path.rpartition("/")
+        if folder and (name in _PYTHON_FILES or _REQUIREMENTS.match(name)):
+            folders.add(folder)
+    return sorted(folders)[:20]
+
+
+def _python_entry(
+    runner: Process, repo: Path, head: str, packet: Path, export: Export,
+) -> dict[str, Any] | None:
+    """The ``python`` entry for the head, or ``None`` when it holds no Python project at all."""
+    root = _tree(runner, repo, head)
+    inputs = _python_inputs(root)
+    if not inputs:
+        projects = _subfolder_projects(runner, repo, head)
+        if projects:
+            return {"state": "not-installed", "reason": "subfolder-project", "projects": projects}
+        return None
+    if any(root[name] == "120000" for name in inputs):
+        return {"state": "not-installed", "reason": "symlinked-input"}
+    if "uv.lock" in inputs and "pyproject.toml" not in inputs:
+        return {"state": "not-installed", "reason": "lock-without-pyproject"}
+    return _install_python(runner, repo, head, packet, export, frozenset(inputs))
+
+
+class _PythonFailure(Exception):
+    """The Python install stopped, for one of :data:`REASONS`."""
+
+    def __init__(self, reason: str) -> None:
+        assert reason in REASONS, reason
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _install_python(
-    runner: Process, repo: Path, head: str, packet: Path, export: Export, names: frozenset[str],
+    runner: Process, repo: Path, head: str, packet: Path, export: Export, inputs: frozenset[str],
 ) -> dict[str, Any]:
     target = packet / PYTHON_DIRECTORY
     deadline = time.monotonic() + PYTHON_TIMEOUT
@@ -631,117 +746,118 @@ def _install_python(
         source.mkdir()
         try:
             if not export(source):
-                raise NotFetched("the head could not be exported")
+                raise _PythonFailure("head-export")
+            for name in inputs:
+                if (source / name).is_symlink() or not (source / name).is_file():
+                    raise _PythonFailure("symlinked-input")
             interpreter = shutil.which("python3")
-            if interpreter is None:
-                raise NotFetched("python3 is not on PATH")
+            version = interpreter_version(interpreter) if interpreter else None
+            if interpreter is None or version is None:
+                raise _PythonFailure("python3-missing")
             env = _uv_env(work)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            uv = _Uv(runner, source, env, [target, work / "home", work / "tmp"], deadline, work,
-                     target)
-            uv.run(["uv", "venv", *_UV_QUIET, "--relocatable", "--python", interpreter,
-                    str(target)], "uv venv")
-            python = target / "bin" / "python3"
-            if target.is_symlink() or not (target / "pyvenv.cfg").is_file() or not os.path.lexists(
-                python
-            ):
-                raise NotFetched("uv venv wrote no environment")
-            configuration = _pyvenv(target / "pyvenv.cfg")
-            locked = "uv.lock" in names and "pyproject.toml" in names
-            unresolved: list[dict[str, str]] = []
-            if locked:
-                options, entries = _parse_requirements(uv.run(
-                    ["uv", "export", *_UV_QUIET, "--frozen", "--all-groups", "--all-extras",
-                     "--no-emit-project", "--no-emit-workspace", "--no-emit-local",
-                     "--no-header", "--no-annotate", "--format", "requirements.txt"],
-                    "uv export",
-                ).stdout)
+            uv = _Uv(runner, work, env, [target, work / "home", work / "tmp"], deadline)
+            dropped: dict[str, int] = {}
+            if "uv.lock" in inputs:
+                exported = uv.run(
+                    ["uv", "export", *_UV_QUIET, "--frozen", "--all-packages", "--all-groups",
+                     "--all-extras", "--no-emit-project", "--no-emit-workspace",
+                     "--no-emit-local", "--no-header", "--no-annotate",
+                     "--format", "requirements.txt", "--project", str(source)],
+                    "export-failed",
+                ).stdout
+                entries = _plain_entries(exported.splitlines(), dropped, hashes=True)
                 pytest = "declared" if "pytest" in entries else "added"
                 if pytest == "added":
                     constraints = work / "constraints.txt"
-                    constraints.write_text(
-                        "".join(_without_hashes(text) + "\n" for text in entries.values()),
-                        encoding="utf-8",
+                    constraints.write_text("".join(
+                        f"{_HASH.sub('', text).strip()}\n" for text in entries.values()
+                    ), encoding="utf-8")
+                    resolved, _aside = _compile_without_sdists(
+                        uv, [*_compile(interpreter, _commit_time(runner, repo, head)),
+                             "-c", str(constraints), str(_write(work / "pytest.in", "pytest\n"))],
+                        work,
                     )
-                    _extra_options, extra = _parse_requirements(uv.run(
-                        [*_compile(python, _commit_time(runner, repo, head)),
-                         "-c", str(constraints), str(_pytest_input(work))],
-                        "uv pip compile",
-                    ).stdout)
-                    for name, text in extra.items():
+                    for name, text in _plain_entries(resolved.splitlines(), {}, True).items():
                         entries.setdefault(name, text)
                 source_label = "uv.lock"
+                unresolved: list[dict[str, str]] = []
             else:
-                inputs = _unlocked_inputs(source, names)
-                argv = _compile(python, _commit_time(runner, repo, head))
-                if "pyproject.toml" in inputs:
-                    argv += ["--all-extras", *_group_flags(source / "pyproject.toml")]
-                compiled, unresolved = _compile_without_sdists(
-                    uv, [*argv, *inputs, str(_pytest_input(work))], work,
+                declared, source_label = _declared(source, inputs, dropped)
+                pytest = "declared" if "pytest" in declared else "added"
+                wanted = work / "declared.in"
+                _write(wanted, "".join(f"{line}\n" for line in declared.values()) + "pytest\n")
+                resolved, unresolved = _compile_without_sdists(
+                    uv, [*_compile(interpreter, _commit_time(runner, repo, head)), str(wanted)],
+                    work,
                 )
-                options, entries = _parse_requirements(compiled)
-                pytest = "declared" if _declares_pytest(source, inputs) else "added"
-                source_label = " ".join(inputs)
-            missing = unresolved + _install_entries(uv, python, options, entries, work)
+                entries = _plain_entries(resolved.splitlines(), {}, hashes=True)
+            missing = unresolved + _install_set(uv, interpreter, target, entries, work)
             missing.sort(key=lambda item: item["name"])
             _tidy(target)
             packages = _installed(target)
             if not packages:
-                raise NotFetched("uv pip install installed nothing")
-            requirements = "".join(f"{line}\n" for line in options) + "".join(
-                f"{entries[name]}\n" for name in sorted(entries)
-            )
+                raise _PythonFailure("nothing-installed")
+            requirements = "".join(f"{entries[name]}\n" for name in sorted(entries))
             return {
                 "state": "partial" if missing else "installed",
                 "directory": PYTHON_DIRECTORY,
-                "interpreter": {
-                    "implementation": configuration.get("implementation", ""),
-                    "version": configuration.get("version_info", ""),
-                },
+                "interpreter": {"version": version},
                 "source": source_label,
                 "pytest": pytest,
                 "packages": packages,
                 "missing": missing,
+                "dropped": dict(sorted(dropped.items())),
                 "requirements_sha256": hashlib.sha256(requirements.encode("utf-8")).hexdigest(),
             }
-        except NotFetched as exc:
+        except _PythonFailure as exc:
             _remove(target)
-            return {"state": "not-installed", "reason": str(exc)}
+            return {"state": "not-installed", "reason": exc.reason}
 
 
 class _Uv:
-    """Runs uv under the watcher, inside the Python install's one shared deadline."""
+    """Runs uv under the watcher, inside the Python install's one shared deadline. A failure
+    becomes a :class:`_PythonFailure` with a fixed reason; uv's output is kept only in memory,
+    to choose that reason and to name a package without a wheel."""
 
-    def __init__(
-        self, runner: Process, cwd: Path, env: Mapping[str, str], watched: list[Path],
-        deadline: float, work: Path, target: Path,
-    ) -> None:
+    def __init__(self, runner: Process, cwd: Path, env: Mapping[str, str], watched: list[Path],
+                 deadline: float) -> None:
         self.runner, self.cwd, self.env, self.watched = runner, cwd, env, watched
-        self.deadline, self.work, self.target = deadline, work, target
+        self.deadline = deadline
+        self.last_output = ""
 
-    def remaining(self) -> float:
-        return self.deadline - time.monotonic()
-
-    def run(self, argv: list[str], label: str) -> Any:
-        seconds = min(FETCH_TIMEOUT, self.remaining())
+    def run(self, argv: list[str], failed: str) -> Any:
+        seconds = min(FETCH_TIMEOUT, self.deadline - time.monotonic())
         if seconds <= 0:
-            raise NotFetched(f"{label} timed out")
-        return _watched(self.runner, argv, label, self.cwd, self.env, self.watched,
-                        seconds=seconds, scrub=self.scrub)
+            raise _PythonFailure("timeout")
+        try:
+            return _watched(self.runner, argv, argv[1], self.cwd, self.env, self.watched,
+                            seconds=seconds, missing="uv-missing", timed_out="timeout")
+        except NotFetched as exc:
+            self.last_output = exc.output
+            message = str(exc)
+            if message in ("uv-missing", "timeout"):
+                raise _PythonFailure(message) from None
+            if "byte limit" in message:
+                raise _PythonFailure("size-limit") from None
+            if _NETWORK.search(exc.output):
+                raise _PythonFailure("network") from None
+            if _NO_WHEEL.search(exc.output):
+                raise _PythonFailure("no-wheel") from None
+            if _NOT_FOUND.search(exc.output):
+                raise _PythonFailure("not-found") from None
+            raise _PythonFailure(failed) from None
 
-    def scrub(self, text: str) -> str:
-        """*text* without the install's temporary paths, so a reason is the same every time."""
-        for path, name in ((self.target, "<environment>"), (self.work, "<work>")):
-            for form in {str(path), str(path.resolve())}:
-                text = text.replace(form, name)
-        return text
+
+def _write(path: Path, text: str) -> Path:
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
 def _uv_env(work: Path) -> dict[str, str]:
     """The allow-list, a fresh home and temp folder, and the operator's uv cache.
 
     The cache only saves downloads: every file is checked against the lock's or the compiled
-    hashes, and ``--link-mode copy`` keeps the environment from sharing a file with it.
+    hashes, and the install copies (or, on macOS, clones) out of it, so no file is shared.
     """
     env = {name: os.environ[name] for name in _ENV_COPIED if name in os.environ}
     for name, folder in (("HOME", "home"), ("TMPDIR", "tmp")):
@@ -761,9 +877,9 @@ def _uv_cache() -> str:
     return str(Path(xdg) / "uv") if xdg else str(Path.home() / ".cache" / "uv")
 
 
-def _compile(python: Path, when: str) -> list[str]:
-    """``uv pip compile`` for *python*, with no build, as of *when*, with hashes."""
-    return ["uv", "pip", "compile", *_UV_QUIET, "--python", str(python), "--no-build",
+def _compile(python: str, when: str) -> list[str]:
+    """``uv pip compile`` for the operator's *python*, with no build, as of *when*, hashed."""
+    return ["uv", "pip", "compile", *_UV_QUIET, "--python", python, "--no-build",
             "--exclude-newer", when, "--generate-hashes", "--no-header", "--no-annotate"]
 
 
@@ -774,13 +890,8 @@ def _commit_time(runner: Process, repo: Path, head: str) -> str:
     try:
         seconds = int((result.stdout or "").strip())
     except ValueError:
-        raise NotFetched("the head's commit time could not be read") from None
+        raise _PythonFailure("unresolvable") from None
     return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-#: How many packages without a wheel a resolve may set aside before it gives up.
-_MAX_SET_ASIDE = 25
-_NO_WHEEL = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*)(?:==\S+)? has no usable wheels")
 
 
 def _compile_without_sdists(
@@ -789,156 +900,190 @@ def _compile_without_sdists(
     """Resolve *argv*; each package uv names as having no wheel is set aside and the resolve
     repeated without it, through an override whose marker never holds.
 
-    Returns the compiled requirements and the packages set aside, with uv's reason.
+    Returns the compiled requirements and the packages set aside, with the reason ``no-wheel``.
     """
     overrides = work / "saga-overrides.txt"
     aside: list[dict[str, str]] = []
     while True:
         extra = ["--overrides", str(overrides)] if aside else []
         try:
-            return uv.run([*argv, *extra], "uv pip compile").stdout, aside
-        except NotFetched as exc:
-            found = _NO_WHEEL.search(str(exc))
+            return uv.run([*argv, *extra], "unresolvable").stdout, aside
+        except _PythonFailure as exc:
+            found = _NO_WHEEL.search(uv.last_output) if exc.reason == "no-wheel" else None
             name = _normalize(found.group(1)) if found else None
             if name is None or len(aside) >= _MAX_SET_ASIDE or any(
                 item["name"] == name for item in aside
             ):
                 raise
-            aside.append({"name": name, "reason": str(exc)})
-            overrides.write_text("".join(f"{item['name']} ; python_version < '0'\n"
-                                         for item in aside), encoding="utf-8")
+            aside.append({"name": name, "reason": "no-wheel"})
+            _write(overrides, "".join(f"{item['name']} ; python_version < '0'\n"
+                                      for item in aside))
 
 
-def _pytest_input(work: Path) -> Path:
-    path = work / "saga-pytest.in"
-    path.write_text("pytest\n", encoding="utf-8")
-    return path
-
-
-def _unlocked_inputs(source: Path, names: frozenset[str]) -> list[str]:
-    """The declaring files, relative to the head, with editable and local lines removed."""
-    inputs = []
-    if "pyproject.toml" in names and (source / "pyproject.toml").is_file():
-        inputs.append("pyproject.toml")
-    for name in sorted(names):
-        path = source / name
-        if not _REQUIREMENTS.match(name) or path.is_symlink() or not path.is_file():
-            continue
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        path.write_text("".join(f"{line}\n" for line in lines
-                                if not _LOCAL_LINE.match(line.strip())), encoding="utf-8")
-        inputs.append(name)
-    return inputs
-
-
-def _group_flags(pyproject: Path) -> list[str]:
-    """``--group`` for every dependency group the head's ``pyproject.toml`` declares."""
-    try:
-        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
-        raise NotFetched("pyproject.toml does not parse") from None
-    groups = data.get("dependency-groups")
-    flags: list[str] = []
-    for name in sorted(groups) if isinstance(groups, Mapping) else []:
-        flags += ["--group", f"pyproject.toml:{name}"]
-    return flags
-
-
-def _declares_pytest(source: Path, inputs: Sequence[str]) -> bool:
-    for name in inputs:
-        text = (source / name).read_text(encoding="utf-8", errors="replace")
-        if re.search(r"(^|[\s\"'\[,])pytest\s*([<>=!~;\[\"',]|$)", text, re.MULTILINE):
-            return True
-    return False
-
-
-def _parse_requirements(text: str) -> tuple[list[str], dict[str, str]]:
-    """The option lines and the pinned entries, by normalized name, from a requirements file.
-
-    An entry spans its continuation lines; it is kept as one line with its hashes.
-    """
+def _logical_lines(lines: Sequence[str]) -> list[str]:
+    """Lines with comments removed and continuations joined."""
     joined: list[str] = []
-    for raw in (text or "").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
+    for raw in lines:
+        line = re.sub(r"(^|\s)#.*$", "", raw).strip()
         if joined and joined[-1].endswith("\\"):
-            joined[-1] = joined[-1][:-1].rstrip() + " " + line
-        else:
+            joined[-1] = (joined[-1][:-1].rstrip() + " " + line).strip()
+        elif line:
             joined.append(line)
-    options: list[str] = []
+    return [line.rstrip("\\").strip() for line in joined if line.rstrip("\\").strip()]
+
+
+def _plain(line: str, dropped: dict[str, int], hashes: bool) -> tuple[str, str] | None:
+    """``(name, line)`` for a plain requirement, or ``None``, counting what was dropped and why."""
+    found = _HASH.findall(line) if hashes else []
+    body = _HASH.sub("", line).strip() if hashes else line.strip()
+    if body.startswith("-"):
+        dropped["options"] = dropped.get("options", 0) + 1
+        return None
+    if "@" in body.split(";")[0] or "://" in body or "/" in body or "\\" in body:
+        dropped["references"] = dropped.get("references", 0) + 1
+        return None
+    match = _PLAIN.match(body)
+    if match is None or "--hash" in body:
+        dropped["unparsed"] = dropped.get("unparsed", 0) + 1
+        return None
+    text = " ".join(body.split())
+    if found:
+        text += "".join(f" --hash={item}" for item in found)
+    return _normalize(match.group("name")), text
+
+
+def _plain_entries(lines: Sequence[str], dropped: dict[str, int], hashes: bool) -> dict[str, str]:
     entries: dict[str, str] = {}
-    for line in joined:
-        line = line.rstrip("\\").strip()
-        if line.startswith("-"):
-            options.append(line)
+    for line in _logical_lines(lines):
+        kept = _plain(line, dropped, hashes)
+        if kept is not None:
+            entries[kept[0]] = kept[1]
+    return entries
+
+
+def _declared(
+    source: Path, inputs: frozenset[str], dropped: dict[str, int],
+) -> tuple[dict[str, str], str]:
+    """The head's declared requirements, read here and never by uv, and where they came from.
+
+    From ``pyproject.toml``: ``project.dependencies`` (unless dynamic), every optional
+    dependency set (unless dynamic) and every dependency group. From each root
+    ``requirements*.txt``: its plain lines; ``-r``, ``-c``, index and other options, URLs, ``@``
+    references and paths are dropped and counted, never followed.
+    """
+    declared: dict[str, str] = {}
+    used: list[str] = []
+    if "pyproject.toml" in inputs:
+        lines, dynamic = _pyproject_requirements(source / "pyproject.toml")
+        if lines or not dynamic:
+            used.append("pyproject.toml")
+        if dynamic:
+            dropped["dynamic"] = 1
+        for line in lines:
+            kept = _plain(line, dropped, hashes=False)
+            if kept is not None:
+                declared.setdefault(*kept)
+    for name in sorted(inputs):
+        if not _REQUIREMENTS.match(name):
             continue
-        match = _REQUIREMENT_NAME.match(line)
-        if match:
-            entries[_normalize(match.group(1))] = line
-    return sorted(set(options)), entries
+        text = (source / name).read_text(encoding="utf-8", errors="replace")
+        for name_, line in _plain_entries(text.splitlines(), dropped, hashes=False).items():
+            declared.setdefault(name_, line)
+        used.append(name)
+    return declared, " ".join(used)
+
+
+def _pyproject_requirements(path: Path) -> tuple[list[str], bool]:
+    """The requirement strings ``pyproject.toml`` declares statically, and whether its project
+    dependencies are dynamic (then the requirements files stand in for them)."""
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return [], True
+    project = data.get("project") if isinstance(data.get("project"), Mapping) else {}
+    raw_dynamic = project.get("dynamic")
+    dynamic = set(raw_dynamic) if isinstance(raw_dynamic, list) else set()
+    lines: list[str] = []
+    if "dependencies" not in dynamic:
+        lines += [item for item in project.get("dependencies") or [] if isinstance(item, str)]
+    optional = project.get("optional-dependencies")
+    if "optional-dependencies" not in dynamic and isinstance(optional, Mapping):
+        for name in sorted(optional):
+            values = optional[name]
+            lines += [item for item in values if isinstance(item, str)] if isinstance(
+                values, list) else []
+    groups = data.get("dependency-groups")
+    if isinstance(groups, Mapping):
+        for name in sorted(groups):
+            values = groups[name]
+            lines += [item for item in values if isinstance(item, str)] if isinstance(
+                values, list) else []
+    return lines, "dependencies" in dynamic
 
 
 def _normalize(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def _without_hashes(text: str) -> str:
-    return re.sub(r"\s+--hash=\S+", "", text).strip()
-
-
-def _install_entries(
-    uv: _Uv, python: Path, options: list[str], entries: Mapping[str, str], work: Path,
+def _install_set(
+    uv: _Uv, python: str, target: Path, entries: Mapping[str, str], work: Path,
 ) -> list[dict[str, str]]:
-    """Install every entry in one command; after a failure, each on its own.
+    """Install *entries* into *target* with ``--target`` against the operator's *python*.
 
-    Returns the entries that did not install, with uv's reason, sorted by name.
+    The packet's packages are never imported here: uv is pointed at the operator's interpreter,
+    and *target* is a plain folder, so no ``.pth`` file a wheel installs runs during prepare.
+    When the one transaction fails, each entry is tried on its own in a scratch folder to find
+    the ones that cannot install, and the rest are installed again, together, into an empty
+    *target*. Returns the entries left out, with a fixed reason, sorted by name.
     """
-    base = ["uv", "pip", "install", *_UV_QUIET, "--python", str(python), "--link-mode", "copy",
-            "--no-deps", "--no-build", "--require-hashes"]
-    every = work / "requirements.txt"
-    every.write_text("".join(f"{line}\n" for line in options)
-                     + "".join(f"{entries[name]}\n" for name in sorted(entries)), encoding="utf-8")
+    def install(names: Sequence[str], into: Path) -> None:
+        requirements = _write(work / "requirements.txt",
+                              "".join(f"{entries[name]}\n" for name in names))
+        uv.run(["uv", "pip", "install", *_UV_QUIET, "--python", python, "--target", str(into),
+                "--link-mode", _LINK_MODE, "--no-deps", "--no-build", "--require-hashes",
+                "-r", str(requirements)], "install-failed")
+
+    names = sorted(entries)
     try:
-        uv.run([*base, "-r", str(every)], "uv pip install")
+        install(names, target)
         return []
-    except NotFetched:
-        pass
+    except _PythonFailure as exc:
+        if exc.reason in ("network", "timeout", "size-limit", "uv-missing"):
+            raise
+    _remove(target)
     missing: list[dict[str, str]] = []
-    for number, name in enumerate(sorted(entries)):
-        one = work / f"requirement-{number}.txt"
-        one.write_text("".join(f"{line}\n" for line in options) + f"{entries[name]}\n",
-                       encoding="utf-8")
+    good: list[str] = []
+    for name in names:
+        trial = work / "trial"
+        _remove(trial)
         try:
-            uv.run([*base, "-r", str(one)], "uv pip install")
-        except NotFetched as exc:
-            missing.append({"name": name, "reason": uv.scrub(str(exc))})
+            install([name], trial)
+            good.append(name)
+        except _PythonFailure as exc:
+            if exc.reason in ("network", "timeout", "size-limit", "uv-missing"):
+                raise
+            missing.append({"name": name, "reason": exc.reason})
+        finally:
+            _remove(trial)
+    if good:
+        install(good, target)
     return missing
 
 
-def _pyvenv(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        key, sep, value = line.partition("=")
-        if sep:
-            values[key.strip()] = value.strip()
-    return values
-
-
-def _tidy(venv: Path) -> None:
-    """Remove what uv leaves that differs between runs or invites a write: its empty lock file."""
-    lock = venv / ".lock"
+def _tidy(target: Path) -> None:
+    """Remove what differs between runs or could be found by name: uv's empty lock file, and
+    the console scripts, which carry the interpreter's absolute path."""
+    lock = target / ".lock"
     if lock.is_file() or lock.is_symlink():
         lock.unlink()
+    _remove(target / "bin")
 
 
-def _installed(venv: Path) -> list[dict[str, str]]:
-    """The distributions in *venv*'s ``site-packages``, by name, from their ``.dist-info``."""
+def _installed(target: Path) -> list[dict[str, str]]:
+    """The distributions in *target*, by name, from their ``.dist-info``."""
     packages = []
-    for site in sorted(venv.glob("lib/python*/site-packages")):
-        if site.is_symlink() or not site.is_dir():
-            continue
-        for info in sorted(site.glob("*.dist-info")):
+    if target.is_dir() and not target.is_symlink():
+        for info in sorted(target.glob("*.dist-info")):
             name, _sep, version = info.name[: -len(".dist-info")].rpartition("-")
             if name:
                 packages.append({"name": _normalize(name), "version": version})

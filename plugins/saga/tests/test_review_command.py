@@ -3149,10 +3149,12 @@ class _RunConfine:
         self.runs: list[dict[str, Any]] = []
 
     def __call__(self, argv: list[str], cwd: Path, env: dict[str, str], _scratch: Path) -> Any:
+        first = Path(env["PATH"].split(os.pathsep)[0])
+        listing = sorted(item.name for item in first.iterdir()) if first.is_dir() else []
         proc = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
                               timeout=C.RERUN_TIMEOUT, check=False)
         self.runs.append({"argv": list(argv), "env": dict(env), "code": proc.returncode,
-                          "output": proc.stdout + proc.stderr})
+                          "output": proc.stdout + proc.stderr, "first": listing})
         return T.ProcessResult(proc.returncode, proc.stdout, proc.stderr)
 
 
@@ -3162,11 +3164,16 @@ def test_prepare_installs_a_locked_python_head_and_the_reproduction_imports_it_a
     packet, runner = _python_packet(tmp_path)
     record = _read(packet / "dependencies.json")
     assert record["python"]["state"] == "installed"
-    assert record["python"]["directory"] == "dependencies/python"
+    assert record["python"]["directory"] == "dependencies/python/site-packages"
     assert "rust" not in record
-    venv = _DEPS.python_environment(packet)
-    assert venv == (packet / "dependencies" / "python").resolve()
-    assert any(call["argv"][1] == "export" for call in runner.uv.calls)
+    deps = _DEPS.python_environment(packet)
+    assert deps is not None
+    site = deps.site
+    # A console script a wheel could name ``git`` or ``bwrap`` is never kept; plant one anyway.
+    (site / "bin").mkdir()
+    for name in ("git", "bwrap", "claude", "python3"):
+        (site / "bin" / name).write_text("#!/bin/sh\necho planted\n", "utf-8")
+        (site / "bin" / name).chmod(0o755)
     home = tmp_path / "home"
     _machine(home, "available")
     scratch = tmp_path / "scratch"
@@ -3179,12 +3186,16 @@ def test_prepare_installs_a_locked_python_head_and_the_reproduction_imports_it_a
     assert code == 0, err
     rerun = confine.runs[0]
     assert rerun["argv"][:3] == ["python3", "-m", "pytest"], "the command is replayed unchanged"
-    assert rerun["env"]["PATH"].split(os.pathsep)[0] == str(venv / "bin")
-    assert rerun["env"]["VIRTUAL_ENV"] == str(venv)
+    assert rerun["first"] == ["python", "python3"], "only saga's python is put first on PATH"
+    assert not any(str(packet.resolve()) in part or str(packet) in part
+                   for part in rerun["env"]["PATH"].split(os.pathsep))
+    assert rerun["env"]["VIRTUAL_ENV"] == str(Path(rerun["env"]["PATH"].split(os.pathsep)[0]).parent)
     assert "inertdep returned 2" in rerun["output"], rerun["output"]
+    assert "planted" not in rerun["output"]
     run = _read(packet / "review-run.json")
     stored = next(item for item in run["findings"] if item["source"]["kind"] == "llm")
     assert stored["evidence"] == "reproduced", run["degraded_inputs"]
+    assert not Path(rerun["env"]["VIRTUAL_ENV"]).exists(), "the re-run's environment is removed"
 
 
 def test_prepare_twice_on_a_python_change_writes_identical_packets(tmp_path: Path) -> None:
@@ -3198,7 +3209,7 @@ def test_prepare_twice_on_a_python_change_writes_identical_packets(tmp_path: Pat
         for path in sorted(packet.rglob("*")) if path.is_symlink() or path.is_file()
     } for packet in packets]
     assert contents[0] == contents[1]
-    assert "dependencies/python/pyvenv.cfg" in contents[0]
+    assert "dependencies/python/site-packages/inertdep/__init__.py" in contents[0]
     assert not any(str(tmp_path).encode() in value for value in contents[0].values()
                    if isinstance(value, bytes) and not value.startswith(b"{\n  \"base\""))
 
@@ -3238,17 +3249,45 @@ def test_the_python_environment_is_read_and_mapped_never_written(tmp_path: Path)
     scratch.mkdir()
     with C._offline_dependencies(packet) as offline:
         assert offline is not None and offline.python is not None and not offline.rust
-        venv = str(offline.python)
+        site = str((packet / "dependencies" / "python" / "site-packages").resolve())
+        shim = str(offline.python.resolve())
         profile = C._seatbelt(scratch, ["python3"], offline.reads, offline.toolchain)
         command = C._bwrap(scratch, ["python3"], (*offline.reads, *offline.toolchain))
     lines = profile.splitlines()
-    assert f'(allow file-read* (subpath "{venv}"))' in lines
-    assert f'(allow file-map-executable (subpath "{venv}"))' in lines
-    assert not any("file-write" in line and venv in line for line in lines)
-    index = command.index(venv)
-    assert command[index - 1] == "--ro-bind"
-    assert not any(part == "--bind" and command[i + 1] == venv
-                   for i, part in enumerate(command[:-1]))
+    for path in (site, shim):
+        assert f'(allow file-read* (subpath "{path}"))' in lines
+        assert f'(allow file-map-executable (subpath "{path}"))' in lines
+        assert not any("file-write" in line and path in line for line in lines)
+        index = command.index(path)
+        assert command[index - 1] == "--ro-bind"
+        assert not any(part == "--bind" and command[i + 1] == path
+                       for i, part in enumerate(command[:-1]))
+
+
+def test_the_bwrap_helper_is_found_on_the_operator_s_path_never_the_re_run_s(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    real = tools / "bwrap"
+    real.write_text("#!/bin/sh\nexit 0\n", "utf-8")
+    real.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tools}{os.pathsep}/usr/bin:/bin")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    command = C._bwrap(scratch, ["python3"])
+    assert command[0] == str(real.resolve()), "an absolute path, so the child's PATH is moot"
+
+
+def test_a_python_environment_for_another_interpreter_version_is_not_used(
+    tmp_path: Path,
+) -> None:
+    packet, _runner = _python_packet(tmp_path)
+    data = _read(packet / "dependencies.json")
+    data["python"]["interpreter"]["version"] = "2.7.18"
+    _dump(packet / "dependencies.json", data)
+    with C._offline_dependencies(packet) as offline:
+        assert offline is None
 
 
 def test_a_cargo_rerun_beside_a_python_environment_still_gets_rustup(tmp_path: Path) -> None:
@@ -3268,9 +3307,9 @@ def test_live_the_confined_rerun_imports_from_the_environment_and_cannot_write_i
         "import inertdep\nraise SystemExit(f'inertdep returned {inertdep.two()}')\n",
         encoding="utf-8",
     )
+    site = packet / "dependencies" / "python" / "site-packages"
     with C._offline_dependencies(packet) as offline:
         assert offline is not None and offline.python is not None
-        site = next(offline.python.glob("lib/python*/site-packages"))
         env = {**C.child_environment(scratch), **offline.env}
 
         def run(argv: list[str]) -> Any:
@@ -3281,9 +3320,11 @@ def test_live_the_confined_rerun_imports_from_the_environment_and_cannot_write_i
         touched = run(["/usr/bin/touch", str(site / "planted")])
         rewritten = run(["python3", "-c",
                          "import inertdep, pathlib; pathlib.Path(inertdep.__file__).write_text('')"])
+        shim_write = run(["/usr/bin/touch", str(offline.python / "bin" / "git")])
     assert "inertdep returned 2" in imported.stdout + imported.stderr, imported.stderr
     assert touched.code != 0 and not (site / "planted").exists()
     assert rewritten.code != 0
+    assert shim_write.code != 0
     assert (site / "inertdep" / "__init__.py").read_text("utf-8").startswith("def two")
 
 

@@ -458,8 +458,8 @@ def test_a_head_without_a_root_manifest_records_no_rust_entry(tmp_path: Path) ->
 
     record = D.fetch(runner, tmp_path, "HEAD", tmp_path / "packet", _export_from({}))
     assert record == {"schema": D.SCHEMA}
-    assert calls == [["git", "cat-file", "-e", "HEAD:Cargo.toml"],
-                     ["git", "ls-tree", "--name-only", "HEAD"]]
+    assert calls == [["git", "cat-file", "-e", "HEAD:Cargo.toml"], ["git", "ls-tree", "HEAD"],
+                     ["git", "ls-tree", "-r", "HEAD"]]
 
 
 @pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo is not installed")
@@ -714,7 +714,7 @@ def test_live_the_shim_outranks_a_commit_s_own_source_replacement(tmp_path: Path
     assert plain.stdout.strip() == "VALUE 99", plain.stderr
 
 
-# --- Python: a virtual environment in the packet --------------------------------------------------
+# --- Python: packages in the packet, an environment saga writes ----------------------------------
 
 
 def _load_support(name: str) -> ModuleType:
@@ -728,52 +728,65 @@ def _load_support(name: str) -> ModuleType:
 
 _FAKE = _load_support("fake_uv")
 FakeUv = _FAKE.FakeUv
-_real_interpreter = _FAKE.real_interpreter
-
-
 _HASH_A = _FAKE.HASH_A
-_HASH_B = _FAKE.HASH_B
-
-
 _EXPORTED = _FAKE.EXPORTED
 _PYTEST = _FAKE.PYTEST
+_LOCKED = {"pyproject.toml": '[project]\nname = "example"\nversion = "0.1.0"\n',
+           "uv.lock": "version = 1\n"}
 
 
-def _python(tmp_path: Path, uv: FakeUv, tree: dict[str, str]) -> tuple[dict[str, Any], Path]:
+def _python(tmp_path: Path, uv: Any, tree: dict[str, str],
+            symlinked: tuple[str, ...] = ()) -> tuple[dict[str, Any], Path]:
     packet = tmp_path / "packet"
     packet.mkdir(parents=True, exist_ok=True)
-    uv.names = tuple(sorted(tree))
+    uv.names = tuple(sorted(tree)) + tuple(f"{name}@" for name in symlinked)
     record = D.fetch(uv, tmp_path, "HEAD", packet, _export_from(tree))
     (packet / D.FILE).write_text(json.dumps(record), encoding="utf-8")
     return record, packet
 
 
-_LOCKED = {"pyproject.toml": '[project]\nname = "example"\nversion = "0.1.0"\n',
-           "uv.lock": "version = 1\n"}
+def _packet_contents(packet: Path) -> dict[str, Any]:
+    return {
+        path.relative_to(packet).as_posix(): (
+            os.readlink(path) if path.is_symlink() else path.read_bytes()
+        )
+        for path in sorted(packet.rglob("*")) if path.is_symlink() or path.is_file()
+    }
 
 
-def test_a_locked_head_gets_an_environment_with_every_group_and_pytest(tmp_path: Path) -> None:
+def test_a_locked_head_gets_its_packages_and_pytest_and_no_interpreter_or_scripts(
+    tmp_path: Path,
+) -> None:
     uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST)
     record, packet = _python(tmp_path, uv, _LOCKED)
     entry = record["python"]
     assert entry["state"] == "installed" and entry["missing"] == []
-    assert entry["directory"] == "dependencies/python" and entry["source"] == "uv.lock"
-    assert entry["pytest"] == "added"
+    assert entry["directory"] == "dependencies/python/site-packages"
+    assert entry["source"] == "uv.lock" and entry["pytest"] == "added"
     assert [item["name"] for item in entry["packages"]] == ["inertdep", "otherdep", "pytest"]
-    assert entry["interpreter"]["version"] == ".".join(map(str, sys.version_info[:3]))
-    assert len(entry["requirements_sha256"]) == 64
+    assert entry["interpreter"] == {
+        "version": D.interpreter_version(str(shutil.which("python3")))}
     export = next(call["argv"] for call in uv.calls if call["argv"][1] == "export")
-    assert {"--frozen", "--all-groups", "--all-extras", "--no-emit-project"} <= set(export)
-    venv = D.python_environment(packet)
-    assert venv == (packet / "dependencies" / "python").resolve()
-    assert not (venv / ".lock").exists(), "uv's empty lock file is removed"
-    # The record names no absolute path: not the packet, not the interpreter.
+    assert {"--frozen", "--all-packages", "--all-groups", "--all-extras",
+            "--no-emit-project"} <= set(export)
+    site = packet / "dependencies" / "python" / "site-packages"
+    assert not (site / ".lock").exists() and not (site / "bin").exists()
+    assert not (packet / "dependencies" / "python" / "bin").exists()
+    assert not list(packet.rglob("pyvenv.cfg")), "the packet holds no environment of its own"
+    deps = D.python_environment(packet)
+    assert deps is not None and deps.site == site.resolve()
     text = json.dumps(record)
-    assert str(tmp_path) not in text and str(_real_interpreter().parent) not in text
-    venv_call = next(call for call in uv.calls if call["argv"][1] == "venv")
-    assert "--relocatable" in venv_call["argv"]
-    assert Path(venv_call["env"]["HOME"]).name == "home" and not Path(venv_call["env"]["HOME"]).exists()
-    assert venv_call["env"]["UV_PYTHON_DOWNLOADS"] == "never"
+    assert str(tmp_path) not in text
+    for call in uv.calls:
+        assert call["argv"][1] != "venv"
+        if call["argv"][1:3] in (["pip", "install"], ["pip", "compile"]):
+            python = call["argv"][call["argv"].index("--python") + 1]
+            assert not Path(python).is_relative_to(packet), "never the packet's interpreter"
+        assert Path(call["env"]["HOME"]).name == "home"
+        assert call["env"]["UV_PYTHON_DOWNLOADS"] == "never"
+    install = next(call["argv"] for call in uv.calls if call["argv"][1:3] == ["pip", "install"])
+    expected = "clone" if sys.platform == "darwin" else "copy"
+    assert install[install.index("--link-mode") + 1] == expected
 
 
 def test_a_lock_that_declares_pytest_installs_no_second_one(tmp_path: Path) -> None:
@@ -783,21 +796,75 @@ def test_a_lock_that_declares_pytest_installs_no_second_one(tmp_path: Path) -> N
     assert not any(call["argv"][1:3] == ["pip", "compile"] for call in uv.calls)
 
 
-def test_an_sdist_only_dependency_is_recorded_missing_and_nothing_builds(tmp_path: Path) -> None:
+def test_an_sdist_only_dependency_is_missing_with_a_fixed_reason_and_nothing_builds(
+    tmp_path: Path,
+) -> None:
     exported = _EXPORTED + f"docopt==0.6.2 \\\n    {_HASH_A}\n"
     uv = FakeUv(exported=exported, compiled=_PYTEST, sdist_only=frozenset({"docopt"}))
     record, packet = _python(tmp_path, uv, _LOCKED)
     entry = record["python"]
     assert entry["state"] == "partial"
-    assert [item["name"] for item in entry["missing"]] == ["docopt"]
-    assert "has no usable wheels" in entry["missing"][0]["reason"]
-    assert str(tmp_path) not in entry["missing"][0]["reason"]
+    assert entry["missing"] == [{"name": "docopt", "reason": "no-wheel"}]
     assert [item["name"] for item in entry["packages"]] == ["inertdep", "otherdep", "pytest"]
-    assert D.python_environment(packet) is not None, "a partial environment is still used"
+    assert D.python_environment(packet) is not None, "partial packages are still used"
     for call in uv.calls:
         if call["argv"][1:3] in (["pip", "install"], ["pip", "compile"]):
             assert "--no-build" in call["argv"]
-        assert "build" not in call["argv"][1:2]
+
+
+def test_a_network_failure_is_not_installed_not_a_missing_package(tmp_path: Path) -> None:
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST,
+                fail_install="error: Failed to fetch: `https://pypi.org/simple/inertdep/`\n")
+    record, packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"] == {"state": "not-installed", "reason": "network"}
+    assert not (packet / "dependencies").exists() or not any(
+        (packet / "dependencies").rglob("*.dist-info"))
+
+
+def test_requirements_reach_uv_only_as_plain_lines(tmp_path: Path) -> None:
+    """An index option and a -r of an operator file would send that file's text to a server."""
+    secret = tmp_path / "operator-token"
+    secret.write_text("inert-example-token\n", encoding="utf-8")
+    tree = {
+        "requirements.txt": (
+            "--index-url http://127.0.0.1:9/simple\n"
+            f"-r {secret}\n-c {secret}\n--extra-index-url=http://127.0.0.1:9/x\n-e .\n"
+            "evil @ https://127.0.0.1:9/evil.whl\nlocal @ file:///etc/passwd\n./folder\n"
+            "inertdep>=1.0 ; python_version >= '3.8'  # a comment\n"
+            "otherdep[extra]==2.0\n"
+        ),
+    }
+    compiled = (f"inertdep==1.0.0 \\\n    {_HASH_A}\notherdep==2.0.0 \\\n    {_HASH_A}\n"
+                + _PYTEST)
+    uv = FakeUv(compiled=compiled)
+    record, _packet = _python(tmp_path, uv, tree)
+    entry = record["python"]
+    assert entry["state"] == "installed"
+    assert entry["dropped"] == {"options": 5, "references": 3}
+    given = "".join(uv.inputs)
+    for word in ("127.0.0.1", str(secret), "inert-example-token", "file:", "-r", "--index"):
+        assert word not in given, word
+    assert "inertdep>=1.0 ; python_version >= '3.8'" in given
+    assert "otherdep[extra]==2.0" in given
+    for call in uv.calls:
+        assert not any(str(secret) in part for part in call["argv"])
+
+
+def test_an_exported_lock_s_index_and_url_lines_are_dropped(tmp_path: Path) -> None:
+    exported = ("--index-url http://127.0.0.1:9/simple\n" + _EXPORTED
+                + "evil @ https://127.0.0.1:9/evil.whl \\\n    " + _HASH_A + "\n")
+    uv = FakeUv(exported=exported, compiled=_PYTEST)
+    record, _packet = _python(tmp_path, uv, _LOCKED)
+    assert record["python"]["dropped"] == {"options": 1, "references": 1}
+    assert "127.0.0.1" not in "".join(uv.inputs)
+
+
+def test_uv_s_own_words_never_reach_the_record(tmp_path: Path) -> None:
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST,
+                fail_install="error: inert-example-token is not a valid package\n")
+    record, _packet = _python(tmp_path, uv, _LOCKED)
+    assert "inert-example-token" not in json.dumps(record)
+    assert record["python"]["reason"] in D.REASONS
 
 
 def test_an_unlocked_head_resolves_as_of_its_commit_and_sets_aside_an_sdist(
@@ -816,32 +883,45 @@ def test_an_unlocked_head_resolves_as_of_its_commit_and_sets_aside_an_sdist(
     entry = record["python"]
     assert entry["source"] == "pyproject.toml requirements-dev.txt"
     assert entry["pytest"] == "declared"
-    assert entry["state"] == "partial" and [m["name"] for m in entry["missing"]] == ["docopt"]
+    assert entry["state"] == "partial"
+    assert entry["missing"] == [{"name": "docopt", "reason": "no-wheel"}]
     compiles = [call["argv"] for call in uv.calls if call["argv"][1:3] == ["pip", "compile"]]
     assert len(compiles) == 2 and "--overrides" in compiles[1]
-    first = compiles[0]
-    assert first[first.index("--group") + 1] == "pyproject.toml:dev"
-    assert "pyproject.toml:test" in first and "--all-extras" in first
+    assert not any(part.endswith("pyproject.toml") for part in compiles[0]), "saga reads it"
 
 
-def test_the_editable_line_is_dropped_before_the_resolve(tmp_path: Path) -> None:
-    source = tmp_path / "head"
-    source.mkdir()
-    (source / "requirements.txt").write_text("-e .\n--editable=./sub\n./local\nsix\n", "utf-8")
-    assert D._unlocked_inputs(source, frozenset({"requirements.txt"})) == ["requirements.txt"]
-    assert (source / "requirements.txt").read_text("utf-8") == "six\n"
+def test_dynamic_dependencies_fall_back_to_the_requirements_files(tmp_path: Path) -> None:
+    tree = {
+        "pyproject.toml": '[project]\nname = "example"\nversion = "0.1.0"\n'
+                          'dynamic = ["dependencies"]\n',
+        "requirements.txt": "inertdep\n",
+    }
+    uv = FakeUv(compiled=f"inertdep==1.0.0 \\\n    {_HASH_A}\n" + _PYTEST)
+    record, _packet = _python(tmp_path, uv, tree)
+    assert record["python"]["source"] == "requirements.txt"
+    assert record["python"]["dropped"] == {"dynamic": 1}
+    assert "inertdep" in uv.inputs[0]
 
 
-def test_a_failed_environment_is_not_fatal_and_leaves_nothing(tmp_path: Path) -> None:
-    class Broken(FakeUv):
-        def _venv(self, target: Path) -> Any:
-            return _Result(2, "", "error: No interpreter found\n")
+@pytest.mark.parametrize(("tree", "symlinked", "reason"), [
+    ({"uv.lock": "version = 1\n"}, (), "lock-without-pyproject"),
+    ({"pyproject.toml": "[project]\n"}, ("requirements.txt",), "symlinked-input"),
+])
+def test_an_unusable_python_head_is_recorded_not_installed(
+    tmp_path: Path, tree: dict[str, str], symlinked: tuple[str, ...], reason: str,
+) -> None:
+    uv = FakeUv()
+    record, _packet = _python(tmp_path, uv, tree, symlinked)
+    assert record["python"] == {"state": "not-installed", "reason": reason}
+    assert uv.calls == []
 
-    record, packet = _python(tmp_path, Broken(), _LOCKED)
-    assert record["python"] == {"state": "not-installed",
-                                "reason": "uv venv exited 2: error: No interpreter found"}
-    assert not (packet / "dependencies" / "python").exists()
-    assert D.python_environment(packet) is None
+
+def test_a_python_project_only_in_a_subfolder_is_recorded(tmp_path: Path) -> None:
+    uv = FakeUv()
+    record, _packet = _python(tmp_path, uv, {"README.md": "x\n", "tools/pyproject.toml": "x"})
+    assert record["python"] == {"state": "not-installed", "reason": "subfolder-project",
+                                "projects": ["tools"]}
+    assert uv.calls == []
 
 
 def test_a_head_without_python_files_gets_no_python_entry(tmp_path: Path) -> None:
@@ -856,46 +936,55 @@ def test_two_installs_of_one_head_write_the_same_bytes(tmp_path: Path) -> None:
     for attempt in (1, 2):
         uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST)
         record, packet = _python(tmp_path / str(attempt), uv, _LOCKED)
-        trees.append((record, {
-            path.relative_to(packet).as_posix(): (
-                os.readlink(path) if path.is_symlink() else path.read_bytes()
-            )
-            for path in sorted(packet.rglob("*")) if path.is_symlink() or path.is_file()
-        }))
+        trees.append((record, _packet_contents(packet)))
     assert trees[0] == trees[1]
 
 
 @pytest.mark.parametrize("entry", [
-    {"state": "not-installed", "reason": "x"},
-    {"state": "installed", "directory": "/etc"},
-    {"state": "installed", "directory": "../elsewhere"},
-    {"state": "installed", "directory": "dependencies/missing"},
+    {"state": "not-installed", "reason": "network"},
+    {"state": "installed", "directory": "/etc", "interpreter": {"version": "3.12.0"}},
+    {"state": "installed", "directory": "../elsewhere", "interpreter": {"version": "3.12.0"}},
+    {"state": "installed", "directory": "dependencies/missing",
+     "interpreter": {"version": "3.12.0"}},
+    {"state": "installed", "directory": "dependencies/python/site-packages"},
 ])
 def test_an_untrustworthy_python_entry_is_ignored(tmp_path: Path, entry: Any) -> None:
     packet = tmp_path / "packet"
-    venv = packet / "dependencies" / "python"
-    (venv / "bin").mkdir(parents=True)
-    (venv / "pyvenv.cfg").write_text("home = /usr/bin\n", "utf-8")
+    (packet / "dependencies" / "python" / "site-packages").mkdir(parents=True)
     (packet / D.FILE).write_text(json.dumps({"schema": D.SCHEMA, "python": entry}), "utf-8")
     assert D.python_environment(packet) is None
 
 
-def test_a_symlinked_python_environment_is_ignored(tmp_path: Path) -> None:
+def test_a_symlinked_site_packages_is_ignored(tmp_path: Path) -> None:
     packet = tmp_path / "packet"
-    (packet / "dependencies").mkdir(parents=True)
-    elsewhere = tmp_path / "elsewhere"
-    (elsewhere / "bin").mkdir(parents=True)
-    (elsewhere / "pyvenv.cfg").write_text("home = /usr/bin\n", "utf-8")
-    (packet / "dependencies" / "python").symlink_to(elsewhere)
+    (packet / "dependencies" / "python").mkdir(parents=True)
+    (packet / "dependencies" / "python" / "site-packages").symlink_to(tmp_path)
     (packet / D.FILE).write_text(json.dumps({"schema": D.SCHEMA, "python": {
-        "state": "installed", "directory": "dependencies/python"}}), "utf-8")
+        "state": "installed", "directory": "dependencies/python/site-packages",
+        "interpreter": {"version": "3.12.0"}}}), "utf-8")
     assert D.python_environment(packet) is None
 
 
-def test_the_environment_comes_first_on_path(tmp_path: Path) -> None:
-    env = D.python_env(tmp_path / "venv", "/usr/bin:/bin")
-    assert env == {"PATH": f"{tmp_path / 'venv' / 'bin'}{os.pathsep}/usr/bin:/bin",
-                   "VIRTUAL_ENV": str(tmp_path / "venv")}
+def test_the_shim_holds_only_python_and_imports_the_packet_s_packages(tmp_path: Path) -> None:
+    site = tmp_path / "packet" / "site-packages"
+    (site / "inertdep").mkdir(parents=True)
+    (site / "inertdep" / "__init__.py").write_text("def two():\n    return 2\n", "utf-8")
+    (site / "bin").mkdir()
+    (site / "bin" / "git").write_text("#!/bin/sh\necho planted\n", "utf-8")
+    python = str(shutil.which("python3"))
+    version = D.interpreter_version(python)
+    assert version is not None
+    deps = D.PythonDependencies(site=site, version=version)
+    shim = D.write_python_shim(tmp_path / "shim", deps, python)
+    assert shim is not None
+    assert sorted(item.name for item in (shim / "bin").iterdir()) == ["python", "python3"]
+    env = {**D.python_shim_env(shim, "/usr/bin:/bin"), "HOME": str(tmp_path)}
+    assert shutil.which("git", path=env["PATH"]) != str(site / "bin" / "git")
+    ran = subprocess.run(["python3", "-c", "import sys, inertdep; print(inertdep.two(), "
+                          "sys.prefix)"], env=env, capture_output=True, text=True, check=False)
+    assert ran.stdout.split() == ["2", str(shim)], ran.stderr
+    wrong = D.PythonDependencies(site=site, version="2.7.18")
+    assert D.write_python_shim(tmp_path / "other", wrong, python) is None
 
 
 def test_the_interpreter_install_under_a_credential_path_is_not_given_back(
@@ -907,17 +996,77 @@ def test_the_interpreter_install_under_a_credential_path_is_not_given_back(
     (install / "lib").mkdir()
     (install / "bin" / "python3.12").write_text("", "utf-8")
     monkeypatch.setenv("HOME", str(home))
-    venv = tmp_path / "venv"
-    (venv / "bin").mkdir(parents=True)
-    (venv / "bin" / "python3").symlink_to(install / "bin" / "python3.12")
-    assert D.python_toolchain(venv) == (venv,)
-    other = tmp_path / "opt" / "python"
-    (other / "bin").mkdir(parents=True)
-    (other / "lib").mkdir()
-    (other / "bin" / "python3.12").write_text("", "utf-8")
-    (venv / "bin" / "python3").unlink()
-    (venv / "bin" / "python3").symlink_to(other / "bin" / "python3.12")
-    assert D.python_toolchain(venv) == (venv, (other / "bin").resolve(), (other / "lib").resolve())
+    shim, site = tmp_path / "shim", tmp_path / "site"
+    (shim / "bin").mkdir(parents=True)
+    site.mkdir()
+    deps = D.PythonDependencies(site=site, version="3.12.0")
+    (shim / "bin" / "python3").symlink_to(install / "bin" / "python3.12")
+    assert D.python_toolchain(shim, deps) == (shim, site.resolve())
+
+
+def _wheel(folder: Path, name: str, files: dict[str, str]) -> tuple[Path, str]:
+    """A hand-written wheel, so the test needs no network and builds nothing."""
+    import base64  # noqa: PLC0415
+    import hashlib  # noqa: PLC0415
+    import zipfile  # noqa: PLC0415
+
+    info = f"{name}-1.0.dist-info"
+    files = {
+        **files,
+        f"{info}/METADATA": f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n",
+        f"{info}/WHEEL": "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\n"
+                         "Tag: py3-none-any\n",
+    }
+    record = ""
+    for path, text in files.items():
+        digest = base64.urlsafe_b64encode(hashlib.sha256(text.encode()).digest()).rstrip(b"=")
+        record += f"{path},sha256={digest.decode()},{len(text.encode())}\n"
+    files[f"{info}/RECORD"] = record + f"{info}/RECORD,,\n"
+    wheel = folder / f"{name}-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for path, text in files.items():
+            archive.writestr(path, text)
+    return wheel, hashlib.sha256(wheel.read_bytes()).hexdigest()
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not installed")
+def test_live_no_pth_file_runs_during_prepare_even_without_uv_s_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wheel's .pth runs when an interpreter starts over its folder; prepare starts none.
+
+    The retry path runs too: a second package is not in the local index, so the one
+    transaction fails and each package is tried on its own.
+    """
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    marker = tmp_path / "pth-ran"
+    _wheel_path, digest = _wheel(wheels, "markerpkg", {
+        "markerpkg/__init__.py": "VALUE = 2\n",
+        "markerpkg.pth": f"import pathlib; pathlib.Path({str(marker)!r}).write_text('ran')\n",
+    })
+    monkeypatch.setitem(D._PYTHON_ENV_FLAGS, "UV_NO_CACHE", "1")
+    monkeypatch.setitem(D._PYTHON_ENV_FLAGS, "UV_NO_INDEX", "1")
+    monkeypatch.setitem(D._PYTHON_ENV_FLAGS, "UV_FIND_LINKS", str(wheels))
+    work = tmp_path / "work"
+    work.mkdir()
+
+    def runner(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+               umask: int | None = None) -> Any:
+        proc = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
+                              timeout=timeout, check=False)
+        return _Result(proc.returncode, proc.stdout, proc.stderr)
+
+    env = D._uv_env(work)
+    target = tmp_path / "packet" / "site-packages"
+    uv = D._Uv(runner, work, env, [target], time.monotonic() + 300)
+    entries = {"markerpkg": f"markerpkg==1.0 --hash=sha256:{digest}",
+               "absentpkg": f"absentpkg==1.0 --hash=sha256:{'cd' * 32}"}
+    missing = D._install_set(uv, str(shutil.which("python3")), target, entries, work)
+    assert [item["name"] for item in missing] == ["absentpkg"]
+    assert missing[0]["reason"] in D.REASONS
+    assert (target / "markerpkg.pth").is_file() and (target / "markerpkg").is_dir()
+    assert not marker.exists(), "no interpreter started over the installed packages"
 
 
 @pytest.mark.skipif(
@@ -956,16 +1105,13 @@ def test_live_uv_installs_a_lock_twice_identically_and_sets_aside_an_sdist(
         packet = tmp_path / f"packet-{attempt}"
         packet.mkdir()
         record = D.fetch(runner, repo, "HEAD", packet, export)
-        packets.append((record, {
-            path.relative_to(packet).as_posix(): (
-                os.readlink(path) if path.is_symlink() else path.read_bytes()
-            )
-            for path in sorted(packet.rglob("*")) if path.is_symlink() or path.is_file()
-        }))
+        packets.append((record, _packet_contents(packet)))
     assert packets[0] == packets[1]
     entry = packets[0][0]["python"]
-    assert entry["state"] == "partial" and [m["name"] for m in entry["missing"]] == ["docopt"]
+    assert entry["state"] == "partial"
+    assert entry["missing"] == [{"name": "docopt", "reason": "no-wheel"}]
     names = {item["name"] for item in entry["packages"]}
     assert {"iniconfig", "pytest"} <= names
-    assert not any(str(tmp_path) in key or str(tmp_path).encode() in value
-                   for key, value in packets[0][1].items() if isinstance(value, bytes))
+    assert not any(str(tmp_path).encode() in value
+                   for value in packets[0][1].values() if isinstance(value, bytes))
+    assert not any(name.endswith("pyvenv.cfg") or "/bin/" in name for name in packets[0][1])

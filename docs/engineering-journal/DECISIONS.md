@@ -2,44 +2,72 @@
 
 ## 2026-10-26
 
-### A Python review packet carries a relocatable virtual environment, put first on PATH
+### A Python review packet carries plain site-packages; the reviewer and the re-run each add a python-only environment
 
-**Decision.** Saga's review prepare installs a Python head's dependencies into a relocatable
-virtual environment inside the packet (`dependencies/python`, built by `uv venv --relocatable`
-on the operator's `python3`), with prebuilt wheels only (`uv pip install --no-deps --no-build
---require-hashes --link-mode copy`). The inputs are the frozen `uv.lock` with every group and
-extra, or `pyproject.toml` and `requirements*.txt` resolved with `--exclude-newer` at the head's
-commit time, plus pytest when nothing declares it; the project itself is not installed. A package
-without a wheel is set aside and listed under `missing` (`partial`); any other failure is
-`not-installed`; neither stops prepare. agent-launcher's reviewer and saga's finish re-run put the
-environment's `bin` first on `PATH` and set `VIRTUAL_ENV`, so the recorded command stays
-`python3 -m pytest ...`; both read the folder and never write it. prepare uses the operator's uv
-cache for downloads.
+**Decision.** Saga's review prepare installs a Python head's dependencies into a plain
+`<packet>/dependencies/python/site-packages`. It runs `uv pip install --target --no-deps
+--no-build --require-hashes` against the operator's `python3`, cloning on macOS and copying
+elsewhere. Afterwards it deletes the installer's `bin/` and `.lock`, so the packet holds no
+interpreter and no program.
 
-**Rationale.** Reviewers gave up reproducing Python findings because the sandbox held only what
-the operator's global Python happened to have. The environment has to be identical in the
-reviewer's sandbox and in finish's re-run, the command has to stay a direct program with no path
-that could differ between the two, and two prepares have to write the same bytes. A relocatable
-environment selected through `PATH` meets all three with no mapping step in finish.
+- **What goes in:**
+  - With a lock: the frozen `uv.lock` with every workspace package, group and extra.
+  - Without one: the requirements Saga reads itself from `pyproject.toml` (when not dynamic)
+    and the root `requirements*.txt` files, resolved as of the head's commit time.
+  - pytest, when nothing declares it.
+  - Never the project itself.
+- **What uv is given:** only plain `name[extras] specifier ; marker` lines. Option lines, URLs,
+  `@` references and paths are dropped and counted.
+- **What is recorded:** only fixed reason words. A package with no wheel is `missing`. A network
+  failure, a symlinked declaring file, a lock without `pyproject.toml`, or a project only in a
+  subfolder each make the entry `not-installed`. None of them stops prepare.
+- **How it is used:**
+  - Finish's re-run and agent-launcher's Claude reviewer each write a small environment:
+    `pyvenv.cfg`, a `bin` holding only `python3` and `python` linked to the operator's
+    interpreter, and `site-packages` linked to the packet's folder.
+  - That `bin` comes first, and `VIRTUAL_ENV` names the environment, for sandboxed commands
+    only: through the shell prefix in the reviewer, and in the confined re-run's environment in
+    finish.
+  - The vendor process's `PATH` never changes. `bwrap` is started by absolute path.
+  - The packages are used only with a `python3` of the recorded major and minor version.
+
+**Rationale.** Reviewers gave up reproducing Python findings because the sandbox had only the
+operator's global packages. Three properties are required:
+
+- The reviewer and the re-run see the same packages.
+- The recorded command stays a direct program with no path in it.
+- Two prepares write the same bytes.
+
+The first version (a relocatable environment in the packet, its `bin` first on `PATH`) met
+those, but an independent review showed that a wheel's console scripts could then replace the
+vendor binary, git or `bwrap`. It also showed that requirements options could reach operator
+files and the network, and that a `.pth` could run during prepare. The LEARNINGS entry of the
+same date has the detail. A plain folder plus a Saga-written environment keeps all three
+properties and closes those paths.
 
 **Rejected alternatives.**
-- `uv pip install --target` plus `PYTHONPATH`: the folder sits ahead of the standard library, so
-  a dependency named like a standard module shadows it; `.pth` files never run; console scripts
-  carry an absolute interpreter path; and the operator's global packages still leak in.
-- A virtual environment at an absolute path the reviewer calls by name: the path would be in the
-  recorded command, so finish would have to map it, and the packet's location would enter hashed
-  content.
-- Building the environment at review and at finish time instead of in prepare: both run without
-  network, and two separate installs are not guaranteed to match.
-- Allowing sdist builds: a build runs the package's own code during prepare, outside any sandbox.
-- A fresh uv cache per prepare, as the Rust fetch uses a fresh cargo home: every prepare would
-  download every wheel again. Hash checking and copying out of the cache already keep the packet
-  independent of it.
+- **A relocatable environment in the packet, its `bin` on `PATH`** (the first version): wheel
+  console scripts become program names, and the environment's interpreter must run over the
+  installed packages.
+- **`PYTHONPATH` to the packet's folder:** it sits ahead of the standard library, and `.pth`
+  files never run.
+- **Linking only the interpreter from a shim folder:** Python then finds no `pyvenv.cfg` and
+  ignores the packages (measured).
+- **Passing the head's requirements files or `pyproject.toml` to uv directly:** their option
+  language can name other files and indexes, and dependency URLs can name local files.
+- **Building at review or finish time:** both run without network.
+- **Allowing sdist builds:** a build runs the package's code during prepare.
+- **A fresh uv cache per prepare:** every prepare would download everything again. Hash checks
+  and copy or clone keep the packet independent of the cache.
 
-**Revisit when.** A measurement run shows Python reproductions still failing for a missing
-package that has a wheel, a reviewed project needs its own package installed (import roots
-other than the working directory), prepare time per Python head becomes a measured problem, or
-a head needs a private package index that the fresh `HOME` and `--no-config` hide.
+**Revisit when.**
+- A Grok, Muse or Codex reviewer needs the packages. Today only Claude's shell prefix carries
+  them.
+- A measurement shows reproductions failing for a package that has a wheel.
+- A project needs its own package installed.
+- Prepare time or packet disk use becomes a measured problem. Packets are not deleted by Saga;
+  the corpus harness deletes them.
+- A head needs a private index, which `--no-config` and the dropped option lines now hide.
 
 ## 2026-10-25
 

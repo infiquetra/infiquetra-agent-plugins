@@ -11,11 +11,15 @@ for C8 to extend.
 
 ### Added
 
-- **The reviewer's `python3` is the packet's Python environment.** When saga's
-  `dependencies.json` names an `installed` or `partial` Python environment inside the packet,
-  the launch puts its `bin` first on the session's `PATH` (after the cargo shim), sets
-  `VIRTUAL_ENV`, and allows the folder back for reading and names it in `denyWrite`.
-  `VIRTUAL_ENV` joins the variable allow-list; the operator's own value is always removed first.
+- **The reviewer's sandboxed `python3` uses the packet's Python packages.** When saga's
+  `dependencies.json` names `installed` or `partial` packages inside the packet, and the session's
+  `python3` has the recorded major and minor version, the launcher writes a small environment
+  beside the copy whose `bin` holds only `python3` and `python`, with `site-packages` linked to the
+  packet's folder. The Claude shell prefix puts it first on `PATH`, and sets `VIRTUAL_ENV`, for
+  sandboxed commands only; the vendor process's own `PATH` never changes, so nothing a wheel
+  installs can stand in for the vendor binary or git. Both folders are allowed back for reading
+  and named in `denyWrite`. `VIRTUAL_ENV` joins the variable allow-list; the operator's own value
+  is always removed.
 - Issue #162: the implementer, standard-repair implementer, and expert-repair implementer prompts
   tell the builder to read `plugins/saga/references/question-banks/policy-questions.json` and store
   one declaration per question with `builder_record.py write` before the build loop.
