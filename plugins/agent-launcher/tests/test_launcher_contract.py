@@ -5899,6 +5899,25 @@ def test_reviewer_ignores_a_link_inside_a_package_cache_and_refuses_one_elsewher
     assert changes["added"] == []
 
 
+def test_reviewer_counts_a_tracked_file_swapped_for_a_link_inside_a_package_cache(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """Only a new link is ignored with its cache. A link in the place of a tracked file, or a
+    tracked link retargeted, was a change before and still is."""
+    copy = _copy_with(tmp_path, {
+        "package.json": "{}\n", "node_modules/.cache/kept.json": "1\n", "Package.swift": "x\n",
+    })
+    (copy / ".build" / "arm64").mkdir(parents=True)
+    (copy / ".build" / "debug").symlink_to("arm64")
+    manifest = launcher._reviewer_manifest(copy)
+    (copy / "node_modules" / ".cache" / "kept.json").unlink()
+    (copy / "node_modules" / ".cache" / "kept.json").symlink_to("/etc/passwd")
+    (copy / ".build" / "debug").unlink()
+    (copy / ".build" / "debug").symlink_to("/")
+    changes = launcher.reviewer_scratch_changes(copy, manifest)
+    assert changes["links"] == [".build/debug", "node_modules/.cache/kept.json"]
+
+
 def test_reviewer_still_counts_a_modified_tracked_file_at_a_cache_path(
     launcher: ModuleType, tmp_path: Path
 ) -> None:

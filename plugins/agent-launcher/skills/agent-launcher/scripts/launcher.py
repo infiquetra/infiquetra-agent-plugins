@@ -2193,9 +2193,9 @@ REVIEWER_SCRATCH_IGNORED = re.compile(
 #: - ``cdk.out/``: the folder ``cdk synth`` writes the synthesised templates to (marker
 #:   ``cdk.json``).
 #:
-#: A symlink inside one of these folders is ignored with it: the tools make them (SwiftPM's
-#: ``.build/debug``), and saga reads nothing under a path that is ignored. A link anywhere else is
-#: still refused.
+#: A new symlink inside one of these folders is ignored with it: the tools make them (SwiftPM's
+#: ``.build/debug``), and saga reads nothing under a path that is ignored. A symlink that replaces
+#: or retargets a tracked path is never ignored, and a link anywhere else is still refused.
 REVIEWER_PACKAGE_CACHES = (
     (re.compile(r"(?:^|(?<=/))node_modules/\.(?:vite|cache)/"), "package.json"),
     (re.compile(r"(?:^|(?<=/))\.dart_tool/"), "pubspec.yaml"),
@@ -3711,7 +3711,7 @@ def reviewer_scratch_changes(copy: Path, manifest: Mapping[str, str]) -> dict[st
         "links": sorted(
             p for p in now
             if now[p].startswith("link:") and manifest.get(p) != now[p]
-            and not reviewer_in_package_cache(p, manifest)
+            and not (p not in manifest and reviewer_in_package_cache(p, manifest))
         ),
     }
 
