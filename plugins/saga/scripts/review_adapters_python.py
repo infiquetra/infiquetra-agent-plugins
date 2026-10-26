@@ -37,7 +37,10 @@ _ROWS: dict[str, tuple[str, ...]] = {
     "bandit": ("security.scanner-high", "security.scanner-medium-low"),
     "pip-audit": ("security.dependency-high",),
     "mypy": ("correctness.type-error", "correctness.tool-style"),
-    "ruff-lint": ("correctness.tool-error", "correctness.tool-warning", "correctness.tool-style"),
+    "ruff-lint": (
+        "correctness.tool-error", "correctness.tool-warning", "correctness.tool-style",
+        "security.scanner-medium-low",
+    ),
     "ruff-format": ("correctness.tool-style",),
     "vulture": ("architecture-maintainability.complexity-dead-code-naming",),
     "import-linter": ("architecture-maintainability.structural-check-fails",),
@@ -481,6 +484,42 @@ def _parse_mypy(text: str) -> ParseResult:
     return ParseResult(tuple(hits))
 
 
+#: Test files, where ``assert`` is how a test checks a result. ``S101`` ("use of assert") is
+#: ruff's flake8-bandit rule for production code, which is stripped under ``python -O``; in a
+#: test file it is never a defect. The standard convention is a per-file ignore for these paths.
+_RUFF_TEST_FILES = ("test_*.py", "*_test.py", "tests.py", "conftest.py")
+_RUFF_TEST_FOLDERS = ("tests", "test")
+#: Rules ruff reports for tests that are not findings.
+_RUFF_TEST_IGNORED = ("S101",)
+#: Where the flake8-bandit rules (the ``S`` family, level ``security`` in the family map) go.
+_RUFF_SECURITY_ROW = "security.scanner-medium-low"
+
+
+def _glob_escape(text: str) -> str:
+    """*text* with ruff's glob metacharacters escaped, so a scan root is matched literally."""
+    return re.sub(r"([\\*?\[\]{}])", r"\\\1", text)
+
+
+def _ruff_per_file_ignores(root: Path) -> str:
+    """Inline TOML for ``--config``: the test-path ignores, anchored at the scan root.
+
+    ``--isolated`` drops every config file, so the reviewed repository's own per-file ignores
+    never apply and a convention has to be passed on the command line. Each pattern starts with
+    the scan root, so a root that happens to sit under a folder named ``tests`` does not make
+    every file in it a test file.
+    """
+    base = _glob_escape(root.as_posix().rstrip("/"))
+    patterns = [f"{base}/**/{name}" for name in _RUFF_TEST_FILES]
+    patterns += [f"{base}/**/{folder}/**" for folder in _RUFF_TEST_FOLDERS]
+    rules = json.dumps(list(_RUFF_TEST_IGNORED))
+    # ``ensure_ascii=False``: ``json.dumps`` writes a character outside the Basic Multilingual
+    # Plane as a surrogate pair, which is not valid in a TOML string; TOML takes the character.
+    table = ", ".join(
+        f"{json.dumps(pattern, ensure_ascii=False)} = {rules}" for pattern in patterns
+    )
+    return f"lint.per-file-ignores = {{{table}}}"
+
+
 def _invoke_ruff(pin: str) -> Callable[[ScanContext], list[str]]:
     """Ruff at the row pin through uv, whatever PATH holds (issue 226)."""
 
@@ -489,6 +528,7 @@ def _invoke_ruff(pin: str) -> Callable[[ScanContext], list[str]]:
             "python3", "-c", _RUFF_WRAPPER, "--",
             "uv", "run", "--with", f"ruff=={pin}",
             "ruff", "check", "--isolated", "--ignore-noqa", "--select", "ALL",
+            "--config", _ruff_per_file_ignores(context.root),
             "--output-format", "json", str(context.root),
         ]
 
@@ -515,12 +555,18 @@ def _parse_ruff(mapping: Mapping[str, str]) -> Callable[[str], ParseResult]:
             start = location.get("row")
             stop = end.get("row") if isinstance(end.get("row"), int) else start
             message = " ".join(str(item.get("message") or code).split())
+            level = _family_level(code, mapping)
+            # A flake8-bandit rule is a lead for a security look, never a proven correctness
+            # error: it goes to the row bandit's own MEDIUM and LOW findings use, which fixes
+            # later and never blocks. Ruff reports no severity, so none is claimed as HIGH.
+            row = _RUFF_SECURITY_ROW if level == "security" else None
             hits.append(Hit(
                 rule_id=code,
                 path=_rel(str(item.get("filename") or ".")),
                 statement=f"{code} {message}",
                 anchor=code,
-                level=_family_level(code, mapping),
+                level=None if row else level,
+                row=row,
                 start=int(start) if isinstance(start, int) else None,
                 end=int(stop) if isinstance(stop, int) else None,
             ))
