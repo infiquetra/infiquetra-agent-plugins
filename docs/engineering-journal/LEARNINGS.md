@@ -29,6 +29,70 @@ only reads or parses its source text is not a reproduction.
 **Generalizable rule.** When a gate accepts only a mechanically re-checked proof, tell the prover
 exactly what the checker accepts, with one short recipe per language, and make every "could not
 prove" carry a named reason, so a miss can be traced to a tooling gap, not guessed at.
+### Dependencies handed to a sandbox must never be found by name, and their installer's output is untrusted
+
+**Author.** Jeff Cox
+
+**Evidence.** The first version of Saga's Python dependency install (PR #289, commit `79ddb02`)
+built a relocatable virtual environment in the review packet and put its `bin` first on `PATH`.
+An independent review then confirmed, against real uv, four ways out:
+
+- **The vendor binary could be replaced.** A locked wheel with console scripts named `claude` and
+  `git` landed in that `bin`, and the launcher had prepended it to the vendor process's own
+  `PATH`. The vendor process starts `claude` by bare name, outside the sandbox and with its
+  sign-in.
+- **The sandbox helper could be replaced on Linux.** Finish looked `bwrap` up by bare name in an
+  environment whose `PATH` began with that same `bin`.
+- **A requirements file could send an operator file to a server.** `--index-url` plus
+  `-r <absolute path>` sent a local token file to a chosen server as a package name, and uv's
+  `cause:` line then copied the token into `dependencies.json`.
+- **A `.pth` file could run outside the sandbox.** Each retry started the packet environment's
+  interpreter, which runs any `.pth` a wheel installed. Only uv's interpreter cache hid this:
+  with `UV_NO_CACHE=1` it ran.
+
+The repair, and the tests that cover each point:
+
+- **Install.** `uv pip install --target` against the operator's interpreter, into a plain
+  `site-packages`: the packet holds no interpreter and no `bin`.
+- **Run.** Finish and the launcher write their own small environment whose `bin` holds only
+  `python3` and `python`. It is given to sandboxed commands only; the launcher passes it through
+  the Claude shell prefix.
+- **Helper lookup.** `bwrap` is started by absolute path.
+- **Requirements.** Saga reads them itself and passes uv only plain requirement lines.
+- **Recorded reasons.** Only fixed words.
+
+Tests:
+
+- `plugins/agent-launcher/tests/test_launcher_reviewer.py`:
+  `test_offline_a_wheel_s_scripts_never_reach_the_vendor_process_s_path`.
+- `plugins/saga/tests/test_review_command.py`:
+  `test_the_bwrap_helper_is_found_on_the_operator_s_path_never_the_re_run_s`.
+- `plugins/saga/tests/test_review_dependencies.py`:
+  - `test_requirements_reach_uv_only_as_plain_lines`;
+  - `test_uv_s_own_words_never_reach_the_record`;
+  - `test_live_no_pth_file_runs_during_prepare_even_without_uv_s_cache`, which uses real uv and
+    a hand-written wheel.
+
+Two earlier measurements still stand. With uv 0.13.4, `--target` output is byte-identical
+between two folders once the empty `.lock` file and `bin/` are removed. A symlink to a virtual
+environment's interpreter placed in another folder does not select that environment: Python
+looks for `pyvenv.cfg` beside the path it was started by. A small environment with its own
+`pyvenv.cfg` and a `site-packages` link does select it.
+
+**Mechanism.** Anything that sits first on a `PATH` stands in for every program name, not just
+the one it was meant for. A folder that a third party's package fills is such a folder. So a
+dependency's folder may be read, but never searched for programs: the only name added to a
+`PATH` belongs to a folder Saga wrote, holding exactly the names Saga chose. Any helper that has
+to start before that `PATH` takes effect is resolved to an absolute path first. An installer is
+an interpreter of its inputs: a requirements file is a command language (`-r`, `--index-url`),
+and the installer's error text repeats what it read. Both have to be cut down to data before
+uv sees them and after uv answers. Finally, "never runs code during prepare" has to hold
+without uv's cache, which can hide a start of the interpreter.
+
+**Generalizable rule.** When handing third-party files to a sandbox, put on `PATH` only a
+folder you wrote that holds the names you chose. Resolve your own helpers to absolute paths
+first. Pass a tool only data, never its option language. Record only fixed reason words from
+its output. Test the "runs no code" claim with every cache turned off.
 
 ### A regex exclusion that backtracks can drop out for a whole file, with no error
 

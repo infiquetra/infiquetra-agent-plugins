@@ -185,17 +185,24 @@ def child_environment(scratch: Path) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class Offline:
-    """What a re-run adds to build offline from the packet's dependencies (issue 262).
+    """What a re-run adds to work offline from the packet's dependencies (issue 262).
 
     *cargo* is the cargo home's shim, which passes its configuration as ``--config`` so a commit's
     own ``.cargo/config.toml`` cannot replace crates.io first; ``None`` when no cargo was found.
+    *python* is a saga-written environment over the packet's Python packages; its ``bin``, which
+    holds only ``python3`` and ``python``, comes first on ``PATH``.
     """
 
     env: Mapping[str, str]
     reads: tuple[Path, ...]
     cargo: Path | None = None
-    #: Paths the re-run may read and map as code: the real cargo's folder and rustup's toolchains.
+    #: Paths the re-run may read and map as code: the real cargo's folder and rustup's toolchains,
+    #: and the Python environment with its interpreter's install.
     toolchain: tuple[Path, ...] = ()
+    #: True when the packet vendored Rust sources and ``env`` points cargo at them.
+    rust: bool = False
+    #: The saga-written Python environment over the packet's packages, when there is one.
+    python: Path | None = None
 
     def argv(self, argv: list[str]) -> list[str]:
         """*argv*, with a ``cargo`` command, by name or by path, run through the shim."""
@@ -206,24 +213,50 @@ class Offline:
 
 @contextmanager
 def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
-    """A cargo home pointing at the packet's vendored crates, for the re-runs; ``None`` without."""
+    """The packet's dependencies for the re-runs: a cargo home pointing at the vendored crates,
+    a saga-written Python environment over the packet's packages, both or neither (``None``)."""
     vendor = review_dependencies.rust_vendor(packet)
-    if vendor is None:
+    deps = review_dependencies.python_environment(packet)
+    python = shutil.which("python3") if deps is not None else None
+    if vendor is None and python is None:
         yield None
         return
-    home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
+    temporary: list[Path] = []
     try:
+        env: dict[str, str] = {}
+        reads: tuple[Path, ...] = ()
+        toolchain: tuple[Path, ...] = ()
+        path = os.environ.get("PATH", "")
+        shim: Path | None = None
+        if deps is not None and python is not None:
+            # Only ``python3`` and ``python``, linked to the operator's interpreter, ever go on
+            # the re-run's PATH: nothing in the packet can be found by name.
+            folder = Path(tempfile.mkdtemp(prefix="saga-review-python-"))
+            temporary.append(folder)
+            shim = review_dependencies.write_python_shim(folder / "env", deps, python)
+            if shim is not None:
+                env.update(review_dependencies.python_shim_env(shim, path))
+                path = env["PATH"]
+                toolchain += review_dependencies.python_toolchain(shim, deps)
+        if vendor is None:
+            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim)
+                   if shim is not None else None)
+            return
+        home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
+        temporary.append(home)
         cargo = shutil.which("cargo")
-        shim = review_dependencies.write_cargo_home(home, vendor, cargo)
-        env = {"CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true",
-               **review_dependencies.rustup_env()}
-        if shim is not None:
+        shim_cargo = review_dependencies.write_cargo_home(home, vendor, cargo)
+        env.update({"CARGO_HOME": str(home), "CARGO_NET_OFFLINE": "true",
+                    **review_dependencies.rustup_env()})
+        if shim_cargo is not None:
             # A cargo that another command starts finds the shim first, too.
-            env["PATH"] = os.pathsep.join([str(shim.parent), os.environ.get("PATH", "")])
-        yield Offline(env=env, reads=(vendor, home), cargo=shim,
-                      toolchain=review_dependencies.toolchain_paths(cargo))
+            env["PATH"] = os.pathsep.join([str(shim_cargo.parent), path])
+        yield Offline(env=env, reads=(*reads, vendor, home), cargo=shim_cargo,
+                      toolchain=(*review_dependencies.toolchain_paths(cargo), *toolchain),
+                      rust=True, python=shim)
     finally:
-        shutil.rmtree(home, ignore_errors=True)
+        for folder in temporary:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 def run_confined(
@@ -1006,11 +1039,12 @@ def _rerun_one(
         env.update(offline.env)
         reads, toolchain = offline.reads, offline.toolchain
         argv = offline.argv(argv)
-    elif Path(argv[0]).name in _RUST_COMMANDS:
+    if (offline is None or not offline.rust) and Path(argv[0]).name in _RUST_COMMANDS:
         # Without vendored crates a Rust re-run still needs rustup's toolchain (issue 262).
         env.update(review_dependencies.rustup_env())
         # By name on the operator's PATH: a folder in the reviewer's command is never trusted.
-        toolchain = review_dependencies.toolchain_paths(shutil.which(Path(argv[0]).name))
+        toolchain = (*toolchain,
+                     *review_dependencies.toolchain_paths(shutil.which(Path(argv[0]).name)))
     try:
         if confine is not None:
             ran = confine(argv, scratch, env, scratch)
@@ -1557,7 +1591,8 @@ def _publish(staging: Path, out: Path) -> None:
     try:
         staging.rename(out)
     except OSError:
-        shutil.copytree(staging, out)
+        # A Python environment's interpreter is a symlink to the operator's; keep it one.
+        shutil.copytree(staging, out, symlinks=True)
 
 
 def _copy_check_modules(staging: Path) -> None:
@@ -1775,7 +1810,10 @@ def _seatbelt(
 
 
 def _bwrap(scratch: Path, argv: Sequence[str], reads: Sequence[Path] = ()) -> list[str]:
-    command = ["bwrap", "--unshare-net"]
+    # By absolute path on the operator's PATH: the re-run's own PATH starts with folders the
+    # re-run is given, and the helper must never be looked up there.
+    helper = shutil.which("bwrap", path=os.environ.get("PATH", "")) or "/usr/bin/bwrap"
+    command = [str(Path(helper).resolve()), "--unshare-net"]
     for prefix in ("/usr", "/bin", "/lib", "/lib64", "/opt", "/etc"):
         if Path(prefix).exists():
             command.extend(["--ro-bind", prefix, prefix])
