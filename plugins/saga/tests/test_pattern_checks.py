@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -230,8 +231,9 @@ def test_silent_skip_ignores_a_continue_after_a_recorded_error_in_a_large_file(
     tmp_path: Path,
 ) -> None:
     """A ``continue`` straight after ``errors.append(...)`` is traced, not silent. The first form of
-    the exclusion stopped applying once the scanned file grew past a couple of thousand lines, so
-    the check runs over a large file as well as the small rule fixtures."""
+    the exclusion stopped applying for a whole file once it held a long recorded call that no
+    ``continue`` follows (the pattern backtracked until Semgrep dropped it), so the check runs
+    over a file with that shape repeated, not only the small rule fixtures."""
     binary = _semgrep_or_skip()
     unit = '''\
 def check_{n}(names, known, report):
@@ -247,6 +249,23 @@ def check_{n}(names, known, report):
             errors.append(f"{{name}} is empty")
             continue
         store(name)
+    for name in names:
+        errors.append(
+            dict(
+                name=name,
+                one=1,
+                two=2,
+                three=3,
+                four=4,
+                five=5,
+                six=6,
+                seven=7,
+                eight=8,
+                nine=9,
+                ten=10,
+            )
+        )
+        process(name)
     for name, dests in known.items():
         if len(dests) != 1:
             continue
@@ -274,6 +293,22 @@ def check_{n}(names, known, report):
     assert found["errors"] == []
     # Every ``continue`` is a guard or follows a recorded error, so the rule reports none.
     assert found["results"] == []
+
+
+def test_silent_skip_exclusion_does_not_backtrack_on_a_long_recorded_call() -> None:
+    """``\\1[ \\t]+[^\\n]*`` let the indent and the rest of a line share the same spaces, and a
+    call of ten lines took minutes to fail to match. Every continuation line must start with
+    something other than a space after the indent."""
+    rule = yaml.safe_load((RULES / "silent-skip.yaml").read_text(encoding="utf-8"))
+    patterns = [item["pattern-not-regex"] for item in rule["rules"][0]["patterns"]
+                if "pattern-not-regex" in item]
+    arguments = "".join(f"            argument_{n}={n},\n" for n in range(40))
+    text = "def f(rows, errors):\n    for row in rows:\n        errors.append(\n" + arguments
+    text += "        )\n        process(row)\n"
+    started = time.monotonic()
+    for pattern in patterns:
+        list(re.finditer(pattern, text * 5))
+    assert time.monotonic() - started < 2.0
 
 
 def _git(repo: Path, *args: str) -> str:

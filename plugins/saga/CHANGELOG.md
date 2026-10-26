@@ -101,18 +101,19 @@
 
 - The `saga.silent-skip` rule (`correctness.pattern.silent-skip`, blocks) no longer matches a
   `continue` that comes straight after a call recording the item into a report collection
-  (`errors.append(...)`, `problems.add(...)`, `failures.push(...)` and the same for findings,
-  warnings, issues, violations, diagnostics, skipped, rejected and mismatch names, with the call
-  spread over up to twelve lines). Such a `continue` is traced, not silent. The exclusion is
-  written without blank-line or possessive forms because Semgrep's regex engine stopped applying
-  a longer form to files of a few thousand lines. A `continue` after any other statement is still
-  matched. No version bump.
+  (`errors.append(...)`, `problems.add(...)`, `failures.push(...)`; a last name segment that
+  starts with error, problem, failure, finding, warning, issue, violation, diagnostic, skipped,
+  rejected or mismatch, with an optional leading `_`, so `seen_issues.add(...)` does not count;
+  the call may spread over up to twelve lines). Such a `continue` is traced, not silent. The
+  exclusion's continuation lines must start with a non-space after the indent: without that the
+  pattern backtracked exponentially on a long call and Semgrep silently dropped it for the whole
+  file. A `continue` after any other statement is still matched. No version bump.
 - `ruff-lint` no longer blocks a clean change for the `assert` statements in its test files.
   Saga runs ruff with `--isolated --select ALL`, so the reviewed repository's own per-file
   ignores never applied and `S101` ("use of `assert`", a flake8-bandit rule) fired on every test.
   The invocation now passes an inline `--config` that ignores `S101` for `test_*.py`,
-  `*_test.py`, `conftest.py` and anything under a `tests` or `test` folder, each pattern anchored
-  at the scan root (a root that sits under a folder named `tests` does not turn every file into a
+  `*_test.py`, `tests.py`, `conftest.py` and anything under a `tests` or `test` folder, each
+  pattern anchored at the scan root (a root that sits under a folder named `tests` does not turn every file into a
   test file). The whole `S` family now goes to `security.scanner-medium-low` (fix later), the row
   bandit's own MEDIUM and LOW findings use, in place of `correctness.tool-error` (blocks): a
   bandit rule is a lead for a security look, not a proven correctness error, and ruff reports no

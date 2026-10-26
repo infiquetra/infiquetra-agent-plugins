@@ -71,3 +71,36 @@ function collectRows(rows: Row[]): void {
     store(cleaned);
   }
 }
+
+function longRecordThenWork(rows: Row[], errors: object[]): void {
+  for (const row of rows) {
+    errors.push({
+      row,
+      one: 1,
+      two: 2,
+      three: 3,
+      four: 4,
+      five: 5,
+      six: 6,
+      seven: 7,
+      eight: 8,
+      nine: 9,
+      ten: 10,
+    });
+    process(row);
+  }
+}
+
+function recordedAfterTheLongCall(rows: Row[], errors: string[]): void {
+  for (const row of rows) {
+    if (bad(row)) {
+      errors.push(
+        `${row} is bad, ` +
+        "so it is reported"
+      );
+      // ok: saga.silent-skip
+      continue;
+    }
+    store(row);
+  }
+}

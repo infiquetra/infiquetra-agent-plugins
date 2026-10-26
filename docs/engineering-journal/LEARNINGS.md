@@ -2,31 +2,37 @@
 
 ## 2026-10-26
 
-### A regex exclusion that works on a fixture can stop applying on a real file
+### A regex exclusion that backtracks can drop out for a whole file, with no error
 
 **Author.** Jeff Cox
 
 **Evidence.** The `saga.silent-skip` Semgrep rule (`plugins/saga/references/semgrep/silent-skip.yaml`)
-blocked changes at two `continue` statements that each followed `errors.append(...)`, a recorded
+blocked changes at `continue` statements that each followed `errors.append(...)`, a recorded
 error rather than a silent skip. The rule's trace exclusion only looked at the line before the
 `continue`, and the word `errors` is not the word `error`. A first exclusion that spanned the
-multi-line call passed `semgrep --test` and a small file, yet reported the same sites on the
-real file of a few thousand lines; Semgrep reported no error. Bisecting the file by prefix found
-the flip at one added line, and removing the blank-line alternative and keeping the repetition
-bounded (`{0,12}`) made the exclusion apply to the whole file. Tests: the
-new `ok` and `ruleid` cases in `silent-skip.py` and `silent-skip.ts`, and
-`test_silent_skip_ignores_a_continue_after_a_recorded_error_in_a_large_file`
+multi-line call passed `semgrep --test` and small files, yet reported the same sites on a real
+script of a few thousand lines; Semgrep reported no error. The review found the cause: a file
+that held one long recorded call (twelve lines) with no `continue` after it made the exclusion
+vanish for every other recorded-error `continue` in that file. The fix is one token,
+`\1[ \t]+\S[^\n]*` in place of `\1[ \t]+[^\n]*`. Tests: the new `ok` and `ruleid` cases in
+`silent-skip.py` and `silent-skip.ts`, `test_silent_skip_ignores_a_continue_after_a_recorded_error_in_a_large_file`
+and `test_silent_skip_exclusion_does_not_backtrack_on_a_long_recorded_call`
 (`plugins/saga/tests/test_pattern_checks.py`).
 
-**Mechanism.** `pattern-not-regex` removes a match only when Semgrep's regex engine returns the
-negative match. When the engine gives up on a pattern (this one, with a repeated group that
-contains a back-reference and an alternative that can match an empty line), it returns nothing
-and the exclusion silently disappears, so the finding survives. Small fixtures never reach the
-limit.
+**Mechanism.** In `\1[ \t]+[^\n]*` the indent match `[ \t]+` and the rest of the line `[^\n]*`
+can both take the same spaces, so when a recorded call is not followed by a `continue` the engine
+tries every way to split the spaces of every line, and the work grows exponentially with the
+length of the call (measured with Python's `re`: seconds at eight lines, minutes at ten). Semgrep
+stops the match when that work gets too large and treats it as no match, so the exclusion
+silently disappears and the finding survives. Small fixtures never reach the limit, and nothing
+reports that a pattern gave up. An earlier explanation here, a blank-line alternative, was wrong:
+bounding the repeat and dropping that alternative only moved the failing case.
 
-**Generalizable rule.** Test a regex-based exclusion on a real file of production size as well
-as on rule fixtures, keep repetitions bounded, and prefer fewer alternatives in a pattern that
-uses a back-reference.
+**Generalizable rule.** In a regex exclusion, make every repeated alternative start with a
+character the next one cannot also take (here `\S` after the indent), and test it with a long
+input that does not match, not only with one that does. A pattern that gives up produces no
+error, so a test that expects the exclusion to hold in a file that also holds the slow shape is
+the only signal.
 
 ### Isolating a linter from the repository's config also removes the repository's test conventions
 
@@ -34,8 +40,7 @@ uses a back-reference.
 
 **Evidence.** In a private measurement run, every clean change that added tests and was wrongly
 blocked in its own lens was blocked by ruff findings with rule `S101` ("use of `assert`") in the
-added test files, mapped to `correctness.tool-error` at severity `blocks`; one change carried
-hundreds of them. The mapping is `family_map` in `plugins/saga/references/review-tools.yaml`
+added test files, mapped to `correctness.tool-error` at severity `blocks`. The mapping is `family_map` in `plugins/saga/references/review-tools.yaml`
 (`S: error`) read by `_parse_ruff` in `plugins/saga/scripts/review_adapters_python.py`, and the
 rule was selected because `_invoke_ruff` runs `ruff check --isolated --select ALL`. Tests:
 `test_ruff_ignores_assert_in_test_paths_by_per_file_patterns_anchored_at_the_root`,

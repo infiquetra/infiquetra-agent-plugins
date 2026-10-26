@@ -487,7 +487,7 @@ def _parse_mypy(text: str) -> ParseResult:
 #: Test files, where ``assert`` is how a test checks a result. ``S101`` ("use of assert") is
 #: ruff's flake8-bandit rule for production code, which is stripped under ``python -O``; in a
 #: test file it is never a defect. The standard convention is a per-file ignore for these paths.
-_RUFF_TEST_FILES = ("test_*.py", "*_test.py", "conftest.py")
+_RUFF_TEST_FILES = ("test_*.py", "*_test.py", "tests.py", "conftest.py")
 _RUFF_TEST_FOLDERS = ("tests", "test")
 #: Rules ruff reports for tests that are not findings.
 _RUFF_TEST_IGNORED = ("S101",)
@@ -512,7 +512,11 @@ def _ruff_per_file_ignores(root: Path) -> str:
     patterns = [f"{base}/**/{name}" for name in _RUFF_TEST_FILES]
     patterns += [f"{base}/**/{folder}/**" for folder in _RUFF_TEST_FOLDERS]
     rules = json.dumps(list(_RUFF_TEST_IGNORED))
-    table = ", ".join(f"{json.dumps(pattern)} = {rules}" for pattern in patterns)
+    # ``ensure_ascii=False``: ``json.dumps`` writes a character outside the Basic Multilingual
+    # Plane as a surrogate pair, which is not valid in a TOML string; TOML takes the character.
+    table = ", ".join(
+        f"{json.dumps(pattern, ensure_ascii=False)} = {rules}" for pattern in patterns
+    )
     return f"lint.per-file-ignores = {{{table}}}"
 
 
