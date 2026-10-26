@@ -2188,6 +2188,11 @@ REVIEWER_SCRATCH_IGNORED = re.compile(
 #: - ``node_modules/.vite/``, ``node_modules/.cache/``: Vite's and Vitest's result and transform
 #:   caches, and the shared cache folder that Jest, Babel, ESLint and Prettier write when
 #:   ``find-cache-dir`` places a cache (marker ``package.json``).
+#: - ``coverage/``, ``.nyc_output/``: the report and raw data that Jest, Vitest, c8 and nyc write
+#:   when a run asks for coverage (marker ``package.json``).
+#: - ``.coverage`` and ``.coverage.<host>.<pid>.<random>``: coverage.py's data file, written to
+#:   the folder the tests run from (the root of the copy, or beside ``pyproject.toml``,
+#:   ``setup.py`` or ``setup.cfg``).
 #: - ``.dart_tool/``: ``dart pub get``, ``dart analyze`` and ``dart test`` write the package
 #:   configuration and test caches there (marker ``pubspec.yaml``; measured with Dart 3.13).
 #:   ``pubspec.lock`` is what ``dart pub get`` and ``dart run`` write when the package does not
@@ -2203,6 +2208,11 @@ REVIEWER_SCRATCH_IGNORED = re.compile(
 #: or retargets a tracked path is never ignored, and a link anywhere else is still refused.
 REVIEWER_PACKAGE_CACHES = (
     (re.compile(r"(?:^|(?<=/))node_modules/\.(?:vite|cache)/"), ("package.json",), False),
+    (re.compile(r"(?:^|(?<=/))(?:coverage|\.nyc_output)/"), ("package.json",), False),
+    (
+        re.compile(r"(?:^|(?<=/))\.coverage(?:\.[^/.]+\.\d+\.[0-9A-Za-z]+)?$"),
+        ("pyproject.toml", "setup.py", "setup.cfg"), True,
+    ),
     (re.compile(r"(?:^|(?<=/))\.dart_tool/"), ("pubspec.yaml",), False),
     (re.compile(r"(?:^|(?<=/))pubspec\.lock$"), ("pubspec.yaml",), False),
     (re.compile(r"(?:^|(?<=/))\.build/"), ("Package.swift",), False),

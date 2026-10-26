@@ -5855,6 +5855,11 @@ _CACHE_CASES = [
      ["pubspec.lock", "app/pubspec.lock"], "lib/pubspec.lock.dart"),
     ("swift-resolved", {"Package.swift": "// manifest\n"}, ["Package.resolved"],
      "Sources/Package.resolved.swift"),
+    ("coverage-py", {"pyproject.toml": "[project]\n", "svc/setup.py": "x\n"},
+     [".coverage", ".coverage.host.123.Xk9zQ2", "svc/.coverage"], "svc/.coverage.py"),
+    ("coverage-js", {"package.json": "{}\n", "web/package.json": "{}\n"},
+     ["coverage/lcov.info", "web/coverage/index.html", ".nyc_output/out.json"],
+     "src/coverage/report.ts"),
 ]
 
 
@@ -5925,6 +5930,8 @@ def test_reviewer_counts_a_tracked_file_swapped_for_a_link_inside_a_package_cach
 @pytest.mark.parametrize(("name", "files"), [
     ("pubspec.lock", {"pubspec.yaml": "name: m\n", "pubspec.lock": "locked\n"}),
     ("Package.resolved", {"Package.swift": "x\n", "Package.resolved": "locked\n"}),
+    (".coverage", {"pyproject.toml": "[project]\n", ".coverage": "data\n"}),
+    ("coverage/lcov.info", {"package.json": "{}\n", "coverage/lcov.info": "1\n"}),
 ])
 def test_reviewer_still_counts_an_edit_to_a_tracked_file_at_a_generated_path(
     launcher: ModuleType, tmp_path: Path, name: str, files: dict[str, str]
@@ -5939,14 +5946,17 @@ def test_reviewer_still_counts_an_edit_to_a_tracked_file_at_a_generated_path(
 def test_reviewer_refuses_generated_names_outside_their_package_root(
     launcher: ModuleType, tmp_path: Path
 ) -> None:
-    """A lock file with no marker beside it is an ordinary added file."""
+    """A lock file or coverage folder with no marker beside it, and a .coverage that is neither at
+    the root nor beside a Python project file, is an ordinary added file."""
     copy = _copy_with(tmp_path, {"src/a.py": "x = 1\n"})
     manifest = launcher._reviewer_manifest(copy)
-    names = ["pubspec.lock", "Package.resolved"]
+    names = ["pubspec.lock", "Package.resolved", "src/.coverage", "coverage/lcov.info"]
     for relative in names:
         (copy / relative).parent.mkdir(parents=True, exist_ok=True)
         (copy / relative).write_text("written\n")
-    assert launcher.reviewer_scratch_changes(copy, manifest)["added"] == sorted(names)
+    assert launcher.reviewer_scratch_changes(copy, manifest)["added"] == sorted(
+        names[:2] + ["coverage/lcov.info", "src/.coverage"]
+    )
 
 
 def test_reviewer_still_counts_a_modified_tracked_file_at_a_cache_path(
