@@ -45,6 +45,9 @@ skipped `TMPDIR` and the system roots and returned the working directory.
 variable that string exports wins. Python's `tempfile` checks that a candidate is writable and
 tries `TMPDIR`, `TEMP`, `TMP`, the system roots and finally the current folder. The fix sets
 `TEMP` and `TMP` to the reviewer's folder too, so Python lands there whatever `TMPDIR` ends up as.
+This fixes Python only: Node, Go, Rust and `mktemp` read `TMPDIR` alone, so in the reviewer
+sandbox their temp writes still fail (they do not fall back into the copy); finish's re-run
+gives them a writable one. The follow-up is queued in `QUEUED.md`.
 `pytest-of-<user>/` is now ignored at any depth, and pytest's own `current` links inside it no
 longer count as links the session made. The existing tests had emulated the 2.1.296 command form,
 which had no export, so they could not see this. Finish's re-run passes an argument list, not a

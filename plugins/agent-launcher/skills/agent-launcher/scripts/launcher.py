@@ -2545,8 +2545,13 @@ def reviewer_claude_shell_script(
     """The prefix: outside the sandbox it runs the command as given; inside, on the allow-list.
 
     The sentinel holds *token*. Only a process outside the sandbox can read it, so anything else,
-    a denied read or a missing file included, filters: the check fails closed. With *temp*, a
-    sandboxed command's ``TMPDIR`` is that folder, whatever the sandbox set.
+    a denied read or a missing file included, filters: the check fails closed. With *temp*, the
+    prefix sets ``TMPDIR``, ``TEMP`` and ``TMP`` to that folder. Claude's own command string then
+    exports ``TMPDIR`` again, to its sandbox temp folder, which the reviewer may not write, so
+    ``TMPDIR`` is not the reviewer's folder in a sandboxed command. Only Python is fixed: its
+    ``tempfile`` skips an unwritable ``TMPDIR`` and takes ``TEMP``. Node, Go, Rust and ``mktemp``
+    read ``TMPDIR`` alone, so their temp writes fail in the reviewer's sandbox (they do not fall
+    back into the copy). Finish's re-run gives its commands a writable ``TMPDIR``.
     Sandboxed commands also run under ``umask 022``, as saga's replay does; it is never reached
     outside the sandbox.
     """
@@ -2558,10 +2563,12 @@ def reviewer_claude_shell_script(
     if temp is not None:
         # Last, so it wins over the TMPDIR the allow-list passed on. Claude's own command string
         # then exports TMPDIR again, to its sandbox temp folder under a root the reviewer's
-        # settings deny (REVIEWER_TEMP_ROOTS_ALWAYS); measured on Claude Code 2.1.308 to 2.1.311.
-        # Python's tempfile tries TMPDIR, then TEMP, then TMP, then the system roots, and falls
-        # back to the working directory, the scratch copy, when none is writable. TEMP and TMP
-        # name the reviewer's folder too, so Python's temp files land there however TMPDIR ends.
+        # settings deny (reviewer_temp_roots): seen live on Claude Code 2.1.311, and the same
+        # export is in the 2.1.308 executable. Python's tempfile tries TMPDIR, then TEMP, then
+        # TMP, then the system roots, and falls back to the working directory, the scratch copy,
+        # when none is writable. TEMP and TMP name the reviewer's folder too, so Python's temp
+        # files land there. This fixes Python only: tools that read TMPDIR alone still get
+        # Claude's unwritable folder.
         quoted_temp = shlex.quote(str(temp))
         kept += f" TMPDIR={quoted_temp} TEMP={quoted_temp} TMP={quoted_temp}"
     if python_env is not None:
