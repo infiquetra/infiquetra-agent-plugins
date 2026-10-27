@@ -4,10 +4,10 @@
   Expected: <3>
     Actual: <2>
   two returned 2
-  
+
   package:matcher          expect
   test/tiny_test.dart 6:5  main.<fn>
-  
+
 00:00 +0 -1: Some tests failed.
 
 Failing tests:

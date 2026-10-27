@@ -11,6 +11,28 @@ for C8 to extend.
 
 ### Added
 
+- **The Claude reviewer's copy links the packet's npm packages.** When saga's `dependencies.json`
+  has a `node` entry that says `installed`, the copy gets a `node_modules` symlink at its root to
+  the packet's folder, made before the scratch baseline so it is never a change. The folder is
+  allowed back for reading and named in `denyWrite`. When the session's `node` is reached through
+  a symlink (a link under home, which the sandbox cannot read), the shell prefix puts node's real
+  `bin` first on a sandboxed command's `PATH`; nothing from the packet is ever on a `PATH`.
+- **Every sandboxed tool now sees the reviewer's temp folder.** Claude's command string exports
+  its own unwritable `TMPDIR` after the prefix sets the reviewer's. The prefix's bash now runs
+  that string through `eval` under a one-shot `DEBUG` trap: the first time `TMPDIR` differs from
+  the reviewer's folder (right after Claude's export) it sets it back and removes itself. So
+  node's `os.tmpdir()`, bun, Go, Rust and `mktemp` write beside the copy, not only Python. The
+  trap saves and restores `$_`, and is gone before the reviewer's own command runs, so `$_`,
+  `PIPESTATUS` (which any `DEBUG` trap resets on bash 3.2) and exit statuses behave as without the
+  prefix. Claude's own `export TMPDIR=...` is overridden. A `TMPDIR` the reviewer's command sets
+  itself, by `export TMPDIR=x` or a leading `TMPDIR=x cmd`, is kept. A live run under Claude Code
+  2.1.311 showed node and bun importing CommonJS and ESM packages through the link,
+  `os.tmpdir()` at the reviewer's folder, and a shell write into the packages denied.
+- **Claude's file tools may never write the read-only dependencies.** The reviewer settings deny
+  `Edit` (which covers `Write`) on every read-only dependency folder by its real path, and on
+  `./node_modules` and `./node_modules/**` in the copy. A live Haiku run found the tools already
+  refused a write through the link without these rules (the allow rule `Edit(./**)` does not
+  match the resolved packet path); the rules make that explicit.
 - **The reviewer's sandboxed `dart` runs the SDK against the packet's pub packages.** When
   saga's `dependencies.json` names an `installed` pub cache inside the packet and the session's
   `PATH` finds a Dart SDK (behind Flutter's `bin/dart` wrapper too), the launcher writes a folder
@@ -21,10 +43,8 @@ for C8 to extend.
   allowed back for reading and named in `denyWrite`.
   No Dart is given when the SDK is of another major or minor version than the one that fetched
   the packages, or when its root cannot be allowed back for reading.
-- **Claude's file tools are denied every path stated read-only.** The reviewer's settings add
-  an `Edit(...)` deny rule for each read-only allowance, including the links from the reviewer's
-  writable pub cache into the packet. Claude's Edit and Write tools run outside the command
-  sandbox, and the temp folder holding those links is otherwise open to them.
+  Claude's file tools are also denied the two `hosted` links in that writable pub cache, which
+  point into the packet: every read-only path gets the `Edit` deny rule described above.
 - **The reviewer's sandboxed `python3` uses the packet's Python packages.** When saga's
   `dependencies.json` names `installed` or `partial` packages inside the packet, and the session's
   `python3` has the recorded major and minor version, the launcher writes a small environment

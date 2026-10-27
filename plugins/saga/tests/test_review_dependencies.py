@@ -459,8 +459,9 @@ def test_a_head_without_a_root_manifest_records_no_rust_entry(tmp_path: Path) ->
 
     record = D.fetch(runner, tmp_path, "HEAD", tmp_path / "packet", _export_from({}))
     assert record == {"schema": D.SCHEMA}
-    # Rust's manifest, then the Python and the Dart checks, each reading the root and the tree.
+    # Rust's manifest, then the Python, npm and Dart checks, each reading the root and the tree.
     assert calls == [["git", "cat-file", "-e", "HEAD:Cargo.toml"],
+                     ["git", "ls-tree", "HEAD"], ["git", "ls-tree", "-r", "HEAD"],
                      ["git", "ls-tree", "HEAD"], ["git", "ls-tree", "-r", "HEAD"],
                      ["git", "ls-tree", "HEAD"], ["git", "ls-tree", "-r", "HEAD"]]
 

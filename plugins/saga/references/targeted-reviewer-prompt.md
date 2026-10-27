@@ -111,6 +111,10 @@ What is available, as facts about the environment:
   environment and `python3` is the machine's own.
 - For a Rust project, the packet's `dependencies/rust` holds the vendored crates, and `cargo`
   builds offline from them.
+- For a JavaScript or TypeScript project whose `dependencies.json` has a `node` entry that says
+  `installed`, the copy's `node_modules` is a read-only link to the packages saga installed from
+  the head's lockfile, so imports resolve for node, bun, Vitest and Jest, here and in the re-run.
+  Leave the link alone. Any other `node` state means no packages are installed.
 - For a Dart project whose `dependencies.json` has a `dart` entry marked `installed`, `dart` on
   your `PATH` is the SDK and `PUB_CACHE` holds the packet's pub packages. Run
   `dart pub get --offline --enforce-lockfile` once, then `dart test <test file>`. Without that
@@ -132,8 +136,7 @@ or left in a build directory: every new or changed symlink gets the answer refus
 - **Limits:** 120 seconds, including any build from a clean copy; no network; umask 022.
 - **Runners:** the matcher reads the output of cargo test and cargo nextest, pytest, unittest,
   Vitest, Jest, bun test, go test, dart test and swift test (XCTest and Swift Testing). Output
-  from any other runner is compared by a weaker fallback, so prefer one of these. `node_modules`
-  is never present, so for JavaScript use `bun test`, not Vitest or Jest.
+  from any other runner is compared by a weaker fallback, so prefer one of these.
 - **Output:** `proof.output` is the cited test's whole failure block from the run: every line of
   the runner's failure section for that test. Never a summary, and never a `test ... FAILED`
   header without its body. Write assertion messages that print no duration, time, absolute path,
@@ -150,8 +153,10 @@ or left in a build directory: every new or changed symlink gets the answer refus
   import that is unavailable only when it is off the harm's path, and say so in the finding's
   `statement`. When `VIRTUAL_ENV` is not set, pytest may be missing: use a `unittest.TestCase` and
   `python3 -m unittest`.
-- **TypeScript and JavaScript:** `bun test path/to/file.test.ts` works when the code under test
-  needs no uninstalled package. Otherwise name the blocker.
+- **TypeScript and JavaScript:** with packages installed, use the project's own runner, started
+  directly (`node_modules/.bin/vitest run path/to/file.test.ts`, `node_modules/.bin/jest
+  path/to/file.test.js`, or `bun test`). Without them, `bun test path/to/file.test.ts` works when
+  the code under test needs no package; otherwise name the blocker.
 - **Rust:** a file under `tests/`, run with `cargo test --test <file> <name>`.
 - **Shell scripts:** a Python test (pytest, or unittest as above) that runs the script with
   `subprocess` the way it runs in normal use, meaning its shebang or the interpreter the project

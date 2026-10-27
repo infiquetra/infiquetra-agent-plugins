@@ -13,6 +13,7 @@ import time
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from contextlib import redirect_stderr
@@ -3912,3 +3913,102 @@ def test_the_final_worktree_is_checked_out_under_the_rerun_mask(tmp_path: Path) 
 
     assert C._worktree(runner, tmp_path, "HEAD") == (None, None)
     assert seen[0]["umask"] == C.RERUN_UMASK
+
+
+# --- npm packages in the packet ------------------------------------------------------------------
+
+
+def _node_packet(tmp_path: Path) -> Path:
+    """A packet whose ``dependencies.json`` names installed npm packages: one CommonJS, one
+    ESM-only."""
+    packet = tmp_path / "packet"
+    modules = packet / "dependencies" / "node" / "node_modules"
+    (modules / "cjs-dep").mkdir(parents=True)
+    (modules / "cjs-dep" / "package.json").write_text(
+        '{"name": "cjs-dep", "version": "1.0.0", "main": "index.js"}', "utf-8")
+    (modules / "cjs-dep" / "index.js").write_text('module.exports = () => "cjs";\n', "utf-8")
+    (modules / "esm-dep").mkdir()
+    (modules / "esm-dep" / "package.json").write_text(
+        '{"name": "esm-dep", "version": "1.0.0", "type": "module", '
+        '"exports": {".": "./index.js"}}', "utf-8")
+    (modules / "esm-dep" / "index.js").write_text('export default () => "esm";\n', "utf-8")
+    (packet / "dependencies.json").write_text(json.dumps({
+        "schema": "saga.review_dependencies.v1",
+        "node": {"state": "installed", "directory": "dependencies/node/node_modules"},
+    }), "utf-8")
+    return packet
+
+
+def test_node_rerun_links_the_packet_s_packages_and_gives_node_its_install(
+    tmp_path: Path,
+) -> None:
+    packet = _node_packet(tmp_path)
+    modules = (packet / "dependencies" / "node" / "node_modules").resolve()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None and offline.node == modules and modules in offline.reads
+        env, toolchain = C._node_rerun(scratch, ["python3", "t.py"], {"PATH": "/usr/bin"}, (),
+                                       offline)
+        assert (scratch / "node_modules").resolve() == modules
+        assert env == {"PATH": "/usr/bin"} and toolchain == ()
+    real = tmp_path / "install" / "bin"
+    real.mkdir(parents=True)
+    (real / "node").write_text("#!/bin/sh\n", "utf-8")
+    (real / "node").chmod(0o755)
+    (tmp_path / "install" / "lib").mkdir()
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    (shims / "node").symlink_to(real / "node")
+    env, toolchain = C._node_rerun(scratch, ["npx", "vitest", "run"], {"PATH": str(shims)}, (),
+                                   None)
+    assert env["PATH"].split(os.pathsep) == [str(real.resolve()), str(shims)]
+    assert toolchain == (real.resolve(), (tmp_path / "install" / "lib").resolve())
+    for part in env["PATH"].split(os.pathsep):
+        assert not part.startswith(str(packet.resolve()))
+
+
+def test_node_a_packet_without_npm_packages_adds_nothing(tmp_path: Path) -> None:
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    (packet / "dependencies.json").write_text(json.dumps({
+        "schema": "saga.review_dependencies.v1",
+        "node": {"state": "not-installed", "reason": "no-lockfile"}}), "utf-8")
+    with C._offline_dependencies(packet) as offline:
+        assert offline is None
+
+
+@pytest.mark.skipif(C.platform_helper() is None or shutil.which("node") is None,
+                    reason="needs the reproduction helper and node")
+def test_node_a_confined_rerun_resolves_commonjs_and_esm_and_writes_its_own_temp(
+    tmp_path: Path,
+) -> None:
+    packet = _node_packet(tmp_path)
+    scratch = Path(tempfile.mkdtemp(prefix="saga-review-rerun-"))
+    try:
+        assert C._make_tmp(scratch)
+        (scratch / "t.mjs").write_text(
+            'import esm from "esm-dep"; import { createRequire } from "node:module";\n'
+            'import os from "node:os"; import fs from "node:fs";\n'
+            'const require = createRequire(import.meta.url);\n'
+            'fs.mkdtempSync(os.tmpdir() + "/probe-");\n'
+            'console.log(esm(), require("cjs-dep")(), os.tmpdir());\n', "utf-8")
+        with C._offline_dependencies(packet) as offline:
+            assert offline is not None
+            env, toolchain = C._node_rerun(scratch, ["node", "t.mjs"],
+                                           C.child_environment(scratch), (), offline)
+            ran = C.run_confined(["node", "t.mjs"], scratch, env, scratch,
+                                 runner=C.review_tools.subprocess_runner, timeout=60,
+                                 reads=offline.reads, toolchain=toolchain)
+        assert ran.code == 0, ran.stderr
+        assert ran.stdout.split() == ["esm", "cjs", str(scratch / "tmp")]
+        if shutil.which("npx"):
+            # npx is JavaScript in node's own install, which the re-run must be able to read.
+            env, toolchain = C._node_rerun(scratch, ["npx", "--version"],
+                                           C.child_environment(scratch), (), None)
+            ran = C.run_confined(["npx", "--version"], scratch, env, scratch,
+                                 runner=C.review_tools.subprocess_runner, timeout=60,
+                                 toolchain=toolchain)
+            assert ran.code == 0, ran.stderr
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)

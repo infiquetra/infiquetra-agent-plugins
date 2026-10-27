@@ -122,6 +122,43 @@ Each one has to be found by running it, one fix at a time.
 **Generalizable rule.** Before claiming a tool runs sandboxed, run it sandboxed from a fresh copy
 with the real home unreadable, and fix one failure at a time. Then give the tool a writable
 folder of its own wherever it writes, and keep the shared inputs read-only behind links.
+### A lockfile check must read the file the way the package manager reads it
+
+**Author.** Jeff Cox
+
+**Evidence.** An independent review of PR #292 got non-registry packages past the first lockfile
+checks in `plugins/saga/scripts/review_dependencies_node.py`. In npm and yarn the installs ran
+end to end, and in pnpm the vetting step was bypassed. The npm check trusted the lockfile's own
+`inBundle` flag, which npm ignores. The yarn check split entries at blank lines, while yarn
+starts an entry at every unindented line. The pnpm check matched lines starting with
+`resolution:`, and a quoted key is the same key to YAML.
+
+**Mechanism.** Each check read a different structure from the one the manager acts on, so a
+lockfile could mean one thing to saga and another to the manager. The repair parses each format
+the manager's way (pnpm through a strict reader that refuses anything pnpm does not write), checks
+every entry, and treats nothing the lockfile asserts about itself as a reason to skip a check.
+
+**Generalizable rule.** Validate an untrusted file with the consumer's own grammar, or a stricter
+one that fails closed; never with a looser shortcut, and never let the file exempt itself.
+
+### A sandboxed command reaches a toolchain by its real path, not by the link on PATH
+
+**Author.** Jeff Cox
+
+**Evidence.** Two live Claude reviewer runs (Claude Code 2.1.311, Haiku, under $0.02 together)
+with the launcher's own settings. With node's real `bin` first on the prefix's `PATH`, `node`
+and bun imported a CommonJS and an ESM package through the copy's `node_modules` link and wrote
+under the reviewer's temp folder, and `npx` ran. Without it, `command -v node` skipped the
+`~/.local/bin/node` link, which the sandbox cannot read because home is blocked, found another
+`node` elsewhere on `PATH`, and that run exited with an error (not investigated further). Finish's confined re-run needed node's install
+(`bin` and `lib`) allowed for `npx`, which is JavaScript inside that install.
+
+**Mechanism.** The sandbox allows back a toolchain's real install, but a lookup by name reads the
+`PATH` entry first, and a link under the blocked home is unreadable, so the shell moves on. The
+`DEBUG` trap in the prefix restores `TMPDIR` after Claude's own export, for every tool.
+
+**Generalizable rule.** When a sandbox allows an install back by its real path, put that real
+path on the sandboxed `PATH` too; allowing the target does not make the link to it readable.
 
 ## 2026-10-26
 

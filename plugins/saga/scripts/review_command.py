@@ -36,6 +36,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 import review_calibration  # noqa: E402
 import review_dependencies  # noqa: E402
 import review_dependencies_dart  # noqa: E402
+import review_dependencies_node  # noqa: E402
 import review_diff  # noqa: E402
 import review_formula  # noqa: E402
 import review_records  # noqa: E402
@@ -205,6 +206,9 @@ class Offline:
     rust: bool = False
     #: The saga-written Python environment over the packet's packages, when there is one.
     python: Path | None = None
+    #: The packet's installed npm packages, linked at the re-run folder's root as
+    #: ``node_modules``, read-only; ``None`` when there are none.
+    node: Path | None = None
     #: The packet's pub cache, when there is one; each re-run gets a writable pub cache in its
     #: own ``tmp`` folder that links to it (:func:`_dart_pub_cache`).
     dart: Path | None = None
@@ -223,14 +227,15 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
     vendor = review_dependencies.rust_vendor(packet)
     deps = review_dependencies.python_environment(packet)
     python = shutil.which("python3") if deps is not None else None
+    modules = review_dependencies_node.node_modules(packet)
     dart = _offline_dart(packet)
-    if vendor is None and python is None and dart is None:
+    if vendor is None and python is None and modules is None and dart is None:
         yield None
         return
     temporary: list[Path] = []
     try:
         env: dict[str, str] = {}
-        reads: tuple[Path, ...] = ()
+        reads: tuple[Path, ...] = (modules,) if modules is not None else ()
         toolchain: tuple[Path, ...] = ()
         path = os.environ.get("PATH", "")
         shim: Path | None = None
@@ -257,8 +262,9 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
                 path = env["PATH"]
                 toolchain += review_dependencies.python_toolchain(shim, deps)
         if vendor is None:
-            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim, dart=dart_cache)
-                   if shim is not None or dart_cache is not None else None)
+            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim, node=modules,
+                           dart=dart_cache)
+                   if shim is not None or modules is not None or dart_cache is not None else None)
             return
         home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
         temporary.append(home)
@@ -271,10 +277,30 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
             env["PATH"] = os.pathsep.join([str(shim_cargo.parent), path])
         yield Offline(env=env, reads=(*reads, vendor, home), cargo=shim_cargo,
                       toolchain=(*review_dependencies.toolchain_paths(cargo), *toolchain),
-                      rust=True, python=shim, dart=dart_cache)
+                      rust=True, python=shim, node=modules, dart=dart_cache)
     finally:
         for folder in temporary:
             shutil.rmtree(folder, ignore_errors=True)
+
+
+def _node_rerun(
+    scratch: Path, argv: Sequence[str], env: dict[str, str], toolchain: tuple[Path, ...],
+    offline: Offline | None,
+) -> tuple[dict[str, str], tuple[Path, ...]]:
+    """What a JavaScript re-run adds: the packet's ``node_modules`` linked at *scratch*'s root,
+    where node's CommonJS and ESM resolvers both find it, and, for a command that needs node,
+    node's own install readable and its real ``bin`` first on ``PATH``, so a ``#!/usr/bin/env
+    node`` script finds it even when the operator's ``node`` is a link under the denied home.
+    Nothing from the packet goes on ``PATH``."""
+    if offline is not None and offline.node is not None:
+        review_dependencies_node.link_into(scratch, offline.node)
+    if argv and review_dependencies_node.needs_node(str(argv[0])):
+        path = env.get("PATH", "")
+        real = review_dependencies_node.node_bin(path)
+        if real is not None:
+            env = {**env, "PATH": os.pathsep.join([str(real), path])}
+        toolchain = (*toolchain, *review_dependencies_node.toolchain_paths(path))
+    return env, toolchain
 
 
 def _offline_dart(
@@ -540,6 +566,8 @@ def _prepare(
                 raise CommandFailure(2, str(exc)) from exc
         _publish(staging, out)
     finally:
+        # The packet's npm packages are sealed read-only; give their folders write back first.
+        review_dependencies_node.unseal(staging / review_dependencies_node.DIRECTORY)
         # A Dart cache in the packet is read-only file by file; give write back first.
         review_dependencies_dart.unseal(staging / "dependencies" / "dart")
         shutil.rmtree(staging, ignore_errors=True)
@@ -1151,6 +1179,7 @@ def _rerun_one(
         # By name on the operator's PATH: a folder in the reviewer's command is never trusted.
         toolchain = (*toolchain,
                      *review_dependencies.toolchain_paths(shutil.which(Path(argv[0]).name)))
+    env, toolchain = _node_rerun(scratch, argv, env, toolchain, offline)
     try:
         if confine is not None:
             ran = confine(argv, scratch, env, scratch)
