@@ -73,7 +73,7 @@
   re-run left behind cannot steer it, while `bwrap` gets `--unshare-pid --die-with-parent`.
   Third repair: a folder that is both a path dependency and a workspace member is checked for
   every section either role reads, in either order, and nested workspace members are walked
-  as roots.
+  as roots, each with its own `pubspec_overrides.yaml` checked as pub 3.13 reads it.
 - The reproduction matcher reads a `dart test` run of one file, whose lines leave the file out
   and name it only in the `loading` line. A file is taken only from a loaded file's name, so a
   run with no `loading` line still matches nothing, and a test named `x.dart: y` is read whole.

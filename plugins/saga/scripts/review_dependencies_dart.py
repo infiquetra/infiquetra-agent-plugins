@@ -484,16 +484,14 @@ _MEMBER_SECTIONS = (*_DEPENDENCY_SECTIONS, _WORKSPACE)
 
 def _check_pubspecs(source: Path, lock: Mapping[str, Mapping[str, Any]] | None = None) -> None:
     """Check every pubspec pub reads during resolution, before it compares anything with the
-    lock: the root ``pubspec.yaml`` and ``pubspec_overrides.yaml``; each workspace member's
-    ``pubspec.yaml``, at any depth, as a root; and, followed from all of those and from the
+    lock: the root's and each workspace member's (at any depth) ``pubspec.yaml`` and
+    ``pubspec_overrides.yaml``, as roots; and, followed from all of those and from the
     lock's path entries, each path dependency's ``pubspec.yaml`` (only its ``dependencies``, as
     pub reads it). A folder reached again with sections not yet checked (a path dependency that
     is also a workspace member, in either order) is read again for the union; a cycle ends.
     Another pubspec in the head (an example app, say) is never read by ``pub get`` at the root,
     so it is not checked."""
     queue: list[tuple[Path, tuple[str, ...]]] = [(source, _MEMBER_SECTIONS)]
-    _read_pubspec(source / "pubspec_overrides.yaml", source, required=False,
-                  sections=("dependency_overrides",), found=queue)
     for item in (lock or {}).values():
         description = item.get("description")
         if item.get("source") == "path" and isinstance(description, Mapping):
@@ -515,6 +513,11 @@ def _check_pubspecs(source: Path, lock: Mapping[str, Mapping[str, Any]] | None =
                              sections=tuple(name for name in _DEPENDENCY_SECTIONS if name in done),
                              found=queue)
         if _WORKSPACE in wanted:
+            # A root's or member's own pubspec_overrides.yaml, which pub 3.13 reads for each
+            # (measured: a member's and a nested member's overrides made pub contact the host
+            # they named; a path dependency's was ignored).
+            _read_pubspec(folder / "pubspec_overrides.yaml", source, required=False,
+                          sections=("dependency_overrides",), found=queue)
             members = data.get(_WORKSPACE)
             if members is None:
                 continue

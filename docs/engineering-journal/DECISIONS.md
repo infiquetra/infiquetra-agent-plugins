@@ -73,6 +73,10 @@ after refusing a link at `scratch/tmp`.
   section not yet covered, so the order in which roles are met cannot skip one. Nested
   workspace members are walked as roots, because pub 3.13 resolves them (measured with local
   folders). There is a cap of 200 pubspec reads.
+  Each root and member's own `pubspec_overrides.yaml` is checked as overrides, and its path
+  dependencies are walked. pub 3.13 reads a member's overrides file, at any depth, and ignores a
+  path dependency's (measured), so checking the member's file follows pub rather than refusing
+  more than pub reads.
 - **Finish's set-up.** It works through folders held open with `O_NOFOLLOW`, using `dir_fd`
   and `fchmod`. On Linux, `bwrap` also gets `--unshare-pid --die-with-parent`.
 - **Rejected:** a fresh scratch copy for every finding. It would need a new export of the head

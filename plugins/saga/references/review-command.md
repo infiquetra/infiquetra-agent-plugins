@@ -60,7 +60,7 @@ A `dart` entry's packages sit in `<packet>/dependencies/dart/pub-cache`, a pub c
 
 - the lock;
 - the root `pubspec.yaml` and `pubspec_overrides.yaml`;
-- each workspace member's `pubspec.yaml`, checked like the root, including members of members (pub 3.13 resolves nested workspaces);
+- each workspace member's `pubspec.yaml` and `pubspec_overrides.yaml`, checked like the root's, including members of members. pub 3.13 resolves nested workspaces and reads each member's overrides file; it ignores a path dependency's overrides file.
 - the `pubspec.yaml` of each path dependency, followed from all of those and from the lock's path entries. Only its `dependencies` section is checked, the one section pub reads from a package that is not a root. With the Dart SDK 3.13, a host named in a path dependency's `dev_dependencies` or `dependency_overrides` was never contacted, while one in its `dependencies` was. Saga remembers which sections it has checked in each folder. A folder that comes up again with sections not yet checked, such as a path dependency that is also a workspace member, in either order, is read again for the union. A cycle ends, and a head that makes saga read more than 200 pubspecs is refused.
 
 Other pubspecs, such as an example app's, are not read by `pub get` at the root and are not checked. Saga reads them with its own reader for the subset of YAML pub writes, so the checks see what pub sees.

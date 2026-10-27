@@ -434,6 +434,43 @@ def test_every_role_a_folder_plays_is_checked_whatever_the_order(
     assert pub.calls == [], "pub never ran"
 
 
+_EVIL_OVERRIDES = ("dependency_overrides:\n  evil:\n    hosted: http://127.0.0.1:9\n"
+                   "    version: ^1.0.0\n")
+
+
+@pytest.mark.parametrize("tree", [
+    {"pubspec.yaml": PUBSPEC + "workspace:\n- a\n",
+     "a/pubspec.yaml": "name: a\nresolution: workspace\n",
+     "a/pubspec_overrides.yaml": _EVIL_OVERRIDES},
+    {"pubspec.yaml": PUBSPEC + "workspace:\n- a\n",
+     "a/pubspec.yaml": "name: a\nresolution: workspace\nworkspace:\n- b\n",
+     "a/b/pubspec.yaml": "name: b\nresolution: workspace\n",
+     "a/b/pubspec_overrides.yaml": "dependency_overrides:\n  evil: {git: x}\n"},
+    {"pubspec.yaml": PUBSPEC + "workspace:\n- a\n",
+     "a/pubspec.yaml": "name: a\nresolution: workspace\n",
+     "a/pubspec_overrides.yaml": "dependency_overrides:\n  local:\n    path: ../pkgs/local\n",
+     "pkgs/local/pubspec.yaml": "name: local\ndependencies:\n  evil:\n    git: x\n"},
+])
+def test_a_workspace_member_s_own_overrides_file_is_checked(
+    tmp_path: Path, sdk: Any, tree: dict[str, str],
+) -> None:
+    """pub 3.13 reads a member's ``pubspec_overrides.yaml``, nested members' too (measured)."""
+    record, _packet, pub = _fetch(tmp_path, {"pubspec.lock": LOCK, **tree})
+    assert record["dart"]["state"] == "not-installed"
+    assert record["dart"]["reason"] in ("unsupported-source", "pubspec-unreadable")
+    assert pub.calls == []
+
+
+def test_a_path_dependency_s_overrides_file_is_ignored_as_pub_ignores_it(
+    tmp_path: Path, sdk: Any,
+) -> None:
+    head = {"pubspec.yaml": _ROOT_WITH_A, "pubspec.lock": _path_lock("pkgs/a"),
+            "pkgs/a/pubspec.yaml": "name: a\n", "pkgs/a/pubspec_overrides.yaml": _EVIL_OVERRIDES}
+    record, _packet, pub = _fetch(tmp_path, head)
+    assert record["dart"]["state"] == "installed", record
+    assert len(pub.calls) == 1
+
+
 def test_a_nested_workspace_member_outside_the_head_is_refused(tmp_path: Path, sdk: Any) -> None:
     tree = {"pubspec.yaml": PUBSPEC + "workspace:\n- a\n", "pubspec.lock": LOCK,
             "a/pubspec.yaml": "name: a\nresolution: workspace\nworkspace:\n- ../../elsewhere\n"}
