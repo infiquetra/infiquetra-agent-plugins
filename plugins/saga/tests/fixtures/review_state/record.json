@@ -535,13 +535,16 @@
           "introduced": true,
           "degraded": false,
           "consequence_jev": "misleads-a-person",
+          "consequence_jev_confidence": 0.9,
           "unconfirmed": false,
           "merge_outcome": null,
           "id": "rf:19f2994089ba6a92ab4829b410769197",
           "severity": "fix-later",
           "severity_basis": {
             "row": "judged.visible",
-            "modifiers": []
+            "modifiers": [
+              "jev-lowered"
+            ]
           },
           "flags": [
             "consequence-disagreement"

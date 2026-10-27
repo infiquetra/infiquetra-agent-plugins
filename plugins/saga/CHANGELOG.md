@@ -4,6 +4,16 @@
 
 ### Changed
 
+- Jev's lower consequence pick on a reproduced finding now applies only when Jev's confidence is
+  at least 0.8 (`JEV_ACT_CONFIDENCE` in `review_formula.py`). Before, any pick above the 0.6
+  floor in a lower group replaced the reviewer's, so a summary-based guess could cancel a harm the
+  reviewer had proved with a failing test. From 0.6 up to below 0.8 the reviewer's pick stands, so a
+  reproduced harm can still block, and the finding keeps `consequence-disagreement` so the author
+  sees it. When Jev's pick applies, `severity_basis.modifiers` names `jev-lowered`. A finding
+  record gains the code-filled `consequence_jev_confidence` (a number from 0 to 1, or `null`),
+  optional in the schema; a Jev pick with no recorded confidence counts as below 0.8. One function,
+  `apply_jev_pick`, serves both the formula and the `consequence-picks` entries, so they agree.
+
 - The targeted reviewer prompt's reproduction guidance is rewritten so reviewers prove real harms
   in every language, not only Rust. It states that a correctness or security finding can block only
   when reproduced, asks for a reproduction attempt on every harm finding believed, and keeps the

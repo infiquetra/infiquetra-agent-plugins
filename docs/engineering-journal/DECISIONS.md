@@ -2,6 +2,31 @@
 
 ## 2026-10-26
 
+### Jev's lower consequence pick applies only at confidence 0.8 or more
+
+**Decision.** Author: Jeff Cox. When a reproduced LLM finding's consequence is picked by both the
+reviewer and Jev, and Jev's pick is in a lower group (harm, visible, upkeep), Jev's pick replaces
+the reviewer's only when Jev's confidence is at least 0.8 (`JEV_ACT_CONFIDENCE` in
+`plugins/saga/scripts/review_formula.py`). From the 0.6 floor up to below 0.8 the reviewer's pick
+stands and the finding keeps the `consequence-disagreement` flag. Below the floor nothing changes
+(`unconfirmed`), and a same-group disagreement still keeps the reviewer's pick, flagged. The
+confidence is stored on the record as the code-filled `consequence_jev_confidence`; a Jev pick with
+no recorded confidence counts as below 0.8. When Jev's pick applies, `severity_basis.modifiers`
+names `jev-lowered`. One function, `apply_jev_pick`, serves the formula and the `consequence-picks`
+entries.
+
+**Rationale.** The reviewer holds a failing test; Jev reads a summary of it. A mid-confidence second
+opinion should be confirmed by a person, not acted on, and 0.8 is the operator's act band for Jev
+answers (act at 0.8 and above, confirm from 0.6). Failing toward the reviewer's pick keeps a proven
+harm from being silently dropped, while the flag still shows the author the disagreement.
+
+**Rejected alternatives.** Keep lower-wins at any confidence above the floor: a mid-confidence
+guess could cancel a proven harm. Reviewer always wins: it throws away a confident second opinion.
+Author decides: it adds a manual step to every disagreement.
+
+**Revisit when.** Held-out results show clean changes blocked by reviewer over-calls that Jev
+disputed below 0.8.
+
 ### A traced harm must name its blocker
 
 **Decision.** Author: Jeff Cox. The targeted reviewer prompt
