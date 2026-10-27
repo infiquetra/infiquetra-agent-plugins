@@ -4617,7 +4617,9 @@ def test_reviewer_read_confinement_settings_are_pinned(
             "allow": [
                 "Bash", "Edit(./**)", f"Edit(/{temp}/**)", f"Read(/{packet.resolve()}/**)",
             ],
-            "deny": ["WebFetch", "WebSearch", "mcp__*"] + [f"Read({p})" for p in credentials],
+            "deny": ["WebFetch", "WebSearch", "mcp__*"] + [f"Read({p})" for p in credentials]
+            # Claude's file tools never write the copy's node_modules link or what it reaches.
+            + ["Edit(./node_modules)", "Edit(./node_modules/**)"],
         },
     }
     linux = launcher.reviewer_claude_settings(copy, packet, env, toolchain=[], platform="linux")

@@ -2,6 +2,64 @@
 
 ## 2026-10-27
 
+### pnpm-lock.yaml is read by a strict subset reader, not a YAML library
+
+**Decision.** Author: Jeff Cox. `review_dependencies_node._pnpm_parse` reads only the block YAML
+pnpm itself writes (plain, single-quoted and simple double-quoted scalars, one-level flow
+mappings and sequences, `- item` lists) and refuses everything else: anchors, aliases, tags,
+merge keys, explicit `?` keys, block and multi-line scalars, document markers, directives,
+comments and duplicate keys. The check then works on the parsed structure: each package's
+resolution is exactly `{integrity: ...}`, importer versions are a version or a `link:` inside the
+head, and an unknown top-level key is `unsupported-lockfile`.
+
+**Rationale.** saga's scripts are standard library only, so no YAML library can be imported, and
+a general YAML loader would also accept the constructs a hostile lockfile would use to make
+saga and pnpm read different things. A reader that fails closed on anything outside pnpm's own
+output cannot disagree with pnpm about a lockfile pnpm wrote.
+
+**Rejected alternatives.** Vendoring a YAML library: a large new trusted dependency for one file.
+Line matching (the first version): a quoted `"resolution":` key slipped past it.
+
+**Revisit when.** A pnpm release writes a construct the reader refuses (the head then records
+`unsupported-lockfile`), or saga gains a vetted YAML dependency.
+
+### The reviewer shell's TMPDIR trap removes itself after one reset
+
+**Decision.** Author: Jeff Cox. The `DEBUG` trap in the reviewer's shell prefix saves `$_`,
+resets `TMPDIR` the first time it differs from the reviewer's folder (Claude's own export),
+removes itself, and restores `$_`.
+
+**Rationale.** Any `DEBUG` trap resets `PIPESTATUS` on bash 3.2, the `/bin/bash` the prefix uses
+on macOS when `$SHELL` is not a bash, and no trap body avoids that; a trap that runs before
+every command also overwrote `$_`. Removing the trap once Claude's export is undone means the
+reviewer's command runs with no trap at all, so `$_`, `PIPESTATUS` and the command's own
+`export TMPDIR=...` behave as they would without the prefix.
+
+**Rejected alternatives.** A trap that runs before every command: it breaks `PIPESTATUS` on bash
+3.2 and costs time in tight loops. Preferring a newer bash on `PATH`: changes the shell every
+reviewer command runs in. Rewriting Claude's command string: tied to its exact text.
+
+**Revisit when.** Claude Code stops exporting `TMPDIR` in its command string (the trap then stays
+armed for the whole command and `PIPESTATUS` on bash 3.2 is reset again), or offers a setting
+for the sandbox's temp folder.
+
+### Installed npm packages are sealed read-only on disk, not only by the sandbox
+
+**Decision.** Author: Jeff Cox. Prepare chmods the packet's `node_modules` to files 0444 (0555
+when executable) and folders 0555, and the reviewer settings deny `Edit` on every read-only
+dependency folder and on `./node_modules` in the copy.
+
+**Rationale.** Claude's file tools run outside the OS sandbox, and finish's re-run reads the
+packet, so a write that reached it would let a reviewer fake a reproduction. A live run found the
+tools already refused a write through the link (`Edit(./**)` does not match the resolved packet
+path), but that rests on how Claude matches paths today. File modes and explicit deny rules hold
+whatever that matching does.
+
+**Rejected alternatives.** Relying on the sandbox's `denyWrite` alone: it binds shell commands,
+not the file tools.
+
+**Revisit when.** Packet cleanup outside saga keeps failing on the sealed folders.
+
 ### npm packages reach the reviewer through a node_modules link, from a vetted lockfile
 
 **Decision.** Author: Jeff Cox. Prepare installs a JavaScript or TypeScript head's npm packages

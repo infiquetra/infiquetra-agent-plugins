@@ -198,6 +198,16 @@ def _contents(folder: Path) -> dict[str, Any]:
 
 
 @pytest.fixture(autouse=True)
+def _unseal_packets(tmp_path: Path) -> Any:
+    """Installed trees are sealed read-only; give their folders write back so pytest can remove
+    them, as whoever deletes a packet must."""
+    yield
+    for modules in tmp_path.rglob("node_modules"):
+        if not modules.is_symlink():
+            N.unseal(modules)
+
+
+@pytest.fixture(autouse=True)
 def _managers(monkeypatch: pytest.MonkeyPatch) -> None:
     real = shutil.which
 
@@ -248,8 +258,16 @@ def test_an_npm_head_installs_from_its_lockfile_into_the_packet(
     assert contents[".bin/tool"] == ("link", "../@scope/tool/cli.js")
     # pnpm's absolute links inside the folder become relative; links out of it are dropped.
     assert contents["pad-alias"] == ("link", "left-pad")
-    assert contents["@scope/tool/cli.js"][0] == 0o755
-    assert contents["left-pad/index.js"][0] == 0o644
+    # Sealed read-only, so a write that reaches the packet outside the OS sandbox is refused too;
+    # a package's scripts keep their execute bit.
+    assert contents["@scope/tool/cli.js"][0] == 0o555
+    assert contents["left-pad/index.js"][0] == 0o444
+    assert {path.stat().st_mode & 0o777 for path in modules.rglob("*")
+            if path.is_dir() and not path.is_symlink()} == {0o555}
+    with pytest.raises(PermissionError):
+        (modules / "left-pad" / "index.js").write_text("planted\n", "utf-8")
+    N.unseal(modules)
+    shutil.rmtree(modules)
     assert str(tmp_path) not in json.dumps(record)
 
 
@@ -393,10 +411,11 @@ GOOD = {"version": "1.0.0", "resolved": "https://registry.npmjs.org/x/-/x-1.0.0.
 
 @pytest.mark.parametrize(("lockfile", "text"), [
     ("package-lock.json", NPM_LOCK),
-    ("package-lock.json", _npm({"version": "1.0.0", "integrity": INTEGRITY})),
     ("package-lock.json", _npm({"link": True, "resolved": "packages/a"})),
     ("package-lock.json", _npm({"version": "1.0.0"}, key="packages/a")),
-    ("package-lock.json", _npm({**GOOD, "inBundle": True, "resolved": None})),
+    # A bundled entry arrives inside its parent's tarball: no resolved, or a registry one.
+    ("package-lock.json", _npm({"version": "1.0.0", "inBundle": True})),
+    ("package-lock.json", _npm({**GOOD, "inBundle": True})),
     ("pnpm-lock.yaml", PNPM_LOCK),
     ("pnpm-lock.yaml", PNPM_LOCK.replace(
         "    resolution: {integrity: " + INTEGRITY + "}",
@@ -433,7 +452,7 @@ def test_a_registry_only_lockfile_passes(lockfile: str, text: str) -> None:
         "    resolution: {integrity: " + INTEGRITY + "}",
         "    resolution:\n      tarball: https://example.invalid/x.tgz")),
     ("yarn.lock", YARN_LOCK.replace("https://registry.yarnpkg.com/", "https://example.invalid/")),
-    ("yarn.lock", YARN_LOCK + '\nx@file:../outside:\n  version "1.0.0"\n'),
+    ("yarn.lock", YARN_LOCK + '\n"x@file:../outside":\n  version "1.0.0"\n'),
     ("bun.lock", BUN_LOCK.replace('"left-pad@1.3.0", ""',
                                   '"left-pad@1.3.0", "https://example.invalid/"')),
     ("bun.lock", BUN_LOCK.replace('"left-pad@1.3.0"', '"left-pad@github:someone/left-pad"')),
@@ -553,3 +572,252 @@ def test_live_two_prepares_are_identical_and_resolve(
                                 'console.log(isOdd(3), nanoid().length);\n', "utf-8")
     ran = subprocess.run(["node", "t.mjs"], cwd=copy, capture_output=True, text=True)
     assert ran.stdout.split() == ["true", "21"], ran.stderr
+
+
+# --- repair pass: npm bundling, yarn's own reading, pnpm's structure ----------------------------
+
+
+@pytest.mark.parametrize("entry", [
+    # The lockfile's own inBundle flag is not trusted: npm decides bundling itself.
+    {"version": "1.0.0", "inBundle": True, "resolved": "file:../../outside.tgz",
+     "integrity": INTEGRITY},
+    {"version": "1.0.0", "inBundle": True, "resolved": "https://example.invalid/x-1.0.0.tgz",
+     "integrity": INTEGRITY},
+    {"version": "file:../outside", "inBundle": True},
+    {"version": "1.0.0", "inBundle": "yes", "integrity": INTEGRITY},
+    # Every other entry names its registry tarball and its integrity.
+    {"version": "1.0.0", "integrity": INTEGRITY},
+    {"version": "1.0.0", "resolved": GOOD["resolved"], "integrity": "not-a-hash"},
+])
+def test_npm_no_entry_escapes_the_registry_check(entry: dict[str, Any]) -> None:
+    assert N.vet("package-lock.json", _npm(entry)) == "non-registry-source"
+
+
+@pytest.mark.parametrize(("spec", "reason"), [
+    ("file:../outside", "non-registry-source"),
+    ("someone/left-pad", "non-registry-source"),
+    ("git+https://example.invalid/x.git", "non-registry-source"),
+    ("https://example.invalid/x.tgz", "non-registry-source"),
+    ("link:../outside", "non-registry-source"),
+    ("workspace:../../../outside", "non-registry-source"),
+    ("^1.3.0", None),
+    (">= 1.0.0 < 2 || 3.x", None),
+    ("npm:@scope/real@^2.0.0", None),
+    ("workspace:*", None),
+    ("catalog:", None),
+    ("latest", None),
+])
+def test_every_manifest_dependency_is_a_registry_range(
+    tmp_path: Path, spec: str, reason: str | None,
+) -> None:
+    (tmp_path / "packages" / "a").mkdir(parents=True)
+    (tmp_path / "package.json").write_text(PACKAGE_JSON, "utf-8")
+    (tmp_path / "packages" / "a" / "package.json").write_text(
+        json.dumps({"name": "a", "devDependencies": {"x": spec}}), "utf-8")
+    assert N.vet_manifests(tmp_path) == reason
+
+
+def test_a_manifest_naming_a_local_folder_never_runs_the_manager(tmp_path: Path) -> None:
+    manifest = json.dumps({"name": "example", "dependencies": {"x": "file:../outside"}})
+    record, _packet, runner = _fetch(tmp_path, {"package.json": manifest,
+                                                "package-lock.json": NPM_LOCK})
+    assert record["node"] == {"state": "not-installed", "reason": "non-registry-source"}
+    assert not runner.calls
+
+
+YARN_FULL = f"""# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"@scope/tool@^2.0.0", "@scope/tool@~2.0.0":
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/@scope/tool/-/tool-2.0.0.tgz#abc"
+  integrity {INTEGRITY}
+  dependencies:
+    left-pad "^1.3.0"
+    "@scope/other" "1.0.0"
+
+"alias@npm:left-pad@1.3.0", left-pad@1.3.0, left-pad@^1.3.0:
+  version "1.3.0"
+  resolved "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz#abc"
+  integrity {INTEGRITY}
+"""
+_ENTRY = f'  version "1.3.0"\n  resolved "{GOOD["resolved"]}"\n  integrity {INTEGRITY}\n'
+
+
+@pytest.mark.parametrize("text", [YARN_FULL, YARN_FULL.replace('\n\n"alias@', '\n"alias@')])
+def test_yarn_a_registry_only_lockfile_passes_with_or_without_blank_lines(text: str) -> None:
+    assert N.vet("yarn.lock", text) is None
+
+
+@pytest.mark.parametrize("tail", [
+    # An adjacent entry, with no blank line before it, as yarn itself may write one.
+    '"x@file:../outside":\n  version "1.0.0"\n',
+    'x@file:../outside:\n  version "1.0.0"\n',
+    '"x@github:someone/x":\n' + _ENTRY,
+    '"x@https://example.invalid/x.tgz":\n' + _ENTRY,
+    'x@1.0.0:\n  version "1.0.0"\n  resolved "https://example.invalid/x.tgz"\n'
+    f'  integrity {INTEGRITY}\n',
+    # A duplicate key, a missing integrity, a second resolved, a quoted field name, a tab.
+    'left-pad@1.3.0:\n' + _ENTRY,
+    f'x@1.0.0:\n  version "1.0.0"\n  resolved "{GOOD["resolved"]}"\n',
+    'x@1.0.0:\n' + _ENTRY + f'  resolved "{GOOD["resolved"]}"\n',
+    'x@1.0.0:\n' + _ENTRY.replace("  resolved ", '  "resolved" '),
+    'x@1.0.0:\n' + _ENTRY.replace("  version", "\tversion"),
+    'x@1.0.0:\n' + _ENTRY + '      deeper "1"\n',
+])
+def test_yarn_an_entry_read_the_way_yarn_reads_it_is_refused(tail: str) -> None:
+    text = YARN_FULL.rstrip("\n") + "\n" + tail
+    assert N.vet("yarn.lock", text) is not None
+
+
+PNPM_FULL = f"""lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      left-pad:
+        specifier: ^1.3.0
+        version: 1.3.0
+      '@scope/tool':
+        specifier: 2.0.0
+        version: 2.0.0(left-pad@1.3.0)
+    devDependencies:
+      sibling:
+        specifier: workspace:*
+        version: link:packages/sibling
+
+  packages/sibling:
+    dependencies:
+      left-pad:
+        specifier: 1.3.0
+        version: 1.3.0
+
+packages:
+
+  '@scope/tool@2.0.0':
+    resolution: {{integrity: {INTEGRITY}}}
+    engines: {{node: '>=18'}}
+    cpu: [x64, arm64]
+    hasBin: true
+    deprecated: Use something else, it's faster
+    peerDependencies:
+      left-pad: '*'
+
+  left-pad@1.3.0:
+    resolution:
+      integrity: {INTEGRITY}
+
+snapshots:
+
+  '@scope/tool@2.0.0(left-pad@1.3.0)':
+    dependencies:
+      left-pad: 1.3.0
+    transitivePeerDependencies:
+      - supports-color
+
+  left-pad@1.3.0: {{}}
+"""
+PNPM_V6 = f"""lockfileVersion: '6.0'
+
+dependencies:
+  left-pad:
+    specifier: 1.3.0
+    version: 1.3.0
+
+packages:
+
+  /left-pad@1.3.0:
+    resolution: {{integrity: {INTEGRITY}}}
+    dev: false
+"""
+
+
+@pytest.mark.parametrize("text", [PNPM_FULL, PNPM_V6])
+def test_pnpm_the_shapes_pnpm_writes_pass(text: str) -> None:
+    assert N.vet("pnpm-lock.yaml", text) is None
+
+
+_RESOLUTION = "    resolution: {integrity: " + INTEGRITY + "}"
+
+
+@pytest.mark.parametrize("change", [
+    # Another spelling of the resolution key, quoted either way.
+    (_RESOLUTION, '    "resolution": {tarball: https://example.invalid/x.tgz}'),
+    (_RESOLUTION, "    'resolution': {tarball: https://example.invalid/x.tgz}"),
+    (_RESOLUTION, _RESOLUTION + "\n    resolution: {tarball: https://example.invalid/x.tgz}"),
+    (_RESOLUTION, "    resolution: {integrity: " + INTEGRITY + ", tarball: https://e.invalid/x}"),
+    ("      integrity: " + INTEGRITY, "      integrity: " + INTEGRITY
+     + "\n      tarball: https://example.invalid/x.tgz"),
+    # YAML constructs pnpm never writes.
+    (_RESOLUTION, "    resolution: &a {integrity: " + INTEGRITY + "}"),
+    (_RESOLUTION, "    resolution: *a"),
+    (_RESOLUTION, "    <<: {resolution: {tarball: https://example.invalid/x.tgz}}"),
+    (_RESOLUTION, "    ? resolution\n    : {tarball: https://example.invalid/x.tgz}"),
+    (_RESOLUTION, "    resolution: !!map {integrity: " + INTEGRITY + "}"),
+    (_RESOLUTION, "    resolution: {integrity: {nested: x}}"),
+    ("    hasBin: true", "    hasBin: |\n      true"),
+    ("    deprecated: Use something else, it's faster",
+     "    deprecated: Use something\n      else"),
+    ("lockfileVersion: '9.0'", "---\nlockfileVersion: '9.0'"),
+    ("lockfileVersion: '9.0'", "# a comment\nlockfileVersion: '9.0'"),
+    # Importer versions: only a version or a link inside the head.
+    ("version: link:packages/sibling", "version: link:../outside"),
+    ("specifier: ^1.3.0\n        version: 1.3.0",
+     "specifier: ^1.3.0\n        version: file:../outside"),
+    ("specifier: ^1.3.0\n        version: 1.3.0",
+     "specifier: ^1.3.0\n        version: https://example.invalid/x.tgz"),
+    ("left-pad@1.3.0:\n    resolution:\n", "left-pad@https://e.invalid/x.tgz:\n    resolution:\n"),
+    ("  left-pad@1.3.0: {}", "  left-pad@1.3.0: {}\n  left-pad@1.3.0: {}"),
+])
+def test_pnpm_anything_outside_pnpm_s_own_output_is_refused(change: tuple[str, str]) -> None:
+    old, new = change
+    assert old in PNPM_FULL, old
+    assert N.vet("pnpm-lock.yaml", PNPM_FULL.replace(old, new, 1)) is not None
+
+
+def test_pnpm_an_unknown_top_level_key_is_unsupported() -> None:
+    text = PNPM_FULL.replace("settings:", "registries:\n  default: https://e.invalid/\nsettings:")
+    assert N.vet("pnpm-lock.yaml", text) == "unsupported-lockfile"
+
+
+# --- repair pass: links resolved for real, the toolchain filter ---------------------------------
+
+
+def test_a_link_through_another_link_that_leaves_the_folder_is_dropped(tmp_path: Path) -> None:
+    root = tmp_path / "node_modules"
+    (root / "x").mkdir(parents=True)
+    (root / "x" / "up").symlink_to("..")
+    (root / "y").symlink_to("x/up/..")      # as text: node_modules/x; really: above the folder
+    (root / "z").symlink_to("x/up/x")       # really node_modules/x: inside
+    (root / "loop").symlink_to("loop")
+    assert N._inside_link({str(root)}, Path("y"), "x/up/..") == "x/up/.."
+    assert N._resolves_inside(root, Path("y")) is False
+    assert N._resolves_inside(root, Path("z")) is True
+    assert N._resolves_inside(root, Path("loop")) is False
+    assert N._prune_escaping_links(root) == 2
+    assert sorted(path.name for path in root.iterdir()) == ["x", "z"]
+
+
+def test_node_s_toolchain_folders_skip_home_and_shared_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    (home / "tools").mkdir(parents=True)
+    node = home / "node"  # the real binary straight in home, not in a bin folder
+    node.write_text("#!/bin/sh\n", "utf-8")
+    node.chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    assert N.toolchain_paths(str(home)) == ()
+    (home / ".local" / "bin").mkdir(parents=True)
+    moved = home / ".local" / "bin" / "node"
+    node.rename(moved)
+    (home / ".local" / "lib").mkdir()
+    # ~/.local is a shared root, but its bin and lib are ordinary folders.
+    assert N.toolchain_paths(str(home / ".local" / "bin")) == (
+        (home / ".local" / "bin").resolve(), (home / ".local" / "lib").resolve())

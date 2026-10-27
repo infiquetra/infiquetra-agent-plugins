@@ -43,7 +43,7 @@ import stat
 import sys
 import time
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -164,7 +164,8 @@ def toolchain_paths(path: str) -> tuple[Path, ...]:
     real = Path(os.path.realpath(found))
     install = real.parent.parent if real.parent.name == "bin" else real.parent
     parts = [install / "bin", install / "lib"] if real.parent.name == "bin" else [real.parent]
-    return tuple(part for part in parts if part.is_dir())
+    # Like the Rust and Python toolchain folders: never home, a shared root or a credential path.
+    return tuple(part for part in parts if part.is_dir() and D.read_problem(part) is None)
 
 
 def needs_node(argv0: str) -> bool:
@@ -193,6 +194,9 @@ def _install(runner: D.Process, packet: Path, export: D.Export, lockfile: str,
             if problem is not None:
                 raise _Failure(problem)
             _strip_configuration(source)
+            problem = vet_manifests(source)
+            if problem is not None:
+                raise _Failure(problem)
             found = shutil.which(manager, path=os.environ.get("PATH", ""))
             if found is None:
                 raise _Failure("manager-missing")
@@ -204,6 +208,7 @@ def _install(runner: D.Process, packet: Path, export: D.Export, lockfile: str,
             if installed.is_symlink() or not installed.is_dir() or not _packages(installed):
                 return {"state": "no-dependencies", "manager": manager, "lockfile": lockfile}
             dropped = _copy_modules(installed, target)
+            dropped += _prune_escaping_links(target)
             record: dict[str, Any] = {
                 "state": "installed",
                 "directory": DIRECTORY,
@@ -214,13 +219,48 @@ def _install(runner: D.Process, packet: Path, export: D.Export, lockfile: str,
             }
             if dropped:
                 record["dropped"] = {"links": dropped}
+            seal(target)
             return record
         except _Failure as exc:
+            unseal(target)
             D._remove(target)
             return {"state": "not-installed", "reason": exc.reason}
         except OSError:
+            unseal(target)
             D._remove(target)
             return {"state": "not-installed", "reason": "install-failed"}
+
+
+def seal(tree: Path) -> None:
+    """Make every file in *tree* 0444 (0555 when executable) and every folder 0555, without
+    following links, so a write
+    that reaches it outside the OS sandbox (a vendor's own file tools) is refused too."""
+    if tree.is_symlink() or not tree.is_dir():
+        return
+    for folder, dirs, files in os.walk(tree, topdown=False):
+        for name in files:
+            path = os.path.join(folder, name)
+            if not os.path.islink(path):
+                # A package's scripts keep their execute bit: ``node_modules/.bin`` runs them.
+                os.chmod(path, 0o555 if os.stat(path).st_mode & 0o111 else 0o444)
+        for name in dirs:
+            path = os.path.join(folder, name)
+            if not os.path.islink(path):
+                os.chmod(path, 0o555)
+    os.chmod(tree, 0o555)
+
+
+def unseal(tree: Path) -> None:
+    """Give folders under *tree* back their owner's write permission, so it can be removed. Does
+    nothing when there is no such folder; never follows a link."""
+    if tree.is_symlink() or not tree.is_dir():
+        return
+    os.chmod(tree, 0o755)
+    for folder, dirs, _files in os.walk(tree):
+        for name in dirs:
+            path = os.path.join(folder, name)
+            if not os.path.islink(path):
+                os.chmod(path, 0o755)
 
 
 def _strip_configuration(source: Path) -> None:
@@ -354,6 +394,48 @@ def _copy_modules(source: Path, target: Path) -> int:
     return dropped
 
 
+def _prune_escaping_links(target: Path) -> int:
+    """Remove every link in *target* that, resolved one component at a time through the links
+    inside *target*, would leave it. Returns how many were removed."""
+    removed = 0
+    for folder, dirs, files in os.walk(target):
+        for name in sorted(dirs + files):
+            path = Path(folder) / name
+            if path.is_symlink() and not _resolves_inside(target, path.relative_to(target)):
+                path.unlink()
+                removed += 1
+                if name in dirs:
+                    dirs.remove(name)
+    return removed
+
+
+def _resolves_inside(root: Path, relative: Path, hops: int = 40) -> bool:
+    """Whether *relative* (a path under *root*) resolves inside *root*. Each component that is a
+    link inside *root* is replaced by its target; a ``..`` above *root*, an absolute target or
+    too many hops is outside. Nothing outside *root* is ever looked at."""
+    queue = list(PurePosixPath(relative.as_posix()).parts)
+    current: list[str] = []
+    while queue:
+        part = queue.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not current:
+                return False
+            current.pop()
+            continue
+        candidate = root.joinpath(*current, part)
+        if candidate.is_symlink():
+            hops -= 1
+            target = os.readlink(candidate)
+            if hops < 0 or os.path.isabs(target) or "\0" in target:
+                return False
+            queue = list(PurePosixPath(target).parts) + queue
+            continue
+        current.append(part)
+    return True
+
+
 def _inside_link(roots: set[str], rel: Path, target: str) -> str | None:
     """The relative target to write for a symlink at *rel* (inside the copied folder) pointing
     at *target*, or ``None`` when it would leave the folder."""
@@ -408,6 +490,9 @@ def _inside_head(base: str, relative: Any) -> bool:
 
 
 def _vet_npm(text: str) -> str | None:
+    """Every ``node_modules/...`` entry, the lockfile's own ``inBundle`` flag ignored (npm works
+    bundling out for itself): a plain version, and either a public-registry ``resolved`` with an
+    ``integrity``, or, for an entry that says it is bundled, no ``resolved`` at all."""
     try:
         data = json.loads(text)
     except ValueError:
@@ -428,76 +513,395 @@ def _vet_npm(text: str) -> str | None:
             continue
         if "node_modules" not in key.split("/"):
             continue  # a workspace package's own folder in the head
-        if item.get("inBundle"):
-            continue
         version = item.get("version")
-        if not isinstance(version, str) or _FOREIGN_SPEC.match(version):
+        if not isinstance(version, str) or not _PLAIN_VERSION.fullmatch(version):
             return "non-registry-source"
         resolved = item.get("resolved")
-        if resolved is not None and not _registry_url(resolved):
-            return "non-registry-source"
-        if not isinstance(item.get("integrity"), str):
+        if resolved is None and item.get("inBundle") is True:
+            continue  # it arrives inside its parent's registry tarball
+        if not _registry_url(resolved) or not _INTEGRITY.fullmatch(str(item.get("integrity"))):
             return "non-registry-source"
     return None
 
 
-def _vet_pnpm(text: str) -> str | None:
-    version = re.search(r"^lockfileVersion:\s*'?([0-9.]+)'?\s*$", text, re.MULTILINE)
-    if version is None or version.group(1).split(".")[0] not in ("6", "9"):
-        return "unsupported-lockfile"
-    section, importer = "", "."
-    resolution_indent: int | None = None
-    for line in text.splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
+_PLAIN_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]*)?")
+_INTEGRITY = re.compile(r"sha(?:1|256|384|512)-[A-Za-z0-9+/]+={0,2}")
+#: A dependency range a manifest or a yarn.lock header may name: plain semver range syntax, or
+#: an ``npm:`` alias of one. No URL, path, git or tag with a ``:`` or ``/``.
+_RANGE = re.compile(r"[0-9A-Za-z.*^~<>=|+ \-]*")
+_NAME = re.compile(r"(?:@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*", re.IGNORECASE)
+
+
+def _plain_spec(spec: str) -> bool:
+    """Whether *spec* is a registry range: plain semver syntax, or ``npm:<name>@<range>``."""
+    if spec.startswith("npm:"):
+        name, at, rest = spec[4:].rpartition("@")
+        if not at or not name:
+            name, rest = spec[4:], ""
+        return bool(_NAME.fullmatch(name)) and bool(_RANGE.fullmatch(rest))
+    return bool(spec) and bool(_RANGE.fullmatch(spec))
+
+
+def _split_key(key: str) -> tuple[str, str] | None:
+    """``name@spec`` split at the ``@`` after the (possibly scoped) name."""
+    at = key.find("@", 1)
+    if at <= 0:
+        return None
+    name, spec = key[:at], key[at + 1:]
+    return (name, spec) if _NAME.fullmatch(name) else None
+
+
+def vet_manifests(source: Path) -> str | None:
+    """Every ``package.json`` in the export, outside ``node_modules``: each dependency it names
+    is a registry range, an ``npm:`` alias or a ``workspace:`` reference inside the head."""
+    for folder, dirs, files in os.walk(source):
+        dirs[:] = sorted(d for d in dirs if d != "node_modules")
+        if "package.json" not in files:
             continue
-        indent = len(line) - len(line.lstrip(" "))
-        stripped = line.strip()
-        if indent == 0:
-            section = stripped.rstrip(":")
-            resolution_indent = None
-            continue
-        if resolution_indent is not None:
-            if indent > resolution_indent:
-                if not re.fullmatch(r"integrity:\s*\S+", stripped):
+        here = Path(folder).relative_to(source).as_posix()
+        try:
+            data = json.loads((Path(folder) / "package.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return "unsupported-lockfile"
+        if not isinstance(data, dict):
+            return "unsupported-lockfile"
+        for field in ("dependencies", "devDependencies", "optionalDependencies",
+                      "peerDependencies", "overrides", "resolutions"):
+            table = data.get(field)
+            if table is None:
+                continue
+            if not isinstance(table, dict):
+                return "unsupported-lockfile"
+            for spec in _leaf_specs(table):
+                if spec == "catalog:" or re.fullmatch(r"catalog:[A-Za-z0-9._-]+", spec):
+                    continue  # pnpm's catalogs: the lockfile records what each resolves to
+                if spec.startswith("workspace:"):
+                    rest = spec[len("workspace:"):]
+                    if not (_RANGE.fullmatch(rest) or _inside_head(here, rest)):
+                        return "non-registry-source"
+                elif spec.startswith("$"):
+                    continue  # an npm override naming a direct dependency's own range
+                elif not _plain_spec(spec):
                     return "non-registry-source"
-                continue
-            resolution_indent = None
-        if section == "importers" and indent == 2 and stripped.endswith(":"):
-            importer = stripped[:-1].strip("'\"")
-            if not _inside_head(".", importer):
-                return "non-registry-source"
-            continue
-        if stripped.startswith("resolution:"):
-            rest = stripped[len("resolution:"):].strip()
-            if not rest:
-                resolution_indent = indent
-                continue
-            if not re.fullmatch(r"\{\s*integrity:\s*[^,{}]+\}", rest):
-                return "non-registry-source"
-            continue
-        value = stripped.split(":", 1)[1].strip().strip("'\"") if ":" in stripped else ""
-        if value.startswith("link:"):
-            if section != "importers" or not _inside_head(importer, value[len("link:"):]):
-                return "non-registry-source"
-        elif re.match(r"^(file:|git\+|github:|https?://)", value):
-            return "non-registry-source"
     return None
+
+
+def _leaf_specs(table: Mapping[str, Any]) -> list[str]:
+    found: list[str] = []
+    for value in table.values():
+        if isinstance(value, dict):
+            found += _leaf_specs(value)
+        else:
+            found.append(value if isinstance(value, str) else "\0")
+    return found
+
+
+# yarn.lock, classic (version 1), read the way yarn reads it: an entry starts at every line with
+# no indent, its fields are indented two spaces, and a dependency table's lines four.
+_YARN_KEY = re.compile(r'"([^"\\]+)"|([^\s",:#][^\s",:#]*)')
+_YARN_FIELD = re.compile(r'([A-Za-z]+) ("(?:[^"\\]*)"|[^\s"]+)')
+_YARN_DEPENDENCY = re.compile(r'(?:"[^"\\]+"|[^\s"]+) "[^"\\]*"')
+_YARN_TABLES = frozenset({"dependencies", "optionalDependencies"})
+_YARN_FIELDS = frozenset({"version", "resolved", "integrity", "uid"})
 
 
 def _vet_yarn(text: str) -> str | None:
-    if "__metadata:" in text or "# yarn lockfile v1" not in text:
+    if not text.startswith("# ") or "# yarn lockfile v1" not in text.splitlines()[:3]:
         return "unsupported-lockfile"
-    for block in re.split(r"\n[ \t]*\n", text):
-        lines = [line for line in block.splitlines() if line.strip() and not line.startswith("#")]
-        if not lines:
+    seen: set[str] = set()
+    entry: dict[str, list[str]] | None = None
+    table = False
+    entries: list[dict[str, list[str]]] = []
+    for line in text.split("\n"):
+        if not line.strip():
             continue
-        if lines[0].startswith((" ", "\t")):
+        if line.startswith("#"):
+            if entry is not None:
+                return "unsupported-lockfile"
+            continue
+        if "\t" in line or "\r" in line or "\\" in line:
             return "unsupported-lockfile"
-        urls = [line.strip()[len("resolved "):].strip().strip('"') for line in lines[1:]
-                if line.strip().startswith("resolved ")]
-        if len(urls) != 1 or not _registry_url(urls[0]):
+        indent = len(line) - len(line.lstrip(" "))
+        body = line.strip()
+        if indent == 0:
+            if not body.endswith(":"):
+                return "unsupported-lockfile"
+            keys = _yarn_keys(body[:-1])
+            if keys is None:
+                return "unsupported-lockfile"
+            for key in keys:
+                if key in seen:
+                    return "unsupported-lockfile"
+                seen.add(key)
+                parts = _split_key(key)
+                if parts is None or not _plain_spec(parts[1]):
+                    return "non-registry-source"
+            entry, table = {}, False
+            entries.append(entry)
+        elif entry is None:
+            return "unsupported-lockfile"
+        elif indent == 2:
+            if body.endswith(":") and body[:-1] in _YARN_TABLES:
+                if body[:-1] in entry:
+                    return "unsupported-lockfile"
+                entry[body[:-1]] = []
+                table = True
+                continue
+            match = _YARN_FIELD.fullmatch(body)
+            if match is None or match.group(1) not in _YARN_FIELDS or match.group(1) in entry:
+                return "unsupported-lockfile"
+            entry[match.group(1)] = [match.group(2).strip('"')]
+            table = False
+        elif indent == 4 and table:
+            if not _YARN_DEPENDENCY.fullmatch(body):
+                return "unsupported-lockfile"
+        else:
+            return "unsupported-lockfile"
+    for item in entries:
+        resolved = item.get("resolved", [""])[0]
+        integrity = item.get("integrity", [""])[0]
+        if not _registry_url(resolved) or not _INTEGRITY.fullmatch(integrity):
+            return "non-registry-source"
+        if not _PLAIN_VERSION.fullmatch(item.get("version", [""])[0]):
             return "non-registry-source"
     return None
+
+
+def _yarn_keys(header: str) -> list[str] | None:
+    """The comma-separated keys of an entry header, each quoted with no escape or plain."""
+    keys: list[str] = []
+    position = 0
+    while True:
+        match = _YARN_KEY.match(header, position)
+        if match is None:
+            return None
+        keys.append(match.group(1) or match.group(2))
+        position = match.end()
+        if position == len(header):
+            return keys
+        if header[position:position + 2] != ", ":
+            return None
+        position += 2
+
+
+# pnpm-lock.yaml: a strict reader of the block YAML pnpm itself writes, failing closed on
+# everything else (see the DECISIONS entry): plain or single-quoted keys and scalars, one-level
+# flow mappings and sequences, ``- item`` lists. No anchors, aliases, tags, merge keys, explicit
+# keys, block or multi-line scalars, documents, directives, comments or duplicate keys.
+class _Unsupported(Exception):
+    pass
+
+
+_PNPM_QUOTED = re.compile(r"'(?:[^']|'')*'")
+#: The first character of a plain scalar: never one YAML reserves for another construct.
+_PNPM_PLAIN_START = re.compile(r"[^\s\-?:,\[\]{}#&*!|>'\"%@`]|[-?:][^\s,\[\]{}]")
+
+
+def _pnpm_scalar(text: str, flow: bool = False) -> str:
+    """A single-quoted, simple double-quoted or plain scalar; *flow* is inside ``{}`` or ``[]``,
+    where a plain scalar may not hold ``,[]{}``."""
+    text = text.strip()
+    if _PNPM_QUOTED.fullmatch(text):
+        return text[1:-1].replace("''", "'")
+    if text.startswith('"'):
+        if re.fullmatch(r'"[^"\\]*"', text):
+            return text[1:-1]
+        raise _Unsupported
+    if (not text or not _PNPM_PLAIN_START.match(text) or ": " in text or " #" in text
+            or text.endswith(":") or (flow and any(c in text for c in ",[]{}"))):
+        raise _Unsupported
+    return text
+
+
+def _pnpm_flow(text: str) -> Any:
+    """A one-level ``{k: v, ...}`` or ``[a, b]``, or a scalar."""
+    text = text.strip()
+    if text.startswith("{") or text.startswith("["):
+        close = "}" if text[0] == "{" else "]"
+        if not text.endswith(close):
+            raise _Unsupported
+        inner = text[1:-1].strip()
+        items = [part for part in _split_flow(inner)] if inner else []
+        if close == "]":
+            return [_pnpm_scalar(item, flow=True) for item in items]
+        mapping: dict[str, str] = {}
+        for item in items:
+            key, sep, value = item.partition(": ")
+            key = _pnpm_scalar(key, flow=True)
+            if not sep or key in mapping:
+                raise _Unsupported
+            mapping[key] = _pnpm_scalar(value, flow=True)
+        return mapping
+    return _pnpm_scalar(text)
+
+
+def _split_flow(inner: str) -> list[str]:
+    parts, current, quoted = [], "", False
+    for char in inner:
+        if char == "'":
+            quoted = not quoted
+        if char in "{}[]" and not quoted:
+            raise _Unsupported  # one level only
+        if char == "," and not quoted:
+            parts.append(current)
+            current = ""
+        else:
+            current += char
+    if quoted:
+        raise _Unsupported
+    return [*parts, current]
+
+
+def _pnpm_key(text: str) -> str:
+    if text.startswith("? ") or text.startswith("<<") or text.startswith("&"):
+        raise _Unsupported
+    return _pnpm_scalar(text)
+
+
+def _pnpm_parse(text: str) -> Any:
+    """The subset of YAML pnpm writes, as dicts, lists and strings; :class:`_Unsupported` for
+    anything outside it."""
+    root: dict[str, Any] = {}
+    #: (the indent this container's entries sit at, the container)
+    stack: list[tuple[int, Any]] = [(0, root)]
+    pending: tuple[dict[str, Any], str, int] | None = None
+    for raw in text.split("\n"):
+        if not raw.strip():
+            continue
+        if "\t" in raw or "\r" in raw or raw.lstrip().startswith(("#", "---", "...", "%")):
+            raise _Unsupported
+        indent = len(raw) - len(raw.lstrip(" "))
+        body = raw.strip()
+        if pending is not None:
+            owner, key, key_indent = pending
+            pending = None
+            if indent > key_indent:
+                child: Any = [] if body.startswith("- ") else {}
+                owner[key] = child
+                stack.append((indent, child))
+            else:
+                owner[key] = {}
+        while len(stack) > 1 and indent < stack[-1][0]:
+            stack.pop()
+        level, container = stack[-1]
+        if indent != level:
+            raise _Unsupported  # a continuation line, or a level no key opened
+        if isinstance(container, list):
+            if not body.startswith("- "):
+                raise _Unsupported
+            container.append(_pnpm_flow(body[2:]))
+            continue
+        key_text, sep, value = _partition_key(body)
+        if not sep:
+            raise _Unsupported
+        key = _pnpm_key(key_text)
+        if key in container:
+            raise _Unsupported
+        if value.strip():
+            container[key] = _pnpm_flow(value)
+        else:
+            container[key] = {}
+            pending = (container, key, indent)
+    return root
+
+
+def _partition_key(body: str) -> tuple[str, str, str]:
+    """``key: value`` or ``key:``, with a single-quoted key allowed to hold ``: ``."""
+    if body.startswith("'"):
+        match = _PNPM_QUOTED.match(body)
+        if match is None:
+            raise _Unsupported
+        rest = body[match.end():]
+        if rest == ":":
+            return match.group(0), ":", ""
+        if rest.startswith(": "):
+            return match.group(0), ":", rest[2:]
+        raise _Unsupported
+    if body.endswith(":") and ": " not in body:
+        return body[:-1], ":", ""
+    key, sep, value = body.partition(": ")
+    return key, (":" if sep else ""), value
+
+
+_PNPM_TOP = frozenset({
+    "lockfileVersion", "settings", "importers", "packages", "snapshots", "overrides",
+    "dependencies", "devDependencies", "optionalDependencies", "catalogs",
+    "patchedDependencies", "packageExtensionsChecksum", "pnpmfileChecksum",
+    "ignoredOptionalDependencies", "time", "onlyBuiltDependencies", "neverBuiltDependencies",
+})
+_PNPM_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]*)?(?:\(.*\))?")
+_PNPM_IMPORTER_TABLES = ("dependencies", "devDependencies", "optionalDependencies")
+
+
+def _vet_pnpm(text: str) -> str | None:
+    try:
+        data = _pnpm_parse(text)
+    except (_Unsupported, RecursionError):
+        return "unsupported-lockfile"
+    version = data.get("lockfileVersion")
+    if not isinstance(version, str) or version.split(".")[0] not in ("6", "9"):
+        return "unsupported-lockfile"
+    if set(data) - _PNPM_TOP:
+        return "unsupported-lockfile"
+    importers = data.get("importers") if "importers" in data else {".": {
+        name: data[name] for name in _PNPM_IMPORTER_TABLES if name in data}}
+    if not isinstance(importers, dict):
+        return "unsupported-lockfile"
+    for path, importer in importers.items():
+        if not _inside_head(".", path) or not isinstance(importer, dict):
+            return "non-registry-source"
+        for table_name in _PNPM_IMPORTER_TABLES:
+            table = importer.get(table_name) or {}
+            if not isinstance(table, dict):
+                return "unsupported-lockfile"
+            for item in table.values():
+                spec = item.get("version") if isinstance(item, dict) else item
+                if not isinstance(spec, str):
+                    return "unsupported-lockfile"
+                if spec.startswith("link:"):
+                    if not _inside_head(path, spec[len("link:"):]):
+                        return "non-registry-source"
+                elif not _pnpm_version(spec):
+                    return "non-registry-source"
+    packages = data.get("packages") or {}
+    if not isinstance(packages, dict):
+        return "unsupported-lockfile"
+    for key, item in packages.items():
+        if not isinstance(item, dict) or set(item.get("resolution") or {}) != {"integrity"} or (
+                not isinstance(item.get("resolution"), dict)):
+            return "non-registry-source"
+        if not _INTEGRITY.fullmatch(item["resolution"]["integrity"]):
+            return "non-registry-source"
+        bare = key.lstrip("/")
+        parts = _split_key(bare)
+        if parts is None or not _PNPM_VERSION.fullmatch(parts[1]):
+            return "non-registry-source"
+    snapshots = data.get("snapshots") or {}
+    if not isinstance(snapshots, dict):
+        return "unsupported-lockfile"
+    for key, item in snapshots.items():
+        parts = _split_key(key)
+        if parts is None or not _PNPM_VERSION.fullmatch(parts[1]):
+            return "non-registry-source"
+        for table_name in ("dependencies", "optionalDependencies"):
+            table = (item or {}).get(table_name) if isinstance(item, dict) else None
+            for spec in (table or {}).values():
+                if not isinstance(spec, str) or not _pnpm_version(spec):
+                    return "non-registry-source"
+    patched = data.get("patchedDependencies") or {}
+    for value in (patched.values() if isinstance(patched, dict) else [None]):
+        path = value.get("path") if isinstance(value, dict) else value
+        if not _inside_head(".", path):
+            return "non-registry-source"
+    return None
+
+
+def _pnpm_version(spec: str) -> bool:
+    """A resolved version, maybe with a peer suffix, or an alias ``name@version``."""
+    if _PNPM_VERSION.fullmatch(spec.lstrip("/")):
+        return True
+    parts = _split_key(spec.lstrip("/"))
+    return parts is not None and bool(_PNPM_VERSION.fullmatch(parts[1]))
 
 
 def _vet_bun(text: str) -> str | None:

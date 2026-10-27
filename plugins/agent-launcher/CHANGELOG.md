@@ -19,11 +19,20 @@ for C8 to extend.
   `bin` first on a sandboxed command's `PATH`; nothing from the packet is ever on a `PATH`.
 - **Every sandboxed tool now sees the reviewer's temp folder.** Claude's command string exports
   its own unwritable `TMPDIR` after the prefix sets the reviewer's. The prefix's bash now runs
-  that string through `eval` under a `DEBUG` trap that restores the reviewer's `TMPDIR` before
-  every simple command, so node's `os.tmpdir()`, bun, Go, Rust and `mktemp` write beside the copy,
-  not only Python. A command's own `TMPDIR=...` prefix still wins, and exit statuses are kept. A
-  live run under Claude Code 2.1.311 showed node and bun importing CommonJS and ESM packages
-  through the link, `os.tmpdir()` at the reviewer's folder, and a write into the packages denied.
+  that string through `eval` under a one-shot `DEBUG` trap: the first time `TMPDIR` differs from
+  the reviewer's folder (right after Claude's export) it sets it back and removes itself. So
+  node's `os.tmpdir()`, bun, Go, Rust and `mktemp` write beside the copy, not only Python. The
+  trap saves and restores `$_`, and is gone before the reviewer's own command runs, so `$_`,
+  `PIPESTATUS` (which any `DEBUG` trap resets on bash 3.2) and exit statuses behave as without the
+  prefix. Claude's own `export TMPDIR=...` is overridden. A `TMPDIR` the reviewer's command sets
+  itself, by `export TMPDIR=x` or a leading `TMPDIR=x cmd`, is kept. A live run under Claude Code
+  2.1.311 showed node and bun importing CommonJS and ESM packages through the link,
+  `os.tmpdir()` at the reviewer's folder, and a shell write into the packages denied.
+- **Claude's file tools may never write the read-only dependencies.** The reviewer settings deny
+  `Edit` (which covers `Write`) on every read-only dependency folder by its real path, and on
+  `./node_modules` and `./node_modules/**` in the copy. A live Haiku run found the tools already
+  refused a write through the link without these rules (the allow rule `Edit(./**)` does not
+  match the resolved packet path); the rules make that explicit.
 
 - **The reviewer's sandboxed `python3` uses the packet's Python packages.** When saga's
   `dependencies.json` names `installed` or `partial` packages inside the packet, and the session's

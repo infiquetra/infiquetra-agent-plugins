@@ -2,6 +2,25 @@
 
 ## 2026-10-27
 
+### A lockfile check must read the file the way the package manager reads it
+
+**Author.** Jeff Cox
+
+**Evidence.** An independent review of PR #292 got non-registry packages past the first lockfile
+checks in `plugins/saga/scripts/review_dependencies_node.py`. In npm and yarn the installs ran
+end to end, and in pnpm the vetting step was bypassed. The npm check trusted the lockfile's own
+`inBundle` flag, which npm ignores. The yarn check split entries at blank lines, while yarn
+starts an entry at every unindented line. The pnpm check matched lines starting with
+`resolution:`, and a quoted key is the same key to YAML.
+
+**Mechanism.** Each check read a different structure from the one the manager acts on, so a
+lockfile could mean one thing to saga and another to the manager. The repair parses each format
+the manager's way (pnpm through a strict reader that refuses anything pnpm does not write), checks
+every entry, and treats nothing the lockfile asserts about itself as a reason to skip a check.
+
+**Generalizable rule.** Validate an untrusted file with the consumer's own grammar, or a stricter
+one that fails closed; never with a looser shortcut, and never let the file exempt itself.
+
 ### A sandboxed command reaches a toolchain by its real path, not by the link on PATH
 
 **Author.** Jeff Cox

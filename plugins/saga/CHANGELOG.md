@@ -18,6 +18,25 @@
   `lockfile-mismatch`, `manager-missing`, `network`, `timeout`, `size-limit`,
   `install-failed`, `head-export` and `subfolder-project`. The new module is
   `scripts/review_dependencies_node.py`, listed in the calibration's review machinery.
+  - The lockfile checks follow each manager's own reading. npm: every `node_modules/...` entry is
+    checked whatever its `inBundle` flag says; it needs a public-registry `resolved` and an
+    `integrity`, or, when bundled, no `resolved` at all. yarn classic: an entry starts at every
+    line with no indent, keys are plain or simply quoted and never repeat, header ranges are plain
+    semver or `npm:` aliases, and each entry has one registry `resolved` and one `integrity`.
+    pnpm: a strict reader of the YAML subset pnpm writes, which refuses anchors, aliases, tags,
+    merge and explicit keys, block and multi-line scalars, comments and duplicate keys; each
+    package's resolution must be exactly `{integrity: ...}` and importer versions a version or a
+    `link:` inside the head. Every `package.json` in the head must name only registry ranges,
+    `npm:` aliases, `workspace:` references inside the head or pnpm catalogs.
+  - A kept symlink is resolved one component at a time through the links inside the folder, and
+    dropped if it would leave it.
+  - The installed tree is sealed read-only (files 0444, or 0555 when executable; folders 0555),
+    so a write that reaches it outside the OS sandbox is refused too. Prepare restores the
+    folders' write permission before it removes a staging folder. **Whoever deletes a packet
+    must do the same** (`chmod -R u+w <packet>`, or `review_dependencies_node.unseal`) before
+    `rm -rf`.
+  - node's toolchain folders for the re-run pass the same home, shared-root and credential-path
+    filter as the Rust and Python ones.
 - `finish`'s re-run links the packet's packages at its folder's root as `node_modules`,
   read-only, which node's CommonJS and ESM resolvers, bun, Vitest and Jest all find. A re-run of
   `node`, a manager or a `node_modules/.bin` script may read node's own install, and node's real

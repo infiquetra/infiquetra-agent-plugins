@@ -667,6 +667,24 @@ def test_tmpdir_every_tool_sees_the_reviewer_s_folder_after_claude_exports_its_o
     assert fallback == str(temp)
 
 
+@NOT_ROOT
+@pytest.mark.parametrize("bash", ["/bin/bash", shutil.which("bash") or "/bin/bash"])
+def test_tmpdir_the_trap_leaves_dollar_underscore_and_pipestatus_alone(
+    launcher: ModuleType, tmp_path: Path, bash: str
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    env = _startup_env(tmp_path, SHELL=bash, **extra)
+    temp = launcher.reviewer_claude_temp_dir(copy)
+    out = _run_like_claude(_as_claude_2_1_311(
+        'mkdir -p made && cd "$_" && basename "$PWD"; (exit 3) | cat; echo "${PIPESTATUS[*]}"; '
+        'echo "$TMPDIR"; export TMPDIR=/own; sh -c \'echo "$TMPDIR"\'',
+        _claude_sandbox_temp(tmp_path)), env, copy).split()
+    # $_ survives (bash 3.2 and later), PIPESTATUS too (any DEBUG trap resets it on bash 3.2,
+    # so the trap is gone before the command runs), and the command's own export is kept.
+    assert out == ["made", "3", "0", str(temp), "/own"]
+
+
 def test_tmpdir_the_prefix_s_exit_status_is_the_command_s(
     launcher: ModuleType, tmp_path: Path
 ) -> None:
@@ -1949,6 +1967,19 @@ def test_node_the_copy_links_the_packet_s_packages_read_only_and_never_a_change(
     for part in env["PATH"].split(os.pathsep):
         assert not part.startswith(str(packet.resolve()))
     assert str(packet.resolve()) not in prefix and ".bin" not in prefix
+
+
+def test_node_claude_s_file_tools_may_never_write_the_packages(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    packet = _node_packet(launcher, tmp_path)
+    modules = (packet / "dependencies" / "node" / "node_modules").resolve()
+    _result, settings, _env = _launch_with(launcher, repo, head, tmp_path, packet)
+    deny = settings["permissions"]["deny"]
+    # Edit rules cover Write too. By the real path, and through the copy's link.
+    assert f"Edit(/{modules}/**)" in deny
+    assert "Edit(./node_modules)" in deny and "Edit(./node_modules/**)" in deny
 
 
 def test_node_a_head_with_its_own_node_modules_keeps_it(

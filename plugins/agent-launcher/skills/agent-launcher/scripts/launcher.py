@@ -2550,9 +2550,12 @@ def reviewer_claude_shell_script(
     prefix sets ``TMPDIR``, ``TEMP`` and ``TMP`` to that folder. Claude's own command string then
     exports ``TMPDIR`` again, to its sandbox temp folder, which the reviewer may not write. So the
     bash the prefix starts runs Claude's command string through ``eval`` under a ``DEBUG`` trap
-    that sets ``TMPDIR`` back to *temp* before every simple command: node's ``os.tmpdir()``, bun,
-    Go, Rust and ``mktemp``, which read ``TMPDIR`` alone, see the reviewer's folder, and so does
-    Python. A command the reviewer prefixes with its own ``TMPDIR=...`` keeps that value.
+    that, the first time ``TMPDIR`` differs from *temp* (right after Claude's export), sets it
+    back and removes itself: node's ``os.tmpdir()``, bun, Go, Rust and ``mktemp``, which read
+    ``TMPDIR`` alone, see the reviewer's folder, and so does Python. The trap keeps ``$_`` and is
+    gone before the reviewer's own command runs, so ``$_``, ``PIPESTATUS`` (which any ``DEBUG``
+    trap resets on bash 3.2) and a ``TMPDIR`` the command sets itself, by ``export`` or a leading
+    assignment, all behave as they would without the prefix.
     *path_front* folders come first on ``PATH``, after the Python environment's ``bin``.
     Sandboxed commands also run under ``umask 022``, as saga's replay does; it is never reached
     outside the sandbox.
@@ -2582,9 +2585,11 @@ def reviewer_claude_shell_script(
         kept += f' PATH={shlex.quote(os.pathsep.join(front))}:"${{PATH-}}"'
     run = '-c "$1"'
     if temp is not None:
-        # Claude's command string exports its own TMPDIR before the command; the trap restores
-        # the reviewer's before every simple command, and bash keeps ``$?`` across a trap.
-        reset = f'[ "${{TMPDIR-}}" = {quoted_temp} ] || export TMPDIR={quoted_temp}'
+        # Claude's command string exports its own TMPDIR before the command. The trap runs before
+        # each simple command until it sees that export, then restores the reviewer's TMPDIR and
+        # removes itself; it saves and restores ``$_``, and bash keeps ``$?`` across a trap.
+        reset = (f'reviewer_last=$_; if [ "${{TMPDIR-}}" != {quoted_temp} ]; then '
+                 f'TMPDIR={quoted_temp}; trap - DEBUG; fi; : "$reviewer_last"')
         body = f'trap {shlex.quote(reset)} DEBUG; reviewer_command=$1; shift; eval "$reviewer_command"'
         run = f'-c {shlex.quote(body)} reviewer-shell "$1"'
 
@@ -2977,7 +2982,11 @@ def reviewer_claude_settings(
                 "Bash", "Edit(./**)", f"Edit(/{temp}/**)", f"Read(/{packet.resolve()}/**)",
             ],
             "deny": ["WebFetch", "WebSearch", "mcp__*"]
-            + [f"Read({path})" for path in list(REVIEWER_CREDENTIAL_PATHS) + list(extra_deny_read)],
+            + [f"Read({path})" for path in list(REVIEWER_CREDENTIAL_PATHS) + list(extra_deny_read)]
+            # Claude's file tools run outside the OS sandbox: they may never write the read-only
+            # dependencies, by their real path or through the copy's node_modules link.
+            + [f"Edit(/{Path(path)}/**)" for path in read_only]
+            + [f"Edit(./{REVIEWER_NODE_LINK})", f"Edit(./{REVIEWER_NODE_LINK}/**)"],
         },
     }
 

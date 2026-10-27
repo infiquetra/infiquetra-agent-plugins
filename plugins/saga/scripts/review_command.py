@@ -470,6 +470,8 @@ def _prepare(
                 raise CommandFailure(2, str(exc)) from exc
         _publish(staging, out)
     finally:
+        # The packet's npm packages are sealed read-only; give their folders write back first.
+        review_dependencies_node.unseal(staging / review_dependencies_node.DIRECTORY)
         shutil.rmtree(staging, ignore_errors=True)
         if temporary:
             profile.unlink(missing_ok=True)
