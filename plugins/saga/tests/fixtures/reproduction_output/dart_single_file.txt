@@ -1,0 +1,17 @@
+00:00 +0: loading test/tiny_test.dart
+00:00 +0: two is three
+00:00 +0 -1: two is three [E]
+  Expected: <3>
+    Actual: <2>
+  two returned 2
+
+  package:matcher          expect
+  test/tiny_test.dart 6:5  main.<fn>
+
+00:00 +0 -1: Some tests failed.
+
+Failing tests:
+  test/tiny_test.dart: two is three
+
+Consider enabling the flag chain-stack-traces to receive more detailed exceptions.
+For example, 'dart test --chain-stack-traces'.

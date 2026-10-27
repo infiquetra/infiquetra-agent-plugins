@@ -98,6 +98,9 @@ class Failure:
     name: str
     body: tuple[str, ...] = ()
     loose: bool = False
+    #: True when the runner printed the test without a file the parser could place: a re-run
+    #: failure like this never stands for a cited test that names a file.
+    unplaced: bool = False
 
 
 def strip_ansi(text: str) -> str:
@@ -453,12 +456,34 @@ def _go(lines: list[str], budget: _Budget | None = None) -> list[Failure]:
 
 
 def _dart(lines: list[str], budget: _Budget) -> list[Failure]:
+    """``dart test`` failures. With several test files each line starts ``<file>: ``; with one
+    file the file is left out and named only in its ``loading`` line. A file prefix is taken
+    only when it is a file that was loaded, so a test named ``x.dart: y`` is not misread. A line
+    that no loaded file places (a reviewer's recorded block, which starts at the failure, or a
+    run whose ``loading`` line was not recognised) names no file and is marked ``unplaced``: it
+    can still be the recorded failure, but in a re-run it never proves a test in a named file."""
     failures = []
+    loaded: list[str] = []
     for index, raw in enumerate(lines):
+        loading = re.match(r"\d+:\d\d(?::\d\d)? [+~-]\d+(?: [+~-]\d+)*: loading (.+\.dart)\s*$",
+                           raw)
+        if loading:
+            if loading.group(1) not in loaded:
+                loaded.append(loading.group(1))
+            continue
         match = re.match(r"\d+:\d\d(?::\d\d)? [+~-]\d+(?: [+~-]\d+)*: (.+?) \[E\]\s*$", raw)
         if not match:
             continue
-        file, _, name = match.group(1).partition(": ")
+        text = match.group(1)
+        prefixed = next((item for item in loaded if text.startswith(f"{item}: ")), None)
+        if prefixed is not None:
+            file, name = prefixed, text[len(prefixed) + 2:]
+        elif len(loaded) == 1:
+            file, name = loaded[0], text
+        else:
+            body = _until(lines, index + 1, lambda line: bool(_DART_CLOCK.match(line)), budget)
+            failures.append(Failure(None, text, body, unplaced=True))
+            continue
         body = _until(lines, index + 1, lambda line: bool(_DART_CLOCK.match(line)), budget)
         failures.append(Failure(file, name, body))
     return failures
@@ -559,7 +584,10 @@ def _matches(code: int, captured: str, recorded: str, test: str = "") -> bool:
         if line is None or line not in whole:
             return False
         return not ("::" in test and test not in text)
-    hits = [item for item in failures if _fits(item, file, name)]
+    hits = [
+        item for item in failures
+        if _fits(item, file, name) and not (item.unplaced and file)
+    ]
     recorded_failures = failed_tests(recorded_text)
     recorded_hits = [
         item for item in recorded_failures if _fits(item, file, name) and item.body

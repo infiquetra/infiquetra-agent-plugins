@@ -48,6 +48,35 @@
   `bin` comes first on its `PATH`, so a `node` reached through a link under the denied home still
   starts. The reviewer prompt's JavaScript recipe says where the packages are and what to do
   without them.
+- A Dart head's pub packages, fetched once in prepare for the reviewer and the re-run. When the
+  head has a root `pubspec.yaml` and `pubspec.lock`, prepare runs the SDK's real `dart`,
+  `dart pub get --enforce-lockfile`, with `PUB_CACHE` in `<packet>/dependencies/dart/pub-cache`,
+  a fresh home and telemetry off, and keeps only `hosted/` and `hosted-hashes/`; two prepares of
+  one head write the same bytes. Git sources, other hosts, paths outside the head and the
+  Flutter SDK are refused before pub runs. Every outcome is a fixed word in
+  `review_dependencies_dart.REASONS` (`TRANSIENT` names the ones a later prepare may not repeat).
+  finish gives a confined re-run a `bin` holding only `dart`, a writable pub cache linked to the
+  packet's, `DASH__SUPPRESS_ANALYTICS=true` and `PUB_MAX_HTTP_RETRIES=0`, and resolves the
+  project offline before replaying the command. `flutter test` is not supported.
+  After review: the lock and the pubspecs pub reads are read with a reader for the YAML subset
+  pub writes, which refuses quoted keys, flow collections, anchors, tags and other forms instead of
+  matching lines; dependencies are only constraints or a `version` and an in-head `path` reached
+  through no link; prepare's pub finds only the SDK's `bin`; an example app's pubspec no longer
+  refuses the package; finish makes a fresh pub cache folder for each re-run and refuses a link
+  at `tmp`; `_make_tmp` no longer runs `chmod` through a link; the offline resolution runs only
+  for a `dart` command; an SDK of another release is not used; and the packet's pub cache is
+  read-only file by file, so a write by the reviewer's file tools through a link fails. New
+  reason word: `pubspec-unreadable`.
+  Second repair: each path dependency's `pubspec.yaml` is checked too, recursively from every
+  checked pubspec and the lock, reading only the `dependencies` pub reads from a package; and
+  finish's set-up works through folders held open with `O_NOFOLLOW`, so a process an earlier
+  re-run left behind cannot steer it, while `bwrap` gets `--unshare-pid --die-with-parent`.
+  Third repair: a folder that is both a path dependency and a workspace member is checked for
+  every section either role reads, in either order, and nested workspace members are walked
+  as roots, each with its own `pubspec_overrides.yaml` checked as pub 3.13 reads it.
+- The reproduction matcher reads a `dart test` run of one file, whose lines leave the file out
+  and name it only in the `loading` line. A file is taken only from a loaded file's name, so a
+  run with no `loading` line still matches nothing, and a test named `x.dart: y` is read whole.
 
 ### Changed
 

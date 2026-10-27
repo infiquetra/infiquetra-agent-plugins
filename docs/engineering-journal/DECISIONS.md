@@ -2,6 +2,109 @@
 
 ## 2026-10-27
 
+### A Dart review packet carries a pruned pub cache; reviewer and re-run get a dart-only bin and their own writable cache
+
+**Decision.** Jeff Cox approved this build on 2026-10-26.
+
+- **Prepare.** For a head with a root `pubspec.yaml` and `pubspec.lock`, Saga's prepare runs the
+  real SDK executable, `dart pub get --enforce-lockfile`. It runs on an export of the head, with
+  `PUB_CACHE` in `<packet>/dependencies/dart/pub-cache`, a fresh home and
+  `DASH__SUPPRESS_ANALYTICS=true`. Afterwards it keeps only `hosted/` and `hosted-hashes/`.
+- **Refused before pub runs.** A git source, another host, a path outside the head, the Flutter
+  SDK, a symlinked input, or a lock layout Saga cannot read. Each outcome is a fixed word in
+  `review_dependencies_dart.REASONS`.
+- **The reviewer and finish's re-run** each get:
+  - a Saga-written `bin` holding only `dart`, linked to the SDK's real executable;
+  - a writable pub cache in their own temp folder, whose `hosted` and `hosted-hashes` link to
+    the packet's;
+  - `DASH__SUPPRESS_ANALYTICS=true` and `PUB_MAX_HTTP_RETRIES=0`.
+
+  These are given to sandboxed commands only; the vendor process's `PATH` never changes. Finish
+  resolves the project offline before replaying a command, and the reviewer is told to do the
+  same.
+- **Flutter.** `flutter test` is not supported, and a Flutter head records `flutter-unsupported`.
+- **Code location.** The code lives in its own module, `review_dependencies_dart.py`, and
+  separate launcher functions, because an npm build is changing the same files in parallel.
+
+**Rationale.** A Dart defect could not be proven because `dart test` crashed in the sandbox and
+the packet had no packages. The LEARNINGS entry of this date lists the four causes. The packet
+has to stay byte-identical between two prepares, so the version listings and `active_roots/`
+cannot be kept. The tool still needs somewhere to write, so the writable part is the
+reviewer's or the re-run's own, never the packet's or the operator's.
+
+**Rejected alternatives.**
+- **Running Flutter's `bin/dart` wrapper:** it needs git and can write into the SDK.
+- **A read-only `PUB_CACHE` pointing straight at the packet:** pub writes `active_roots/` and
+  exits 66.
+- **Keeping the version listings:** they hold a fetch time and change whenever a package is
+  published, so two prepares would differ.
+- **Saga writing `package_config.json` itself:** `dart test` still runs pub's resolution and
+  needs a writable cache. `pub get --offline` writes the same file in the format the installed
+  SDK expects.
+- **Supporting `flutter test` by letting it write its SDK's `bin/cache/lockfile`:** it would
+  write into the operator's install, and it also probes the Android SDK.
+- **Sharing the operator's `~/.pub-cache` at prepare:** the brief rules it out, and prepare would
+  then write into the operator's state.
+
+**Reading the YAML (after review).** The lock and the pubspecs pub reads are read by a small
+reader in `review_dependencies_dart.py`. It accepts the subset of YAML that pub writes, plus a
+top-level multi-line `description`, and refuses everything else. A YAML library was rejected:
+
+- the plugin's scripts run on the operator's Python with the standard library only, and the
+  repository's baseline installs nothing;
+- vendoring a full YAML parser would add a large component to the calibration fingerprint;
+- a full parser would accept the very forms that must be refused (flow maps, anchors, tags,
+  quoted keys), so it would still need a fail-closed check of its own on top.
+
+The structural check after reading allows a dependency to be only a version constraint, or a
+block with `version` and an in-head `path` reached through no link. Prepare's pub gets a `PATH`
+holding only the SDK's `bin`. Finish makes its pub cache folder with `mkdtemp` for every re-run,
+after refusing a link at `scratch/tmp`.
+
+**Second repair.**
+
+- **Path dependencies.** The pubspec check follows path dependencies recursively, reading only
+  the sections pub reads from each kind of package:
+  - a root or workspace member: `dependencies`, `dev_dependencies` and `dependency_overrides`;
+  - the overrides file: `dependency_overrides`;
+  - a path dependency: `dependencies` only.
+
+  The walk remembers the sections checked in each folder and reads a folder again for any
+  section not yet covered, so the order in which roles are met cannot skip one. Nested
+  workspace members are walked as roots, because pub 3.13 resolves them (measured with local
+  folders). There is a cap of 200 pubspec reads.
+  Each root and member's own `pubspec_overrides.yaml` is checked as overrides, and its path
+  dependencies are walked. pub 3.13 reads a member's overrides file, at any depth, and ignores a
+  path dependency's (measured), so checking the member's file follows pub rather than refusing
+  more than pub reads.
+- **Finish's set-up.** It works through folders held open with `O_NOFOLLOW`, using `dir_fd`
+  and `fchmod`. On Linux, `bwrap` also gets `--unshare-pid --die-with-parent`.
+- **Rejected:** a fresh scratch copy for every finding. It would need a new export of the head
+  for each re-run, and a process left behind could still act on the folder it shares with the
+  next re-run.
+- **Accepted:** a file in the reviewer's own pub cache other than its `hosted` links stays open
+  to Claude's file tools. It affects only the reviewer's own runs. Denying the whole folder
+  would also deny the sandboxed `dart test` its `active_roots` write.
+
+**Claude's file tools (after review).** The reviewer's writable pub cache is not inside the copy.
+It is in the reviewer's temp folder beside the copy. But that folder is open to Claude's Edit and
+Write tools through `Edit(/<temp>/**)`, and those tools run outside the command sandbox. So its
+links into the packet could have carried a write into the packet, and finish's re-run reads from
+there. Two layers close this:
+
+- the packet's cache is read-only file by file (0444, or 0555 for executables, and 0555 for
+  folders), restored to writable before any removal;
+- every read-only allowance in the Claude settings is also an `Edit(...)` deny rule, including
+  the two links in the temp folder. A deny rule outranks the allow rule.
+
+**Revisit when.**
+- A Flutter project needs a reproduction.
+- A Grok, Muse or Codex reviewer needs Dart.
+- Pub changes how it treats `PUB_MAX_HTTP_RETRIES` or the offline resolution.
+- Prepare time per Dart head becomes a measured problem. There is no shared download cache, so
+  every prepare downloads every package.
+
+## 2026-10-26
 ### pnpm-lock.yaml is read by a strict subset reader, not a YAML library
 
 **Decision.** Author: Jeff Cox. `review_dependencies_node._pnpm_parse` reads only the block YAML

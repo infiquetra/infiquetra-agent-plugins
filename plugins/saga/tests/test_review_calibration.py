@@ -320,6 +320,7 @@ def test_components_match_the_landed_cards() -> None:
         "plugins/saga/scripts/review_command.py",
         "plugins/saga/scripts/review_dependencies.py",
         "plugins/saga/scripts/review_dependencies_node.py",
+        "plugins/saga/scripts/review_dependencies_dart.py",
         *question_banks.QUESTION_BANK_COMPONENTS,
         "plugins/saga/scripts/review_checks.py",
     )

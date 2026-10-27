@@ -79,6 +79,7 @@ MATCHING = [
     # dart test
     ("dart_filtered", "dart", "test/add_test.dart::math adds"),
     ("dart", "dart", "test/add_test.dart::math other"),
+    ("dart_single_file", "dart_single_file", "test/tiny_test.dart::two is three"),
     # swift test, XCTest and Swift Testing
     ("swift_xctest", "swift_xctest", "Tests/DemoTests/DemoTests.swift::DemoTests/testAdds"),
     ("swift_xctest", "swift_xctest", "Tests/DemoTests/DemoTests.swift::OtherTests.testBroken"),
@@ -102,6 +103,7 @@ NOT_MATCHING = [
     ("go", "go", "add_test.go::TestOk"),
     ("dart_filtered", "dart", "test/add_test.dart::math other"),
     ("dart", "dart", "test/add_test.dart::math ok"),
+    ("dart_single_file", "dart_single_file", "test/other_test.dart::two is three"),
     ("swift_xctest", "swift_xctest", "Tests/DemoTests/DemoTests.swift::DemoTests/testOk"),
     ("swift_testing", "swift_testing", "Tests/DemoTests/DemoTests.swift::ok"),
 ]
@@ -227,6 +229,8 @@ def test_failed_tests_reads_the_name_and_file_each_runner_prints() -> None:
     assert ("add.test.js", "math > adds") in names("vitest_default")
     assert (None, "TestOther") in names("go")
     assert ("test/add_test.dart", "math adds") in names("dart")
+    # One test file: dart test names it only in the "loading" line.
+    assert names("dart_single_file") == [("test/tiny_test.dart", "two is three")]
     assert ("DemoTests.swift", "adds()") in names("swift_testing")
     assert names("cargo_pass_only") == []
     assert names("pytest_pass") == []
@@ -644,3 +648,48 @@ def test_bun_expected_and_received_differing_only_in_directory_do_not_match() ->
     cited = "save.test.ts::save saves"
     assert M.matches(1, one, one, cited)
     assert not M.matches(1, one, two, cited)
+
+
+_DART_NO_LOADING = """00:00 +0: math adds
+00:00 +0 -1: math adds [E]
+  Expected: <3>
+    Actual: <2>
+00:00 +0 -1: Some tests failed.
+"""
+
+
+def test_a_dart_failure_with_no_loading_line_names_no_file_and_matches_nothing() -> None:
+    """Without a loaded file, a single-file line cannot be placed, so a claim about another file
+    never matches by the test's name alone."""
+    failures = M.failed_tests(_DART_NO_LOADING)
+    assert [(item.file, item.name, item.unplaced) for item in failures] == [
+        (None, "math adds", True)]
+    recorded = "00:00 +0 -1: math adds [E]\n  Expected: <3>\n    Actual: <2>\n"
+    assert not M.matches(1, _DART_NO_LOADING, recorded, "test/a_test.dart::adds")
+    assert not M.matches(1, _DART_NO_LOADING, recorded, "test/a_test.dart::math adds")
+
+
+def test_a_recorded_dart_block_without_its_loading_line_still_matches_the_re_run() -> None:
+    """A reviewer records the failure block, which starts at the failure, not at ``loading``."""
+    rerun = _text("dart_single_file")
+    block = "".join(rerun.splitlines(keepends=True)[2:9])
+    assert block.startswith("00:00 +0 -1: two is three [E]")
+    assert M.matches(1, rerun, block, "test/tiny_test.dart::two is three")
+    assert not M.matches(1, rerun, block, "test/other_test.dart::two is three")
+
+
+def test_a_one_file_dart_test_whose_name_holds_a_dart_path_is_read_whole() -> None:
+    text = ("00:00 +0: loading test/tiny_test.dart\n"
+            "00:00 +0 -1: reads lib/x.dart: and fails [E]\n"
+            "  Expected: <3>\n    Actual: <2>\n"
+            "00:00 +0 -1: Some tests failed.\n")
+    assert [(item.file, item.name) for item in M.failed_tests(text)] == [
+        ("test/tiny_test.dart", "reads lib/x.dart: and fails")]
+
+
+def test_a_dart_test_file_with_a_space_in_its_path_is_named() -> None:
+    text = ("00:00 +0: loading test/my tests/tiny_test.dart\n"
+            "00:00 +0 -1: two is three [E]\n  Expected: <3>\n    Actual: <2>\n"
+            "00:00 +0 -1: Some tests failed.\n")
+    assert [(item.file, item.name) for item in M.failed_tests(text)] == [
+        ("test/my tests/tiny_test.dart", "two is three")]

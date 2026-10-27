@@ -146,6 +146,11 @@ def fetch(runner: Process, repo: Path, head: str, packet: Path, export: Export) 
     if python is not None:
         record["python"] = python
     _add_node_entry(record, runner, repo, head, packet, export)
+    import review_dependencies_dart  # noqa: PLC0415 - imports this module
+
+    dart = review_dependencies_dart.entry(runner, repo, head, packet, export)
+    if dart is not None:
+        record["dart"] = dart
     return record
 
 

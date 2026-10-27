@@ -16,6 +16,7 @@ import copy
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import subprocess  # nosec B404
@@ -34,6 +35,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 import review_calibration  # noqa: E402
 import review_dependencies  # noqa: E402
+import review_dependencies_dart  # noqa: E402
 import review_dependencies_node  # noqa: E402
 import review_diff  # noqa: E402
 import review_formula  # noqa: E402
@@ -207,6 +209,9 @@ class Offline:
     #: The packet's installed npm packages, linked at the re-run folder's root as
     #: ``node_modules``, read-only; ``None`` when there are none.
     node: Path | None = None
+    #: The packet's pub cache, when there is one; each re-run gets a writable pub cache in its
+    #: own ``tmp`` folder that links to it (:func:`_dart_pub_cache`).
+    dart: Path | None = None
 
     def argv(self, argv: list[str]) -> list[str]:
         """*argv*, with a ``cargo`` command, by name or by path, run through the shim."""
@@ -223,7 +228,8 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
     deps = review_dependencies.python_environment(packet)
     python = shutil.which("python3") if deps is not None else None
     modules = review_dependencies_node.node_modules(packet)
-    if vendor is None and python is None and modules is None:
+    dart = _offline_dart(packet)
+    if vendor is None and python is None and modules is None and dart is None:
         yield None
         return
     temporary: list[Path] = []
@@ -233,6 +239,18 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
         toolchain: tuple[Path, ...] = ()
         path = os.environ.get("PATH", "")
         shim: Path | None = None
+        dart_cache: Path | None = None
+        if dart is not None:
+            folder = Path(tempfile.mkdtemp(prefix="saga-review-dart-"))
+            temporary.append(folder)
+            packages, sdk = dart
+            dart_shim = review_dependencies_dart.write_dart_shim(folder / "env", sdk)
+            # PUB_CACHE is set per re-run, to a folder inside its own tmp (_dart_pub_cache).
+            env.update({key: value for key, value in review_dependencies_dart.dart_env(
+                dart_shim, folder, path).items() if key != "PUB_CACHE"})
+            path = env["PATH"]
+            toolchain += review_dependencies_dart.dart_toolchain(dart_shim, packages, sdk)
+            dart_cache = packages.cache
         if deps is not None and python is not None:
             # Only ``python3`` and ``python``, linked to the operator's interpreter, ever go on
             # the re-run's PATH: nothing in the packet can be found by name.
@@ -244,8 +262,9 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
                 path = env["PATH"]
                 toolchain += review_dependencies.python_toolchain(shim, deps)
         if vendor is None:
-            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim, node=modules)
-                   if shim is not None or modules is not None else None)
+            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim, node=modules,
+                           dart=dart_cache)
+                   if shim is not None or modules is not None or dart_cache is not None else None)
             return
         home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
         temporary.append(home)
@@ -258,7 +277,7 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
             env["PATH"] = os.pathsep.join([str(shim_cargo.parent), path])
         yield Offline(env=env, reads=(*reads, vendor, home), cargo=shim_cargo,
                       toolchain=(*review_dependencies.toolchain_paths(cargo), *toolchain),
-                      rust=True, python=shim, node=modules)
+                      rust=True, python=shim, node=modules, dart=dart_cache)
     finally:
         for folder in temporary:
             shutil.rmtree(folder, ignore_errors=True)
@@ -282,6 +301,83 @@ def _node_rerun(
             env = {**env, "PATH": os.pathsep.join([str(real), path])}
         toolchain = (*toolchain, *review_dependencies_node.toolchain_paths(path))
     return env, toolchain
+
+
+def _offline_dart(
+    packet: Path,
+) -> tuple[review_dependencies_dart.DartDependencies, review_dependencies_dart.DartSdk] | None:
+    """The packet's pub cache and the operator's Dart SDK, found on the operator's PATH, or
+    ``None`` when either is missing."""
+    packages = review_dependencies_dart.dart_packages(packet)
+    if packages is None:
+        return None
+    sdk = review_dependencies_dart.dart_sdk()
+    if sdk is None or not review_dependencies_dart.same_release(sdk.version, packages.version):
+        # Another SDK than the one that fetched the packages would only fail to resolve.
+        return None
+    return packages, sdk
+
+
+def _dart_pub_cache(
+    offline: Offline | None, scratch: Path, runner: Process, confine: Confine | None,
+    argv: Sequence[str] = (),
+) -> dict[str, str]:
+    """A fresh writable pub cache inside the re-run's ``tmp``, linking to the packet's read-only
+    one, and, for a ``dart`` command, the project resolved against it.
+
+    ``dart test`` records the project under ``PUB_CACHE/active_roots`` before every run, so the
+    cache it is given must be writable; the packages themselves stay in the packet. Earlier
+    re-runs write in the same scratch copy, so nothing there is trusted: a link at ``scratch`` or
+    ``tmp`` is refused without being followed, and the cache is a new folder with a random name
+    (``mkdtemp``), never one that might already exist. Raises ``OSError`` when it cannot be made.
+
+    The packet keeps no version listings, so before a ``dart`` command the project is resolved
+    first, confined and offline, with ``dart pub get --offline --enforce-lockfile``; a failure is
+    left for the command to show. Other commands skip it.
+    """
+    if offline is None or offline.dart is None:
+        return {}
+    cache = _fresh_pub_cache(scratch, offline.dart)
+    added = {"PUB_CACHE": str(cache)}
+    if argv and Path(argv[0]).name == "dart" and (scratch / "pubspec.yaml").is_file():
+        env = {**child_environment(scratch), **offline.env, **added}
+        resolve = ["dart", *review_dependencies_dart.OFFLINE_GET]
+        try:
+            if confine is not None:
+                confine(resolve, scratch, env, scratch)
+            else:
+                run_confined(resolve, scratch, env, scratch, runner=runner,
+                             timeout=RERUN_TIMEOUT, reads=offline.reads,
+                             toolchain=offline.toolchain)
+        except subprocess.TimeoutExpired:
+            pass
+    return added
+
+
+def _fresh_pub_cache(scratch: Path, packet_cache: Path) -> Path:
+    """Make ``scratch/tmp/saga-pub-cache-<random>`` with ``hosted`` and ``hosted-hashes`` links
+    to *packet_cache*, through open folders only (see :func:`_make_tmp`): a link at ``tmp`` is
+    refused, the new folder's name cannot be guessed, and a swap of ``tmp`` midway moves only
+    the folder saga holds. Raises ``OSError`` when it cannot be made."""
+    source = packet_cache.resolve()
+    name = f"saga-pub-cache-{secrets.token_hex(8)}"
+    scratch_fd = os.open(scratch, _DIRECTORY_FLAGS)
+    try:
+        tmp_fd = os.open("tmp", _DIRECTORY_FLAGS, dir_fd=scratch_fd)
+        try:
+            os.mkdir(name, 0o700, dir_fd=tmp_fd)
+            cache_fd = os.open(name, _DIRECTORY_FLAGS, dir_fd=tmp_fd)
+            try:
+                for part in ("hosted", "hosted-hashes"):
+                    if (source / part).is_dir():
+                        os.symlink(str(source / part), part, dir_fd=cache_fd)
+            finally:
+                os.close(cache_fd)
+        finally:
+            os.close(tmp_fd)
+    finally:
+        os.close(scratch_fd)
+    return scratch / "tmp" / name
 
 
 def run_confined(
@@ -472,6 +568,8 @@ def _prepare(
     finally:
         # The packet's npm packages are sealed read-only; give their folders write back first.
         review_dependencies_node.unseal(staging / review_dependencies_node.DIRECTORY)
+        # A Dart cache in the packet is read-only file by file; give write back first.
+        review_dependencies_dart.unseal(staging / "dependencies" / "dart")
         shutil.rmtree(staging, ignore_errors=True)
         if temporary:
             profile.unlink(missing_ok=True)
@@ -1064,6 +1162,15 @@ def _rerun_one(
     toolchain: tuple[Path, ...] = ()
     if offline is not None:
         env.update(offline.env)
+        try:
+            env.update(_dart_pub_cache(offline, scratch, runner, confine, argv))
+        except OSError:
+            # An earlier re-run left something in tmp that saga will not follow.
+            _downgrade(finding)
+            return [_degraded(
+                str(finding.get("lens") or "correctness"), "none", "tmp", "review-command",
+                "re-run-could-not-start",
+            )]
         reads, toolchain = offline.reads, offline.toolchain
         argv = offline.argv(argv)
     if (offline is None or not offline.rust) and Path(argv[0]).name in _RUST_COMMANDS:
@@ -1601,14 +1708,38 @@ def _extract_tree(bundle: tarfile.TarFile, dest: Path) -> None:
         target.chmod(0o755 if mode & 0o111 else 0o644)
 
 
+#: Opening a folder for the set-up below: never through a link, never anything but a folder.
+_DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
 def _make_tmp(scratch: Path) -> bool:
-    temporary = scratch / "tmp"
+    """Make ``scratch/tmp`` owner-only, working through open folders, never through paths.
+
+    Earlier re-runs wrote in the same scratch copy, and a process one of them started in a new
+    session can outlive it (the runner stops only the re-run's own process group), so a link may
+    appear at ``tmp`` at any moment. Every step here acts on a folder held open with
+    ``O_NOFOLLOW``: a link at ``tmp`` is refused, and a swap after the open moves only the
+    folder saga holds, inside the scratch copy. Nothing outside it is ever touched.
+    """
     try:
-        temporary.mkdir(parents=True, exist_ok=True)
-        temporary.chmod(0o700)
+        scratch_fd = os.open(scratch, _DIRECTORY_FLAGS)
     except OSError:
         return False
-    return temporary.is_dir() and not temporary.is_symlink()
+    try:
+        try:
+            os.mkdir("tmp", 0o700, dir_fd=scratch_fd)
+        except FileExistsError:
+            pass
+        tmp_fd = os.open("tmp", _DIRECTORY_FLAGS, dir_fd=scratch_fd)
+        try:
+            os.fchmod(tmp_fd, 0o700)
+        finally:
+            os.close(tmp_fd)
+    except OSError:
+        return False
+    finally:
+        os.close(scratch_fd)
+    return True
 
 
 def _publish(staging: Path, out: Path) -> None:
@@ -1841,7 +1972,9 @@ def _bwrap(scratch: Path, argv: Sequence[str], reads: Sequence[Path] = ()) -> li
     # By absolute path on the operator's PATH: the re-run's own PATH starts with folders the
     # re-run is given, and the helper must never be looked up there.
     helper = shutil.which("bwrap", path=os.environ.get("PATH", "")) or "/usr/bin/bwrap"
-    command = [str(Path(helper).resolve()), "--unshare-net"]
+    # A new PID namespace, ended with the helper: a process the command starts in a new
+    # session cannot outlive the re-run and act during the next unconfined set-up.
+    command = [str(Path(helper).resolve()), "--unshare-net", "--unshare-pid", "--die-with-parent"]
     for prefix in ("/usr", "/bin", "/lib", "/lib64", "/opt", "/etc"):
         if Path(prefix).exists():
             command.extend(["--ro-bind", prefix, prefix])

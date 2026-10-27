@@ -2,6 +2,126 @@
 
 ## 2026-10-27
 
+### A security check over YAML must read YAML, not lines, and set-up between confined runs must trust nothing they wrote
+
+**Author.** Jeff Cox
+
+**Evidence.** An independent review of PR #293 reproduced the first problem with the real Dart
+SDK 3.13.2. The first version checked `pubspec.yaml` and `pubspec.lock` with line patterns: a
+bare `git:`, `hosted:`, `url:` or `path:` at the start of a line, and a top-level key spelled
+exactly `packages`. YAML gives the same meaning to other spellings, and all of these got past:
+
+- a quoted key (`"packages":`, `"hosted":`);
+- a flow map (`evilpkg: {hosted: "http://host"}`, `{git: "file://..."}`).
+
+Prepare's pub, which runs with the network on and no sandbox, then contacted the chosen host,
+read a folder outside the head, or ran `git clone`. It did so before comparing anything with the
+lock.
+
+Second, finish's re-runs share one scratch copy, and before each one, unconfined Saga code built
+the pub cache at a fixed name. The review showed, under `sandbox-exec`, that a confined command
+could plant `scratch/tmp/saga-pub-cache` as a link to an outside folder. The next set-up then
+created `hosted` and `hosted-hashes` inside that folder. I replayed the same attack on the old
+and the new code.
+
+Tests:
+
+- `plugins/saga/tests/test_review_dependencies_dart.py`:
+  `test_anything_outside_the_yaml_pub_writes_is_refused_before_pub_runs`, which includes the
+  review's four heads.
+- `plugins/saga/tests/test_review_command.py`:
+  `test_live_a_confined_command_cannot_steer_finish_s_setup_outside_the_scratch_copy` and
+  `test_a_link_at_tmp_is_refused_before_anything_follows_it`.
+
+**Mechanism.**
+
+- **Line patterns.** A pattern over lines checks one spelling. The consumer acts on the meaning,
+  and YAML has many spellings for one meaning. The safe check reads the file into the structure
+  the consumer will see, and refuses every form the reader does not fully understand. Unknown
+  forms then fail closed, instead of passing because no pattern matched them.
+- **Shared scratch copy.** A folder that an earlier confined command could write is untrusted
+  input to the next unconfined step. `mkdir(exist_ok=True)`, `chmod` and `symlink_to` all follow
+  links. The step has to refuse a link with `lstat` before touching anything, and create what it
+  needs under a name nobody could have predicted.
+
+**Generalizable rule.** Validate structured input by parsing it into what the consumer sees, and
+fail closed on anything the parser does not understand. Treat every path a confined step could
+have written as hostile: `lstat` before you follow it, and create under an unpredictable name.
+
+A second review found two more gaps in the same area.
+
+- **Path dependencies' own pubspecs.** Pub reads the `pubspec.yaml` of every path dependency
+  during resolution, so checking only the root's let a nested `git:` or `hosted:` through. With
+  the Dart SDK 3.13, pub contacted a host named in a path dependency's `dependencies`, and
+  ignored one named in its `dev_dependencies` or `dependency_overrides`.
+- **A check, then a separate use, by path.** An `lstat` check followed by a separate `mkdir` or
+  `chmod` on the same path is not enough. The runner stops a re-run's process group, but a
+  process that calls `setsid` leaves the group, and `sandbox-exec` has no process namespace.
+  The live test `test_live_a_process_that_outlives_its_re_run_cannot_steer_the_next_set_up`
+  shows such a process surviving its re-run. The safe form holds the folders open with
+  `O_NOFOLLOW` and acts relative to them. `test_a_swap_of_tmp_in_the_middle_of_the_set_up_lands_inside_the_scratch_copy`
+  fails on the path-based version and passes on this one.
+
+**Further rule.** Follow every file the consumer reads, not just the entry point. When a
+writer you do not control may still be running, act through open handles, not paths.
+
+### `dart test` in a sandbox fails four separate ways before it reaches the test
+
+**Author.** Jeff Cox
+
+**Evidence.** A from-scratch Dart package was run under Saga's finish sandbox (`sandbox-exec`,
+home folder unreadable, no network). The package has one `package:test` dependency and one
+failing test. It failed four times, each fix exposing the next:
+
+1. **The SDK is unreadable.** `dart` on `PATH` was a link under home to a Flutter install's
+   `bin/dart`, so the run exited 126 with "Operation not permitted". That `bin/dart` is a shell
+   wrapper that needs git and the SDK's `.git`, and can take a lock and write stamps under the
+   SDK's own `bin/cache`. The real executable is `bin/cache/dart-sdk/bin/dart`.
+2. **Telemetry crashes on the unreadable home.** With the SDK readable but `HOME` unreadable, the
+   Dart CLI opens `~/.dart-tool/dart-flutter-telemetry.config` first and exits 255 with "An
+   unexpected error was encountered by the Dart CLI". `DASH__SUPPRESS_ANALYTICS=true` (named in
+   the `dartdev` snapshot) stops it.
+3. **No packages means the network.** `dart test` runs pub's resolution first, and with an empty
+   cache that needs pub.dev.
+4. **pub writes into its cache.** Even offline and up to date, pub records the project under
+   `PUB_CACHE/active_roots/`, so a read-only cache fails (exit 66).
+
+Two determinism and speed findings followed:
+
+- **Version listings.** The version listings under `hosted/pub.dev/.cache/` carry a fetch time,
+  so two fetches differ there and in `active_roots/`. Without the listings, `dart test` asks
+  pub.dev and, with pub's default retries, waits out the whole time limit.
+- **The working combination.** `dart pub get --offline --enforce-lockfile` resolves without
+  listings, and `PUB_MAX_HTTP_RETRIES=0` makes the one optional request fail at once.
+
+Separately, `flutter test` cannot run against a read-only SDK. The tool opens
+`<flutter>/bin/cache/lockfile` for writing even when started past its wrapper. It also finds the
+Android SDK through `adb` on `PATH`.
+
+Finally, Saga's reproduction matcher did not recognise a one-file `dart test` run, whose lines
+leave out the file name.
+
+Tests:
+
+- `plugins/saga/tests/test_review_dependencies_dart.py`, and the opt-in
+  `test_live_pub_fetches_a_lock_twice_identically` (`SAGA_TEST_LIVE_DART=1`).
+- `plugins/saga/tests/test_review_command.py`, and the opt-in
+  `test_live_a_dart_reproduction_passes_through_finish_and_cannot_write_the_packet`.
+- `plugins/saga/tests/test_reproduction_match.py`: `dart_single_file`.
+
+**Mechanism.** A toolchain run inside a sandbox reads and writes more than its documentation
+lists:
+
+- **its install**, through a wrapper it does not need;
+- **its per-user state**, the telemetry config, before any command;
+- **its package cache**, which it treats as its own scratch space;
+- **the network**, for metadata it can do without, retried until a deadline.
+
+Each one has to be found by running it, one fix at a time.
+
+**Generalizable rule.** Before claiming a tool runs sandboxed, run it sandboxed from a fresh copy
+with the real home unreadable, and fix one failure at a time. Then give the tool a writable
+folder of its own wherever it writes, and keep the shared inputs read-only behind links.
 ### A lockfile check must read the file the way the package manager reads it
 
 **Author.** Jeff Cox

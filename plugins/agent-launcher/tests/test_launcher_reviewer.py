@@ -2070,6 +2070,153 @@ def test_offline_the_shell_prefix_passes_the_virtual_env(launcher: ModuleType, t
     assert line.index("${PATH+") < line.index(f"PATH={tmp_path / 'python-env' / 'bin'}:")
 
 
+def _dart_packet(launcher: ModuleType, tmp_path: Path, entry: Any = None) -> Path:
+    """A packet whose ``dependencies.json`` names saga's pub cache, holding package scripts a
+    hostile package could ship, named after the vendor and git."""
+    packet = tmp_path / "packet"
+    cache = packet / "dependencies" / "dart" / "pub-cache"
+    package = cache / "hosted" / "pub.dev" / "inert-1.0.0"
+    (package / "lib").mkdir(parents=True)
+    (package / "lib" / "inert.dart").write_text("int two() => 2;\n", "utf-8")
+    (package / "bin").mkdir()
+    for name in ("claude", "git", "dart"):
+        (package / "bin" / name).write_text("#!/bin/sh\necho planted\n", "utf-8")
+        (package / "bin" / name).chmod(0o755)
+    (cache / "hosted-hashes").mkdir()
+    record = {
+        "schema": launcher.REVIEWER_DEPENDENCIES_SCHEMA,
+        "dart": entry if entry is not None
+        else {"state": "installed", "directory": "dependencies/dart/pub-cache",
+              "sdk": {"version": "3.13.2"}},
+    }
+    (packet / "dependencies.json").write_text(json.dumps(record), "utf-8")
+    return packet
+
+
+def _dart_on_path(tmp_path: Path) -> tuple[str, Path]:
+    """A Flutter-like layout on a PATH folder: ``bin/dart`` is a script, the SDK is below it."""
+    flutter = tmp_path / "flutter"
+    sdk = flutter / "bin" / "cache" / "dart-sdk"
+    (sdk / "bin").mkdir(parents=True)
+    (sdk / "bin" / "dart").write_bytes(b"\xcf\xfa\xed\xfe binary\n")
+    (sdk / "bin" / "dart").chmod(0o755)
+    (sdk / "version").write_text("3.13.2\n", "utf-8")
+    (flutter / "bin" / "dart").write_text("#!/bin/sh\nexec git status\n", "utf-8")
+    (flutter / "bin" / "dart").chmod(0o755)
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "dart").symlink_to(flutter / "bin" / "dart")
+    return f"{tools}{os.pathsep}{os.environ.get('PATH', '')}", sdk.resolve()
+
+
+def test_offline_the_reviewer_s_dart_is_the_sdk_and_its_packages_are_read_only(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    packet = _dart_packet(launcher, tmp_path)
+    path, sdk = _dart_on_path(tmp_path)
+    result, settings, env = _launch_with(launcher, repo, head, tmp_path, packet, PATH=path)
+    copy = Path(result["scratch"]["path"])
+    dart_env = launcher.reviewer_dart_env_dir(copy.parent)
+    pub_cache = launcher.reviewer_dart_pub_cache_dir(copy)
+    root = str(packet.resolve())
+    # The vendor process keeps the operator's PATH: nothing from the packet or the launcher.
+    assert env["PATH"].endswith(path)
+    for part in env["PATH"].split(os.pathsep):
+        assert not part.startswith(root) and not part.startswith(str(dart_env))
+    for name in ("claude", "git"):
+        found = shutil.which(name, path=env["PATH"])
+        assert found is None or not Path(found).resolve().is_relative_to(packet.resolve())
+    assert [item.name for item in (dart_env / "bin").iterdir()] == ["dart"]
+    assert (dart_env / "bin" / "dart").resolve() == sdk / "bin" / "dart"
+    cache = (packet / "dependencies" / "dart" / "pub-cache").resolve()
+    assert sorted(item.name for item in pub_cache.iterdir()) == ["hosted", "hosted-hashes"]
+    assert (pub_cache / "hosted").resolve() == cache / "hosted"
+    prefix = Path(settings["env"][launcher.REVIEWER_SHELL_PREFIX]).read_text("utf-8")
+    line = next(item for item in prefix.splitlines() if item.startswith("exec /usr/bin/env -i"))
+    assert f"PUB_CACHE={pub_cache}" in line
+    assert "DASH__SUPPRESS_ANALYTICS=true" in line and "PUB_MAX_HTTP_RETRIES=0" in line
+    # One PATH assignment; node's real bin may come first (reviewer_toolchain_front).
+    assigned = line.split(" PATH=", 1)[1].split(':"${PATH-}"', 1)[0].strip("'")
+    assert str(dart_env / "bin") in assigned.split(os.pathsep) and root not in line
+    filesystem = settings["sandbox"]["filesystem"]
+    for allowed in (str(dart_env.resolve()), str(cache), str(sdk)):
+        assert allowed in filesystem["allowRead"] and allowed in filesystem["denyWrite"]
+    assert str(pub_cache.parent) in filesystem["allowWrite"]
+    # Claude's Edit and Write run outside the command sandbox, under Edit(/<temp>/**): the
+    # cache's links into the packet, and the packet's cache itself, are denied to them.
+    deny = settings["permissions"]["deny"]
+    for path in (pub_cache / "hosted", pub_cache / "hosted-hashes", cache, dart_env.resolve()):
+        assert f"Edit(/{path}/**)" in deny, path
+
+
+def test_offline_python_and_dart_share_one_path_assignment(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    script = launcher.reviewer_claude_shell_script(
+        tmp_path / "sentinel", "token", python_env=tmp_path / "python-env",
+        dart_env=(tmp_path / "dart-env", tmp_path / "temp" / "saga-pub-cache"))
+    line = next(item for item in script.splitlines() if item.startswith("exec /usr/bin/env -i"))
+    assert line.count(" PATH=") == 1
+    assert f"PATH={tmp_path / 'python-env' / 'bin'}:{tmp_path / 'dart-env' / 'bin'}:" in line
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"state": "not-installed", "reason": "network"},
+        {"state": "installed", "directory": "/etc", "sdk": {"version": "3.13.2"}},
+        {"state": "installed", "directory": "../elsewhere", "sdk": {"version": "3.13.2"}},
+        {"state": "installed", "directory": "dependencies/missing", "sdk": {"version": "3.13.2"}},
+    ],
+)
+def test_offline_an_untrustworthy_dart_entry_is_ignored(
+    launcher: ModuleType, tmp_path: Path, entry: Any
+) -> None:
+    packet = _dart_packet(launcher, tmp_path, entry)
+    assert launcher.reviewer_packet_dart(packet) is None
+    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", None, os.environ) is None
+
+
+def test_offline_no_dart_sdk_means_no_dart_folder(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    packet = _dart_packet(launcher, tmp_path)
+    packages = launcher.reviewer_packet_dart(packet)
+    assert packages is not None and packages[1] == "3.13.2"
+    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", packages,
+                                      {"PATH": str(tmp_path / "empty")}) is None
+
+
+def test_offline_an_sdk_of_another_release_means_no_dart_folder(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    packet = _dart_packet(launcher, tmp_path, {
+        "state": "installed", "directory": "dependencies/dart/pub-cache",
+        "sdk": {"version": "3.12.0"}})
+    path, _sdk = _dart_on_path(tmp_path)
+    packages = launcher.reviewer_packet_dart(packet)
+    assert packages is not None
+    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", packages,
+                                      {"PATH": path, "HOME": str(tmp_path / "home")}) is None
+    assert not launcher.reviewer_dart_env_dir(tmp_path / "root").exists()
+
+
+def test_offline_an_sdk_that_cannot_be_read_back_puts_no_dart_on_path(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """An SDK under a credential path cannot be allowed back, so its dart could not run."""
+    home = tmp_path / "home"
+    sdk = home / ".config" / "gh" / "dart-sdk"
+    (sdk / "bin").mkdir(parents=True)
+    (sdk / "bin" / "dart").write_bytes(b"\xcf\xfa\xed\xfe binary\n")
+    (sdk / "bin" / "dart").chmod(0o755)
+    (sdk / "version").write_text("3.13.2\n", "utf-8")
+    packages = launcher.reviewer_packet_dart(_dart_packet(launcher, tmp_path))
+    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", packages,
+                                      {"PATH": str(sdk / "bin"), "HOME": str(home)}) is None
+
+
 def test_offline_the_shell_prefix_passes_the_cargo_variables_to_sandboxed_commands(
     launcher: ModuleType, tmp_path: Path
 ) -> None:
