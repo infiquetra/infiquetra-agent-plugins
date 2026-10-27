@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- A Dart head's pub packages, fetched once in prepare for the reviewer and the re-run. When the
+  head has a root `pubspec.yaml` and `pubspec.lock`, prepare runs the SDK's real `dart`,
+  `dart pub get --enforce-lockfile`, with `PUB_CACHE` in `<packet>/dependencies/dart/pub-cache`,
+  a fresh home and telemetry off, and keeps only `hosted/` and `hosted-hashes/`; two prepares of
+  one head write the same bytes. Git sources, other hosts, paths outside the head and the
+  Flutter SDK are refused before pub runs. Every outcome is a fixed word in
+  `review_dependencies_dart.REASONS` (`TRANSIENT` names the ones a later prepare may not repeat).
+  finish gives a confined re-run a `bin` holding only `dart`, a writable pub cache linked to the
+  packet's, `DASH__SUPPRESS_ANALYTICS=true` and `PUB_MAX_HTTP_RETRIES=0`, and resolves the
+  project offline before replaying the command. `flutter test` is not supported.
+- The reproduction matcher reads a `dart test` run of one file, whose lines leave the file out
+  and name it only in the `loading` line.
+
 ### Changed
 
 - The targeted reviewer prompt's reproduction guidance is rewritten so reviewers prove real harms

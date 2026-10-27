@@ -11,6 +11,14 @@ for C8 to extend.
 
 ### Added
 
+- **The reviewer's sandboxed `dart` runs the SDK against the packet's pub packages.** When
+  saga's `dependencies.json` names an `installed` pub cache inside the packet and the session's
+  `PATH` finds a Dart SDK (behind Flutter's `bin/dart` wrapper too), the launcher writes a folder
+  beside the copy whose `bin` holds only `dart`, and a writable pub cache in the reviewer's temp
+  folder linked to the packet's. The Claude shell prefix gives sandboxed commands that `bin`
+  first on `PATH`, `PUB_CACHE`, `DASH__SUPPRESS_ANALYTICS=true` and `PUB_MAX_HTTP_RETRIES=0`; the
+  vendor process's own `PATH` never changes. The folder, the packet's cache and the SDK's root are
+  allowed back for reading and named in `denyWrite`.
 - **The reviewer's sandboxed `python3` uses the packet's Python packages.** When saga's
   `dependencies.json` names `installed` or `partial` packages inside the packet, and the session's
   `python3` has the recorded major and minor version, the launcher writes a small environment

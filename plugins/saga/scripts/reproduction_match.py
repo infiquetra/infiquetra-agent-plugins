@@ -454,11 +454,21 @@ def _go(lines: list[str], budget: _Budget | None = None) -> list[Failure]:
 
 def _dart(lines: list[str], budget: _Budget) -> list[Failure]:
     failures = []
+    loading: str | None = None
     for index, raw in enumerate(lines):
+        loaded = re.match(r"\d+:\d\d(?::\d\d)? [+~-]\d+(?: [+~-]\d+)*: loading (\S+\.dart)\s*$",
+                          raw)
+        if loaded:
+            loading = loaded.group(1)
+            continue
         match = re.match(r"\d+:\d\d(?::\d\d)? [+~-]\d+(?: [+~-]\d+)*: (.+?) \[E\]\s*$", raw)
         if not match:
             continue
         file, _, name = match.group(1).partition(": ")
+        if not file.endswith(".dart"):
+            # One test file: dart test leaves the file out of each line, and names it only in
+            # the "loading" line before.
+            file, name = loading, match.group(1)
         body = _until(lines, index + 1, lambda line: bool(_DART_CLOCK.match(line)), budget)
         failures.append(Failure(file, name, body))
     return failures

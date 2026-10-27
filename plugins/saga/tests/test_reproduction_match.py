@@ -79,6 +79,7 @@ MATCHING = [
     # dart test
     ("dart_filtered", "dart", "test/add_test.dart::math adds"),
     ("dart", "dart", "test/add_test.dart::math other"),
+    ("dart_single_file", "dart_single_file", "test/tiny_test.dart::two is three"),
     # swift test, XCTest and Swift Testing
     ("swift_xctest", "swift_xctest", "Tests/DemoTests/DemoTests.swift::DemoTests/testAdds"),
     ("swift_xctest", "swift_xctest", "Tests/DemoTests/DemoTests.swift::OtherTests.testBroken"),
@@ -102,6 +103,7 @@ NOT_MATCHING = [
     ("go", "go", "add_test.go::TestOk"),
     ("dart_filtered", "dart", "test/add_test.dart::math other"),
     ("dart", "dart", "test/add_test.dart::math ok"),
+    ("dart_single_file", "dart_single_file", "test/other_test.dart::two is three"),
     ("swift_xctest", "swift_xctest", "Tests/DemoTests/DemoTests.swift::DemoTests/testOk"),
     ("swift_testing", "swift_testing", "Tests/DemoTests/DemoTests.swift::ok"),
 ]
@@ -227,6 +229,8 @@ def test_failed_tests_reads_the_name_and_file_each_runner_prints() -> None:
     assert ("add.test.js", "math > adds") in names("vitest_default")
     assert (None, "TestOther") in names("go")
     assert ("test/add_test.dart", "math adds") in names("dart")
+    # One test file: dart test names it only in the "loading" line.
+    assert names("dart_single_file") == [("test/tiny_test.dart", "two is three")]
     assert ("DemoTests.swift", "adds()") in names("swift_testing")
     assert names("cargo_pass_only") == []
     assert names("pytest_pass") == []

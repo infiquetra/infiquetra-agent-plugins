@@ -34,6 +34,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 import review_calibration  # noqa: E402
 import review_dependencies  # noqa: E402
+import review_dependencies_dart  # noqa: E402
 import review_diff  # noqa: E402
 import review_formula  # noqa: E402
 import review_records  # noqa: E402
@@ -203,6 +204,9 @@ class Offline:
     rust: bool = False
     #: The saga-written Python environment over the packet's packages, when there is one.
     python: Path | None = None
+    #: The packet's pub cache, when there is one; each re-run gets a writable pub cache in its
+    #: own ``tmp`` folder that links to it (:func:`_dart_pub_cache`).
+    dart: Path | None = None
 
     def argv(self, argv: list[str]) -> list[str]:
         """*argv*, with a ``cargo`` command, by name or by path, run through the shim."""
@@ -218,7 +222,8 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
     vendor = review_dependencies.rust_vendor(packet)
     deps = review_dependencies.python_environment(packet)
     python = shutil.which("python3") if deps is not None else None
-    if vendor is None and python is None:
+    dart = _offline_dart(packet)
+    if vendor is None and python is None and dart is None:
         yield None
         return
     temporary: list[Path] = []
@@ -228,6 +233,18 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
         toolchain: tuple[Path, ...] = ()
         path = os.environ.get("PATH", "")
         shim: Path | None = None
+        dart_cache: Path | None = None
+        if dart is not None:
+            folder = Path(tempfile.mkdtemp(prefix="saga-review-dart-"))
+            temporary.append(folder)
+            packages, sdk = dart
+            dart_shim = review_dependencies_dart.write_dart_shim(folder / "env", sdk)
+            # PUB_CACHE is set per re-run, to a folder inside its own tmp (_dart_pub_cache).
+            env.update({key: value for key, value in review_dependencies_dart.dart_env(
+                dart_shim, folder, path).items() if key != "PUB_CACHE"})
+            path = env["PATH"]
+            toolchain += review_dependencies_dart.dart_toolchain(dart_shim, packages, sdk)
+            dart_cache = packages.cache
         if deps is not None and python is not None:
             # Only ``python3`` and ``python``, linked to the operator's interpreter, ever go on
             # the re-run's PATH: nothing in the packet can be found by name.
@@ -239,8 +256,8 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
                 path = env["PATH"]
                 toolchain += review_dependencies.python_toolchain(shim, deps)
         if vendor is None:
-            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim)
-                   if shim is not None else None)
+            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim, dart=dart_cache)
+                   if shim is not None or dart_cache is not None else None)
             return
         home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
         temporary.append(home)
@@ -253,10 +270,54 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
             env["PATH"] = os.pathsep.join([str(shim_cargo.parent), path])
         yield Offline(env=env, reads=(*reads, vendor, home), cargo=shim_cargo,
                       toolchain=(*review_dependencies.toolchain_paths(cargo), *toolchain),
-                      rust=True, python=shim)
+                      rust=True, python=shim, dart=dart_cache)
     finally:
         for folder in temporary:
             shutil.rmtree(folder, ignore_errors=True)
+
+
+def _offline_dart(
+    packet: Path,
+) -> tuple[review_dependencies_dart.DartDependencies, review_dependencies_dart.DartSdk] | None:
+    """The packet's pub cache and the operator's Dart SDK, found on the operator's PATH, or
+    ``None`` when either is missing."""
+    packages = review_dependencies_dart.dart_packages(packet)
+    if packages is None:
+        return None
+    sdk = review_dependencies_dart.dart_sdk()
+    return (packages, sdk) if sdk is not None else None
+
+
+def _dart_pub_cache(
+    offline: Offline | None, scratch: Path, runner: Process, confine: Confine | None,
+) -> dict[str, str]:
+    """A writable pub cache inside the re-run's ``tmp``, linking to the packet's read-only one,
+    and the project resolved against it.
+
+    ``dart test`` records the project under ``PUB_CACHE/active_roots`` before every run, so the
+    cache it is given must be writable; the packages themselves stay in the packet. The packet
+    keeps no version listings, so the project is resolved first, confined and offline, with
+    ``dart pub get --offline --enforce-lockfile``; a failure is left for the command to show.
+    """
+    if offline is None or offline.dart is None:
+        return {}
+    cache = review_dependencies_dart.write_pub_cache(
+        scratch / "tmp" / "saga-pub-cache",
+        review_dependencies_dart.DartDependencies(cache=offline.dart, version=""),
+    )
+    added = {"PUB_CACHE": str(cache)}
+    if (scratch / "pubspec.yaml").is_file():
+        env = {**child_environment(scratch), **offline.env, **added}
+        argv = ["dart", *review_dependencies_dart.OFFLINE_GET]
+        try:
+            if confine is not None:
+                confine(argv, scratch, env, scratch)
+            else:
+                run_confined(argv, scratch, env, scratch, runner=runner, timeout=RERUN_TIMEOUT,
+                             reads=offline.reads, toolchain=offline.toolchain)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+    return added
 
 
 def run_confined(
@@ -1037,6 +1098,7 @@ def _rerun_one(
     toolchain: tuple[Path, ...] = ()
     if offline is not None:
         env.update(offline.env)
+        env.update(_dart_pub_cache(offline, scratch, runner, confine))
         reads, toolchain = offline.reads, offline.toolchain
         argv = offline.argv(argv)
     if (offline is None or not offline.rust) and Path(argv[0]).name in _RUST_COMMANDS:

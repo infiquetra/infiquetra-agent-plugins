@@ -2540,7 +2540,8 @@ def reviewer_claude_temp_dir(copy: Path) -> Path:
 
 
 def reviewer_claude_shell_script(
-    sentinel: Path, token: str, temp: Path | None = None, python_env: Path | None = None
+    sentinel: Path, token: str, temp: Path | None = None, python_env: Path | None = None,
+    dart_env: tuple[Path, Path] | None = None,
 ) -> str:
     """The prefix: outside the sandbox it runs the command as given; inside, on the allow-list.
 
@@ -2571,11 +2572,16 @@ def reviewer_claude_shell_script(
         # Claude's unwritable folder.
         quoted_temp = shlex.quote(str(temp))
         kept += f" TMPDIR={quoted_temp} TEMP={quoted_temp} TMP={quoted_temp}"
+    front: list[Path] = []
     if python_env is not None:
         # Sandboxed commands only: the launcher's environment, whose bin holds just python3 and
         # python, first on PATH. The vendor process's own PATH is never changed.
-        quoted = shlex.quote(str(python_env))
-        kept += f' VIRTUAL_ENV={quoted} PATH={shlex.quote(str(python_env / "bin"))}:"${{PATH-}}"'
+        kept += f" VIRTUAL_ENV={shlex.quote(str(python_env))}"
+        front.append(python_env / "bin")
+    kept += reviewer_dart_prefix(dart_env, front)
+    if front:
+        dirs = ":".join(shlex.quote(str(path)) for path in front)
+        kept += f' PATH={dirs}:"${{PATH-}}"'
 
     read = f"/bin/cat {shlex.quote(str(sentinel))} 2>/dev/null"
     return (
@@ -2612,12 +2618,146 @@ def reviewer_claude_materialize(
     temp.mkdir(exist_ok=True)
     temp.chmod(0o700)
     python_env = reviewer_python_env_dir(root)
+    dart_env = reviewer_dart_env_dir(root)
     prefix.write_text(reviewer_claude_shell_script(
         sentinel, token, temp,
         python_env if (python_env / "pyvenv.cfg").is_file() else None,
+        (dart_env, reviewer_dart_pub_cache_dir(copy))
+        if (dart_env / "bin" / "dart").is_symlink() else None,
     ), "utf-8")
     prefix.chmod(0o755)
     return path, {REVIEWER_SHELL_PREFIX: str(prefix)}
+
+
+#: What the Dart CLI needs in a sandboxed command: telemetry off, because it otherwise opens a
+#: file under the unreadable home and exits 255; and no HTTP retry, because ``dart test`` asks
+#: pub.dev for version listings the packet does not keep and would wait out the time limit on the
+#: denied network. They match saga's ``review_dependencies_dart.RUN_FLAGS``.
+REVIEWER_DART_FLAGS = (("DASH__SUPPRESS_ANALYTICS", "true"), ("PUB_MAX_HTTP_RETRIES", "0"))
+
+
+def reviewer_packet_dart(packet: Path) -> Path | None:
+    """The packet's pub cache, or ``None`` when there is none to trust.
+
+    Saga's prepare fetches a Dart head's pub.dev packages into ``dependencies/dart/pub-cache``.
+    The entry counts only when it says ``installed`` and names a relative directory inside the
+    packet with no symlink along the way; the rules match saga's ``review_dependencies_dart``.
+    """
+    try:
+        data = json.loads((packet / REVIEWER_DEPENDENCIES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("schema") != REVIEWER_DEPENDENCIES_SCHEMA:
+        return None
+    entry = data.get("dart")
+    if not isinstance(entry, dict) or entry.get("state") != "installed":
+        return None
+    relative = entry.get("directory")
+    if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
+        return None
+    parts = Path(relative).parts
+    if any(part in ("", ".", "..") for part in parts) or packet.is_symlink():
+        return None
+    cursor = packet
+    for part in parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return None
+    if not cursor.is_dir() or not _reviewer_inside(cursor, packet):
+        return None
+    return cursor.resolve()
+
+
+def reviewer_dart_sdk(env: Mapping[str, str]) -> tuple[Path, Path] | None:
+    """The Dart SDK the session's ``PATH`` finds: its real ``dart`` executable and its root.
+
+    A Flutter install's ``bin/dart`` is a shell wrapper that needs git and writes into the SDK;
+    its SDK is ``bin/cache/dart-sdk``. Only a root with a ``version`` file and a ``bin/dart``
+    that is not a script counts. The rules match saga's ``review_dependencies_dart.dart_sdk``.
+    """
+    found = shutil.which("dart", path=env.get("PATH", ""))
+    if not found:
+        return None
+    real = Path(os.path.realpath(found))
+    for root in (real.parent.parent, real.parent / "cache" / "dart-sdk"):
+        executable = root / "bin" / "dart"
+        try:
+            if not executable.is_file() or not (root / "version").is_file():
+                continue
+            with executable.open("rb") as handle:
+                if handle.read(2) == b"#!":
+                    continue
+        except OSError:
+            continue
+        return executable.resolve(), root.resolve()
+    return None
+
+
+def reviewer_dart_env_dir(root: Path) -> Path:
+    """Where the launcher writes the reviewer's ``dart`` folder: beside the copy."""
+    return root / "dart-env"
+
+
+def reviewer_dart_pub_cache_dir(copy: Path) -> Path:
+    """The reviewer's writable pub cache, inside its own temp folder."""
+    return reviewer_claude_temp_dir(copy) / "saga-pub-cache"
+
+
+def reviewer_dart_env(
+    root: Path, copy: Path, cache: Path | None, env: Mapping[str, str]
+) -> tuple[Path, Path] | None:
+    """Write the reviewer's ``dart`` folder and writable pub cache; return ``(folder, sdk)``.
+
+    The folder's ``bin`` holds only ``dart``, linked to the SDK's real executable. The pub cache
+    is a writable folder in the reviewer's temp folder whose ``hosted`` and ``hosted-hashes``
+    link to the packet's read-only cache: ``dart test`` records the project there before each
+    run. Only the shell prefix gives either to sandboxed commands. ``None`` without a cache or
+    an SDK.
+    """
+    if cache is None:
+        return None
+    sdk = reviewer_dart_sdk(env)
+    if sdk is None:
+        return None
+    executable, sdk_root = sdk
+    folder = reviewer_dart_env_dir(root)
+    (folder / "bin").mkdir(parents=True, exist_ok=True)
+    (folder / "bin" / "dart").symlink_to(executable)
+    pub_cache = reviewer_dart_pub_cache_dir(copy)
+    pub_cache.mkdir(parents=True, exist_ok=True)
+    for part in ("hosted", "hosted-hashes"):
+        if (cache / part).is_dir():
+            (pub_cache / part).symlink_to(cache / part)
+    return folder, sdk_root
+
+
+def reviewer_dart_reads(
+    dart: tuple[Path, Path] | None, cache: Path | None, home: Path
+) -> list[dict[str, str]]:
+    """The read-only allowances a Dart review adds: the ``dart`` folder, the packet's cache, and
+    the SDK's root (under home on a Flutter install), unless it would re-open too much."""
+    if dart is None or cache is None:
+        return []
+    folder, sdk_root = dart
+    reads = [
+        {"path": str(folder.resolve()),
+         "reason": "the reviewer's dart folder beside the copy, read-only; its bin holds only dart"},
+        {"path": str(cache), "reason": "the packet's pub packages, read-only"},
+    ]
+    if reviewer_allowed_read_problem(sdk_root, home) is None:
+        reads.append({"path": str(sdk_root),
+                      "reason": "dart on the session PATH belongs to this SDK; read-only"})
+    return reads
+
+
+def reviewer_dart_prefix(dart_env: tuple[Path, Path] | None, front: list[Path]) -> str:
+    """The shell prefix's Dart assignments, and the ``dart`` folder added to *front*."""
+    if dart_env is None:
+        return ""
+    folder, pub_cache = dart_env
+    front.append(folder / "bin")
+    flags = "".join(f" {name}={value}" for name, value in REVIEWER_DART_FLAGS)
+    return f" PUB_CACHE={shlex.quote(str(pub_cache))}{flags}"
 
 
 def reviewer_packet_vendor(packet: Path) -> Path | None:
@@ -4237,6 +4377,9 @@ def reviewer_launch(
     vendor = reviewer_packet_vendor(request.packet)
     packages = reviewer_packet_python(request.packet)
     python_env = reviewer_python_env(root, packages, session_env)
+    dart_cache = reviewer_packet_dart(request.packet)
+    dart = (reviewer_dart_env(root, copy, dart_cache, session_env)
+            if recipe.temp_dir is not None else None)
     cargo_home = reviewer_cargo_home(root, vendor, session_env)
     reviewer_offline_cargo(session_env, cargo_home)
     dependency_reads = [
@@ -4250,7 +4393,8 @@ def reviewer_launch(
                    "only python3 and python"},
         {"path": str(packages[0]) if packages else "",
          "reason": "the packet's installed Python packages, read-only"},
-    ] if python_env is not None and packages is not None else [])
+    ] if python_env is not None and packages is not None else []) + reviewer_dart_reads(
+        dart, dart_cache, home)
     settings_path, extra_env = recipe.materialize(
         recipe.settings(
             copy, request.packet, session_env, toolchain=toolchain,

@@ -3328,6 +3328,203 @@ def test_live_the_confined_rerun_imports_from_the_environment_and_cannot_write_i
     assert (site / "inertdep" / "__init__.py").read_text("utf-8").startswith("def two")
 
 
+# --- Dart: pub packages in the packet, dart test in the re-run ------------------------------------
+
+
+_DART = C.review_dependencies_dart
+
+
+def _dart_packet(tmp: Path) -> Path:
+    """A prepared packet plus a hand-written pub cache entry, so no SDK or network is needed."""
+    _repo_path, packet, _runner = _repro_packet(tmp)
+    package = packet / "dependencies" / "dart" / "pub-cache" / "hosted" / "pub.dev" / "inert-1.0.0"
+    (package / "lib").mkdir(parents=True)
+    (package / "lib" / "inert.dart").write_text("int two() => 2;\n", "utf-8")
+    (package / "bin").mkdir()
+    (package / "bin" / "git").write_text("#!/bin/sh\necho planted\n", "utf-8")
+    (packet / "dependencies" / "dart" / "pub-cache" / "hosted-hashes").mkdir()
+    data = _read(packet / "dependencies.json")
+    data["dart"] = {"state": "installed", "directory": "dependencies/dart/pub-cache",
+                    "sdk": {"version": "3.13.2"}, "packages": [], "lock_sha256": "ab" * 32}
+    _dump(packet / "dependencies.json", data)
+    return packet
+
+
+def _fake_sdk(tmp: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    root = tmp / "sdk"
+    (root / "bin").mkdir(parents=True)
+    (root / "bin" / "dart").write_bytes(b"\xcf\xfa\xed\xfe\n")
+    (root / "version").write_text("3.13.2\n", "utf-8")
+    sdk = _DART.DartSdk(executable=(root / "bin" / "dart").resolve(), root=root.resolve(),
+                        version="3.13.2")
+    monkeypatch.setattr(_DART, "dart_sdk", lambda path=None: sdk)
+    return sdk
+
+
+class _DartConfine(_Confine):
+    """Records each call's argv and environment, and what the first PATH folder holds."""
+
+    def __init__(self) -> None:
+        super().__init__(1, _CAPTURED)
+        self.seen: list[dict[str, Any]] = []
+
+    def __call__(self, argv: list[str], cwd: Path, env: dict[str, str], scratch: Path) -> Any:
+        first = Path(env["PATH"].split(os.pathsep)[0])
+        cache = Path(env.get("PUB_CACHE", "/nonexistent"))
+        self.seen.append({
+            "argv": list(argv), "env": dict(env), "cwd": Path(cwd),
+            "first": sorted(item.name for item in first.iterdir()) if first.is_dir() else [],
+            "cache": sorted(item.name for item in cache.iterdir()) if cache.is_dir() else [],
+            "hosted": (cache / "hosted").resolve() if cache.is_dir() else None,
+        })
+        return super().__call__(argv, cwd, env, scratch)
+
+
+def test_finish_resolves_a_dart_head_offline_then_replays_the_command_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    packet = _dart_packet(tmp_path)
+    sdk = _fake_sdk(tmp_path, monkeypatch)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    (scratch / "pubspec.yaml").write_text("name: tiny\n", "utf-8")
+    confine = _DartConfine()
+    finding = _finding("A retry returns the new number.")
+    finding["proof"]["command"] = "dart test tests/test_changed.py"
+    code, err = _finish(
+        packet, [(_answer([finding]), _result(scratch, changes))], home, _Runner(),
+        ask=_ask(consequence_status="error"), confine=confine,
+    )
+    assert code == 0, err
+    # The export of the head has no pubspec.yaml here, so only the reviewer's command runs.
+    assert [call["argv"] for call in confine.seen] == [["dart", "test", "tests/test_changed.py"]]
+    call = confine.seen[0]
+    assert call["first"] == ["dart"], "only saga's dart is put first on PATH"
+    assert call["env"]["DASH__SUPPRESS_ANALYTICS"] == "true"
+    assert call["env"]["PUB_MAX_HTTP_RETRIES"] == "0"
+    cache = Path(call["env"]["PUB_CACHE"])
+    assert cache.parent.name == "tmp" and cache.name == "saga-pub-cache"
+    assert call["cache"] == ["hosted", "hosted-hashes"]
+    packet_cache = (packet / "dependencies" / "dart" / "pub-cache").resolve()
+    assert call["hosted"] == packet_cache / "hosted"
+    for part in call["env"]["PATH"].split(os.pathsep):
+        assert not part.startswith(str(packet.resolve())) and not part.startswith(str(packet))
+    assert sdk.executable.name == "dart"
+
+
+def test_finish_runs_the_offline_resolution_first_when_the_head_is_a_dart_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    packet = _dart_packet(tmp_path)
+    _fake_sdk(tmp_path, monkeypatch)
+    offline_cm = C._offline_dependencies(packet)
+    offline = offline_cm.__enter__()
+    try:
+        assert offline is not None and offline.dart is not None and offline.python is None
+        scratch = tmp_path / "rerun"
+        (scratch / "tmp").mkdir(parents=True)
+        (scratch / "pubspec.yaml").write_text("name: tiny\n", "utf-8")
+        confine = _DartConfine()
+        added = C._dart_pub_cache(offline, scratch, _Runner(), confine)
+    finally:
+        offline_cm.__exit__(None, None, None)
+    assert [call["argv"] for call in confine.seen] == [
+        ["dart", "pub", "get", "--offline", "--enforce-lockfile"]]
+    assert added == {"PUB_CACHE": str(scratch / "tmp" / "saga-pub-cache")}
+
+
+def test_finish_without_a_dart_sdk_adds_nothing_for_dart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    packet = _dart_packet(tmp_path)
+    monkeypatch.setattr(_DART, "dart_sdk", lambda path=None: None)
+    with C._offline_dependencies(packet) as offline:
+        assert offline is None
+
+
+@pytest.mark.skipif(
+    os.environ.get("SAGA_TEST_LIVE_DART") != "1" or shutil.which("dart") is None
+    or C.platform_helper() is None,
+    reason="opt-in (SAGA_TEST_LIVE_DART=1): needs the Dart SDK, the network and the sandbox",
+)
+def test_live_a_dart_reproduction_passes_through_finish_and_cannot_write_the_packet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prepare fetches a from-scratch package's pub packages for real; finish replays
+    ``dart test`` confined, with the operator's home unreadable, and the failure matches."""
+    monkeypatch.setenv("HOME", str(_OPERATOR_HOME))
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "lib").mkdir()
+    (repo / "test").mkdir()
+    (repo / "pubspec.yaml").write_text(
+        "name: tiny\nenvironment:\n  sdk: ^3.0.0\ndev_dependencies:\n  test: ^1.25.0\n", "utf-8")
+    (repo / "lib" / "tiny.dart").write_text("int two() => 3;\n", "utf-8")
+    (repo / "test" / "placeholder_test.dart").write_text(
+        "import 'package:test/test.dart';\n\nvoid main() {\n  test('ok', () {});\n}\n", "utf-8")
+    subprocess.run(["dart", "pub", "get"], cwd=repo, check=True, capture_output=True, timeout=300,
+                   env={**os.environ, "PUB_CACHE": str(tmp_path / "lock-cache"),
+                        "DASH__SUPPRESS_ANALYTICS": "true"})
+    shutil.rmtree(repo / ".dart_tool")
+    base = _commit(repo, "base")
+    (repo / "lib" / "tiny.dart").write_text("int two() => 2;\n", "utf-8")
+    head = _commit(repo, "head")
+    home = tmp_path / "saga-home"
+    home.mkdir()
+    _machine(home, "available")
+    packet = tmp_path / "packet"
+
+    class Fetching(_Runner):
+        """The stub tool and real git, as elsewhere; the fetch watcher's commands for real."""
+
+        def __call__(self, argv: list[str], **kwargs: Any) -> Any:
+            if argv[:2] == [sys.executable, "-I"]:
+                return _exec_runner()(argv, **kwargs)
+            return super().__call__(argv, **kwargs)
+
+    code, err = _prepare(
+        repo, base, head, _profile(tmp_path / "outside"), _builder(tmp_path / "builder.json"),
+        packet, home, Fetching(), start=2, ask=_ask(), bank=tmp_path / "no-bank.json",
+    )
+    assert code == 0, err
+    assert _read(packet / "dependencies.json")["dart"]["state"] == "installed"
+    scratch = tmp_path / "scratch"
+    (scratch / "test").mkdir(parents=True)
+    (scratch / "test" / "tiny_test.dart").write_text(
+        "import 'package:test/test.dart';\nimport 'package:tiny/tiny.dart';\n\n"
+        "void main() {\n  test('two is three', () {\n"
+        "    expect(two(), 3, reason: 'two returned ${two()}');\n  });\n}\n", "utf-8")
+    changes = {"added": ["test/tiny_test.dart"], "modified": [], "deleted": []}
+    finding = _finding("two returns 2.", key="dart")
+    finding["language"] = "dart"
+    finding["proof"] = {
+        "test": "test/tiny_test.dart::two is three",
+        "command": "dart test test/tiny_test.dart",
+        # The whole failure block, as the reviewer prompt asks.
+        "output": "00:00 +0 -1: two is three [E]\n  Expected: <3>\n    Actual: <2>\n"
+                  "  two returned 2\n  \n  package:matcher          expect\n"
+                  "  test/tiny_test.dart 6:5  main.<fn>\n",
+    }
+    code, err = _finish(packet, [(_answer([finding]), _result(scratch, changes))], home,
+                        _exec_runner(), ask=_ask(consequence_status="error"))
+    assert code == 0, err
+    run = _read(packet / "review-run.json")
+    stored = next(item for item in run["findings"] if item["source"]["kind"] == "llm")
+    assert stored["evidence"] == "reproduced", [
+        item.get("output_tail") for item in run["degraded_inputs"]]
+    cache = packet / "dependencies" / "dart" / "pub-cache"
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None
+        rerun = tmp_path / "write-probe"
+        (rerun / "tmp").mkdir(parents=True)
+        env = {**C.child_environment(rerun), **offline.env}
+        wrote = C.run_confined(["/usr/bin/touch", str(cache / "hosted" / "planted")], rerun,
+                               env, rerun, runner=_exec_runner(), timeout=30,
+                               reads=offline.reads, toolchain=offline.toolchain)
+    assert wrote.code != 0 and not (cache / "hosted" / "planted").exists()
+
+
 # --- prepare bundles the reviewer self-check (preflight contract) -------------------------------
 
 

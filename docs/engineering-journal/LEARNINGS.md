@@ -1,5 +1,65 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-27
+
+### `dart test` in a sandbox fails four separate ways before it reaches the test
+
+**Author.** Jeff Cox
+
+**Evidence.** A from-scratch Dart package was run under Saga's finish sandbox (`sandbox-exec`,
+home folder unreadable, no network). The package has one `package:test` dependency and one
+failing test. It failed four times, each fix exposing the next:
+
+1. **The SDK is unreadable.** `dart` on `PATH` was a link under home to a Flutter install's
+   `bin/dart`, so the run exited 126 with "Operation not permitted". That `bin/dart` is a shell
+   wrapper that needs git and the SDK's `.git`, and can take a lock and write stamps under the
+   SDK's own `bin/cache`. The real executable is `bin/cache/dart-sdk/bin/dart`.
+2. **Telemetry crashes on the unreadable home.** With the SDK readable but `HOME` unreadable, the
+   Dart CLI opens `~/.dart-tool/dart-flutter-telemetry.config` first and exits 255 with "An
+   unexpected error was encountered by the Dart CLI". `DASH__SUPPRESS_ANALYTICS=true` (named in
+   the `dartdev` snapshot) stops it.
+3. **No packages means the network.** `dart test` runs pub's resolution first, and with an empty
+   cache that needs pub.dev.
+4. **pub writes into its cache.** Even offline and up to date, pub records the project under
+   `PUB_CACHE/active_roots/`, so a read-only cache fails (exit 66).
+
+Two determinism and speed findings followed:
+
+- **Version listings.** The version listings under `hosted/pub.dev/.cache/` carry a fetch time,
+  so two fetches differ there and in `active_roots/`. Without the listings, `dart test` asks
+  pub.dev and, with pub's default retries, waits out the whole time limit.
+- **The working combination.** `dart pub get --offline --enforce-lockfile` resolves without
+  listings, and `PUB_MAX_HTTP_RETRIES=0` makes the one optional request fail at once.
+
+Separately, `flutter test` cannot run against a read-only SDK. The tool opens
+`<flutter>/bin/cache/lockfile` for writing even when started past its wrapper. It also finds the
+Android SDK through `adb` on `PATH`.
+
+Finally, Saga's reproduction matcher did not recognise a one-file `dart test` run, whose lines
+leave out the file name.
+
+Tests:
+
+- `plugins/saga/tests/test_review_dependencies_dart.py`, and the opt-in
+  `test_live_pub_fetches_a_lock_twice_identically` (`SAGA_TEST_LIVE_DART=1`).
+- `plugins/saga/tests/test_review_command.py`, and the opt-in
+  `test_live_a_dart_reproduction_passes_through_finish_and_cannot_write_the_packet`.
+- `plugins/saga/tests/test_reproduction_match.py`: `dart_single_file`.
+
+**Mechanism.** A toolchain run inside a sandbox reads and writes more than its documentation
+lists:
+
+- **its install**, through a wrapper it does not need;
+- **its per-user state**, the telemetry config, before any command;
+- **its package cache**, which it treats as its own scratch space;
+- **the network**, for metadata it can do without, retried until a deadline.
+
+Each one has to be found by running it, one fix at a time.
+
+**Generalizable rule.** Before claiming a tool runs sandboxed, run it sandboxed from a fresh copy
+with the real home unreadable, and fix one failure at a time. Then give the tool a writable
+folder of its own wherever it writes, and keep the shared inputs read-only behind links.
+
 ## 2026-10-26
 
 ### An installer that writes wheels in parallel makes a shared file's contents a race
