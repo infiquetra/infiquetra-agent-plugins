@@ -190,7 +190,11 @@ def _install(runner: D.Process, packet: Path, export: D.Export, lockfile: str,
                 if (source / name).is_symlink() or not (source / name).is_file():
                     raise _Failure("symlinked-input")
             raw = (source / lockfile).read_bytes()
-            problem = vet(lockfile, raw.decode("utf-8", "replace"))
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                raise _Failure("unsupported-lockfile") from None
+            problem = vet(lockfile, text)
             if problem is not None:
                 raise _Failure(problem)
             _strip_configuration(source)
@@ -565,14 +569,20 @@ def vet_manifests(source: Path) -> str | None:
             return "unsupported-lockfile"
         if not isinstance(data, dict):
             return "unsupported-lockfile"
-        for field in ("dependencies", "devDependencies", "optionalDependencies",
-                      "peerDependencies", "overrides", "resolutions"):
-            table = data.get(field)
+        pnpm = data.get("pnpm", {})
+        if not isinstance(pnpm, dict):
+            return "unsupported-lockfile"
+        tables = [data.get(field) for field in (
+            "dependencies", "devDependencies", "optionalDependencies", "peerDependencies",
+            "overrides", "resolutions")] + [pnpm.get("overrides")]
+        for table in tables:
             if table is None:
                 continue
             if not isinstance(table, dict):
                 return "unsupported-lockfile"
             for spec in _leaf_specs(table):
+                if spec in ("", "-"):
+                    continue  # npm reads "" as "*"; pnpm's "-" removes a dependency
                 if spec == "catalog:" or re.fullmatch(r"catalog:[A-Za-z0-9._-]+", spec):
                     continue  # pnpm's catalogs: the lockfile records what each resolves to
                 if spec.startswith("workspace:"):
@@ -606,6 +616,8 @@ _YARN_FIELDS = frozenset({"version", "resolved", "integrity", "uid"})
 
 
 def _vet_yarn(text: str) -> str | None:
+    if re.search(r"^__metadata:", text, re.MULTILINE):
+        return "unsupported-lockfile"  # yarn berry, whatever comment precedes it
     if not text.startswith("# ") or "# yarn lockfile v1" not in text.splitlines()[:3]:
         return "unsupported-lockfile"
     seen: set[str] = set()
@@ -888,11 +900,58 @@ def _vet_pnpm(text: str) -> str | None:
             for spec in (table or {}).values():
                 if not isinstance(spec, str) or not _pnpm_version(spec):
                     return "non-registry-source"
+    problem = _vet_pnpm_settings(data)
+    if problem is not None:
+        return problem
     patched = data.get("patchedDependencies") or {}
     for value in (patched.values() if isinstance(patched, dict) else [None]):
         path = value.get("path") if isinstance(value, dict) else value
         if not _inside_head(".", path):
             return "non-registry-source"
+    return None
+
+
+def _pnpm_range(spec: Any, base: str = ".") -> bool:
+    """A range pnpm may record for an override or a catalog: a version, a registry range, an
+    ``npm:`` alias, or a ``link:`` inside the head."""
+    if not isinstance(spec, str):
+        return False
+    if spec.startswith("link:"):
+        return _inside_head(base, spec[len("link:"):])
+    return _pnpm_version(spec) or _plain_spec(spec)
+
+
+def _vet_pnpm_settings(data: Mapping[str, Any]) -> str | None:
+    """The top-level ``overrides``, ``catalogs`` and ``settings``.
+
+    ``overrides`` values and each catalog entry's ``specifier`` and ``version`` pass the same
+    checks as the importers. ``settings`` holds switches, never a source: any key is allowed, but
+    only with a ``true``, ``false`` or whole-number value."""
+    overrides = data.get("overrides") or {}
+    if not isinstance(overrides, dict):
+        return "unsupported-lockfile"
+    for value in overrides.values():
+        if not _pnpm_range(value):
+            return "non-registry-source"
+    catalogs = data.get("catalogs") or {}
+    if not isinstance(catalogs, dict):
+        return "unsupported-lockfile"
+    for catalog in catalogs.values():
+        if not isinstance(catalog, dict):
+            return "unsupported-lockfile"
+        for item in catalog.values():
+            if not isinstance(item, dict) or not set(item) <= {"specifier", "version"}:
+                return "unsupported-lockfile"
+            if "version" not in item or not _pnpm_range(item["version"]):
+                return "non-registry-source"
+            if "specifier" in item and not _pnpm_range(item["specifier"]):
+                return "non-registry-source"
+    settings = data.get("settings") or {}
+    if not isinstance(settings, dict):
+        return "unsupported-lockfile"
+    for value in settings.values():
+        if not isinstance(value, str) or not re.fullmatch(r"true|false|[0-9]+", value):
+            return "unsupported-lockfile"
     return None
 
 

@@ -26,8 +26,13 @@
     pnpm: a strict reader of the YAML subset pnpm writes, which refuses anchors, aliases, tags,
     merge and explicit keys, block and multi-line scalars, comments and duplicate keys; each
     package's resolution must be exactly `{integrity: ...}` and importer versions a version or a
-    `link:` inside the head. Every `package.json` in the head must name only registry ranges,
-    `npm:` aliases, `workspace:` references inside the head or pnpm catalogs.
+    `link:` inside the head. Top-level `overrides` values and each catalog entry's `specifier` and
+    `version` pass the same checks, and `settings` may hold only `true`, `false` or whole-number
+    values. A yarn berry lockfile is `unsupported-lockfile` even behind a classic header comment,
+    and a lockfile that is not valid UTF-8 is `unsupported-lockfile`. Every `package.json` in the head must name only registry ranges,
+    `npm:` aliases, `workspace:` references inside the head or pnpm catalogs, in its dependency
+    tables, `overrides` (nested), `resolutions` and `pnpm.overrides`; an empty range reads as
+    `*`, as npm reads it.
   - A kept symlink is resolved one component at a time through the links inside the folder, and
     dropped if it would leave it.
   - The installed tree is sealed read-only (files 0444, or 0555 when executable; folders 0555),
