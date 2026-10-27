@@ -407,6 +407,51 @@ def test_what_pub_ignores_in_a_path_dependency_does_not_refuse_the_head(
     assert len(pub.calls) == 1
 
 
+_EVIL_DEV = ("dev_dependencies:\n  evil:\n    hosted: http://127.0.0.1:9\n"
+             "    version: ^1.0.0\n")
+
+
+@pytest.mark.parametrize("tree", [
+    # Visited first as a path dependency (only its dependencies), then as a workspace member:
+    # its dev_dependencies, which pub reads for a member, must still be checked.
+    {"pubspec.yaml": PUBSPEC + "dependencies:\n  a:\n    path: pkgs/a\nworkspace:\n- pkgs/a\n",
+     "pkgs/a/pubspec.yaml": "name: a\nresolution: workspace\n" + _EVIL_DEV},
+    # The other order: a member first, and a path dependency of another member afterwards.
+    {"pubspec.yaml": PUBSPEC + "workspace:\n- pkgs/a\n- pkgs/c\n",
+     "pkgs/a/pubspec.yaml": "name: a\nresolution: workspace\n" + _EVIL_DEV,
+     "pkgs/c/pubspec.yaml": "name: c\nresolution: workspace\ndependencies:\n"
+                            "  a:\n    path: ../a\n"},
+    # A nested workspace: pub 3.13 resolves a member's members as roots too.
+    {"pubspec.yaml": PUBSPEC + "workspace:\n- a\n",
+     "a/pubspec.yaml": "name: a\nresolution: workspace\nworkspace:\n- b\n",
+     "a/b/pubspec.yaml": "name: b\nresolution: workspace\n" + _EVIL_DEV},
+])
+def test_every_role_a_folder_plays_is_checked_whatever_the_order(
+    tmp_path: Path, sdk: Any, tree: dict[str, str],
+) -> None:
+    record, _packet, pub = _fetch(tmp_path, {"pubspec.lock": LOCK, **tree})
+    assert record["dart"] == {"state": "not-installed", "reason": "unsupported-source"}
+    assert pub.calls == [], "pub never ran"
+
+
+def test_a_nested_workspace_member_outside_the_head_is_refused(tmp_path: Path, sdk: Any) -> None:
+    tree = {"pubspec.yaml": PUBSPEC + "workspace:\n- a\n", "pubspec.lock": LOCK,
+            "a/pubspec.yaml": "name: a\nresolution: workspace\nworkspace:\n- ../../elsewhere\n"}
+    record, _packet, pub = _fetch(tmp_path, tree)
+    assert record["dart"] == {"state": "not-installed", "reason": "unsupported-source"}
+    assert pub.calls == []
+
+
+def test_a_clean_nested_workspace_is_fetched(tmp_path: Path, sdk: Any) -> None:
+    tree = {"pubspec.yaml": PUBSPEC + "workspace:\n- a\n", "pubspec.lock": LOCK,
+            "a/pubspec.yaml": "name: a\nresolution: workspace\nworkspace:\n- b\n",
+            "a/b/pubspec.yaml": "name: b\nresolution: workspace\ndev_dependencies:\n"
+                                "  test: ^1.25.0\n"}
+    record, _packet, pub = _fetch(tmp_path, tree)
+    assert record["dart"]["state"] == "installed", record
+    assert len(pub.calls) == 1
+
+
 def test_a_flutter_example_app_does_not_refuse_the_package(tmp_path: Path, sdk: Any) -> None:
     tree = {"pubspec.yaml": PUBSPEC, "pubspec.lock": LOCK,
             "example/pubspec.yaml": "name: example\ndependencies:\n  flutter:\n    sdk: flutter\n"}

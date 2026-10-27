@@ -475,39 +475,53 @@ _PACKAGE_SECTIONS = ("dependencies",)
 _MAX_PUBSPECS = 200
 
 
+#: The role of a workspace member: every section a root has, and its own ``workspace`` list.
+#: pub 3.13 resolves nested workspaces (measured: a member's member's ``dev_dependencies`` made
+#: pub contact the host it named).
+_WORKSPACE = "workspace"
+_MEMBER_SECTIONS = (*_DEPENDENCY_SECTIONS, _WORKSPACE)
+
+
 def _check_pubspecs(source: Path, lock: Mapping[str, Mapping[str, Any]] | None = None) -> None:
     """Check every pubspec pub reads during resolution, before it compares anything with the
-    lock: the root ``pubspec.yaml`` and ``pubspec_overrides.yaml``, each workspace member's
-    ``pubspec.yaml`` (as roots), and, followed from all of those and from the lock's path
-    entries, each path dependency's ``pubspec.yaml`` (only its ``dependencies``, as pub reads
-    it). A folder is read once; a cycle ends. Another pubspec in the head (an example app,
-    say) is never read by ``pub get`` at the root, so it is not checked."""
-    queue: list[tuple[Path, tuple[str, ...]]] = []
-    root = _read_pubspec(source / "pubspec.yaml", source, required=True,
-                         sections=_DEPENDENCY_SECTIONS, found=queue)
+    lock: the root ``pubspec.yaml`` and ``pubspec_overrides.yaml``; each workspace member's
+    ``pubspec.yaml``, at any depth, as a root; and, followed from all of those and from the
+    lock's path entries, each path dependency's ``pubspec.yaml`` (only its ``dependencies``, as
+    pub reads it). A folder reached again with sections not yet checked (a path dependency that
+    is also a workspace member, in either order) is read again for the union; a cycle ends.
+    Another pubspec in the head (an example app, say) is never read by ``pub get`` at the root,
+    so it is not checked."""
+    queue: list[tuple[Path, tuple[str, ...]]] = [(source, _MEMBER_SECTIONS)]
     _read_pubspec(source / "pubspec_overrides.yaml", source, required=False,
                   sections=("dependency_overrides",), found=queue)
-    members = root.get("workspace")
-    if members is not None:
-        if not isinstance(members, list):
-            raise _DartFailure("pubspec-unreadable")
-        for member in members:
-            queue.append((_inside(source, source, member), _DEPENDENCY_SECTIONS))
     for item in (lock or {}).values():
         description = item.get("description")
         if item.get("source") == "path" and isinstance(description, Mapping):
             queue.append((_inside(source, source, description.get("path")), _PACKAGE_SECTIONS))
-    seen = {source.resolve()}
+    checked: dict[Path, set[str]] = {}
+    reads = 0
     while queue:
         folder, sections = queue.pop(0)
         key = folder.resolve()
-        if key in seen:
+        done = checked.setdefault(key, set())
+        wanted = set(sections) - done
+        if not wanted:
             continue
-        seen.add(key)
-        if len(seen) > _MAX_PUBSPECS:
+        done |= wanted
+        reads += 1
+        if reads > _MAX_PUBSPECS:
             raise _DartFailure("pubspec-unreadable")
-        _read_pubspec(folder / "pubspec.yaml", source, required=True, sections=sections,
-                      found=queue)
+        data = _read_pubspec(folder / "pubspec.yaml", source, required=True,
+                             sections=tuple(name for name in _DEPENDENCY_SECTIONS if name in done),
+                             found=queue)
+        if _WORKSPACE in wanted:
+            members = data.get(_WORKSPACE)
+            if members is None:
+                continue
+            if not isinstance(members, list):
+                raise _DartFailure("pubspec-unreadable")
+            for member in members:
+                queue.append((_inside(source, folder, member), _MEMBER_SECTIONS))
 
 
 def _read_pubspec(

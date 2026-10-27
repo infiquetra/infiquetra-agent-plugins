@@ -69,7 +69,10 @@ after refusing a link at `scratch/tmp`.
   - the overrides file: `dependency_overrides`;
   - a path dependency: `dependencies` only.
 
-  Each folder is read once, and there is a cap of 200 pubspecs.
+  The walk remembers the sections checked in each folder and reads a folder again for any
+  section not yet covered, so the order in which roles are met cannot skip one. Nested
+  workspace members are walked as roots, because pub 3.13 resolves them (measured with local
+  folders). There is a cap of 200 pubspec reads.
 - **Finish's set-up.** It works through folders held open with `O_NOFOLLOW`, using `dir_fd`
   and `fchmod`. On Linux, `bwrap` also gets `--unshare-pid --die-with-parent`.
 - **Rejected:** a fresh scratch copy for every finding. It would need a new export of the head
