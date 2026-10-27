@@ -14,8 +14,18 @@
   finish gives a confined re-run a `bin` holding only `dart`, a writable pub cache linked to the
   packet's, `DASH__SUPPRESS_ANALYTICS=true` and `PUB_MAX_HTTP_RETRIES=0`, and resolves the
   project offline before replaying the command. `flutter test` is not supported.
+  After review: the lock and the pubspecs pub reads are read with a reader for the YAML subset
+  pub writes, which refuses quoted keys, flow collections, anchors, tags and other forms instead of
+  matching lines; dependencies are only constraints or a `version` and an in-head `path` reached
+  through no link; prepare's pub finds only the SDK's `bin`; an example app's pubspec no longer
+  refuses the package; finish makes a fresh pub cache folder for each re-run and refuses a link
+  at `tmp`; `_make_tmp` no longer runs `chmod` through a link; the offline resolution runs only
+  for a `dart` command; an SDK of another release is not used; and the packet's pub cache is
+  read-only file by file, so a write by the reviewer's file tools through a link fails. New
+  reason word: `pubspec-unreadable`.
 - The reproduction matcher reads a `dart test` run of one file, whose lines leave the file out
-  and name it only in the `loading` line.
+  and name it only in the `loading` line. A file is taken only from a loaded file's name, so a
+  run with no `loading` line still matches nothing, and a test named `x.dart: y` is read whole.
 
 ### Changed
 

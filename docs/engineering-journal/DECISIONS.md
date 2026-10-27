@@ -46,6 +46,32 @@ reviewer's or the re-run's own, never the packet's or the operator's.
 - **Sharing the operator's `~/.pub-cache` at prepare:** the brief rules it out, and prepare would
   then write into the operator's state.
 
+**Reading the YAML (after review).** The lock and the pubspecs pub reads are read by a small
+reader in `review_dependencies_dart.py`. It accepts the subset of YAML that pub writes, plus a
+top-level multi-line `description`, and refuses everything else. A YAML library was rejected:
+
+- the plugin's scripts run on the operator's Python with the standard library only, and the
+  repository's baseline installs nothing;
+- vendoring a full YAML parser would add a large component to the calibration fingerprint;
+- a full parser would accept the very forms that must be refused (flow maps, anchors, tags,
+  quoted keys), so it would still need a fail-closed check of its own on top.
+
+The structural check after reading allows a dependency to be only a version constraint, or a
+block with `version` and an in-head `path` reached through no link. Prepare's pub gets a `PATH`
+holding only the SDK's `bin`. Finish makes its pub cache folder with `mkdtemp` for every re-run,
+after refusing a link at `scratch/tmp`.
+
+**Claude's file tools (after review).** The reviewer's writable pub cache is not inside the copy.
+It is in the reviewer's temp folder beside the copy. But that folder is open to Claude's Edit and
+Write tools through `Edit(/<temp>/**)`, and those tools run outside the command sandbox. So its
+links into the packet could have carried a write into the packet, and finish's re-run reads from
+there. Two layers close this:
+
+- the packet's cache is read-only file by file (0444, or 0555 for executables, and 0555 for
+  folders), restored to writable before any removal;
+- every read-only allowance in the Claude settings is also an `Edit(...)` deny rule, including
+  the two links in the temp folder. A deny rule outranks the allow rule.
+
 **Revisit when.**
 - A Flutter project needs a reproduction.
 - A Grok, Muse or Codex reviewer needs Dart.

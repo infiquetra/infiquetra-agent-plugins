@@ -44,6 +44,7 @@ TIMEOUT = 600
 #: Every reason a ``dart`` entry may record. uv's and pub's own words never reach the packet.
 REASONS = frozenset({
     "no-lockfile", "flutter-unsupported", "unsupported-source", "lock-unreadable",
+    "pubspec-unreadable",
     "lock-mismatch", "dart-missing", "fetch-failed", "network", "timeout", "size-limit",
     "symlinked-input", "subfolder-project", "head-export", "nothing-installed",
 })
@@ -60,10 +61,6 @@ RUN_FLAGS = {**ENV_FLAGS, "PUB_MAX_HTTP_RETRIES": "0"}
 #: listings, writing ``.dart_tool/package_config.json``. ``dart test`` needs it first.
 OFFLINE_GET = ("pub", "get", "--offline", "--enforce-lockfile")
 _PUB_HOSTS = frozenset({"https://pub.dev", "https://pub.dartlang.org"})
-#: A dependency key in a pubspec that points somewhere other than pub.dev, or a path.
-_PUBSPEC_SOURCE = re.compile(r"^\s*(git|hosted|url)\s*:", re.MULTILINE)
-_PUBSPEC_PATH = re.compile(r"^\s*path\s*:\s*['\"]?([^'\"#\n]+?)['\"]?\s*(?:#.*)?$", re.MULTILINE)
-_PUBSPEC_FLUTTER = re.compile(r"^\s*sdk\s*:\s*['\"]?flutter\b", re.MULTILINE)
 _NETWORK = re.compile(r"socket error|SocketException|Failed host lookup|HandshakeException|"
                       r"Connection (?:refused|reset|closed)|timed out|network", re.IGNORECASE)
 _LOCK_MISMATCH = re.compile(r"Unable to satisfy|would change|enforce-lockfile|"
@@ -134,6 +131,11 @@ def dart_sdk(path: str | None = None) -> DartSdk | None:
     return None
 
 
+def same_release(found: str, recorded: str) -> bool:
+    """True when two SDK versions share their major and minor number."""
+    return found.split(".")[:2] == recorded.split(".")[:2]
+
+
 def write_dart_shim(directory: Path, sdk: DartSdk) -> Path:
     """A folder saga writes whose ``bin`` holds only ``dart``, linked to *sdk*'s executable."""
     (directory / "bin").mkdir(parents=True, exist_ok=True)
@@ -147,6 +149,8 @@ def write_pub_cache(directory: Path, packages: DartDependencies) -> Path:
     pub writes ``active_roots`` here; a write through a link reaches the read-only packet and is
     refused.
     """
+    if directory.is_symlink():
+        raise OSError(f"{directory} is a link")
     directory.mkdir(parents=True, exist_ok=True)
     for part in ("hosted", "hosted-hashes"):
         source = packages.cache.resolve() / part
@@ -205,6 +209,7 @@ def entry(
 
 def _clear(packet: Path) -> None:
     """Remove the Dart folder, and ``dependencies/`` when nothing else is left in it."""
+    unseal(packet / "dependencies" / "dart")
     deps._remove(packet / "dependencies" / "dart")
     parent = packet / "dependencies"
     if parent.is_dir() and not parent.is_symlink() and not any(parent.iterdir()):
@@ -240,6 +245,10 @@ def _install(runner: deps.Process, packet: Path, export: deps.Export) -> dict[st
         if sdk is None:
             raise _DartFailure("dart-missing")
         env = {name: os.environ[name] for name in deps._ENV_COPIED if name in os.environ}
+        # The SDK's own bin, and a folder saga writes holding only the system tools pub runs
+        # (``chmod``, to mark package scripts executable): a git source, should one get past the
+        # checks, finds no git to run.
+        env["PATH"] = os.pathsep.join([str(sdk.root / "bin"), str(_pub_tools(work / "tools"))])
         for name, folder in (("HOME", "home"), ("TMPDIR", "tmp")):
             (work / folder).mkdir(mode=0o700)
             env[name] = str(work / folder)
@@ -257,6 +266,7 @@ def _install(runner: deps.Process, packet: Path, export: deps.Export) -> dict[st
         except deps.NotFetched as exc:
             raise _DartFailure(_classify(str(exc), exc.output)) from None
         _tidy(target)
+        seal(target)
         packages = sorted(
             ({"name": name, "version": str(item.get("version", ""))}
              for name, item in lock.items() if item.get("source") == "hosted"),
@@ -273,6 +283,20 @@ def _install(runner: deps.Process, packet: Path, export: deps.Export) -> dict[st
         }
 
 
+#: The system commands pub runs while it fetches. Nothing else is on its PATH.
+_PUB_TOOLS = ("chmod",)
+
+
+def _pub_tools(folder: Path) -> Path:
+    """A folder with links to the system's own ``chmod``, found only in ``/bin`` and ``/usr/bin``."""
+    folder.mkdir()
+    for name in _PUB_TOOLS:
+        found = shutil.which(name, path="/bin:/usr/bin")
+        if found:
+            (folder / name).symlink_to(found)
+    return folder
+
+
 def _classify(message: str, output: str) -> str:
     if message in ("dart-missing", "timeout"):
         return message
@@ -285,46 +309,143 @@ def _classify(message: str, output: str) -> str:
     return "fetch-failed"
 
 
-def _read_lock(text: str) -> dict[str, dict[str, Any]]:
-    """The ``packages`` map of a ``pubspec.lock``, the subset of YAML pub writes.
+# --- the YAML subset pub writes ---------------------------------------------------------------------
+#
+# pub runs with the network on and no sandbox during prepare, and it acts on every pubspec it
+# reads before it compares anything with the lock. So the files are read here, as the subset of
+# YAML that pub itself writes and people write by hand, and anything outside it is refused rather
+# than interpreted: a quoted or complex key, a document marker, an anchor, an alias, a tag, a flow
+# collection, a block scalar (except a top-level ``description``), a tab, a duplicate key, or a
+# line that is none of a key, a list item, a comment or a blank. What this reader returns is then
+# what YAML means, so the structural checks below see what pub sees.
 
-    Each package is ``{"source": ..., "version": ..., "description": str | dict}``. A layout this
-    reader does not know is refused (``lock-unreadable``), never guessed at.
-    """
-    packages: dict[str, dict[str, Any]] = {}
-    section = None
-    current: dict[str, Any] | None = None
-    in_description = False
+
+class _Unreadable(Exception):
+    """The text is outside the YAML subset this reader accepts."""
+
+
+_KEY = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_]+)[ ]*:(?:[ ]+(?P<value>.*?))?[ ]*$")
+_ITEM = re.compile(r"^(?P<indent> *)-[ ]+(?P<value>.*?)[ ]*$")
+#: Characters YAML gives a meaning to at the start of a plain value.
+_INDICATORS = tuple("{[&*!|>%@`,?:-#")
+#: Top-level keys whose value may be a folded or multi-line text, which pub never resolves.
+_TEXT_KEYS = frozenset({"description"})
+
+
+def _yaml(text: str) -> dict[str, Any]:
+    """Read *text* as nested ``dict``s, ``list``s of scalars and ``str`` scalars."""
+    root: dict[str, Any] = {}
+    # Each open block: (indent of its keys or items, the container, the key that opened it).
+    stack: list[tuple[int, Any]] = [(-1, root)]
+    pending: tuple[int, dict[str, Any], str] | None = None
+    text_block: tuple[int, dict[str, Any], str] | None = None
     for raw in text.splitlines():
-        if not raw.strip() or raw.lstrip().startswith("#"):
-            continue
+        if "\t" in raw[: len(raw) - len(raw.lstrip())] or "\r" in raw:
+            raise _Unreadable
+        stripped = raw.strip()
         indent = len(raw) - len(raw.lstrip(" "))
-        key, sep, value = raw.strip().partition(":")
-        if not sep:
+        if text_block is not None:
+            block_indent, owner, key = text_block
+            if not stripped or indent > block_indent:
+                owner[key] = (owner[key] + " " + stripped).strip()
+                continue
+            text_block = None
+        if not stripped or stripped.startswith("#"):
+            continue
+        if indent == 0 and stripped.startswith(("---", "...", "%")):
+            raise _Unreadable
+        is_item = _ITEM.match(raw) is not None
+        # Close every block this line is outside of. A list written at its key's own indent
+        # stays open only for further items.
+        while len(stack) > 1 and (
+            indent < stack[-1][0]
+            or (indent == stack[-1][0] and isinstance(stack[-1][1], list) and not is_item)
+        ):
+            stack.pop()
+        if pending is not None:
+            pending_indent, owner, key = pending
+            pending = None
+            if indent > pending_indent or (indent == pending_indent and _ITEM.match(raw)):
+                container: Any = [] if _ITEM.match(raw) else {}
+                owner[key] = container
+                stack.append((indent, container))
+        parent_indent, parent = stack[-1]
+        item = _ITEM.match(raw)
+        if item:
+            if not isinstance(parent, list) or indent != parent_indent:
+                raise _Unreadable
+            parent.append(_scalar(item.group("value")))
+            continue
+        found = _KEY.match(raw)
+        if found is None or not isinstance(parent, dict):
+            raise _Unreadable
+        if parent is not root and indent != parent_indent:
+            raise _Unreadable
+        if parent is root and indent != 0:
+            raise _Unreadable
+        key = found.group("key")
+        if key in parent:
+            raise _Unreadable
+        value = found.group("value")
+        if value is None or value.startswith("#"):
+            parent[key] = None
+            pending = (indent, parent, key)
+            continue
+        if parent is root and key in _TEXT_KEYS and re.fullmatch(r"[|>][-+]?", value):
+            parent[key] = ""
+            text_block = (indent, parent, key)
+            continue
+        parent[key] = _scalar(value)
+        if parent is root and key in _TEXT_KEYS and not value.startswith(("'", '"')):
+            # A plain text may go on over more indented lines.
+            text_block = (indent, parent, key)
+    return root
+
+
+def _scalar(value: str) -> str:
+    """A quoted or plain scalar, with a trailing comment removed; anything else is refused."""
+    if value.startswith('"'):
+        end = value.find('"', 1)
+        if end < 0 or "\\" in value[:end] or value[end + 1:].strip()[:1] not in ("", "#"):
+            raise _Unreadable
+        return value[1:end]
+    if value.startswith("'"):
+        end = value.find("'", 1)
+        if end < 0 or value[end + 1:].strip()[:1] not in ("", "#"):
+            raise _Unreadable
+        return value[1:end]
+    if value.startswith(_INDICATORS) and not re.match(r"-[0-9]", value):
+        raise _Unreadable
+    plain = re.split(r"[ ]+#", value, maxsplit=1)[0].rstrip()
+    if ": " in plain or plain.endswith(":") or not plain:
+        raise _Unreadable
+    return plain
+
+
+def _read_lock(text: str) -> dict[str, dict[str, Any]]:
+    """The ``packages`` map of a ``pubspec.lock``, as pub writes it; anything else is refused."""
+    try:
+        data = _yaml(text)
+    except _Unreadable:
+        raise _DartFailure("lock-unreadable") from None
+    if set(data) - {"packages", "sdks"}:
+        raise _DartFailure("lock-unreadable")
+    packages = data.get("packages")
+    if packages is None:
+        return {}
+    if not isinstance(packages, dict):
+        raise _DartFailure("lock-unreadable")
+    for item in packages.values():
+        if not isinstance(item, dict) or set(item) - {"dependency", "description", "source",
+                                                       "version"}:
             raise _DartFailure("lock-unreadable")
-        value = _unquote(value.strip())
-        if indent == 0:
-            section, current, in_description = key, None, False
-            continue
-        if section != "packages":
-            continue
-        if indent == 2:
-            current = packages.setdefault(_unquote(key), {})
-            in_description = False
-        elif indent == 4 and current is not None:
-            in_description = key == "description" and value == ""
-            current[key] = {} if in_description else value
-        elif indent == 6 and current is not None and in_description:
-            current["description"][key] = value
-        else:
+        description = item.get("description")
+        if isinstance(description, list) or (
+            isinstance(description, dict)
+            and any(not isinstance(value, str) for value in description.values())
+        ):
             raise _DartFailure("lock-unreadable")
     return packages
-
-
-def _unquote(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1]
-    return value
 
 
 def _check_lock(lock: Mapping[str, Mapping[str, Any]], source: Path) -> None:
@@ -345,25 +466,124 @@ def _check_lock(lock: Mapping[str, Mapping[str, Any]], source: Path) -> None:
             raise _DartFailure("unsupported-source")
 
 
+_DEPENDENCY_SECTIONS = ("dependencies", "dev_dependencies", "dependency_overrides")
+
+
 def _check_pubspecs(source: Path) -> None:
-    """Refuse a pubspec or override file that names a git source, a host, a path outside the
-    head, or the Flutter SDK. pub reads them before it compares them with the lock."""
-    for path in sorted(source.rglob("pubspec*.yaml")):
-        if ".dart_tool" in path.parts or path.name not in ("pubspec.yaml", "pubspec_overrides.yaml"):
+    """Check the files pub reads at the root: ``pubspec.yaml``, ``pubspec_overrides.yaml``, and
+    each workspace member's ``pubspec.yaml``. Another pubspec in the head (an example app, say) is
+    never read by ``pub get`` at the root, so it is not checked and never refuses the head."""
+    root = _read_pubspec(source / "pubspec.yaml", source, required=True)
+    _read_pubspec(source / "pubspec_overrides.yaml", source, required=False)
+    members = root.get("workspace")
+    if members is None:
+        return
+    if not isinstance(members, list):
+        raise _DartFailure("pubspec-unreadable")
+    for member in members:
+        folder = _inside(source, source, member)
+        _read_pubspec(folder / "pubspec.yaml", source, required=True)
+
+
+def _read_pubspec(path: Path, source: Path, *, required: bool) -> dict[str, Any]:
+    if not os.path.lexists(path):
+        if required:
+            raise _DartFailure("pubspec-unreadable")
+        return {}
+    _no_links(source, path)
+    try:
+        data = _yaml(path.read_text(encoding="utf-8", errors="replace"))
+    except _Unreadable:
+        raise _DartFailure("pubspec-unreadable") from None
+    environment = data.get("environment")
+    if environment is not None and (
+        not isinstance(environment, dict) or "flutter" in environment
+    ):
+        raise _DartFailure("flutter-unsupported" if isinstance(environment, dict)
+                           else "pubspec-unreadable")
+    for section in _DEPENDENCY_SECTIONS:
+        entries = data.get(section)
+        if entries is None:
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if _PUBSPEC_FLUTTER.search(text):
-            raise _DartFailure("flutter-unsupported")
-        if _PUBSPEC_SOURCE.search(text):
-            raise _DartFailure("unsupported-source")
-        for found in _PUBSPEC_PATH.finditer(text):
-            _inside(source, path.parent, found.group(1).strip())
+        if not isinstance(entries, dict):
+            raise _DartFailure("pubspec-unreadable")
+        for spec in entries.values():
+            _check_dependency(spec, path.parent, source)
+    return data
 
 
-def _inside(root: Path, base: Path, value: str) -> None:
-    joined = Path(os.path.normpath(base / value))
-    if not value or Path(value).is_absolute() or not joined.is_relative_to(root):
+def _check_dependency(spec: Any, base: Path, source: Path) -> None:
+    """A dependency is a version constraint, or a block with ``version`` and an in-head
+    ``path``. Flutter's ``sdk`` is refused as unsupported; any other key as another source."""
+    if spec is None or isinstance(spec, str):
+        return
+    if not isinstance(spec, dict):
+        raise _DartFailure("pubspec-unreadable")
+    if "sdk" in spec:
+        raise _DartFailure("flutter-unsupported")
+    if set(spec) - {"version", "path"}:
         raise _DartFailure("unsupported-source")
+    if "path" in spec:
+        if not isinstance(spec["path"], str):
+            raise _DartFailure("unsupported-source")
+        _inside(source, base, spec["path"])
+
+
+def _inside(root: Path, base: Path, value: Any) -> Path:
+    """*value*, a path relative to *base*, as a folder inside *root* reached through no link."""
+    if not isinstance(value, str) or not value or Path(value).is_absolute():
+        raise _DartFailure("unsupported-source")
+    joined = Path(os.path.normpath(base / value))
+    if not joined.is_relative_to(root):
+        raise _DartFailure("unsupported-source")
+    _no_links(root, joined)
+    if not joined.resolve().is_relative_to(root.resolve()):
+        raise _DartFailure("unsupported-source")
+    return joined
+
+
+def _no_links(root: Path, path: Path) -> None:
+    """Refuse a link at any step from *root* down to *path*."""
+    cursor = root
+    for part in path.relative_to(root).parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            raise _DartFailure("symlinked-input")
+
+
+def seal(cache: Path) -> None:
+    """Make the cache's files and folders read-only (0444 or 0555 for files, 0555 for folders).
+
+    The reviewer's file tools run outside the command sandbox; a write that reaches the packet
+    through a link then fails at the file. :func:`unseal` gives write back before a removal.
+    """
+    for folder, dirs, files in os.walk(cache, topdown=False):
+        for name in files:
+            path = os.path.join(folder, name)
+            if not os.path.islink(path):
+                mode = os.lstat(path).st_mode
+                os.chmod(path, 0o555 if mode & 0o111 else 0o444)
+        for name in dirs:
+            path = os.path.join(folder, name)
+            if not os.path.islink(path):
+                os.chmod(path, 0o555)
+    if cache.is_dir() and not cache.is_symlink():
+        cache.chmod(0o555)
+
+
+def unseal(path: Path) -> None:
+    """Give write back to the owner under *path*, without following links, before removing it."""
+    if not os.path.lexists(path) or path.is_symlink():
+        return
+    if path.is_dir():
+        path.chmod(0o755)
+        for folder, dirs, files in os.walk(path):
+            for name in dirs:
+                if not os.path.islink(os.path.join(folder, name)):
+                    os.chmod(os.path.join(folder, name), 0o755)
+            for name in files:
+                if not os.path.islink(os.path.join(folder, name)):
+                    os.chmod(os.path.join(folder, name), 0o644)
 
 
 def _tidy(cache: Path) -> None:

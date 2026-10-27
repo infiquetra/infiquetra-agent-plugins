@@ -19,6 +19,12 @@ for C8 to extend.
   first on `PATH`, `PUB_CACHE`, `DASH__SUPPRESS_ANALYTICS=true` and `PUB_MAX_HTTP_RETRIES=0`; the
   vendor process's own `PATH` never changes. The folder, the packet's cache and the SDK's root are
   allowed back for reading and named in `denyWrite`.
+  No Dart is given when the SDK is of another major or minor version than the one that fetched
+  the packages, or when its root cannot be allowed back for reading.
+- **Claude's file tools are denied every path stated read-only.** The reviewer's settings add
+  an `Edit(...)` deny rule for each read-only allowance, including the links from the reviewer's
+  writable pub cache into the packet. Claude's Edit and Write tools run outside the command
+  sandbox, and the temp folder holding those links is otherwise open to them.
 - **The reviewer's sandboxed `python3` uses the packet's Python packages.** When saga's
   `dependencies.json` names `installed` or `partial` packages inside the packet, and the session's
   `python3` has the recorded major and minor version, the launcher writes a small environment

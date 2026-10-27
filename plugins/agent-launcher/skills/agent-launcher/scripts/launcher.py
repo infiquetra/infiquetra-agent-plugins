@@ -2636,12 +2636,13 @@ def reviewer_claude_materialize(
 REVIEWER_DART_FLAGS = (("DASH__SUPPRESS_ANALYTICS", "true"), ("PUB_MAX_HTTP_RETRIES", "0"))
 
 
-def reviewer_packet_dart(packet: Path) -> Path | None:
-    """The packet's pub cache, or ``None`` when there is none to trust.
+def reviewer_packet_dart(packet: Path) -> tuple[Path, str] | None:
+    """The packet's pub cache and the SDK version that fetched it, or ``None``.
 
     Saga's prepare fetches a Dart head's pub.dev packages into ``dependencies/dart/pub-cache``.
-    The entry counts only when it says ``installed`` and names a relative directory inside the
-    packet with no symlink along the way; the rules match saga's ``review_dependencies_dart``.
+    The entry counts only when it says ``installed``, records ``sdk.version``, and names a
+    relative directory inside the packet with no symlink along the way; the rules match saga's
+    ``review_dependencies_dart``.
     """
     try:
         data = json.loads((packet / REVIEWER_DEPENDENCIES_FILE).read_text(encoding="utf-8"))
@@ -2651,6 +2652,10 @@ def reviewer_packet_dart(packet: Path) -> Path | None:
         return None
     entry = data.get("dart")
     if not isinstance(entry, dict) or entry.get("state") != "installed":
+        return None
+    sdk = entry.get("sdk")
+    version = sdk.get("version") if isinstance(sdk, dict) else None
+    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+[A-Za-z0-9.+-]*", version):
         return None
     relative = entry.get("directory")
     if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
@@ -2665,11 +2670,11 @@ def reviewer_packet_dart(packet: Path) -> Path | None:
             return None
     if not cursor.is_dir() or not _reviewer_inside(cursor, packet):
         return None
-    return cursor.resolve()
+    return cursor.resolve(), version
 
 
-def reviewer_dart_sdk(env: Mapping[str, str]) -> tuple[Path, Path] | None:
-    """The Dart SDK the session's ``PATH`` finds: its real ``dart`` executable and its root.
+def reviewer_dart_sdk(env: Mapping[str, str]) -> tuple[Path, Path, str] | None:
+    """The Dart SDK the session's ``PATH`` finds: its real ``dart`` executable, root and version.
 
     A Flutter install's ``bin/dart`` is a shell wrapper that needs git and writes into the SDK;
     its SDK is ``bin/cache/dart-sdk``. Only a root with a ``version`` file and a ``bin/dart``
@@ -2687,9 +2692,10 @@ def reviewer_dart_sdk(env: Mapping[str, str]) -> tuple[Path, Path] | None:
             with executable.open("rb") as handle:
                 if handle.read(2) == b"#!":
                     continue
+            version = (root / "version").read_text(encoding="utf-8").strip()
         except OSError:
             continue
-        return executable.resolve(), root.resolve()
+        return executable.resolve(), root.resolve(), version
     return None
 
 
@@ -2704,22 +2710,28 @@ def reviewer_dart_pub_cache_dir(copy: Path) -> Path:
 
 
 def reviewer_dart_env(
-    root: Path, copy: Path, cache: Path | None, env: Mapping[str, str]
+    root: Path, copy: Path, packages: tuple[Path, str] | None, env: Mapping[str, str]
 ) -> tuple[Path, Path] | None:
     """Write the reviewer's ``dart`` folder and writable pub cache; return ``(folder, sdk)``.
 
     The folder's ``bin`` holds only ``dart``, linked to the SDK's real executable. The pub cache
     is a writable folder in the reviewer's temp folder whose ``hosted`` and ``hosted-hashes``
     link to the packet's read-only cache: ``dart test`` records the project there before each
-    run. Only the shell prefix gives either to sandboxed commands. ``None`` without a cache or
-    an SDK.
+    run. Only the shell prefix gives either to sandboxed commands. ``None`` without a cache, without
+    an SDK, with an SDK of another major or minor version than the one that fetched the packages,
+    or with an SDK that cannot be allowed back for reading (a ``dart`` that could not run).
     """
-    if cache is None:
+    if packages is None:
         return None
+    cache, recorded = packages
     sdk = reviewer_dart_sdk(env)
     if sdk is None:
         return None
-    executable, sdk_root = sdk
+    executable, sdk_root, version = sdk
+    if version.split(".")[:2] != recorded.split(".")[:2]:
+        return None
+    if reviewer_allowed_read_problem(sdk_root, _reviewer_home(env)) is not None:
+        return None
     folder = reviewer_dart_env_dir(root)
     (folder / "bin").mkdir(parents=True, exist_ok=True)
     (folder / "bin" / "dart").symlink_to(executable)
@@ -2732,18 +2744,26 @@ def reviewer_dart_env(
 
 
 def reviewer_dart_reads(
-    dart: tuple[Path, Path] | None, cache: Path | None, home: Path
+    dart: tuple[Path, Path] | None, packages: tuple[Path, str] | None, home: Path,
+    pub_cache: Path | None = None,
 ) -> list[dict[str, str]]:
     """The read-only allowances a Dart review adds: the ``dart`` folder, the packet's cache, and
     the SDK's root (under home on a Flutter install), unless it would re-open too much."""
-    if dart is None or cache is None:
+    if dart is None or packages is None:
         return []
+    cache = packages[0]
     folder, sdk_root = dart
     reads = [
         {"path": str(folder.resolve()),
          "reason": "the reviewer's dart folder beside the copy, read-only; its bin holds only dart"},
         {"path": str(cache), "reason": "the packet's pub packages, read-only"},
     ]
+    if pub_cache is not None:
+        # The writable cache's own links into the packet: the temp folder is editable, so these
+        # paths are stated read-only to deny Claude's file tools a write through them.
+        reads += [{"path": str(pub_cache / part),
+                   "reason": "a link from the reviewer's pub cache to the packet's, read-only"}
+                  for part in ("hosted", "hosted-hashes") if (pub_cache / part).is_symlink()]
     if reviewer_allowed_read_problem(sdk_root, home) is None:
         reads.append({"path": str(sdk_root),
                       "reason": "dart on the session PATH belongs to this SDK; read-only"})
@@ -3036,7 +3056,11 @@ def reviewer_claude_settings(
                 "Bash", "Edit(./**)", f"Edit(/{temp}/**)", f"Read(/{packet.resolve()}/**)",
             ],
             "deny": ["WebFetch", "WebSearch", "mcp__*"]
-            + [f"Read({path})" for path in list(REVIEWER_CREDENTIAL_PATHS) + list(extra_deny_read)],
+            + [f"Read({path})" for path in list(REVIEWER_CREDENTIAL_PATHS) + list(extra_deny_read)]
+            # Claude's file tools run outside the command sandbox, under the Edit allow rules
+            # above; a path stated read-only is denied to them too, including a link in the
+            # writable temp folder that points into the packet.
+            + [f"Edit(/{path}/**)" for path in read_only],
         },
     }
 
@@ -4394,7 +4418,7 @@ def reviewer_launch(
         {"path": str(packages[0]) if packages else "",
          "reason": "the packet's installed Python packages, read-only"},
     ] if python_env is not None and packages is not None else []) + reviewer_dart_reads(
-        dart, dart_cache, home)
+        dart, dart_cache, home, reviewer_dart_pub_cache_dir(copy) if dart is not None else None)
     settings_path, extra_env = recipe.materialize(
         recipe.settings(
             copy, request.packet, session_env, toolchain=toolchain,

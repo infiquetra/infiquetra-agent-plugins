@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess  # nosec B404
 import sys
 import tarfile
@@ -285,37 +286,51 @@ def _offline_dart(
     if packages is None:
         return None
     sdk = review_dependencies_dart.dart_sdk()
-    return (packages, sdk) if sdk is not None else None
+    if sdk is None or not review_dependencies_dart.same_release(sdk.version, packages.version):
+        # Another SDK than the one that fetched the packages would only fail to resolve.
+        return None
+    return packages, sdk
 
 
 def _dart_pub_cache(
     offline: Offline | None, scratch: Path, runner: Process, confine: Confine | None,
+    argv: Sequence[str] = (),
 ) -> dict[str, str]:
-    """A writable pub cache inside the re-run's ``tmp``, linking to the packet's read-only one,
-    and the project resolved against it.
+    """A fresh writable pub cache inside the re-run's ``tmp``, linking to the packet's read-only
+    one, and, for a ``dart`` command, the project resolved against it.
 
     ``dart test`` records the project under ``PUB_CACHE/active_roots`` before every run, so the
-    cache it is given must be writable; the packages themselves stay in the packet. The packet
-    keeps no version listings, so the project is resolved first, confined and offline, with
-    ``dart pub get --offline --enforce-lockfile``; a failure is left for the command to show.
+    cache it is given must be writable; the packages themselves stay in the packet. Earlier
+    re-runs write in the same scratch copy, so nothing there is trusted: a link at ``scratch`` or
+    ``tmp`` is refused without being followed, and the cache is a new folder with a random name
+    (``mkdtemp``), never one that might already exist. Raises ``OSError`` when it cannot be made.
+
+    The packet keeps no version listings, so before a ``dart`` command the project is resolved
+    first, confined and offline, with ``dart pub get --offline --enforce-lockfile``; a failure is
+    left for the command to show. Other commands skip it.
     """
     if offline is None or offline.dart is None:
         return {}
+    temporary = scratch / "tmp"
+    for path in (scratch, temporary):
+        if not stat.S_ISDIR(os.lstat(path).st_mode):
+            raise OSError(f"{path} is not a folder saga made")
     cache = review_dependencies_dart.write_pub_cache(
-        scratch / "tmp" / "saga-pub-cache",
+        Path(tempfile.mkdtemp(prefix="saga-pub-cache-", dir=temporary)),
         review_dependencies_dart.DartDependencies(cache=offline.dart, version=""),
     )
     added = {"PUB_CACHE": str(cache)}
-    if (scratch / "pubspec.yaml").is_file():
+    if argv and Path(argv[0]).name == "dart" and (scratch / "pubspec.yaml").is_file():
         env = {**child_environment(scratch), **offline.env, **added}
-        argv = ["dart", *review_dependencies_dart.OFFLINE_GET]
+        resolve = ["dart", *review_dependencies_dart.OFFLINE_GET]
         try:
             if confine is not None:
-                confine(argv, scratch, env, scratch)
+                confine(resolve, scratch, env, scratch)
             else:
-                run_confined(argv, scratch, env, scratch, runner=runner, timeout=RERUN_TIMEOUT,
-                             reads=offline.reads, toolchain=offline.toolchain)
-        except (subprocess.TimeoutExpired, OSError):
+                run_confined(resolve, scratch, env, scratch, runner=runner,
+                             timeout=RERUN_TIMEOUT, reads=offline.reads,
+                             toolchain=offline.toolchain)
+        except subprocess.TimeoutExpired:
             pass
     return added
 
@@ -506,6 +521,8 @@ def _prepare(
                 raise CommandFailure(2, str(exc)) from exc
         _publish(staging, out)
     finally:
+        # A Dart cache in the packet is read-only file by file; give write back first.
+        review_dependencies_dart.unseal(staging / "dependencies" / "dart")
         shutil.rmtree(staging, ignore_errors=True)
         if temporary:
             profile.unlink(missing_ok=True)
@@ -1098,7 +1115,15 @@ def _rerun_one(
     toolchain: tuple[Path, ...] = ()
     if offline is not None:
         env.update(offline.env)
-        env.update(_dart_pub_cache(offline, scratch, runner, confine))
+        try:
+            env.update(_dart_pub_cache(offline, scratch, runner, confine, argv))
+        except OSError:
+            # An earlier re-run left something in tmp that saga will not follow.
+            _downgrade(finding)
+            return [_degraded(
+                str(finding.get("lens") or "correctness"), "none", "tmp", "review-command",
+                "re-run-could-not-start",
+            )]
         reads, toolchain = offline.reads, offline.toolchain
         argv = offline.argv(argv)
     if (offline is None or not offline.rust) and Path(argv[0]).name in _RUST_COMMANDS:
@@ -1636,13 +1661,21 @@ def _extract_tree(bundle: tarfile.TarFile, dest: Path) -> None:
 
 
 def _make_tmp(scratch: Path) -> bool:
+    """Make ``scratch/tmp`` owner-only. An earlier re-run may have left a link there: it is
+    refused before anything follows it, so no folder outside the scratch copy is touched."""
     temporary = scratch / "tmp"
     try:
-        temporary.mkdir(parents=True, exist_ok=True)
+        if scratch.is_symlink() or not scratch.is_dir():
+            return False
+        if os.path.lexists(temporary):
+            if not stat.S_ISDIR(os.lstat(temporary).st_mode):
+                return False
+        else:
+            temporary.mkdir()
         temporary.chmod(0o700)
     except OSError:
         return False
-    return temporary.is_dir() and not temporary.is_symlink()
+    return stat.S_ISDIR(os.lstat(temporary).st_mode)
 
 
 def _publish(staging: Path, out: Path) -> None:

@@ -175,6 +175,23 @@ def test_a_locked_head_s_packages_land_in_the_packet_and_nothing_that_varies(
     assert str(tmp_path) not in json.dumps(record)
 
 
+def test_the_packet_s_cache_is_read_only_file_by_file_and_can_still_be_removed(
+    tmp_path: Path, sdk: Any,
+) -> None:
+    """Claude's file tools run outside the command sandbox, so the files refuse a write too."""
+    _record, packet, _pub = _fetch(tmp_path, {"pubspec.yaml": PUBSPEC, "pubspec.lock": LOCK})
+    cache = packet / "dependencies" / "dart" / "pub-cache"
+    for path in [cache, *cache.rglob("*")]:
+        mode = path.lstat().st_mode & 0o777
+        assert not mode & 0o222, (path, oct(mode))
+    planted = cache / "hosted" / "pub.dev" / "inertdep-1.0.0" / "lib" / "inertdep.dart"
+    with pytest.raises(PermissionError):
+        planted.write_text("int two() => 3;\n", "utf-8")
+    DART.unseal(packet / "dependencies" / "dart")
+    shutil.rmtree(packet / "dependencies" / "dart")
+    assert not (packet / "dependencies" / "dart").exists()
+
+
 def test_the_operator_s_pub_cache_is_never_named(
     tmp_path: Path, sdk: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -215,6 +232,10 @@ def test_two_fetches_of_one_head_write_the_same_bytes(tmp_path: Path, sdk: Any) 
     ({"pubspec.yaml": PUBSPEC, "pubspec.lock": _lock(
         "  evil:\n    dependency: \"direct main\"\n    description:\n      path: \".\"\n"
         "      ref: main\n      resolved-ref: abc\n      url: \"https://example.com/x.git\"\n"
+        "    source: git\n    version: \"1.0.0\"\n")}, (), "lock-unreadable"),
+    ({"pubspec.yaml": PUBSPEC, "pubspec.lock": _lock(
+        "  evil:\n    dependency: \"direct main\"\n    description:\n      path: \".\"\n"
+        "      ref: main\n      url: \"https://example.com/x.git\"\n"
         "    source: git\n    version: \"1.0.0\"\n")}, (), "unsupported-source"),
     ({"pubspec.yaml": PUBSPEC + "dependency_overrides:\n  evil:\n    path: /etc\n",
       "pubspec.lock": LOCK}, (), "unsupported-source"),
@@ -232,6 +253,139 @@ def test_an_unusable_dart_head_is_refused_before_pub_runs(
     assert reason in DART.REASONS
     assert pub.calls == []
     assert not (packet / "dependencies" / "dart").exists()
+
+
+_OUTSIDE = "/private/var/empty/outside-folder"
+_HONEST_LOCK = 'sdks:\n  dart: ">=3.0.0 <4.0.0"\n'
+
+
+@pytest.mark.parametrize(("tree", "reason"), [
+    # The review's four heads: each got past the line checks, and pub then read an outside
+    # folder, contacted a chosen host, or ran git.
+    ({"pubspec.lock": '"packages":\n  evil:\n    source: path\n',
+      "pubspec.yaml": f'name: tiny\ndependencies:\n  evil:\n    "path": {_OUTSIDE}\n'},
+     "lock-unreadable"),
+    ({"pubspec.lock": '"packages":\n  evilpkg:\n    source: hosted\n',
+      "pubspec.yaml": 'name: tiny\ndependencies:\n  evilpkg:\n    "hosted": http://127.0.0.1:9\n'
+                      '    version: ^1.0.0\n'},
+     "lock-unreadable"),
+    ({"pubspec.lock": _HONEST_LOCK,
+      "pubspec.yaml": 'name: tiny\ndependencies:\n'
+                      '  evilpkg: {hosted: "http://127.0.0.1:9", version: ^1.0.0}\n'},
+     "pubspec-unreadable"),
+    ({"pubspec.lock": _HONEST_LOCK,
+      "pubspec.yaml": 'name: tiny\ndependencies:\n  evilpkg: {git: "file:///private/var/empty"}\n'},
+     "pubspec-unreadable"),
+    # The same sources written as plain blocks are refused by what they are.
+    ({"pubspec.lock": _HONEST_LOCK,
+      "pubspec.yaml": "name: tiny\ndependencies:\n  evil:\n    hosted: http://127.0.0.1:9\n"},
+     "unsupported-source"),
+    ({"pubspec.lock": _HONEST_LOCK,
+      "pubspec.yaml": "name: tiny\ndependencies:\n  evil:\n    git:\n      url: x\n"},
+     "unsupported-source"),
+    ({"pubspec.lock": _HONEST_LOCK,
+      "pubspec.yaml": f"name: tiny\ndependency_overrides:\n  evil:\n    path: {_OUTSIDE}\n"},
+     "unsupported-source"),
+    ({"pubspec.lock": _HONEST_LOCK,
+      "pubspec.yaml": "name: tiny\nenvironment:\n  sdk: ^3.0.0\n  flutter: '>=3.0.0'\n"},
+     "flutter-unsupported"),
+    # Everything outside the subset pub writes is refused, never interpreted.
+    ({"pubspec.lock": _HONEST_LOCK, "pubspec.yaml": "name: tiny\ndependencies: &d\n  a: any\n"},
+     "pubspec-unreadable"),
+    ({"pubspec.lock": _HONEST_LOCK, "pubspec.yaml": "name: tiny\ndev_dependencies: *d\n"},
+     "pubspec-unreadable"),
+    ({"pubspec.lock": _HONEST_LOCK, "pubspec.yaml": "name: tiny\ndependencies: !!map {}\n"},
+     "pubspec-unreadable"),
+    ({"pubspec.lock": _HONEST_LOCK, "pubspec.yaml": "---\nname: tiny\n"}, "pubspec-unreadable"),
+    ({"pubspec.lock": _HONEST_LOCK, "pubspec.yaml": "name: tiny\n? dependencies\n: {}\n"},
+     "pubspec-unreadable"),
+    ({"pubspec.lock": _HONEST_LOCK, "pubspec.yaml": "name: tiny\ndependencies: |\n  a: any\n"},
+     "pubspec-unreadable"),
+    ({"pubspec.lock": _HONEST_LOCK, "pubspec.yaml": "name: tiny\nname: other\n"},
+     "pubspec-unreadable"),
+    ({"pubspec.lock": _HONEST_LOCK, "pubspec_overrides.yaml":
+      "dependency_overrides: {evil: {git: x}}\n", "pubspec.yaml": "name: tiny\n"},
+     "pubspec-unreadable"),
+    ({"pubspec.lock": "packages: {evil: {source: git}}\n", "pubspec.yaml": "name: tiny\n"},
+     "lock-unreadable"),
+])
+def test_anything_outside_the_yaml_pub_writes_is_refused_before_pub_runs(
+    tmp_path: Path, sdk: Any, tree: dict[str, str], reason: str,
+) -> None:
+    record, _packet, pub = _fetch(tmp_path, tree)
+    assert record["dart"] == {"state": "not-installed", "reason": reason}
+    assert reason in DART.REASONS
+    assert pub.calls == [], "pub never ran"
+
+
+def test_real_pubspec_shapes_are_read(tmp_path: Path, sdk: Any) -> None:
+    pubspec = ("name: tiny\ndescription: >-\n  A long\n  text: with a colon.\nversion: 1.0.0\n"
+               "environment:\n  sdk: ^3.0.0\ndependencies:\n  inertdep: ^1.0.0\n"
+               "  other: 'any'  # quoted\ndev_dependencies:\n  test: \">=1.25.0 <2.0.0\"\n"
+               "topics:\n- testing\n- tools\n")
+    record, _packet, pub = _fetch(tmp_path, {"pubspec.yaml": pubspec, "pubspec.lock": LOCK})
+    assert record["dart"]["state"] == "installed", record
+    assert len(pub.calls) == 1
+
+
+def test_prepare_s_pub_finds_only_the_sdk_on_its_path(tmp_path: Path, sdk: Any) -> None:
+    """A git source that got past every check would still find no git to run."""
+    _record, _packet, pub = _fetch(tmp_path, {"pubspec.yaml": PUBSPEC, "pubspec.lock": LOCK})
+    folders = pub.calls[0]["env"]["PATH"].split(os.pathsep)
+    assert folders[0] == str(sdk.root / "bin")
+    assert len(folders) == 2 and Path(folders[1]).name == "tools"
+    assert shutil.which("git", path=pub.calls[0]["env"]["PATH"]) is None
+
+
+def test_a_flutter_example_app_does_not_refuse_the_package(tmp_path: Path, sdk: Any) -> None:
+    tree = {"pubspec.yaml": PUBSPEC, "pubspec.lock": LOCK,
+            "example/pubspec.yaml": "name: example\ndependencies:\n  flutter:\n    sdk: flutter\n"}
+    record, _packet, _pub = _fetch(tmp_path, tree)
+    assert record["dart"]["state"] == "installed"
+
+
+def test_a_workspace_member_is_checked_like_the_root(tmp_path: Path, sdk: Any) -> None:
+    tree = {"pubspec.yaml": PUBSPEC + "workspace:\n- pkgs/app\n", "pubspec.lock": LOCK,
+            "pkgs/app/pubspec.yaml": "name: app\nresolution: workspace\ndependencies:\n"
+                                     "  flutter:\n    sdk: flutter\n"}
+    record, _packet, _pub = _fetch(tmp_path, tree)
+    assert record["dart"] == {"state": "not-installed", "reason": "flutter-unsupported"}
+    outside = {"pubspec.yaml": PUBSPEC + "workspace:\n- ../elsewhere\n", "pubspec.lock": LOCK}
+    record, _packet, _pub = _fetch(tmp_path / "2", outside)
+    assert record["dart"] == {"state": "not-installed", "reason": "unsupported-source"}
+
+
+def _export_with_link(tree: dict[str, str], link: str, target: Path) -> Any:
+    def export(dest: Path) -> bool:
+        _export_from(tree)(dest)
+        (dest / link).parent.mkdir(parents=True, exist_ok=True)
+        (dest / link).symlink_to(target)
+        return True
+
+    return export
+
+
+@pytest.mark.parametrize(("tree", "link"), [
+    ({"pubspec.yaml": PUBSPEC + "dependencies:\n  local:\n    path: vendored\n",
+      "pubspec.lock": _lock(_hosted("inertdep"),
+                            "  local:\n    dependency: \"direct main\"\n    description:\n"
+                            "      path: vendored\n      relative: true\n    source: path\n"
+                            "    version: \"1.0.0\"\n")}, "vendored"),
+    ({"pubspec.yaml": PUBSPEC, "pubspec.lock": LOCK}, "pubspec_overrides.yaml"),
+])
+def test_a_link_inside_the_head_is_never_followed(
+    tmp_path: Path, sdk: Any, tree: dict[str, str], link: str,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "pubspec.yaml").write_text("name: local\n", "utf-8")
+    target = outside if link == "vendored" else outside / "pubspec.yaml"
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    pub = FakePub(tuple(sorted(tree)))
+    record = D.fetch(pub, tmp_path, "HEAD", packet, _export_with_link(tree, link, target))
+    assert record["dart"] == {"state": "not-installed", "reason": "symlinked-input"}
+    assert pub.calls == []
 
 
 def test_a_path_package_inside_the_head_is_allowed(tmp_path: Path, sdk: Any) -> None:

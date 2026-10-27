@@ -2,6 +2,52 @@
 
 ## 2026-10-27
 
+### A security check over YAML must read YAML, not lines, and set-up between confined runs must trust nothing they wrote
+
+**Author.** Jeff Cox
+
+**Evidence.** An independent review of PR #293 reproduced the first problem with the real Dart
+SDK 3.13.2. The first version checked `pubspec.yaml` and `pubspec.lock` with line patterns: a
+bare `git:`, `hosted:`, `url:` or `path:` at the start of a line, and a top-level key spelled
+exactly `packages`. YAML gives the same meaning to other spellings, and all of these got past:
+
+- a quoted key (`"packages":`, `"hosted":`);
+- a flow map (`evilpkg: {hosted: "http://host"}`, `{git: "file://..."}`).
+
+Prepare's pub, which runs with the network on and no sandbox, then contacted the chosen host,
+read a folder outside the head, or ran `git clone`. It did so before comparing anything with the
+lock.
+
+Second, finish's re-runs share one scratch copy, and before each one, unconfined Saga code built
+the pub cache at a fixed name. The review showed, under `sandbox-exec`, that a confined command
+could plant `scratch/tmp/saga-pub-cache` as a link to an outside folder. The next set-up then
+created `hosted` and `hosted-hashes` inside that folder. I replayed the same attack on the old
+and the new code.
+
+Tests:
+
+- `plugins/saga/tests/test_review_dependencies_dart.py`:
+  `test_anything_outside_the_yaml_pub_writes_is_refused_before_pub_runs`, which includes the
+  review's four heads.
+- `plugins/saga/tests/test_review_command.py`:
+  `test_live_a_confined_command_cannot_steer_finish_s_setup_outside_the_scratch_copy` and
+  `test_a_link_at_tmp_is_refused_before_anything_follows_it`.
+
+**Mechanism.**
+
+- **Line patterns.** A pattern over lines checks one spelling. The consumer acts on the meaning,
+  and YAML has many spellings for one meaning. The safe check reads the file into the structure
+  the consumer will see, and refuses every form the reader does not fully understand. Unknown
+  forms then fail closed, instead of passing because no pattern matched them.
+- **Shared scratch copy.** A folder that an earlier confined command could write is untrusted
+  input to the next unconfined step. `mkdir(exist_ok=True)`, `chmod` and `symlink_to` all follow
+  links. The step has to refuse a link with `lstat` before touching anything, and create what it
+  needs under a name nobody could have predicted.
+
+**Generalizable rule.** Validate structured input by parsing it into what the consumer sees, and
+fail closed on anything the parser does not understand. Treat every path a confined step could
+have written as hostile: `lstat` before you follow it, and create under an unpredictable name.
+
 ### `dart test` in a sandbox fails four separate ways before it reaches the test
 
 **Author.** Jeff Cox

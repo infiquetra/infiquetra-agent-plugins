@@ -1959,6 +1959,11 @@ def test_offline_the_reviewer_s_dart_is_the_sdk_and_its_packages_are_read_only(
     for allowed in (str(dart_env.resolve()), str(cache), str(sdk)):
         assert allowed in filesystem["allowRead"] and allowed in filesystem["denyWrite"]
     assert str(pub_cache.parent) in filesystem["allowWrite"]
+    # Claude's Edit and Write run outside the command sandbox, under Edit(/<temp>/**): the
+    # cache's links into the packet, and the packet's cache itself, are denied to them.
+    deny = settings["permissions"]["deny"]
+    for path in (pub_cache / "hosted", pub_cache / "hosted-hashes", cache, dart_env.resolve()):
+        assert f"Edit(/{path}/**)" in deny, path
 
 
 def test_offline_python_and_dart_share_one_path_assignment(
@@ -1993,10 +1998,39 @@ def test_offline_no_dart_sdk_means_no_dart_folder(
     launcher: ModuleType, tmp_path: Path
 ) -> None:
     packet = _dart_packet(launcher, tmp_path)
-    cache = launcher.reviewer_packet_dart(packet)
-    assert cache is not None
-    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", cache,
+    packages = launcher.reviewer_packet_dart(packet)
+    assert packages is not None and packages[1] == "3.13.2"
+    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", packages,
                                       {"PATH": str(tmp_path / "empty")}) is None
+
+
+def test_offline_an_sdk_of_another_release_means_no_dart_folder(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    packet = _dart_packet(launcher, tmp_path, {
+        "state": "installed", "directory": "dependencies/dart/pub-cache",
+        "sdk": {"version": "3.12.0"}})
+    path, _sdk = _dart_on_path(tmp_path)
+    packages = launcher.reviewer_packet_dart(packet)
+    assert packages is not None
+    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", packages,
+                                      {"PATH": path, "HOME": str(tmp_path / "home")}) is None
+    assert not launcher.reviewer_dart_env_dir(tmp_path / "root").exists()
+
+
+def test_offline_an_sdk_that_cannot_be_read_back_puts_no_dart_on_path(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """An SDK under a credential path cannot be allowed back, so its dart could not run."""
+    home = tmp_path / "home"
+    sdk = home / ".config" / "gh" / "dart-sdk"
+    (sdk / "bin").mkdir(parents=True)
+    (sdk / "bin" / "dart").write_bytes(b"\xcf\xfa\xed\xfe binary\n")
+    (sdk / "bin" / "dart").chmod(0o755)
+    (sdk / "version").write_text("3.13.2\n", "utf-8")
+    packages = launcher.reviewer_packet_dart(_dart_packet(launcher, tmp_path))
+    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", packages,
+                                      {"PATH": str(sdk / "bin"), "HOME": str(home)}) is None
 
 
 def test_offline_the_shell_prefix_passes_the_cargo_variables_to_sandboxed_commands(

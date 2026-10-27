@@ -54,25 +54,29 @@ Every install is `uv pip install --target --no-deps --no-build --require-hashes`
 
 Each packet carries its own copy of the packages. The corpus harness, or whoever keeps packets, is responsible for deleting them after a run; on macOS the clone keeps that copy nearly free until it is deleted.
 
-A `dart` entry's packages sit in `<packet>/dependencies/dart/pub-cache`, a pub cache holding only `hosted/` and `hosted-hashes/` (`plugins/saga/scripts/review_dependencies_dart.py` holds the rules). Prepare needs a root `pubspec.yaml` and `pubspec.lock` (otherwise `no-lockfile`). Before pub runs, it refuses any of these, each with a fixed reason:
+A `dart` entry's packages sit in `<packet>/dependencies/dart/pub-cache`, a pub cache holding only `hosted/` and `hosted-hashes/` (`plugins/saga/scripts/review_dependencies_dart.py` holds the rules). Prepare needs a root `pubspec.yaml` and `pubspec.lock` (otherwise `no-lockfile`). Before pub runs, saga reads the files pub would act on: the lock, the root `pubspec.yaml`, the root `pubspec_overrides.yaml` and each workspace member's `pubspec.yaml`. Other pubspecs, such as an example app's, are not read by `pub get` at the root and are not checked. Saga reads them with its own reader for the subset of YAML pub writes, so the checks see what pub sees.
 
-- a lock or pubspec naming a git source, a host other than pub.dev, or a path outside the head (`unsupported-source`);
-- the Flutter SDK (`flutter-unsupported`);
-- a lock layout it cannot read (`lock-unreadable`);
-- a symlinked `pubspec.yaml` or `pubspec.lock` (`symlinked-input`).
+That reader refuses rather than interprets: a quoted or complex key, a document marker, an anchor, an alias, a tag, a flow collection, a tab, a duplicate key, and a block scalar or multi-line value anywhere but the top-level `description`.
 
-Then it runs the SDK's own `dart` executable, `dart pub get --enforce-lockfile`, on an export of the head, under the same watcher as cargo and uv. That run has `PUB_CACHE` set to the packet folder, a fresh `HOME` and `TMPDIR`, `DASH__SUPPRESS_ANALYTICS=true`, and no operator variable beyond the allow-list, so the operator's own pub cache is never touched. The SDK is found from the operator's `PATH`; a Flutter install's `bin/dart` is a shell wrapper, so its `bin/cache/dart-sdk` is used. No SDK is `dart-missing`. A failure is `network`, `lock-mismatch`, `timeout`, `size-limit` or `fetch-failed`; pub's own words never reach the packet.
+Then each dependency must be a version constraint, or a block with only `version` and a `path` inside the head that crosses no link. Each refusal has a fixed reason:
 
-Prepare then removes what differs between two fetches: `active_roots/`, which pub names from the project's folder; the version listings under `hosted/*/.cache`, which carry a fetch time; `_temp/` and `README.md`. Of the words above, `dart-missing`, `fetch-failed`, `network` and `timeout` can change on a later prepare of the same head (`review_dependencies_dart.TRANSIENT`); the rest cannot.
+- an unreadable lock (`lock-unreadable`) or pubspec (`pubspec-unreadable`);
+- a git source, a host other than pub.dev, or a path outside the head (`unsupported-source`);
+- the Flutter SDK, as a dependency or an `environment` constraint (`flutter-unsupported`);
+- a link on the way to a pubspec or a path dependency (`symlinked-input`).
+
+Then it runs the SDK's own `dart` executable, `dart pub get --enforce-lockfile`, on an export of the head, under the same watcher as cargo and uv. That run has a `PATH` holding only the SDK's `bin` (so no git can run), `PUB_CACHE` set to the packet folder, a fresh `HOME` and `TMPDIR`, `DASH__SUPPRESS_ANALYTICS=true`, and no operator variable beyond the allow-list, so the operator's own pub cache is never touched. The SDK is found from the operator's `PATH`; a Flutter install's `bin/dart` is a shell wrapper, so its `bin/cache/dart-sdk` is used. No SDK is `dart-missing`. A failure is `network`, `lock-mismatch`, `timeout`, `size-limit` or `fetch-failed`; pub's own words never reach the packet.
+
+Prepare then removes what differs between two fetches: `active_roots/`, which pub names from the project's folder; the version listings under `hosted/*/.cache`, which carry a fetch time; `_temp/` and `README.md`. It then makes what is left read-only file by file (0444, or 0555 for an executable, and 0555 for folders), and gives write back before it removes a packet's Dart folder. Claude's file tools run outside the command sandbox, so a write that reaches the packet through a link must fail at the file itself. Of the words above, `dart-missing`, `fetch-failed`, `network` and `timeout` can change on a later prepare of the same head (`review_dependencies_dart.TRANSIENT`); the rest cannot.
 
 `finish`'s re-run and agent-launcher's Claude reviewer give `dart` to sandboxed commands the way they give `python3`:
 
 - **A saga-written `bin`** holding only `dart`, linked to the SDK's real executable, first on `PATH`.
-- **A writable pub cache** in the command's own temp folder, named by `PUB_CACHE`. Its `hosted` and `hosted-hashes` link to the packet's read-only cache. `dart test` records the project under `PUB_CACHE/active_roots` before every run, so the packet itself cannot be the cache.
+- **A writable pub cache**, named by `PUB_CACHE`. Its `hosted` and `hosted-hashes` link to the packet's read-only cache. In finish it is a new folder with a random name (`mkdtemp`) in the re-run's `tmp` for every re-run. An earlier re-run writes in the same scratch copy, so a link it leaves at `scratch/tmp` is refused before anything follows it, and the finding is downgraded `re-run-could-not-start`. `dart test` records the project under `PUB_CACHE/active_roots` before every run, so the packet itself cannot be the cache.
 - **`DASH__SUPPRESS_ANALYTICS=true`**: without it the Dart CLI opens `~/.dart-tool/dart-flutter-telemetry.config` first and exits 255 on the unreadable home.
 - **`PUB_MAX_HTTP_RETRIES=0`**: `dart test` asks pub.dev for the version listings the packet does not keep, and with retries it waits out the whole time limit on the denied network.
 
-The SDK's root is readable and mappable, never writable. Before it replays a command on a head with a root `pubspec.yaml`, `finish` resolves the project once, confined: `dart pub get --offline --enforce-lockfile`, which needs no listings and writes `.dart_tool/package_config.json`. The reviewer is told to run the same command first. `.dart_tool/` in the reviewer's copy is already ignored at a package root.
+For the Claude reviewer, every path stated read-only is also an `Edit(...)` deny rule: the packet's cache, the `dart` folder, the SDK's root, and the `hosted` and `hosted-hashes` links in the reviewer's writable pub cache. The temp folder that holds them is otherwise open to Claude's Edit and Write tools, which run outside the command sandbox. The SDK's root is readable and mappable, never writable. Dart is left out when the SDK found is of another major or minor version than the one that fetched the packages, and, for the reviewer, when its root cannot be allowed back for reading. Before it replays a `dart` command on a head with a root `pubspec.yaml`, `finish` resolves the project once, confined: `dart pub get --offline --enforce-lockfile`, which needs no listings and writes `.dart_tool/package_config.json`. The reviewer is told to run the same command first. `.dart_tool/` in the reviewer's copy is already ignored at a package root.
 
 `flutter test` is not supported: the Flutter tool opens `<flutter>/bin/cache/lockfile` for writing on every run, and the SDK stays read-only.
 

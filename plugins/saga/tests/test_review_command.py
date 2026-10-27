@@ -8,6 +8,7 @@ import io
 import json
 import os
 import socket
+import stat
 import shutil
 import subprocess
 import sys
@@ -3404,7 +3405,7 @@ def test_finish_resolves_a_dart_head_offline_then_replays_the_command_unchanged(
     assert call["env"]["DASH__SUPPRESS_ANALYTICS"] == "true"
     assert call["env"]["PUB_MAX_HTTP_RETRIES"] == "0"
     cache = Path(call["env"]["PUB_CACHE"])
-    assert cache.parent.name == "tmp" and cache.name == "saga-pub-cache"
+    assert cache.parent.name == "tmp" and cache.name.startswith("saga-pub-cache-")
     assert call["cache"] == ["hosted", "hosted-hashes"]
     packet_cache = (packet / "dependencies" / "dart" / "pub-cache").resolve()
     assert call["hosted"] == packet_cache / "hosted"
@@ -3426,12 +3427,15 @@ def test_finish_runs_the_offline_resolution_first_when_the_head_is_a_dart_packag
         (scratch / "tmp").mkdir(parents=True)
         (scratch / "pubspec.yaml").write_text("name: tiny\n", "utf-8")
         confine = _DartConfine()
-        added = C._dart_pub_cache(offline, scratch, _Runner(), confine)
+        added = C._dart_pub_cache(offline, scratch, _Runner(), confine, ["dart", "test"])
+        other = C._dart_pub_cache(offline, scratch, _Runner(), confine, ["python3", "-m", "pytest"])
     finally:
         offline_cm.__exit__(None, None, None)
+    # Only a dart command is resolved first; each re-run gets its own fresh cache folder.
     assert [call["argv"] for call in confine.seen] == [
         ["dart", "pub", "get", "--offline", "--enforce-lockfile"]]
-    assert added == {"PUB_CACHE": str(scratch / "tmp" / "saga-pub-cache")}
+    assert Path(added["PUB_CACHE"]).parent == scratch / "tmp"
+    assert added["PUB_CACHE"] != other["PUB_CACHE"]
 
 
 def test_finish_without_a_dart_sdk_adds_nothing_for_dart(
@@ -3441,6 +3445,95 @@ def test_finish_without_a_dart_sdk_adds_nothing_for_dart(
     monkeypatch.setattr(_DART, "dart_sdk", lambda path=None: None)
     with C._offline_dependencies(packet) as offline:
         assert offline is None
+
+
+def test_finish_leaves_dart_out_when_the_sdk_is_another_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    packet = _dart_packet(tmp_path)
+    other = _DART.DartSdk(executable=tmp_path / "dart", root=tmp_path, version="3.14.0")
+    monkeypatch.setattr(_DART, "dart_sdk", lambda path=None: other)
+    with C._offline_dependencies(packet) as offline:
+        assert offline is None
+
+
+def test_finish_survives_a_link_an_earlier_re_run_left_at_the_cache_s_old_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finding 1's command plants tmp/saga-pub-cache as a dangling link; finding 2 still runs."""
+    packet = _dart_packet(tmp_path)
+    _fake_sdk(tmp_path, monkeypatch)
+    home = tmp_path / "home"
+    _machine(home, "available")
+    scratch, changes = _scratch(tmp_path, with_test=True)
+    planted: list[Path] = []
+
+    class Planting(_DartConfine):
+        def __call__(self, argv: list[str], cwd: Path, env: dict[str, str], scratch_: Path) -> Any:
+            if not planted:
+                link = Path(cwd) / "tmp" / "saga-pub-cache"
+                link.symlink_to(tmp_path / "does-not-exist")
+                planted.append(link)
+            return super().__call__(argv, cwd, env, scratch_)
+
+    confine = Planting()
+    first, second = (_finding(f"Finding {n} returns the new number.", key=f"k{n}") for n in (1, 2))
+    code, err = _finish(packet, [(_answer([first, second]), _result(scratch, changes))], home,
+                        _Runner(), ask=_ask(consequence_status="error"), confine=confine)
+    assert code == 0, err
+    assert len(confine.seen) == 2, "the second finding re-ran after the plant"
+    assert not (tmp_path / "does-not-exist").exists()
+
+
+def test_a_link_at_tmp_is_refused_before_anything_follows_it(tmp_path: Path) -> None:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside.chmod(0o755)
+    (scratch / "tmp").symlink_to(outside)
+    assert C._make_tmp(scratch) is False
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o755, "chmod never followed the link"
+    offline = C.Offline(env={}, reads=(), dart=tmp_path / "cache")
+    with pytest.raises(OSError):
+        C._dart_pub_cache(offline, scratch, _Runner(), None, ["dart", "test"])
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.skipif(C.platform_helper() is None, reason="no reproduction helper on this platform")
+def test_live_a_confined_command_cannot_steer_finish_s_setup_outside_the_scratch_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The review's attack, for real: a confined re-run plants links in the shared scratch
+    copy; the unconfined set-up for the next re-run must create nothing through them."""
+    packet = _dart_packet(tmp_path)
+    _fake_sdk(tmp_path, monkeypatch)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    assert C._make_tmp(scratch)
+    outside = tmp_path / "planted-target"
+    outside.mkdir()
+    outside.chmod(0o755)
+    env = C.child_environment(scratch)
+
+    def confined(argv: list[str]) -> Any:
+        return C.run_confined(argv, scratch, env, scratch, runner=_exec_runner(), timeout=30)
+
+    planted = confined(["/bin/ln", "-s", str(outside), str(scratch / "tmp" / "saga-pub-cache")])
+    assert planted.code == 0, planted.stderr
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None
+        assert C._make_tmp(scratch)
+        C._dart_pub_cache(offline, scratch, _Runner(), None, ["python3"])
+        assert list(outside.iterdir()) == [], "nothing is created through the planted link"
+        swapped = confined(["/bin/mv", str(scratch / "tmp"), str(scratch / "old-tmp")])
+        relinked = confined(["/bin/ln", "-s", str(outside), str(scratch / "tmp")])
+        assert swapped.code == 0 and relinked.code == 0
+        assert C._make_tmp(scratch) is False
+        with pytest.raises(OSError):
+            C._dart_pub_cache(offline, scratch, _Runner(), None, ["dart", "test"])
+    assert list(outside.iterdir()) == []
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o755
 
 
 @pytest.mark.skipif(
