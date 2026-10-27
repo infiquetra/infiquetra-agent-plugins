@@ -636,25 +636,47 @@ GETTEMPDIR = f"{shlex.quote(sys.executable)} -c 'import tempfile; print(tempfile
 
 
 @NOT_ROOT
-def test_tmpdir_python_s_temp_folder_is_the_reviewer_s_after_claude_exports_its_own(
+def test_tmpdir_every_tool_sees_the_reviewer_s_folder_after_claude_exports_its_own(
     launcher: ModuleType, tmp_path: Path
 ) -> None:
     copy, _, extra = _claude_shell(launcher, tmp_path)
     _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
     sandbox_temp = _claude_sandbox_temp(tmp_path)
     env = _startup_env(tmp_path, **extra)
-    shown = _run_like_claude(
-        _as_claude_2_1_311(f'echo "$TMPDIR"; {GETTEMPDIR}', sandbox_temp), env, copy
-    ).split()
     temp = launcher.reviewer_claude_temp_dir(copy)
-    # Claude's TMPDIR wins over the prefix's, and Python skips it because it is not writable.
-    assert shown == [str(sandbox_temp), str(temp)]
-    # The control: without TEMP and TMP, Python moves past the reviewer's folder to the system
-    # roots (which the real sandbox denies, leaving the working directory, the copy).
-    control = _run_like_claude(
-        _as_claude_2_1_311(f"unset TEMP TMP; {GETTEMPDIR}", sandbox_temp), env, copy
-    ).strip()
-    assert control and control != str(temp)
+    shown = _run_like_claude(
+        _as_claude_2_1_311(f'echo "$TMPDIR"; {GETTEMPDIR}; sh -c \'echo "$TMPDIR"\'',
+                           sandbox_temp), env, copy
+    ).split()
+    # The DEBUG trap puts the reviewer's folder back after Claude's export, for Python and for
+    # any child that reads TMPDIR alone.
+    assert shown == [str(temp)] * 3
+    node = shutil.which("node")
+    if node:
+        script = f"{shlex.quote(node)} -e 'console.log(require(\"os\").tmpdir())'"
+        assert _run_like_claude(_as_claude_2_1_311(script, sandbox_temp), env, copy).strip() == (
+            str(temp))
+    # A command's own TMPDIR=... keeps its value; exit statuses survive the trap.
+    kept = _run_like_claude(_as_claude_2_1_311(
+        "TMPDIR=/elsewhere sh -c 'echo \"$TMPDIR\"'; false; echo $?; (exit 3); echo $?",
+        sandbox_temp), env, copy).split()
+    assert kept == ["/elsewhere", "1", "3"]
+    # Python's own fallback stays: with TMPDIR unwritable it takes TEMP.
+    fallback = _run_like_claude(
+        f"TMPDIR={shlex.quote(str(sandbox_temp))} {GETTEMPDIR}", env, copy).strip()
+    assert fallback == str(temp)
+
+
+def test_tmpdir_the_prefix_s_exit_status_is_the_command_s(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    env = _startup_env(tmp_path, **extra)
+    line = f"{shlex.quote(extra[PREFIX])} {shlex.quote('echo ran; exit 7')}"
+    proc = subprocess.run(["bash", "-c", line], cwd=copy, env=env, capture_output=True,
+                          text=True, check=False)
+    assert (proc.returncode, proc.stdout) == (7, "ran\n")
 
 
 @NOT_ROOT
@@ -1875,6 +1897,135 @@ def test_offline_packages_for_another_python_are_not_used(
     packages = launcher.reviewer_packet_python(packet)
     assert packages is not None
     assert launcher.reviewer_python_env(tmp_path / "root", packages, os.environ) is None
+
+
+def _node_packet(launcher: ModuleType, tmp_path: Path, entry: Any = None) -> Path:
+    """A packet whose ``dependencies.json`` names saga's installed npm packages: one CommonJS
+    and one ESM-only package, and ``.bin`` scripts a hostile package could ship, named after
+    the vendor and git."""
+    packet = tmp_path / "packet"
+    modules = packet / "dependencies" / "node" / "node_modules"
+    (modules / "cjs-dep").mkdir(parents=True)
+    (modules / "cjs-dep" / "package.json").write_text(
+        '{"name": "cjs-dep", "version": "1.0.0", "main": "index.js"}', "utf-8")
+    (modules / "cjs-dep" / "index.js").write_text('module.exports = () => "cjs";\n', "utf-8")
+    (modules / "esm-dep").mkdir()
+    (modules / "esm-dep" / "package.json").write_text(
+        '{"name": "esm-dep", "version": "1.0.0", "type": "module", '
+        '"exports": {".": "./index.js"}}', "utf-8")
+    (modules / "esm-dep" / "index.js").write_text('export default () => "esm";\n', "utf-8")
+    (modules / ".bin").mkdir()
+    for name in ("claude", "git", "node"):
+        (modules / ".bin" / name).write_text("#!/bin/sh\necho planted\n", "utf-8")
+        (modules / ".bin" / name).chmod(0o755)
+    record = {
+        "schema": launcher.REVIEWER_DEPENDENCIES_SCHEMA,
+        "node": entry if entry is not None
+        else {"state": "installed", "directory": "dependencies/node/node_modules"},
+    }
+    (packet / "dependencies.json").write_text(json.dumps(record), "utf-8")
+    return packet
+
+
+def test_node_the_copy_links_the_packet_s_packages_read_only_and_never_a_change(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    packet = _node_packet(launcher, tmp_path)
+    modules = (packet / "dependencies" / "node" / "node_modules").resolve()
+    result, settings, env = _launch_with(launcher, repo, head, tmp_path, packet)
+    copy = Path(result["scratch"]["path"])
+    link = copy / "node_modules"
+    assert link.is_symlink() and Path(os.readlink(link)) == modules
+    # Made before the baseline, so finish never reads it as a link the session made.
+    assert result["scratch"]["changes"] == {
+        "added": [], "modified": [], "deleted": [], "links": []}
+    filesystem = settings["sandbox"]["filesystem"]
+    assert str(modules) in filesystem["allowRead"] and str(modules) in filesystem["denyWrite"]
+    reads = {item["path"]: item["reason"] for item in result["sandbox_reads"]["allowed"]}
+    assert "npm packages, read-only" in reads[str(modules)]
+    # Nothing a package ships can be found by name: not by the vendor, not by a command.
+    prefix = Path(settings["env"][launcher.REVIEWER_SHELL_PREFIX]).read_text("utf-8")
+    for part in env["PATH"].split(os.pathsep):
+        assert not part.startswith(str(packet.resolve()))
+    assert str(packet.resolve()) not in prefix and ".bin" not in prefix
+
+
+def test_node_a_head_with_its_own_node_modules_keeps_it(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy = tmp_path / "copy"
+    (copy / "node_modules").mkdir(parents=True)
+    assert launcher.reviewer_link_node_modules(copy, tmp_path) is False
+    assert not (copy / "node_modules").is_symlink()
+    assert launcher.reviewer_link_node_modules(tmp_path / "empty", None) is False
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"state": "not-installed", "reason": "no-lockfile"},
+        {"state": "no-dependencies"},
+        {"state": "installed", "directory": "/etc"},
+        {"state": "installed", "directory": "../elsewhere"},
+        {"state": "installed", "directory": "dependencies/missing"},
+    ],
+)
+def test_node_an_untrustworthy_entry_is_ignored(
+    launcher: ModuleType, tmp_path: Path, entry: Any
+) -> None:
+    assert launcher.reviewer_packet_node(_node_packet(launcher, tmp_path, entry)) is None
+
+
+def test_node_a_symlinked_packet_folder_is_ignored(launcher: ModuleType, tmp_path: Path) -> None:
+    packet = _node_packet(launcher, tmp_path)
+    real = packet / "dependencies" / "node"
+    real.rename(packet / "dependencies" / "elsewhere")
+    real.symlink_to(packet / "dependencies" / "elsewhere")
+    assert launcher.reviewer_packet_node(packet) is None
+
+
+@NOT_ROOT
+@pytest.mark.parametrize("runtime", ["node", "bun"])
+def test_node_a_sandboxed_command_resolves_commonjs_and_esm_through_the_link(
+    launcher: ModuleType, tmp_path: Path, runtime: str
+) -> None:
+    if shutil.which(runtime) is None:
+        pytest.skip(f"{runtime} is not installed")
+    packet = _node_packet(launcher, tmp_path)
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    assert launcher.reviewer_link_node_modules(copy, launcher.reviewer_packet_node(packet))
+    (copy / "src").mkdir()
+    (copy / "src" / "probe.mjs").write_text(
+        'import esm from "esm-dep";\nimport { createRequire } from "node:module";\n'
+        'import os from "node:os";\n'
+        'const require = createRequire(import.meta.url);\n'
+        'console.log(esm(), require("cjs-dep")(), os.tmpdir());\n', "utf-8")
+    (copy / "src" / "probe.cjs").write_text(
+        'console.log(require("cjs-dep")());\n', "utf-8")
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    env = _startup_env(tmp_path, **extra)
+    command = f"{runtime} src/probe.mjs && {runtime} src/probe.cjs"
+    out = _run_like_claude(_as_claude_2_1_311(command, _claude_sandbox_temp(tmp_path)), env, copy)
+    assert out.split() == ["esm", "cjs", str(launcher.reviewer_claude_temp_dir(copy)), "cjs"]
+
+
+def test_node_a_node_reached_through_a_link_puts_its_real_bin_first(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    real = tmp_path / "install" / "bin"
+    real.mkdir(parents=True)
+    (real / "node").write_text("#!/bin/sh\n", "utf-8")
+    (real / "node").chmod(0o755)
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    (shims / "node").symlink_to(real / "node")
+    assert launcher.reviewer_toolchain_front({"PATH": str(shims)}) == [real.resolve()]
+    assert launcher.reviewer_toolchain_front({"PATH": str(real)}) == []
+    assert launcher.reviewer_toolchain_front({"PATH": str(tmp_path / "none")}) == []
+    script = launcher.reviewer_claude_shell_script(
+        tmp_path / "sentinel", "token", path_front=[real])
+    assert f'PATH={real}:"${{PATH-}}"' in script
 
 
 def test_offline_the_shell_prefix_passes_the_virtual_env(launcher: ModuleType, tmp_path: Path) -> None:

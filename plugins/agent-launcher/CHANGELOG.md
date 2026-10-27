@@ -11,6 +11,20 @@ for C8 to extend.
 
 ### Added
 
+- **The Claude reviewer's copy links the packet's npm packages.** When saga's `dependencies.json`
+  has a `node` entry that says `installed`, the copy gets a `node_modules` symlink at its root to
+  the packet's folder, made before the scratch baseline so it is never a change. The folder is
+  allowed back for reading and named in `denyWrite`. When the session's `node` is reached through
+  a symlink (a link under home, which the sandbox cannot read), the shell prefix puts node's real
+  `bin` first on a sandboxed command's `PATH`; nothing from the packet is ever on a `PATH`.
+- **Every sandboxed tool now sees the reviewer's temp folder.** Claude's command string exports
+  its own unwritable `TMPDIR` after the prefix sets the reviewer's. The prefix's bash now runs
+  that string through `eval` under a `DEBUG` trap that restores the reviewer's `TMPDIR` before
+  every simple command, so node's `os.tmpdir()`, bun, Go, Rust and `mktemp` write beside the copy,
+  not only Python. A command's own `TMPDIR=...` prefix still wins, and exit statuses are kept. A
+  live run under Claude Code 2.1.311 showed node and bun importing CommonJS and ESM packages
+  through the link, `os.tmpdir()` at the reviewer's folder, and a write into the packages denied.
+
 - **The reviewer's sandboxed `python3` uses the packet's Python packages.** When saga's
   `dependencies.json` names `installed` or `partial` packages inside the packet, and the session's
   `python3` has the recorded major and minor version, the launcher writes a small environment

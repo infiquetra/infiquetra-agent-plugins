@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+- **Prepare installs a JavaScript or TypeScript head's npm packages into the packet.** A head with
+  a root `package.json` and a lockfile gets its packages installed from that lockfile alone, by its
+  own manager, with install scripts off: `npm ci`, `pnpm install --frozen-lockfile`,
+  `yarn install --frozen-lockfile` (classic) or `bun install --frozen-lockfile`. Saga reads the
+  lockfile first and refuses any package that is not from the public npm registry. The install
+  works on an export of the head with every manager configuration file removed, with a fresh
+  `HOME`, `TMPDIR` and cache, and under the existing byte and time watcher. Only the root
+  `node_modules` is kept, in `dependencies/node/node_modules`, with fixed modes, no manager state
+  files and only the symlinks that stay inside it, so two prepares write the same bytes.
+  `dependencies.json` gains a `node` entry. Its fixed reasons are `no-lockfile`,
+  `binary-lockfile`, `unsupported-lockfile`, `non-registry-source`, `symlinked-input`,
+  `lockfile-mismatch`, `manager-missing`, `network`, `timeout`, `size-limit`,
+  `install-failed`, `head-export` and `subfolder-project`. The new module is
+  `scripts/review_dependencies_node.py`, listed in the calibration's review machinery.
+- `finish`'s re-run links the packet's packages at its folder's root as `node_modules`,
+  read-only, which node's CommonJS and ESM resolvers, bun, Vitest and Jest all find. A re-run of
+  `node`, a manager or a `node_modules/.bin` script may read node's own install, and node's real
+  `bin` comes first on its `PATH`, so a `node` reached through a link under the denied home still
+  starts. The reviewer prompt's JavaScript recipe says where the packages are and what to do
+  without them.
+
 ### Changed
 
 - The targeted reviewer prompt's reproduction guidance is rewritten so reviewers prove real harms

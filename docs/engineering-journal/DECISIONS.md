@@ -1,6 +1,31 @@
 # Decisions - infiquetra-agent-plugins
 
-## 2026-10-26
+## 2026-10-27
+
+### npm packages reach the reviewer through a node_modules link, from a vetted lockfile
+
+**Decision.** Author: Jeff Cox. Prepare installs a JavaScript or TypeScript head's npm packages
+from its lockfile only, by the lockfile's own manager with scripts off, after saga has read the
+lockfile and refused any non-registry source (`plugins/saga/scripts/review_dependencies_node.py`).
+The reviewer's copy and finish's re-run folder each get a `node_modules` symlink at their root
+pointing at the packet's read-only folder. The launcher makes the copy's link before the scratch
+baseline, so it is never a change.
+
+**Rationale.** Node's ESM resolver ignores `NODE_PATH` and walks up from the importing file to the
+nearest `node_modules`; so do CommonJS, bun, Vitest and Jest. A link at the copy root is the one
+place all of them look, and making it part of the baseline keeps finish's link check strict for
+every other link. Vetting the lockfile mirrors the Python install's plain-requirement rule: a
+`file:`, `link:` or git source could copy or link an operator file into the packet, and a
+tarball from another host is not checked against the public registry.
+
+**Rejected alternatives.** `NODE_PATH`: CommonJS only. A link in the launch root above the copy:
+the sandbox blocks reading the launch root, and the re-run folder's parent is the shared temp
+folder. Copying `node_modules` into each copy: slow, and the reviewer could edit it. Running the
+install inside a sandbox with network: not available on both platforms, and the lockfile check
+already bounds what is fetched.
+
+**Revisit when.** A reviewed head needs workspace packages (`packages/*/node_modules` or
+workspace links), a yarn berry or binary bun lockfile, or a private registry.
 
 ### A traced harm must name its blocker
 

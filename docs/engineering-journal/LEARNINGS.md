@@ -1,5 +1,26 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-27
+
+### A sandboxed command reaches a toolchain by its real path, not by the link on PATH
+
+**Author.** Jeff Cox
+
+**Evidence.** Two live Claude reviewer runs (Claude Code 2.1.311, Haiku, under $0.02 together)
+with the launcher's own settings. With node's real `bin` first on the prefix's `PATH`, `node`
+and bun imported a CommonJS and an ESM package through the copy's `node_modules` link and wrote
+under the reviewer's temp folder, and `npx` ran. Without it, `command -v node` skipped the
+`~/.local/bin/node` link, which the sandbox cannot read because home is blocked, found another
+`node` elsewhere on `PATH`, and that run exited with an error (not investigated further). Finish's confined re-run needed node's install
+(`bin` and `lib`) allowed for `npx`, which is JavaScript inside that install.
+
+**Mechanism.** The sandbox allows back a toolchain's real install, but a lookup by name reads the
+`PATH` entry first, and a link under the blocked home is unreadable, so the shell moves on. The
+`DEBUG` trap in the prefix restores `TMPDIR` after Claude's own export, for every tool.
+
+**Generalizable rule.** When a sandbox allows an install back by its real path, put that real
+path on the sandboxed `PATH` too; allowing the target does not make the link to it readable.
+
 ## 2026-10-26
 
 ### An installer that writes wheels in parallel makes a shared file's contents a race

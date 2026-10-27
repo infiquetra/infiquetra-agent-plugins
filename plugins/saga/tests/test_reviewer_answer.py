@@ -211,7 +211,10 @@ def test_prompt_gives_a_recipe_for_every_language_it_covers() -> None:
     assert "`misleads-a-person`, which never blocks" in text
     assert "referenced path" not in text
     assert "`<name>_test.swift` or `test_<name>.swift`" in text
-    assert "use `bun test`, not Vitest or Jest" in " ".join(
+    # npm packages: where they are, and what to do without them.
+    assert "`node_modules/.bin/vitest run path/to/file.test.ts`" in text
+    assert "Without them, `bun test path/to/file.test.ts`" in text
+    assert "`node_modules` is never present" not in " ".join(
         _section("What saga's re-run accepts").split()
     )
 

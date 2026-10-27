@@ -319,6 +319,7 @@ def test_components_match_the_landed_cards() -> None:
         "plugins/saga/references/semgrep/money-as-floating-point.yaml",
         "plugins/saga/scripts/review_command.py",
         "plugins/saga/scripts/review_dependencies.py",
+        "plugins/saga/scripts/review_dependencies_node.py",
         *question_banks.QUESTION_BANK_COMPONENTS,
         "plugins/saga/scripts/review_checks.py",
     )

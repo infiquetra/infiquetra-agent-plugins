@@ -2540,18 +2540,20 @@ def reviewer_claude_temp_dir(copy: Path) -> Path:
 
 
 def reviewer_claude_shell_script(
-    sentinel: Path, token: str, temp: Path | None = None, python_env: Path | None = None
+    sentinel: Path, token: str, temp: Path | None = None, python_env: Path | None = None,
+    *, path_front: Sequence[Path] = (),
 ) -> str:
     """The prefix: outside the sandbox it runs the command as given; inside, on the allow-list.
 
     The sentinel holds *token*. Only a process outside the sandbox can read it, so anything else,
     a denied read or a missing file included, filters: the check fails closed. With *temp*, the
     prefix sets ``TMPDIR``, ``TEMP`` and ``TMP`` to that folder. Claude's own command string then
-    exports ``TMPDIR`` again, to its sandbox temp folder, which the reviewer may not write, so
-    ``TMPDIR`` is not the reviewer's folder in a sandboxed command. Only Python is fixed: its
-    ``tempfile`` skips an unwritable ``TMPDIR`` and takes ``TEMP``. Node, Go, Rust and ``mktemp``
-    read ``TMPDIR`` alone, so their temp writes fail in the reviewer's sandbox (they do not fall
-    back into the copy). Finish's re-run gives its commands a writable ``TMPDIR``.
+    exports ``TMPDIR`` again, to its sandbox temp folder, which the reviewer may not write. So the
+    bash the prefix starts runs Claude's command string through ``eval`` under a ``DEBUG`` trap
+    that sets ``TMPDIR`` back to *temp* before every simple command: node's ``os.tmpdir()``, bun,
+    Go, Rust and ``mktemp``, which read ``TMPDIR`` alone, see the reviewer's folder, and so does
+    Python. A command the reviewer prefixes with its own ``TMPDIR=...`` keeps that value.
+    *path_front* folders come first on ``PATH``, after the Python environment's ``bin``.
     Sandboxed commands also run under ``umask 022``, as saga's replay does; it is never reached
     outside the sandbox.
     """
@@ -2567,15 +2569,24 @@ def reviewer_claude_shell_script(
         # export is in the 2.1.308 executable. Python's tempfile tries TMPDIR, then TEMP, then
         # TMP, then the system roots, and falls back to the working directory, the scratch copy,
         # when none is writable. TEMP and TMP name the reviewer's folder too, so Python's temp
-        # files land there. This fixes Python only: tools that read TMPDIR alone still get
-        # Claude's unwritable folder.
+        # files land there; the DEBUG trap below restores TMPDIR for every other tool.
         quoted_temp = shlex.quote(str(temp))
         kept += f" TMPDIR={quoted_temp} TEMP={quoted_temp} TMP={quoted_temp}"
+    front = [str(path) for path in path_front]
     if python_env is not None:
         # Sandboxed commands only: the launcher's environment, whose bin holds just python3 and
         # python, first on PATH. The vendor process's own PATH is never changed.
-        quoted = shlex.quote(str(python_env))
-        kept += f' VIRTUAL_ENV={quoted} PATH={shlex.quote(str(python_env / "bin"))}:"${{PATH-}}"'
+        kept += f" VIRTUAL_ENV={shlex.quote(str(python_env))}"
+        front.insert(0, str(python_env / "bin"))
+    if front:
+        kept += f' PATH={shlex.quote(os.pathsep.join(front))}:"${{PATH-}}"'
+    run = '-c "$1"'
+    if temp is not None:
+        # Claude's command string exports its own TMPDIR before the command; the trap restores
+        # the reviewer's before every simple command, and bash keeps ``$?`` across a trap.
+        reset = f'[ "${{TMPDIR-}}" = {quoted_temp} ] || export TMPDIR={quoted_temp}'
+        body = f'trap {shlex.quote(reset)} DEBUG; reviewer_command=$1; shift; eval "$reviewer_command"'
+        run = f'-c {shlex.quote(body)} reviewer-shell "$1"'
 
     read = f"/bin/cat {shlex.quote(str(sentinel))} 2>/dev/null"
     return (
@@ -2595,14 +2606,18 @@ def reviewer_claude_shell_script(
         "# Same file-creation mask as saga's replay (RERUN_UMASK, 022), so a file the reviewer's\n"
         "# test creates gets the mode the replay gives it, not one from the launching harness.\n"
         "umask 022 || exit 1\n"
-        f'exec /usr/bin/env -i {kept} "$reviewer_bash" --noprofile --norc -c "$1"\n'
+        f'exec /usr/bin/env -i {kept} "$reviewer_bash" --noprofile --norc {run}\n'
     )
 
 
 def reviewer_claude_materialize(
-    settings: Mapping[str, Any], root: Path, copy: Path
+    settings: Mapping[str, Any], root: Path, copy: Path, *,
+    path_front: Sequence[Path] = (), **_options: Any,
 ) -> tuple[Path, dict[str, str]]:
-    """Write the settings, shell prefix, sentinel and temp folder beside the copy; name the prefix."""
+    """Write the settings, shell prefix, sentinel and temp folder beside the copy; name the prefix.
+
+    *path_front* goes first on a sandboxed command's ``PATH`` (see
+    :func:`reviewer_toolchain_front`)."""
     path, _ = reviewer_settings_materialize(settings, root, copy)
     prefix, sentinel = reviewer_claude_shell_paths(copy)
     temp = reviewer_claude_temp_dir(copy)
@@ -2615,9 +2630,75 @@ def reviewer_claude_materialize(
     prefix.write_text(reviewer_claude_shell_script(
         sentinel, token, temp,
         python_env if (python_env / "pyvenv.cfg").is_file() else None,
+        path_front=path_front,
     ), "utf-8")
     prefix.chmod(0o755)
     return path, {REVIEWER_SHELL_PREFIX: str(prefix)}
+
+
+#: Where saga's prepare installs a JavaScript head's npm packages, and the link the reviewer's
+#: copy gets to them.
+REVIEWER_NODE_LINK = "node_modules"
+
+
+def reviewer_packet_node(packet: Path) -> Path | None:
+    """The packet's installed npm packages, or ``None`` when there are none to trust.
+
+    The ``node`` entry counts only when it says ``installed`` and names a relative directory
+    inside the packet that exists, with no symlink anywhere along the way. The rules match
+    saga's ``review_dependencies_node.node_modules``.
+    """
+    try:
+        data = json.loads((packet / REVIEWER_DEPENDENCIES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("schema") != REVIEWER_DEPENDENCIES_SCHEMA:
+        return None
+    entry = data.get("node")
+    if not isinstance(entry, dict) or entry.get("state") != "installed":
+        return None
+    relative = entry.get("directory")
+    if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
+        return None
+    parts = Path(relative).parts
+    if any(part in ("", ".", "..") for part in parts) or packet.is_symlink():
+        return None
+    cursor = packet
+    for part in parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return None
+    if not cursor.is_dir() or not _reviewer_inside(cursor, packet):
+        return None
+    return cursor.resolve()
+
+
+def reviewer_link_node_modules(copy: Path, modules: Path | None) -> bool:
+    """Link the copy's root ``node_modules`` to the packet's packages, before the scratch
+    manifest is taken, so the link is part of the export's baseline and never a change.
+
+    Node's CommonJS and ESM resolvers, bun, vitest and jest all walk up from the importing file to
+    the nearest ``node_modules``; ``NODE_PATH`` reaches CommonJS only. A head that already has a
+    path by that name keeps it and gets no link.
+    """
+    link = copy / REVIEWER_NODE_LINK
+    if modules is None or os.path.lexists(link):
+        return False
+    link.symlink_to(modules, target_is_directory=True)
+    return True
+
+
+def reviewer_toolchain_front(env: Mapping[str, str]) -> list[Path]:
+    """Folders to put first on a sandboxed command's ``PATH``: the real ``bin`` of a ``node``
+    the session's ``PATH`` reaches through a symlink (a link under home such as
+    ``~/.local/bin/node``). The sandbox denies reading that link, so a lookup by name would fail
+    even though the install it points at is allowed back. ``npm`` and ``npx`` sit beside the
+    real ``node``. Never a packet folder."""
+    found = shutil.which("node", path=env.get("PATH", ""))
+    if not found:
+        return []
+    real = Path(os.path.realpath(found)).parent
+    return [real] if real != Path(found).parent else []
 
 
 def reviewer_packet_vendor(packet: Path) -> Path | None:
@@ -3361,7 +3442,7 @@ def _reviewer_toml_string(value: str) -> str:
 
 
 def reviewer_grok_materialize(
-    settings: Mapping[str, Any], root: Path, copy: Path
+    settings: Mapping[str, Any], root: Path, copy: Path, **_options: Any
 ) -> tuple[Path, dict[str, str]]:
     """Write the profile into the copy's ``.grok/sandbox.toml``; return it and the overlay.
 
@@ -3548,7 +3629,7 @@ def reviewer_muse_config_sources(
 
 
 def reviewer_settings_materialize(
-    settings: Mapping[str, Any], root: Path, copy: Path
+    settings: Mapping[str, Any], root: Path, copy: Path, **_options: Any
 ) -> tuple[Path, dict[str, str]]:
     """Write the settings beside the copy, never inside it; no extra environment."""
     path = root / "settings.json"
@@ -4235,6 +4316,8 @@ def reviewer_launch(
     # Issue #262: cargo builds offline from the packet's vendored crates, through a read-only
     # cargo home beside the copy and the shim in it.
     vendor = reviewer_packet_vendor(request.packet)
+    node_modules = reviewer_packet_node(request.packet)
+    reviewer_link_node_modules(copy, node_modules)
     packages = reviewer_packet_python(request.packet)
     python_env = reviewer_python_env(root, packages, session_env)
     cargo_home = reviewer_cargo_home(root, vendor, session_env)
@@ -4250,13 +4333,17 @@ def reviewer_launch(
                    "only python3 and python"},
         {"path": str(packages[0]) if packages else "",
          "reason": "the packet's installed Python packages, read-only"},
-    ] if python_env is not None and packages is not None else [])
+    ] if python_env is not None and packages is not None else []) + ([
+        {"path": str(node_modules),
+         "reason": "the packet's installed npm packages, read-only; the copy's node_modules "
+                   "links here"},
+    ] if node_modules is not None else [])
     settings_path, extra_env = recipe.materialize(
         recipe.settings(
             copy, request.packet, session_env, toolchain=toolchain,
             read_only=[item["path"] for item in dependency_reads],
         ),
-        root, copy,
+        root, copy, path_front=reviewer_toolchain_front(session_env),
     )
     manifest = _reviewer_manifest(copy)
     configuration = reviewer_configuration_fingerprint(recipe.config_sources(copy, session_env))
