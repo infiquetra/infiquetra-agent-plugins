@@ -61,6 +61,24 @@ block with `version` and an in-head `path` reached through no link. Prepare's pu
 holding only the SDK's `bin`. Finish makes its pub cache folder with `mkdtemp` for every re-run,
 after refusing a link at `scratch/tmp`.
 
+**Second repair.**
+
+- **Path dependencies.** The pubspec check follows path dependencies recursively, reading only
+  the sections pub reads from each kind of package:
+  - a root or workspace member: `dependencies`, `dev_dependencies` and `dependency_overrides`;
+  - the overrides file: `dependency_overrides`;
+  - a path dependency: `dependencies` only.
+
+  Each folder is read once, and there is a cap of 200 pubspecs.
+- **Finish's set-up.** It works through folders held open with `O_NOFOLLOW`, using `dir_fd`
+  and `fchmod`. On Linux, `bwrap` also gets `--unshare-pid --die-with-parent`.
+- **Rejected:** a fresh scratch copy for every finding. It would need a new export of the head
+  for each re-run, and a process left behind could still act on the folder it shares with the
+  next re-run.
+- **Accepted:** a file in the reviewer's own pub cache other than its `hosted` links stays open
+  to Claude's file tools. It affects only the reviewer's own runs. Denying the whole folder
+  would also deny the sandboxed `dart test` its `active_roots` write.
+
 **Claude's file tools (after review).** The reviewer's writable pub cache is not inside the copy.
 It is in the reviewer's temp folder beside the copy. But that folder is open to Claude's Edit and
 Write tools through `Edit(/<temp>/**)`, and those tools run outside the command sandbox. So its

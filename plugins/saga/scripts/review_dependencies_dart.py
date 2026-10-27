@@ -240,7 +240,7 @@ def _install(runner: deps.Process, packet: Path, export: deps.Export) -> dict[st
             raise _DartFailure("symlinked-input")
         lock = _read_lock(lock_path.read_text(encoding="utf-8", errors="replace"))
         _check_lock(lock, source)
-        _check_pubspecs(source)
+        _check_pubspecs(source, lock)
         sdk = dart_sdk()
         if sdk is None:
             raise _DartFailure("dart-missing")
@@ -467,25 +467,55 @@ def _check_lock(lock: Mapping[str, Mapping[str, Any]], source: Path) -> None:
 
 
 _DEPENDENCY_SECTIONS = ("dependencies", "dev_dependencies", "dependency_overrides")
+#: What pub reads from a package that is not a root: only its ``dependencies``. Measured with the
+#: Dart SDK 3.13: a path dependency's ``dev_dependencies`` and ``dependency_overrides`` naming an
+#: unreachable host were ignored, its ``dependencies`` made pub contact that host.
+_PACKAGE_SECTIONS = ("dependencies",)
+#: The most pubspecs one head may make saga read, roots and path dependencies together.
+_MAX_PUBSPECS = 200
 
 
-def _check_pubspecs(source: Path) -> None:
-    """Check the files pub reads at the root: ``pubspec.yaml``, ``pubspec_overrides.yaml``, and
-    each workspace member's ``pubspec.yaml``. Another pubspec in the head (an example app, say) is
-    never read by ``pub get`` at the root, so it is not checked and never refuses the head."""
-    root = _read_pubspec(source / "pubspec.yaml", source, required=True)
-    _read_pubspec(source / "pubspec_overrides.yaml", source, required=False)
+def _check_pubspecs(source: Path, lock: Mapping[str, Mapping[str, Any]] | None = None) -> None:
+    """Check every pubspec pub reads during resolution, before it compares anything with the
+    lock: the root ``pubspec.yaml`` and ``pubspec_overrides.yaml``, each workspace member's
+    ``pubspec.yaml`` (as roots), and, followed from all of those and from the lock's path
+    entries, each path dependency's ``pubspec.yaml`` (only its ``dependencies``, as pub reads
+    it). A folder is read once; a cycle ends. Another pubspec in the head (an example app,
+    say) is never read by ``pub get`` at the root, so it is not checked."""
+    queue: list[tuple[Path, tuple[str, ...]]] = []
+    root = _read_pubspec(source / "pubspec.yaml", source, required=True,
+                         sections=_DEPENDENCY_SECTIONS, found=queue)
+    _read_pubspec(source / "pubspec_overrides.yaml", source, required=False,
+                  sections=("dependency_overrides",), found=queue)
     members = root.get("workspace")
-    if members is None:
-        return
-    if not isinstance(members, list):
-        raise _DartFailure("pubspec-unreadable")
-    for member in members:
-        folder = _inside(source, source, member)
-        _read_pubspec(folder / "pubspec.yaml", source, required=True)
+    if members is not None:
+        if not isinstance(members, list):
+            raise _DartFailure("pubspec-unreadable")
+        for member in members:
+            queue.append((_inside(source, source, member), _DEPENDENCY_SECTIONS))
+    for item in (lock or {}).values():
+        description = item.get("description")
+        if item.get("source") == "path" and isinstance(description, Mapping):
+            queue.append((_inside(source, source, description.get("path")), _PACKAGE_SECTIONS))
+    seen = {source.resolve()}
+    while queue:
+        folder, sections = queue.pop(0)
+        key = folder.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        if len(seen) > _MAX_PUBSPECS:
+            raise _DartFailure("pubspec-unreadable")
+        _read_pubspec(folder / "pubspec.yaml", source, required=True, sections=sections,
+                      found=queue)
 
 
-def _read_pubspec(path: Path, source: Path, *, required: bool) -> dict[str, Any]:
+def _read_pubspec(
+    path: Path, source: Path, *, required: bool, sections: tuple[str, ...],
+    found: list[tuple[Path, tuple[str, ...]]],
+) -> dict[str, Any]:
+    """Read one pubspec, check the *sections* pub reads from it, and add each in-head path
+    dependency it names to *found*, to be read as a package."""
     if not os.path.lexists(path):
         if required:
             raise _DartFailure("pubspec-unreadable")
@@ -501,32 +531,36 @@ def _read_pubspec(path: Path, source: Path, *, required: bool) -> dict[str, Any]
     ):
         raise _DartFailure("flutter-unsupported" if isinstance(environment, dict)
                            else "pubspec-unreadable")
-    for section in _DEPENDENCY_SECTIONS:
+    for section in sections:
         entries = data.get(section)
         if entries is None:
             continue
         if not isinstance(entries, dict):
             raise _DartFailure("pubspec-unreadable")
         for spec in entries.values():
-            _check_dependency(spec, path.parent, source)
+            folder = _check_dependency(spec, path.parent, source)
+            if folder is not None:
+                found.append((folder, _PACKAGE_SECTIONS))
     return data
 
 
-def _check_dependency(spec: Any, base: Path, source: Path) -> None:
+def _check_dependency(spec: Any, base: Path, source: Path) -> Path | None:
     """A dependency is a version constraint, or a block with ``version`` and an in-head
-    ``path``. Flutter's ``sdk`` is refused as unsupported; any other key as another source."""
+    ``path``, whose folder is returned. Flutter's ``sdk`` is refused as unsupported; any other
+    key as another source."""
     if spec is None or isinstance(spec, str):
-        return
+        return None
     if not isinstance(spec, dict):
         raise _DartFailure("pubspec-unreadable")
     if "sdk" in spec:
         raise _DartFailure("flutter-unsupported")
     if set(spec) - {"version", "path"}:
         raise _DartFailure("unsupported-source")
-    if "path" in spec:
-        if not isinstance(spec["path"], str):
-            raise _DartFailure("unsupported-source")
-        _inside(source, base, spec["path"])
+    if "path" not in spec:
+        return None
+    if not isinstance(spec["path"], str):
+        raise _DartFailure("unsupported-source")
+    return _inside(source, base, spec["path"])
 
 
 def _inside(root: Path, base: Path, value: Any) -> Path:

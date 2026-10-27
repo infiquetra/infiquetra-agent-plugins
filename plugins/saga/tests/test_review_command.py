@@ -9,6 +9,7 @@ import json
 import os
 import socket
 import stat
+import time
 import shutil
 import subprocess
 import sys
@@ -3498,6 +3499,93 @@ def test_a_link_at_tmp_is_refused_before_anything_follows_it(tmp_path: Path) -> 
     with pytest.raises(OSError):
         C._dart_pub_cache(offline, scratch, _Runner(), None, ["dart", "test"])
     assert list(outside.iterdir()) == []
+
+
+def test_a_swap_of_tmp_in_the_middle_of_the_set_up_lands_inside_the_scratch_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A process an earlier re-run left behind can swap ``tmp`` for a link at any moment. Here
+    it happens at the worst one, just before the cache folder is created: the folder must still
+    land inside the scratch copy, and nothing may appear in the folder the link points at."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    assert C._make_tmp(scratch)
+    target = tmp_path / "planted-target"
+    target.mkdir()
+    cache = tmp_path / "cache"
+    (cache / "hosted").mkdir(parents=True)
+    (cache / "hosted-hashes").mkdir()
+    real_mkdir = os.mkdir
+    swapped: list[bool] = []
+
+    def swap_then_mkdir(path: Any, *args: Any, **kwargs: Any) -> None:
+        if not swapped:
+            swapped.append(True)
+            os.rename(scratch / "tmp", scratch / "held")
+            os.symlink(target, scratch / "tmp")
+        real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "mkdir", swap_then_mkdir)
+    offline = C.Offline(env={}, reads=(), dart=cache)
+    try:
+        added = C._dart_pub_cache(offline, scratch, _Runner(), None, ["python3"])
+    except OSError:
+        added = {}
+    monkeypatch.setattr(os, "mkdir", real_mkdir)
+    assert swapped
+    assert list(target.iterdir()) == [], "nothing was created through the link"
+    if added:
+        made = [item for item in (scratch / "held").iterdir() if item.name.startswith("saga-")]
+        assert len(made) == 1 and (made[0] / "hosted").is_symlink()
+
+
+def test_the_bwrap_re_run_cannot_leave_a_process_behind(tmp_path: Path) -> None:
+    command = C._bwrap(tmp_path, ["dart", "test"])
+    assert "--unshare-pid" in command and "--die-with-parent" in command
+    assert command.index("--die-with-parent") < command.index("--")
+
+
+@pytest.mark.skipif(
+    C.platform_helper() != "sandbox-exec" or not Path("/usr/bin/perl").exists(),
+    reason="needs macOS sandbox-exec and the system perl",
+)
+def test_live_a_process_that_outlives_its_re_run_cannot_steer_the_next_set_up(
+    tmp_path: Path,
+) -> None:
+    """sandbox-exec has no process namespace, so a confined command can start a process in a
+    new session that the runner's group stop does not reach. It stays confined, and the swap it
+    makes later is refused by the next set-up without anything outside being touched."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    assert C._make_tmp(scratch)
+    target = tmp_path / "planted-target"
+    target.mkdir()
+    target.chmod(0o755)
+    marker = scratch / "sleeper-swapped"
+    script = (
+        "use POSIX; fork and exit; POSIX::setsid(); sleep 1;"
+        f" rename('{scratch}/tmp', '{scratch}/old-tmp');"
+        f" symlink('{target}', '{scratch}/tmp');"
+        f" open(my $f, '>', '{target}/escaped') and close($f);"
+        f" open(my $g, '>', '{marker}') and close($g);"
+    )
+    env = C.child_environment(scratch)
+    ran = C.run_confined(["/usr/bin/perl", "-e", script], scratch, env, scratch,
+                         runner=_exec_runner(), timeout=30)
+    assert ran.code == 0, ran.stderr
+    for _ in range(100):
+        if marker.exists():
+            break
+        time.sleep(0.05)
+    assert marker.exists(), "the sleeper outlived its re-run, as sandbox-exec allows"
+    assert (scratch / "tmp").is_symlink()
+    assert not (target / "escaped").exists(), "the sleeper itself stays confined"
+    assert C._make_tmp(scratch) is False
+    offline = C.Offline(env={}, reads=(), dart=tmp_path)
+    with pytest.raises(OSError):
+        C._dart_pub_cache(offline, scratch, _Runner(), None, ["dart", "test"])
+    assert list(target.iterdir()) == []
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
 
 
 @pytest.mark.skipif(C.platform_helper() is None, reason="no reproduction helper on this platform")

@@ -48,6 +48,23 @@ Tests:
 fail closed on anything the parser does not understand. Treat every path a confined step could
 have written as hostile: `lstat` before you follow it, and create under an unpredictable name.
 
+A second review found two more gaps in the same area.
+
+- **Path dependencies' own pubspecs.** Pub reads the `pubspec.yaml` of every path dependency
+  during resolution, so checking only the root's let a nested `git:` or `hosted:` through. With
+  the Dart SDK 3.13, pub contacted a host named in a path dependency's `dependencies`, and
+  ignored one named in its `dev_dependencies` or `dependency_overrides`.
+- **A check, then a separate use, by path.** An `lstat` check followed by a separate `mkdir` or
+  `chmod` on the same path is not enough. The runner stops a re-run's process group, but a
+  process that calls `setsid` leaves the group, and `sandbox-exec` has no process namespace.
+  The live test `test_live_a_process_that_outlives_its_re_run_cannot_steer_the_next_set_up`
+  shows such a process surviving its re-run. The safe form holds the folders open with
+  `O_NOFOLLOW` and acts relative to them. `test_a_swap_of_tmp_in_the_middle_of_the_set_up_lands_inside_the_scratch_copy`
+  fails on the path-based version and passes on this one.
+
+**Further rule.** Follow every file the consumer reads, not just the entry point. When a
+writer you do not control may still be running, act through open handles, not paths.
+
 ### `dart test` in a sandbox fails four separate ways before it reaches the test
 
 **Author.** Jeff Cox

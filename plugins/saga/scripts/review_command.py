@@ -16,9 +16,9 @@ import copy
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
-import stat
 import subprocess  # nosec B404
 import sys
 import tarfile
@@ -311,14 +311,7 @@ def _dart_pub_cache(
     """
     if offline is None or offline.dart is None:
         return {}
-    temporary = scratch / "tmp"
-    for path in (scratch, temporary):
-        if not stat.S_ISDIR(os.lstat(path).st_mode):
-            raise OSError(f"{path} is not a folder saga made")
-    cache = review_dependencies_dart.write_pub_cache(
-        Path(tempfile.mkdtemp(prefix="saga-pub-cache-", dir=temporary)),
-        review_dependencies_dart.DartDependencies(cache=offline.dart, version=""),
-    )
+    cache = _fresh_pub_cache(scratch, offline.dart)
     added = {"PUB_CACHE": str(cache)}
     if argv and Path(argv[0]).name == "dart" and (scratch / "pubspec.yaml").is_file():
         env = {**child_environment(scratch), **offline.env, **added}
@@ -333,6 +326,32 @@ def _dart_pub_cache(
         except subprocess.TimeoutExpired:
             pass
     return added
+
+
+def _fresh_pub_cache(scratch: Path, packet_cache: Path) -> Path:
+    """Make ``scratch/tmp/saga-pub-cache-<random>`` with ``hosted`` and ``hosted-hashes`` links
+    to *packet_cache*, through open folders only (see :func:`_make_tmp`): a link at ``tmp`` is
+    refused, the new folder's name cannot be guessed, and a swap of ``tmp`` midway moves only
+    the folder saga holds. Raises ``OSError`` when it cannot be made."""
+    source = packet_cache.resolve()
+    name = f"saga-pub-cache-{secrets.token_hex(8)}"
+    scratch_fd = os.open(scratch, _DIRECTORY_FLAGS)
+    try:
+        tmp_fd = os.open("tmp", _DIRECTORY_FLAGS, dir_fd=scratch_fd)
+        try:
+            os.mkdir(name, 0o700, dir_fd=tmp_fd)
+            cache_fd = os.open(name, _DIRECTORY_FLAGS, dir_fd=tmp_fd)
+            try:
+                for part in ("hosted", "hosted-hashes"):
+                    if (source / part).is_dir():
+                        os.symlink(str(source / part), part, dir_fd=cache_fd)
+            finally:
+                os.close(cache_fd)
+        finally:
+            os.close(tmp_fd)
+    finally:
+        os.close(scratch_fd)
+    return scratch / "tmp" / name
 
 
 def run_confined(
@@ -1660,22 +1679,38 @@ def _extract_tree(bundle: tarfile.TarFile, dest: Path) -> None:
         target.chmod(0o755 if mode & 0o111 else 0o644)
 
 
+#: Opening a folder for the set-up below: never through a link, never anything but a folder.
+_DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
 def _make_tmp(scratch: Path) -> bool:
-    """Make ``scratch/tmp`` owner-only. An earlier re-run may have left a link there: it is
-    refused before anything follows it, so no folder outside the scratch copy is touched."""
-    temporary = scratch / "tmp"
+    """Make ``scratch/tmp`` owner-only, working through open folders, never through paths.
+
+    Earlier re-runs wrote in the same scratch copy, and a process one of them started in a new
+    session can outlive it (the runner stops only the re-run's own process group), so a link may
+    appear at ``tmp`` at any moment. Every step here acts on a folder held open with
+    ``O_NOFOLLOW``: a link at ``tmp`` is refused, and a swap after the open moves only the
+    folder saga holds, inside the scratch copy. Nothing outside it is ever touched.
+    """
     try:
-        if scratch.is_symlink() or not scratch.is_dir():
-            return False
-        if os.path.lexists(temporary):
-            if not stat.S_ISDIR(os.lstat(temporary).st_mode):
-                return False
-        else:
-            temporary.mkdir()
-        temporary.chmod(0o700)
+        scratch_fd = os.open(scratch, _DIRECTORY_FLAGS)
     except OSError:
         return False
-    return stat.S_ISDIR(os.lstat(temporary).st_mode)
+    try:
+        try:
+            os.mkdir("tmp", 0o700, dir_fd=scratch_fd)
+        except FileExistsError:
+            pass
+        tmp_fd = os.open("tmp", _DIRECTORY_FLAGS, dir_fd=scratch_fd)
+        try:
+            os.fchmod(tmp_fd, 0o700)
+        finally:
+            os.close(tmp_fd)
+    except OSError:
+        return False
+    finally:
+        os.close(scratch_fd)
+    return True
 
 
 def _publish(staging: Path, out: Path) -> None:
@@ -1908,7 +1943,9 @@ def _bwrap(scratch: Path, argv: Sequence[str], reads: Sequence[Path] = ()) -> li
     # By absolute path on the operator's PATH: the re-run's own PATH starts with folders the
     # re-run is given, and the helper must never be looked up there.
     helper = shutil.which("bwrap", path=os.environ.get("PATH", "")) or "/usr/bin/bwrap"
-    command = [str(Path(helper).resolve()), "--unshare-net"]
+    # A new PID namespace, ended with the helper: a process the command starts in a new
+    # session cannot outlive the re-run and act during the next unconfined set-up.
+    command = [str(Path(helper).resolve()), "--unshare-net", "--unshare-pid", "--die-with-parent"]
     for prefix in ("/usr", "/bin", "/lib", "/lib64", "/opt", "/etc"):
         if Path(prefix).exists():
             command.extend(["--ro-bind", prefix, prefix])

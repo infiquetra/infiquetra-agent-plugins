@@ -337,6 +337,76 @@ def test_prepare_s_pub_finds_only_the_sdk_on_its_path(tmp_path: Path, sdk: Any) 
     assert shutil.which("git", path=pub.calls[0]["env"]["PATH"]) is None
 
 
+def _path_lock(*folders: str) -> str:
+    return _lock(_hosted("inertdep"), *(
+        f"  {Path(folder).name}:\n    dependency: \"direct main\"\n    description:\n"
+        f"      path: \"{folder}\"\n      relative: true\n    source: path\n"
+        f"    version: \"1.0.0\"\n" for folder in folders))
+
+
+_ROOT_WITH_A = PUBSPEC + "dependencies:\n  a:\n    path: pkgs/a\n"
+
+
+@pytest.mark.parametrize(("tree", "reason"), [
+    # A path dependency's own pubspec is read by pub during resolution: its dependencies must
+    # pass the same checks as the root's.
+    ({"pkgs/a/pubspec.yaml": "name: a\ndependencies:\n  evil:\n    git: file:///private/var/empty\n"},
+     "unsupported-source"),
+    ({"pkgs/a/pubspec.yaml": "name: a\ndependencies:\n  evil: {git: \"file:///private/var/empty\"}\n"},
+     "pubspec-unreadable"),
+    ({"pkgs/a/pubspec.yaml": "name: a\ndependencies:\n  evil:\n    hosted: http://127.0.0.1:9\n"
+                             "    version: ^1.0.0\n"},
+     "unsupported-source"),
+    # Two levels down: a -> b, and b names a host.
+    ({"pkgs/a/pubspec.yaml": "name: a\ndependencies:\n  b:\n    path: ../b\n",
+      "pkgs/b/pubspec.yaml": "name: b\ndependencies:\n  evil:\n    hosted: http://127.0.0.1:9\n"},
+     "unsupported-source"),
+    ({"pkgs/a/pubspec.yaml": "name: a\ndependencies:\n  b:\n    path: ../../../outside\n"},
+     "unsupported-source"),
+])
+def test_a_path_dependency_s_own_dependencies_are_checked_recursively(
+    tmp_path: Path, sdk: Any, tree: dict[str, str], reason: str,
+) -> None:
+    head = {"pubspec.yaml": _ROOT_WITH_A, "pubspec.lock": _path_lock("pkgs/a"), **tree}
+    record, _packet, pub = _fetch(tmp_path, head)
+    assert record["dart"] == {"state": "not-installed", "reason": reason}
+    assert pub.calls == [], "pub never ran"
+
+
+def test_a_path_dependency_cycle_ends_and_a_clean_cycle_is_fetched(
+    tmp_path: Path, sdk: Any,
+) -> None:
+    head = {"pubspec.yaml": _ROOT_WITH_A, "pubspec.lock": _path_lock("pkgs/a", "pkgs/b"),
+            "pkgs/a/pubspec.yaml": "name: a\ndependencies:\n  b:\n    path: ../b\n",
+            "pkgs/b/pubspec.yaml": "name: b\ndependencies:\n  a:\n    path: ../a\n"
+                                   "  root:\n    path: ../..\n"}
+    record, _packet, pub = _fetch(tmp_path, head)
+    assert record["dart"]["state"] == "installed"
+    assert len(pub.calls) == 1
+
+
+def test_a_path_named_only_in_the_lock_is_checked_too(tmp_path: Path, sdk: Any) -> None:
+    head = {"pubspec.yaml": PUBSPEC, "pubspec.lock": _path_lock("pkgs/a"),
+            "pkgs/a/pubspec.yaml": "name: a\ndependencies:\n  evil:\n    git: x\n"}
+    record, _packet, pub = _fetch(tmp_path, head)
+    assert record["dart"] == {"state": "not-installed", "reason": "unsupported-source"}
+    assert pub.calls == []
+
+
+def test_what_pub_ignores_in_a_path_dependency_does_not_refuse_the_head(
+    tmp_path: Path, sdk: Any,
+) -> None:
+    """pub reads only a path dependency's ``dependencies`` (measured with the Dart SDK 3.13):
+    its dev_dependencies and dependency_overrides are never resolved."""
+    head = {"pubspec.yaml": _ROOT_WITH_A, "pubspec.lock": _path_lock("pkgs/a"),
+            "pkgs/a/pubspec.yaml": "name: a\ndev_dependencies:\n  flutter_test:\n    sdk: flutter\n"
+                                   "  tool:\n    git: x\ndependency_overrides:\n"
+                                   "  other:\n    hosted: http://127.0.0.1:9\n"}
+    record, _packet, pub = _fetch(tmp_path, head)
+    assert record["dart"]["state"] == "installed", record
+    assert len(pub.calls) == 1
+
+
 def test_a_flutter_example_app_does_not_refuse_the_package(tmp_path: Path, sdk: Any) -> None:
     tree = {"pubspec.yaml": PUBSPEC, "pubspec.lock": LOCK,
             "example/pubspec.yaml": "name: example\ndependencies:\n  flutter:\n    sdk: flutter\n"}

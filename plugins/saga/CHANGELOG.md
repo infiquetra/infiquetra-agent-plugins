@@ -23,6 +23,10 @@
   for a `dart` command; an SDK of another release is not used; and the packet's pub cache is
   read-only file by file, so a write by the reviewer's file tools through a link fails. New
   reason word: `pubspec-unreadable`.
+  Second repair: each path dependency's `pubspec.yaml` is checked too, recursively from every
+  checked pubspec and the lock, reading only the `dependencies` pub reads from a package; and
+  finish's set-up works through folders held open with `O_NOFOLLOW`, so a process an earlier
+  re-run left behind cannot steer it, while `bwrap` gets `--unshare-pid --die-with-parent`.
 - The reproduction matcher reads a `dart test` run of one file, whose lines leave the file out
   and name it only in the `loading` line. A file is taken only from a loaded file's name, so a
   run with no `loading` line still matches nothing, and a test named `x.dart: y` is read whole.
