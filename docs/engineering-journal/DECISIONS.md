@@ -1,6 +1,192 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-27
+
+### A Dart review packet carries a pruned pub cache; reviewer and re-run get a dart-only bin and their own writable cache
+
+**Decision.** Jeff Cox approved this build on 2026-10-26.
+
+- **Prepare.** For a head with a root `pubspec.yaml` and `pubspec.lock`, Saga's prepare runs the
+  real SDK executable, `dart pub get --enforce-lockfile`. It runs on an export of the head, with
+  `PUB_CACHE` in `<packet>/dependencies/dart/pub-cache`, a fresh home and
+  `DASH__SUPPRESS_ANALYTICS=true`. Afterwards it keeps only `hosted/` and `hosted-hashes/`.
+- **Refused before pub runs.** A git source, another host, a path outside the head, the Flutter
+  SDK, a symlinked input, or a lock layout Saga cannot read. Each outcome is a fixed word in
+  `review_dependencies_dart.REASONS`.
+- **The reviewer and finish's re-run** each get:
+  - a Saga-written `bin` holding only `dart`, linked to the SDK's real executable;
+  - a writable pub cache in their own temp folder, whose `hosted` and `hosted-hashes` link to
+    the packet's;
+  - `DASH__SUPPRESS_ANALYTICS=true` and `PUB_MAX_HTTP_RETRIES=0`.
+
+  These are given to sandboxed commands only; the vendor process's `PATH` never changes. Finish
+  resolves the project offline before replaying a command, and the reviewer is told to do the
+  same.
+- **Flutter.** `flutter test` is not supported, and a Flutter head records `flutter-unsupported`.
+- **Code location.** The code lives in its own module, `review_dependencies_dart.py`, and
+  separate launcher functions, because an npm build is changing the same files in parallel.
+
+**Rationale.** A Dart defect could not be proven because `dart test` crashed in the sandbox and
+the packet had no packages. The LEARNINGS entry of this date lists the four causes. The packet
+has to stay byte-identical between two prepares, so the version listings and `active_roots/`
+cannot be kept. The tool still needs somewhere to write, so the writable part is the
+reviewer's or the re-run's own, never the packet's or the operator's.
+
+**Rejected alternatives.**
+- **Running Flutter's `bin/dart` wrapper:** it needs git and can write into the SDK.
+- **A read-only `PUB_CACHE` pointing straight at the packet:** pub writes `active_roots/` and
+  exits 66.
+- **Keeping the version listings:** they hold a fetch time and change whenever a package is
+  published, so two prepares would differ.
+- **Saga writing `package_config.json` itself:** `dart test` still runs pub's resolution and
+  needs a writable cache. `pub get --offline` writes the same file in the format the installed
+  SDK expects.
+- **Supporting `flutter test` by letting it write its SDK's `bin/cache/lockfile`:** it would
+  write into the operator's install, and it also probes the Android SDK.
+- **Sharing the operator's `~/.pub-cache` at prepare:** the brief rules it out, and prepare would
+  then write into the operator's state.
+
+**Reading the YAML (after review).** The lock and the pubspecs pub reads are read by a small
+reader in `review_dependencies_dart.py`. It accepts the subset of YAML that pub writes, plus a
+top-level multi-line `description`, and refuses everything else. A YAML library was rejected:
+
+- the plugin's scripts run on the operator's Python with the standard library only, and the
+  repository's baseline installs nothing;
+- vendoring a full YAML parser would add a large component to the calibration fingerprint;
+- a full parser would accept the very forms that must be refused (flow maps, anchors, tags,
+  quoted keys), so it would still need a fail-closed check of its own on top.
+
+The structural check after reading allows a dependency to be only a version constraint, or a
+block with `version` and an in-head `path` reached through no link. Prepare's pub gets a `PATH`
+holding only the SDK's `bin`. Finish makes its pub cache folder with `mkdtemp` for every re-run,
+after refusing a link at `scratch/tmp`.
+
+**Second repair.**
+
+- **Path dependencies.** The pubspec check follows path dependencies recursively, reading only
+  the sections pub reads from each kind of package:
+  - a root or workspace member: `dependencies`, `dev_dependencies` and `dependency_overrides`;
+  - the overrides file: `dependency_overrides`;
+  - a path dependency: `dependencies` only.
+
+  The walk remembers the sections checked in each folder and reads a folder again for any
+  section not yet covered, so the order in which roles are met cannot skip one. Nested
+  workspace members are walked as roots, because pub 3.13 resolves them (measured with local
+  folders). There is a cap of 200 pubspec reads.
+  Each root and member's own `pubspec_overrides.yaml` is checked as overrides, and its path
+  dependencies are walked. pub 3.13 reads a member's overrides file, at any depth, and ignores a
+  path dependency's (measured), so checking the member's file follows pub rather than refusing
+  more than pub reads.
+- **Finish's set-up.** It works through folders held open with `O_NOFOLLOW`, using `dir_fd`
+  and `fchmod`. On Linux, `bwrap` also gets `--unshare-pid --die-with-parent`.
+- **Rejected:** a fresh scratch copy for every finding. It would need a new export of the head
+  for each re-run, and a process left behind could still act on the folder it shares with the
+  next re-run.
+- **Accepted:** a file in the reviewer's own pub cache other than its `hosted` links stays open
+  to Claude's file tools. It affects only the reviewer's own runs. Denying the whole folder
+  would also deny the sandboxed `dart test` its `active_roots` write.
+
+**Claude's file tools (after review).** The reviewer's writable pub cache is not inside the copy.
+It is in the reviewer's temp folder beside the copy. But that folder is open to Claude's Edit and
+Write tools through `Edit(/<temp>/**)`, and those tools run outside the command sandbox. So its
+links into the packet could have carried a write into the packet, and finish's re-run reads from
+there. Two layers close this:
+
+- the packet's cache is read-only file by file (0444, or 0555 for executables, and 0555 for
+  folders), restored to writable before any removal;
+- every read-only allowance in the Claude settings is also an `Edit(...)` deny rule, including
+  the two links in the temp folder. A deny rule outranks the allow rule.
+
+**Revisit when.**
+- A Flutter project needs a reproduction.
+- A Grok, Muse or Codex reviewer needs Dart.
+- Pub changes how it treats `PUB_MAX_HTTP_RETRIES` or the offline resolution.
+- Prepare time per Dart head becomes a measured problem. There is no shared download cache, so
+  every prepare downloads every package.
+
 ## 2026-10-26
+### pnpm-lock.yaml is read by a strict subset reader, not a YAML library
+
+**Decision.** Author: Jeff Cox. `review_dependencies_node._pnpm_parse` reads only the block YAML
+pnpm itself writes (plain, single-quoted and simple double-quoted scalars, one-level flow
+mappings and sequences, `- item` lists) and refuses everything else: anchors, aliases, tags,
+merge keys, explicit `?` keys, block and multi-line scalars, document markers, directives,
+comments and duplicate keys. The check then works on the parsed structure: each package's
+resolution is exactly `{integrity: ...}`, importer versions are a version or a `link:` inside the
+head, and an unknown top-level key is `unsupported-lockfile`.
+
+**Rationale.** saga's scripts are standard library only, so no YAML library can be imported, and
+a general YAML loader would also accept the constructs a hostile lockfile would use to make
+saga and pnpm read different things. A reader that fails closed on anything outside pnpm's own
+output cannot disagree with pnpm about a lockfile pnpm wrote.
+
+**Rejected alternatives.** Vendoring a YAML library: a large new trusted dependency for one file.
+Line matching (the first version): a quoted `"resolution":` key slipped past it.
+
+**Revisit when.** A pnpm release writes a construct the reader refuses (the head then records
+`unsupported-lockfile`), or saga gains a vetted YAML dependency.
+
+### The reviewer shell's TMPDIR trap removes itself after one reset
+
+**Decision.** Author: Jeff Cox. The `DEBUG` trap in the reviewer's shell prefix saves `$_`,
+resets `TMPDIR` the first time it differs from the reviewer's folder (Claude's own export),
+removes itself, and restores `$_`.
+
+**Rationale.** Any `DEBUG` trap resets `PIPESTATUS` on bash 3.2, the `/bin/bash` the prefix uses
+on macOS when `$SHELL` is not a bash, and no trap body avoids that; a trap that runs before
+every command also overwrote `$_`. Removing the trap once Claude's export is undone means the
+reviewer's command runs with no trap at all, so `$_`, `PIPESTATUS` and the command's own
+`export TMPDIR=...` behave as they would without the prefix.
+
+**Rejected alternatives.** A trap that runs before every command: it breaks `PIPESTATUS` on bash
+3.2 and costs time in tight loops. Preferring a newer bash on `PATH`: changes the shell every
+reviewer command runs in. Rewriting Claude's command string: tied to its exact text.
+
+**Revisit when.** Claude Code stops exporting `TMPDIR` in its command string (the trap then stays
+armed for the whole command and `PIPESTATUS` on bash 3.2 is reset again), or offers a setting
+for the sandbox's temp folder.
+
+### Installed npm packages are sealed read-only on disk, not only by the sandbox
+
+**Decision.** Author: Jeff Cox. Prepare chmods the packet's `node_modules` to files 0444 (0555
+when executable) and folders 0555, and the reviewer settings deny `Edit` on every read-only
+dependency folder and on `./node_modules` in the copy.
+
+**Rationale.** Claude's file tools run outside the OS sandbox, and finish's re-run reads the
+packet, so a write that reached it would let a reviewer fake a reproduction. A live run found the
+tools already refused a write through the link (`Edit(./**)` does not match the resolved packet
+path), but that rests on how Claude matches paths today. File modes and explicit deny rules hold
+whatever that matching does.
+
+**Rejected alternatives.** Relying on the sandbox's `denyWrite` alone: it binds shell commands,
+not the file tools.
+
+**Revisit when.** Packet cleanup outside saga keeps failing on the sealed folders.
+
+### npm packages reach the reviewer through a node_modules link, from a vetted lockfile
+
+**Decision.** Author: Jeff Cox. Prepare installs a JavaScript or TypeScript head's npm packages
+from its lockfile only, by the lockfile's own manager with scripts off, after saga has read the
+lockfile and refused any non-registry source (`plugins/saga/scripts/review_dependencies_node.py`).
+The reviewer's copy and finish's re-run folder each get a `node_modules` symlink at their root
+pointing at the packet's read-only folder. The launcher makes the copy's link before the scratch
+baseline, so it is never a change.
+
+**Rationale.** Node's ESM resolver ignores `NODE_PATH` and walks up from the importing file to the
+nearest `node_modules`; so do CommonJS, bun, Vitest and Jest. A link at the copy root is the one
+place all of them look, and making it part of the baseline keeps finish's link check strict for
+every other link. Vetting the lockfile mirrors the Python install's plain-requirement rule: a
+`file:`, `link:` or git source could copy or link an operator file into the packet, and a
+tarball from another host is not checked against the public registry.
+
+**Rejected alternatives.** `NODE_PATH`: CommonJS only. A link in the launch root above the copy:
+the sandbox blocks reading the launch root, and the re-run folder's parent is the shared temp
+folder. Copying `node_modules` into each copy: slow, and the reviewer could edit it. Running the
+install inside a sandbox with network: not available on both platforms, and the lockfile check
+already bounds what is fetched.
+
+**Revisit when.** A reviewed head needs workspace packages (`packages/*/node_modules` or
+workspace links), a yarn berry or binary bun lockfile, or a private registry.
 
 ### Jev's lower consequence pick applies only at confidence 0.8 or more
 

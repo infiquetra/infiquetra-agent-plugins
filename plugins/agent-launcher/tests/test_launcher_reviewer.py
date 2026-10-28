@@ -636,25 +636,65 @@ GETTEMPDIR = f"{shlex.quote(sys.executable)} -c 'import tempfile; print(tempfile
 
 
 @NOT_ROOT
-def test_tmpdir_python_s_temp_folder_is_the_reviewer_s_after_claude_exports_its_own(
+def test_tmpdir_every_tool_sees_the_reviewer_s_folder_after_claude_exports_its_own(
     launcher: ModuleType, tmp_path: Path
 ) -> None:
     copy, _, extra = _claude_shell(launcher, tmp_path)
     _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
     sandbox_temp = _claude_sandbox_temp(tmp_path)
     env = _startup_env(tmp_path, **extra)
-    shown = _run_like_claude(
-        _as_claude_2_1_311(f'echo "$TMPDIR"; {GETTEMPDIR}', sandbox_temp), env, copy
-    ).split()
     temp = launcher.reviewer_claude_temp_dir(copy)
-    # Claude's TMPDIR wins over the prefix's, and Python skips it because it is not writable.
-    assert shown == [str(sandbox_temp), str(temp)]
-    # The control: without TEMP and TMP, Python moves past the reviewer's folder to the system
-    # roots (which the real sandbox denies, leaving the working directory, the copy).
-    control = _run_like_claude(
-        _as_claude_2_1_311(f"unset TEMP TMP; {GETTEMPDIR}", sandbox_temp), env, copy
-    ).strip()
-    assert control and control != str(temp)
+    shown = _run_like_claude(
+        _as_claude_2_1_311(f'echo "$TMPDIR"; {GETTEMPDIR}; sh -c \'echo "$TMPDIR"\'',
+                           sandbox_temp), env, copy
+    ).split()
+    # The DEBUG trap puts the reviewer's folder back after Claude's export, for Python and for
+    # any child that reads TMPDIR alone.
+    assert shown == [str(temp)] * 3
+    node = shutil.which("node")
+    if node:
+        script = f"{shlex.quote(node)} -e 'console.log(require(\"os\").tmpdir())'"
+        assert _run_like_claude(_as_claude_2_1_311(script, sandbox_temp), env, copy).strip() == (
+            str(temp))
+    # A command's own TMPDIR=... keeps its value; exit statuses survive the trap.
+    kept = _run_like_claude(_as_claude_2_1_311(
+        "TMPDIR=/elsewhere sh -c 'echo \"$TMPDIR\"'; false; echo $?; (exit 3); echo $?",
+        sandbox_temp), env, copy).split()
+    assert kept == ["/elsewhere", "1", "3"]
+    # Python's own fallback stays: with TMPDIR unwritable it takes TEMP.
+    fallback = _run_like_claude(
+        f"TMPDIR={shlex.quote(str(sandbox_temp))} {GETTEMPDIR}", env, copy).strip()
+    assert fallback == str(temp)
+
+
+@NOT_ROOT
+@pytest.mark.parametrize("bash", ["/bin/bash", shutil.which("bash") or "/bin/bash"])
+def test_tmpdir_the_trap_leaves_dollar_underscore_and_pipestatus_alone(
+    launcher: ModuleType, tmp_path: Path, bash: str
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    env = _startup_env(tmp_path, SHELL=bash, **extra)
+    temp = launcher.reviewer_claude_temp_dir(copy)
+    out = _run_like_claude(_as_claude_2_1_311(
+        'mkdir -p made && cd "$_" && basename "$PWD"; (exit 3) | cat; echo "${PIPESTATUS[*]}"; '
+        'echo "$TMPDIR"; export TMPDIR=/own; sh -c \'echo "$TMPDIR"\'',
+        _claude_sandbox_temp(tmp_path)), env, copy).split()
+    # $_ survives (bash 3.2 and later), PIPESTATUS too (any DEBUG trap resets it on bash 3.2,
+    # so the trap is gone before the command runs), and the command's own export is kept.
+    assert out == ["made", "3", "0", str(temp), "/own"]
+
+
+def test_tmpdir_the_prefix_s_exit_status_is_the_command_s(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    env = _startup_env(tmp_path, **extra)
+    line = f"{shlex.quote(extra[PREFIX])} {shlex.quote('echo ran; exit 7')}"
+    proc = subprocess.run(["bash", "-c", line], cwd=copy, env=env, capture_output=True,
+                          text=True, check=False)
+    assert (proc.returncode, proc.stdout) == (7, "ran\n")
 
 
 @NOT_ROOT
@@ -1877,6 +1917,148 @@ def test_offline_packages_for_another_python_are_not_used(
     assert launcher.reviewer_python_env(tmp_path / "root", packages, os.environ) is None
 
 
+def _node_packet(launcher: ModuleType, tmp_path: Path, entry: Any = None) -> Path:
+    """A packet whose ``dependencies.json`` names saga's installed npm packages: one CommonJS
+    and one ESM-only package, and ``.bin`` scripts a hostile package could ship, named after
+    the vendor and git."""
+    packet = tmp_path / "packet"
+    modules = packet / "dependencies" / "node" / "node_modules"
+    (modules / "cjs-dep").mkdir(parents=True)
+    (modules / "cjs-dep" / "package.json").write_text(
+        '{"name": "cjs-dep", "version": "1.0.0", "main": "index.js"}', "utf-8")
+    (modules / "cjs-dep" / "index.js").write_text('module.exports = () => "cjs";\n', "utf-8")
+    (modules / "esm-dep").mkdir()
+    (modules / "esm-dep" / "package.json").write_text(
+        '{"name": "esm-dep", "version": "1.0.0", "type": "module", '
+        '"exports": {".": "./index.js"}}', "utf-8")
+    (modules / "esm-dep" / "index.js").write_text('export default () => "esm";\n', "utf-8")
+    (modules / ".bin").mkdir()
+    for name in ("claude", "git", "node"):
+        (modules / ".bin" / name).write_text("#!/bin/sh\necho planted\n", "utf-8")
+        (modules / ".bin" / name).chmod(0o755)
+    record = {
+        "schema": launcher.REVIEWER_DEPENDENCIES_SCHEMA,
+        "node": entry if entry is not None
+        else {"state": "installed", "directory": "dependencies/node/node_modules"},
+    }
+    (packet / "dependencies.json").write_text(json.dumps(record), "utf-8")
+    return packet
+
+
+def test_node_the_copy_links_the_packet_s_packages_read_only_and_never_a_change(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    packet = _node_packet(launcher, tmp_path)
+    modules = (packet / "dependencies" / "node" / "node_modules").resolve()
+    result, settings, env = _launch_with(launcher, repo, head, tmp_path, packet)
+    copy = Path(result["scratch"]["path"])
+    link = copy / "node_modules"
+    assert link.is_symlink() and Path(os.readlink(link)) == modules
+    # Made before the baseline, so finish never reads it as a link the session made.
+    assert result["scratch"]["changes"] == {
+        "added": [], "modified": [], "deleted": [], "links": []}
+    filesystem = settings["sandbox"]["filesystem"]
+    assert str(modules) in filesystem["allowRead"] and str(modules) in filesystem["denyWrite"]
+    reads = {item["path"]: item["reason"] for item in result["sandbox_reads"]["allowed"]}
+    assert "npm packages, read-only" in reads[str(modules)]
+    # Nothing a package ships can be found by name: not by the vendor, not by a command.
+    prefix = Path(settings["env"][launcher.REVIEWER_SHELL_PREFIX]).read_text("utf-8")
+    for part in env["PATH"].split(os.pathsep):
+        assert not part.startswith(str(packet.resolve()))
+    assert str(packet.resolve()) not in prefix and ".bin" not in prefix
+
+
+def test_node_claude_s_file_tools_may_never_write_the_packages(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    packet = _node_packet(launcher, tmp_path)
+    modules = (packet / "dependencies" / "node" / "node_modules").resolve()
+    _result, settings, _env = _launch_with(launcher, repo, head, tmp_path, packet)
+    deny = settings["permissions"]["deny"]
+    # Edit rules cover Write too. By the real path, and through the copy's link.
+    assert f"Edit(/{modules}/**)" in deny
+    assert "Edit(./node_modules)" in deny and "Edit(./node_modules/**)" in deny
+
+
+def test_node_a_head_with_its_own_node_modules_keeps_it(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    copy = tmp_path / "copy"
+    (copy / "node_modules").mkdir(parents=True)
+    assert launcher.reviewer_link_node_modules(copy, tmp_path) is False
+    assert not (copy / "node_modules").is_symlink()
+    assert launcher.reviewer_link_node_modules(tmp_path / "empty", None) is False
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"state": "not-installed", "reason": "no-lockfile"},
+        {"state": "no-dependencies"},
+        {"state": "installed", "directory": "/etc"},
+        {"state": "installed", "directory": "../elsewhere"},
+        {"state": "installed", "directory": "dependencies/missing"},
+    ],
+)
+def test_node_an_untrustworthy_entry_is_ignored(
+    launcher: ModuleType, tmp_path: Path, entry: Any
+) -> None:
+    assert launcher.reviewer_packet_node(_node_packet(launcher, tmp_path, entry)) is None
+
+
+def test_node_a_symlinked_packet_folder_is_ignored(launcher: ModuleType, tmp_path: Path) -> None:
+    packet = _node_packet(launcher, tmp_path)
+    real = packet / "dependencies" / "node"
+    real.rename(packet / "dependencies" / "elsewhere")
+    real.symlink_to(packet / "dependencies" / "elsewhere")
+    assert launcher.reviewer_packet_node(packet) is None
+
+
+@NOT_ROOT
+@pytest.mark.parametrize("runtime", ["node", "bun"])
+def test_node_a_sandboxed_command_resolves_commonjs_and_esm_through_the_link(
+    launcher: ModuleType, tmp_path: Path, runtime: str
+) -> None:
+    if shutil.which(runtime) is None:
+        pytest.skip(f"{runtime} is not installed")
+    packet = _node_packet(launcher, tmp_path)
+    copy, _, extra = _claude_shell(launcher, tmp_path)
+    assert launcher.reviewer_link_node_modules(copy, launcher.reviewer_packet_node(packet))
+    (copy / "src").mkdir()
+    (copy / "src" / "probe.mjs").write_text(
+        'import esm from "esm-dep";\nimport { createRequire } from "node:module";\n'
+        'import os from "node:os";\n'
+        'const require = createRequire(import.meta.url);\n'
+        'console.log(esm(), require("cjs-dep")(), os.tmpdir());\n', "utf-8")
+    (copy / "src" / "probe.cjs").write_text(
+        'console.log(require("cjs-dep")());\n', "utf-8")
+    _sandbox_denies(launcher.reviewer_claude_shell_paths(copy)[1])
+    env = _startup_env(tmp_path, **extra)
+    command = f"{runtime} src/probe.mjs && {runtime} src/probe.cjs"
+    out = _run_like_claude(_as_claude_2_1_311(command, _claude_sandbox_temp(tmp_path)), env, copy)
+    assert out.split() == ["esm", "cjs", str(launcher.reviewer_claude_temp_dir(copy)), "cjs"]
+
+
+def test_node_a_node_reached_through_a_link_puts_its_real_bin_first(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    real = tmp_path / "install" / "bin"
+    real.mkdir(parents=True)
+    (real / "node").write_text("#!/bin/sh\n", "utf-8")
+    (real / "node").chmod(0o755)
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    (shims / "node").symlink_to(real / "node")
+    assert launcher.reviewer_toolchain_front({"PATH": str(shims)}) == [real.resolve()]
+    assert launcher.reviewer_toolchain_front({"PATH": str(real)}) == []
+    assert launcher.reviewer_toolchain_front({"PATH": str(tmp_path / "none")}) == []
+    script = launcher.reviewer_claude_shell_script(
+        tmp_path / "sentinel", "token", path_front=[real])
+    assert f'PATH={real}:"${{PATH-}}"' in script
+
+
 def test_offline_the_shell_prefix_passes_the_virtual_env(launcher: ModuleType, tmp_path: Path) -> None:
     script = launcher.reviewer_claude_shell_script(tmp_path / "sentinel", "token")
     assert '${VIRTUAL_ENV+"VIRTUAL_ENV=$VIRTUAL_ENV"}' in script
@@ -1886,6 +2068,153 @@ def test_offline_the_shell_prefix_passes_the_virtual_env(launcher: ModuleType, t
         tmp_path / "sentinel", "token", python_env=tmp_path / "python-env")
     line = next(item for item in with_env.splitlines() if item.startswith("exec /usr/bin/env -i"))
     assert line.index("${PATH+") < line.index(f"PATH={tmp_path / 'python-env' / 'bin'}:")
+
+
+def _dart_packet(launcher: ModuleType, tmp_path: Path, entry: Any = None) -> Path:
+    """A packet whose ``dependencies.json`` names saga's pub cache, holding package scripts a
+    hostile package could ship, named after the vendor and git."""
+    packet = tmp_path / "packet"
+    cache = packet / "dependencies" / "dart" / "pub-cache"
+    package = cache / "hosted" / "pub.dev" / "inert-1.0.0"
+    (package / "lib").mkdir(parents=True)
+    (package / "lib" / "inert.dart").write_text("int two() => 2;\n", "utf-8")
+    (package / "bin").mkdir()
+    for name in ("claude", "git", "dart"):
+        (package / "bin" / name).write_text("#!/bin/sh\necho planted\n", "utf-8")
+        (package / "bin" / name).chmod(0o755)
+    (cache / "hosted-hashes").mkdir()
+    record = {
+        "schema": launcher.REVIEWER_DEPENDENCIES_SCHEMA,
+        "dart": entry if entry is not None
+        else {"state": "installed", "directory": "dependencies/dart/pub-cache",
+              "sdk": {"version": "3.13.2"}},
+    }
+    (packet / "dependencies.json").write_text(json.dumps(record), "utf-8")
+    return packet
+
+
+def _dart_on_path(tmp_path: Path) -> tuple[str, Path]:
+    """A Flutter-like layout on a PATH folder: ``bin/dart`` is a script, the SDK is below it."""
+    flutter = tmp_path / "flutter"
+    sdk = flutter / "bin" / "cache" / "dart-sdk"
+    (sdk / "bin").mkdir(parents=True)
+    (sdk / "bin" / "dart").write_bytes(b"\xcf\xfa\xed\xfe binary\n")
+    (sdk / "bin" / "dart").chmod(0o755)
+    (sdk / "version").write_text("3.13.2\n", "utf-8")
+    (flutter / "bin" / "dart").write_text("#!/bin/sh\nexec git status\n", "utf-8")
+    (flutter / "bin" / "dart").chmod(0o755)
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "dart").symlink_to(flutter / "bin" / "dart")
+    return f"{tools}{os.pathsep}{os.environ.get('PATH', '')}", sdk.resolve()
+
+
+def test_offline_the_reviewer_s_dart_is_the_sdk_and_its_packages_are_read_only(
+    launcher: ModuleType, reviewed_repo: tuple[Path, str], tmp_path: Path
+) -> None:
+    repo, head = reviewed_repo
+    packet = _dart_packet(launcher, tmp_path)
+    path, sdk = _dart_on_path(tmp_path)
+    result, settings, env = _launch_with(launcher, repo, head, tmp_path, packet, PATH=path)
+    copy = Path(result["scratch"]["path"])
+    dart_env = launcher.reviewer_dart_env_dir(copy.parent)
+    pub_cache = launcher.reviewer_dart_pub_cache_dir(copy)
+    root = str(packet.resolve())
+    # The vendor process keeps the operator's PATH: nothing from the packet or the launcher.
+    assert env["PATH"].endswith(path)
+    for part in env["PATH"].split(os.pathsep):
+        assert not part.startswith(root) and not part.startswith(str(dart_env))
+    for name in ("claude", "git"):
+        found = shutil.which(name, path=env["PATH"])
+        assert found is None or not Path(found).resolve().is_relative_to(packet.resolve())
+    assert [item.name for item in (dart_env / "bin").iterdir()] == ["dart"]
+    assert (dart_env / "bin" / "dart").resolve() == sdk / "bin" / "dart"
+    cache = (packet / "dependencies" / "dart" / "pub-cache").resolve()
+    assert sorted(item.name for item in pub_cache.iterdir()) == ["hosted", "hosted-hashes"]
+    assert (pub_cache / "hosted").resolve() == cache / "hosted"
+    prefix = Path(settings["env"][launcher.REVIEWER_SHELL_PREFIX]).read_text("utf-8")
+    line = next(item for item in prefix.splitlines() if item.startswith("exec /usr/bin/env -i"))
+    assert f"PUB_CACHE={pub_cache}" in line
+    assert "DASH__SUPPRESS_ANALYTICS=true" in line and "PUB_MAX_HTTP_RETRIES=0" in line
+    # One PATH assignment; node's real bin may come first (reviewer_toolchain_front).
+    assigned = line.split(" PATH=", 1)[1].split(':"${PATH-}"', 1)[0].strip("'")
+    assert str(dart_env / "bin") in assigned.split(os.pathsep) and root not in line
+    filesystem = settings["sandbox"]["filesystem"]
+    for allowed in (str(dart_env.resolve()), str(cache), str(sdk)):
+        assert allowed in filesystem["allowRead"] and allowed in filesystem["denyWrite"]
+    assert str(pub_cache.parent) in filesystem["allowWrite"]
+    # Claude's Edit and Write run outside the command sandbox, under Edit(/<temp>/**): the
+    # cache's links into the packet, and the packet's cache itself, are denied to them.
+    deny = settings["permissions"]["deny"]
+    for path in (pub_cache / "hosted", pub_cache / "hosted-hashes", cache, dart_env.resolve()):
+        assert f"Edit(/{path}/**)" in deny, path
+
+
+def test_offline_python_and_dart_share_one_path_assignment(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    script = launcher.reviewer_claude_shell_script(
+        tmp_path / "sentinel", "token", python_env=tmp_path / "python-env",
+        dart_env=(tmp_path / "dart-env", tmp_path / "temp" / "saga-pub-cache"))
+    line = next(item for item in script.splitlines() if item.startswith("exec /usr/bin/env -i"))
+    assert line.count(" PATH=") == 1
+    assert f"PATH={tmp_path / 'python-env' / 'bin'}:{tmp_path / 'dart-env' / 'bin'}:" in line
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"state": "not-installed", "reason": "network"},
+        {"state": "installed", "directory": "/etc", "sdk": {"version": "3.13.2"}},
+        {"state": "installed", "directory": "../elsewhere", "sdk": {"version": "3.13.2"}},
+        {"state": "installed", "directory": "dependencies/missing", "sdk": {"version": "3.13.2"}},
+    ],
+)
+def test_offline_an_untrustworthy_dart_entry_is_ignored(
+    launcher: ModuleType, tmp_path: Path, entry: Any
+) -> None:
+    packet = _dart_packet(launcher, tmp_path, entry)
+    assert launcher.reviewer_packet_dart(packet) is None
+    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", None, os.environ) is None
+
+
+def test_offline_no_dart_sdk_means_no_dart_folder(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    packet = _dart_packet(launcher, tmp_path)
+    packages = launcher.reviewer_packet_dart(packet)
+    assert packages is not None and packages[1] == "3.13.2"
+    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", packages,
+                                      {"PATH": str(tmp_path / "empty")}) is None
+
+
+def test_offline_an_sdk_of_another_release_means_no_dart_folder(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    packet = _dart_packet(launcher, tmp_path, {
+        "state": "installed", "directory": "dependencies/dart/pub-cache",
+        "sdk": {"version": "3.12.0"}})
+    path, _sdk = _dart_on_path(tmp_path)
+    packages = launcher.reviewer_packet_dart(packet)
+    assert packages is not None
+    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", packages,
+                                      {"PATH": path, "HOME": str(tmp_path / "home")}) is None
+    assert not launcher.reviewer_dart_env_dir(tmp_path / "root").exists()
+
+
+def test_offline_an_sdk_that_cannot_be_read_back_puts_no_dart_on_path(
+    launcher: ModuleType, tmp_path: Path
+) -> None:
+    """An SDK under a credential path cannot be allowed back, so its dart could not run."""
+    home = tmp_path / "home"
+    sdk = home / ".config" / "gh" / "dart-sdk"
+    (sdk / "bin").mkdir(parents=True)
+    (sdk / "bin" / "dart").write_bytes(b"\xcf\xfa\xed\xfe binary\n")
+    (sdk / "bin" / "dart").chmod(0o755)
+    (sdk / "version").write_text("3.13.2\n", "utf-8")
+    packages = launcher.reviewer_packet_dart(_dart_packet(launcher, tmp_path))
+    assert launcher.reviewer_dart_env(tmp_path / "root", tmp_path / "copy", packages,
+                                      {"PATH": str(sdk / "bin"), "HOME": str(home)}) is None
 
 
 def test_offline_the_shell_prefix_passes_the_cargo_variables_to_sandboxed_commands(

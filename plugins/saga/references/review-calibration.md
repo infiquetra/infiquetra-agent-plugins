@@ -61,7 +61,7 @@ The kinds on the list today:
 - The Python, CDK, shell, workflow, and Markdown adapters (C4b).
 - Our checks: the six saga pattern rules, listed as files (C5).
 - The TypeScript, Dart, Rust, and Swift adapters (C4c).
-- The review command (C10a): `plugins/saga/scripts/review_command.py`, and the dependencies it installs for the reviewer and the re-run: `plugins/saga/scripts/review_dependencies.py`.
+- The review command (C10a): `plugins/saga/scripts/review_command.py`, and the dependencies it installs for the reviewer and the re-run: `plugins/saga/scripts/review_dependencies.py`; for npm packages, `plugins/saga/scripts/review_dependencies_node.py`; and, for Dart, `plugins/saga/scripts/review_dependencies_dart.py`.
 - The policy questions, the four banks, and their loader (C7).
 - The scripted checks (issue 155): `scripts/review_checks.py`. The scripted-checks test requires this path to stay last.
 
@@ -100,6 +100,8 @@ plugins/saga/references/semgrep/naive-time-comparison.yaml
 plugins/saga/references/semgrep/money-as-floating-point.yaml
 plugins/saga/scripts/review_command.py
 plugins/saga/scripts/review_dependencies.py
+plugins/saga/scripts/review_dependencies_node.py
+plugins/saga/scripts/review_dependencies_dart.py
 plugins/saga/scripts/question_banks.py
 plugins/saga/references/question-banks/policy-questions.json
 plugins/saga/references/question-banks/architecture-maintainability.json

@@ -2,6 +2,82 @@
 
 ## Unreleased
 
+### Added
+
+- **Prepare installs a JavaScript or TypeScript head's npm packages into the packet.** A head with
+  a root `package.json` and a lockfile gets its packages installed from that lockfile alone, by its
+  own manager, with install scripts off: `npm ci`, `pnpm install --frozen-lockfile`,
+  `yarn install --frozen-lockfile` (classic) or `bun install --frozen-lockfile`. Saga reads the
+  lockfile first and refuses any package that is not from the public npm registry. The install
+  works on an export of the head with every manager configuration file removed, with a fresh
+  `HOME`, `TMPDIR` and cache, and under the existing byte and time watcher. Only the root
+  `node_modules` is kept, in `dependencies/node/node_modules`, with fixed modes, no manager state
+  files and only the symlinks that stay inside it, so two prepares write the same bytes.
+  `dependencies.json` gains a `node` entry. Its fixed reasons are `no-lockfile`,
+  `binary-lockfile`, `unsupported-lockfile`, `non-registry-source`, `symlinked-input`,
+  `lockfile-mismatch`, `manager-missing`, `network`, `timeout`, `size-limit`,
+  `install-failed`, `head-export` and `subfolder-project`. The new module is
+  `scripts/review_dependencies_node.py`, listed in the calibration's review machinery.
+  - The lockfile checks follow each manager's own reading. npm: every `node_modules/...` entry is
+    checked whatever its `inBundle` flag says; it needs a public-registry `resolved` and an
+    `integrity`, or, when bundled, no `resolved` at all. yarn classic: an entry starts at every
+    line with no indent, keys are plain or simply quoted and never repeat, header ranges are plain
+    semver or `npm:` aliases, and each entry has one registry `resolved` and one `integrity`.
+    pnpm: a strict reader of the YAML subset pnpm writes, which refuses anchors, aliases, tags,
+    merge and explicit keys, block and multi-line scalars, comments and duplicate keys; each
+    package's resolution must be exactly `{integrity: ...}` and importer versions a version or a
+    `link:` inside the head. Top-level `overrides` values and each catalog entry's `specifier` and
+    `version` pass the same checks, and `settings` may hold only `true`, `false` or whole-number
+    values. A yarn berry lockfile is `unsupported-lockfile` even behind a classic header comment,
+    and a lockfile that is not valid UTF-8 is `unsupported-lockfile`. Every `package.json` in the head must name only registry ranges,
+    `npm:` aliases, `workspace:` references inside the head or pnpm catalogs, in its dependency
+    tables, `overrides` (nested), `resolutions` and `pnpm.overrides`; an empty range reads as
+    `*`, as npm reads it.
+  - A kept symlink is resolved one component at a time through the links inside the folder, and
+    dropped if it would leave it.
+  - The installed tree is sealed read-only (files 0444, or 0555 when executable; folders 0555),
+    so a write that reaches it outside the OS sandbox is refused too. Prepare restores the
+    folders' write permission before it removes a staging folder. **Whoever deletes a packet
+    must do the same** (`chmod -R u+w <packet>`, or `review_dependencies_node.unseal`) before
+    `rm -rf`.
+  - node's toolchain folders for the re-run pass the same home, shared-root and credential-path
+    filter as the Rust and Python ones.
+- `finish`'s re-run links the packet's packages at its folder's root as `node_modules`,
+  read-only, which node's CommonJS and ESM resolvers, bun, Vitest and Jest all find. A re-run of
+  `node`, a manager or a `node_modules/.bin` script may read node's own install, and node's real
+  `bin` comes first on its `PATH`, so a `node` reached through a link under the denied home still
+  starts. The reviewer prompt's JavaScript recipe says where the packages are and what to do
+  without them.
+- A Dart head's pub packages, fetched once in prepare for the reviewer and the re-run. When the
+  head has a root `pubspec.yaml` and `pubspec.lock`, prepare runs the SDK's real `dart`,
+  `dart pub get --enforce-lockfile`, with `PUB_CACHE` in `<packet>/dependencies/dart/pub-cache`,
+  a fresh home and telemetry off, and keeps only `hosted/` and `hosted-hashes/`; two prepares of
+  one head write the same bytes. Git sources, other hosts, paths outside the head and the
+  Flutter SDK are refused before pub runs. Every outcome is a fixed word in
+  `review_dependencies_dart.REASONS` (`TRANSIENT` names the ones a later prepare may not repeat).
+  finish gives a confined re-run a `bin` holding only `dart`, a writable pub cache linked to the
+  packet's, `DASH__SUPPRESS_ANALYTICS=true` and `PUB_MAX_HTTP_RETRIES=0`, and resolves the
+  project offline before replaying the command. `flutter test` is not supported.
+  After review: the lock and the pubspecs pub reads are read with a reader for the YAML subset
+  pub writes, which refuses quoted keys, flow collections, anchors, tags and other forms instead of
+  matching lines; dependencies are only constraints or a `version` and an in-head `path` reached
+  through no link; prepare's pub finds only the SDK's `bin`; an example app's pubspec no longer
+  refuses the package; finish makes a fresh pub cache folder for each re-run and refuses a link
+  at `tmp`; `_make_tmp` no longer runs `chmod` through a link; the offline resolution runs only
+  for a `dart` command; an SDK of another release is not used; and the packet's pub cache is
+  read-only file by file, so a write by the reviewer's file tools through a link fails. New
+  reason word: `pubspec-unreadable`.
+  Second repair: each path dependency's `pubspec.yaml` is checked too, recursively from every
+  checked pubspec and the lock, reading only the `dependencies` pub reads from a package; and
+  finish's set-up works through folders held open with `O_NOFOLLOW`, so a process an earlier
+  re-run left behind cannot steer it, while `bwrap` gets `--unshare-pid --die-with-parent`.
+  Third repair: a folder that is both a path dependency and a workspace member is checked for
+  every section either role reads, in either order, and nested workspace members are walked
+  as roots, each with its own `pubspec_overrides.yaml` checked as pub 3.13 reads it.
+- The reproduction matcher reads a `dart test` run of one file, whose lines leave the file out
+  and name it only in the `loading` line. A file is taken only from a loaded file's name, so a
+  run with no `loading` line still matches nothing, and a test named `x.dart: y` is read whole.
+
 ### Changed
 
 - Jev's lower consequence pick on a reproduced finding now applies only when Jev's confidence is

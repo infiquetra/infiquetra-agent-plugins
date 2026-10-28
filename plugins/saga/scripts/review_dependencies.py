@@ -145,7 +145,24 @@ def fetch(runner: Process, repo: Path, head: str, packet: Path, export: Export) 
     python = _python_entry(runner, repo, head, packet, export)
     if python is not None:
         record["python"] = python
+    _add_node_entry(record, runner, repo, head, packet, export)
+    import review_dependencies_dart  # noqa: PLC0415 - imports this module
+
+    dart = review_dependencies_dart.entry(runner, repo, head, packet, export)
+    if dart is not None:
+        record["dart"] = dart
     return record
+
+
+def _add_node_entry(record: dict[str, Any], runner: Process, repo: Path, head: str,
+                    packet: Path, export: Export) -> None:
+    """The ``node`` entry, from ``review_dependencies_node`` (imported here: it imports this
+    module)."""
+    import review_dependencies_node  # noqa: PLC0415
+
+    node = review_dependencies_node.entry(runner, repo, head, packet, export)
+    if node is not None:
+        record["node"] = node
 
 
 def rust_vendor(packet: Path) -> Path | None:
