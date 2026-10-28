@@ -26,6 +26,11 @@ lens reporting until a calibration run includes the scanner.
 tools differ from what was calibrated). Keeping the exemption but capping `security.scanner-high`
 at fix later (more code, and the cap would need its own removal).
 
+**Cache reasons are operator notices.** `rule-cache-missing` and `rule-cache-mismatch` add no
+where-to-look item and no `missing-tools.json` entry. A reviewer cannot run setup, and an extra
+item would change every packet made on a machine without the cache. Prepare prints a `warning:`
+line for the operator instead.
+
 **Revisit when** the private calibration run is made with the pack's cache present and recorded
 by setup, so the scanner's rows are measured. Then decide whether the calibration should also
 record the pack digest it measured with, so a later refresh of the rules is a visible change.

@@ -248,31 +248,35 @@ def _rules_pin(digest: str) -> dict[str, Any]:
     return {"rules": [{"pack": "p/security-audit", "sha256": digest}]}
 
 
-def test_an_adapter_id_rules_pin_reaches_the_security_row_only() -> None:
+def _rules(home: Path, adapter: Any, profile: dict[str, Any]) -> Any:
+    return T._resolve_rules(adapter, profile, home)[0]
+
+
+def test_an_adapter_id_rules_pin_reaches_the_security_row_only(tmp_path: Path) -> None:
     digest = "a" * 64
     profile = {"pins": {"semgrep-security": _rules_pin(digest)}}
-    security = T._rules_for(_adapter("semgrep-security"), profile)
+    security = _rules(tmp_path, _adapter("semgrep-security"), profile)
     assert [(rule.pack, rule.sha256) for rule in security] == [("p/security-audit", digest)]
-    assert T._rules_for(_adapter("semgrep-saga"), profile) == _adapter("semgrep-saga").rules
+    assert _rules(tmp_path, _adapter("semgrep-saga"), profile) == _adapter("semgrep-saga").rules
 
 
-def test_the_adapter_id_pin_wins_over_the_tool_name_pin() -> None:
+def test_the_adapter_id_pin_wins_over_the_tool_name_pin(tmp_path: Path) -> None:
     profile = {"pins": {
         "semgrep": _rules_pin("b" * 64),
         "semgrep-security": _rules_pin("c" * 64),
     }}
-    security = T._rules_for(_adapter("semgrep-security"), profile)
+    security = _rules(tmp_path, _adapter("semgrep-security"), profile)
     assert [rule.sha256 for rule in security] == ["c" * 64]
 
 
-def test_a_tool_name_rules_pin_still_applies_when_no_id_pin_exists() -> None:
+def test_a_tool_name_rules_pin_still_applies_when_no_id_pin_exists(tmp_path: Path) -> None:
     profile = {"pins": {"semgrep": _rules_pin("b" * 64)}}
-    security = T._rules_for(_adapter("semgrep-security"), profile)
+    security = _rules(tmp_path, _adapter("semgrep-security"), profile)
     assert [rule.sha256 for rule in security] == ["b" * 64]
     # A version-only id pin carries no rules, so the tool name pin still decides.
     both = {"pins": {"semgrep": _rules_pin("b" * 64), "semgrep-security": {"version": "1.0.0"}}}
-    assert [r.sha256 for r in T._rules_for(_adapter("semgrep-security"), both)] == ["b" * 64]
-    assert T._rules_for(_adapter("semgrep-security"), {}) == _adapter("semgrep-security").rules
+    assert [r.sha256 for r in _rules(tmp_path, _adapter("semgrep-security"), both)] == ["b" * 64]
+    assert _rules(tmp_path, _adapter("semgrep-security"), {}) == _adapter("semgrep-security").rules
 
 
 def test_a_local_digest_pinned_under_the_adapter_id_runs_the_security_scan(
@@ -416,6 +420,13 @@ def test_a_changed_cache_does_not_reuse_the_cached_base_scan(tmp_path: Path) -> 
     _machine_record(home, T.digest_tree(T.semgrep_cache(home, "p/security-audit")))
     key_three = T._rules_digest(T._resolve_rules(_adapter("semgrep-security"), {}, home)[0])
     assert key_three not in {key_one, key_two}
+
+
+def test_a_recorded_digest_with_a_trailing_newline_is_not_accepted(tmp_path: Path) -> None:
+    _machine_record(tmp_path, "a" * 64)
+    assert T.machine_rule_digest(tmp_path, "p/security-audit") == "a" * 64
+    _machine_record(tmp_path, "a" * 64 + "\n")
+    assert T.machine_rule_digest(tmp_path, "p/security-audit") == ""
 
 
 def test_a_version_under_a_row_id_is_refused(tmp_path: Path) -> None:

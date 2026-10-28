@@ -104,7 +104,7 @@ Because the committed digest is a placeholder (the catalogue marks the rule `pla
 2. The machine record's digest for the pack, when the catalogue's rule is a placeholder.
 3. The catalogue's own digest, which no real cache matches.
 
-Each run writes `rule-sources.json` beside the other records: per adapter with a pack, the source used (`profile`, `machine` or `catalogue`) and the pack's expected digest. The digest is part of the base-scan cache key, so a refreshed cache never reuses an earlier scan. A refreshed cache that setup has not been re-run on no longer matches the recorded digest and is `rule-cache-mismatch`. A prepare that cannot use the cache records a question that names the cache path and says to run `/saga:setup`.
+Each run writes `rule-sources.json` beside the other records: per adapter with a pack, the source used (`profile`, `machine` or `catalogue`) and the pack's expected digest. The digest is part of the base-scan cache key, so a refreshed cache never reuses an earlier scan. A refreshed cache that setup has not been re-run on no longer matches the recorded digest and is `rule-cache-mismatch`. A prepare that cannot use the cache prints a `warning:` line on stderr for the operator, naming the cache path and saying to run `/saga:setup`. The reviewer's packet carries only the degraded record.
 
 The saga row reads `plugins/saga/references/semgrep`. While that directory is missing or empty, the run records one `known-gap` per `correctness.pattern.*` row and does not invent a rule. When the directory is present, each result's `metadata.row` must be one of those rows.
 

@@ -129,8 +129,10 @@
     cache key, so a changed cache never reuses an old scan.
   - A cache that exists but digests differently, such as one refreshed without running setup
     again, is now reason `rule-cache-mismatch`. An absent or empty cache stays
-    `rule-cache-missing`. `rule-cache-mismatch` is a new degraded reason word. Both now become a
-    question in the packet that names the cache path and says to run `/saga:setup`.
+    `rule-cache-missing`. `rule-cache-mismatch` is a new degraded reason word. Prepare also
+    prints a `warning:` line on stderr for the operator, naming the cache path and saying to run
+    `/saga:setup` (and saying whether a digest is recorded). The reviewer's packet gains nothing
+    from a missing or mismatched cache beyond the degraded record.
   - The profile loader and `may-block` accept a rules pin keyed by a row id, and refuse a
     `version` under one. `may-block` reads the row id's rules first, as the runner does. A
     profile pin under a row id that differs from the catalogue still reports the lens only. The

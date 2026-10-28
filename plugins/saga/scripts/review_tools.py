@@ -2316,12 +2316,6 @@ def _profile_rules(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePi
     )
 
 
-def _rules_for(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, ...]:
-    """A profile rules list replaces the yaml rules. A version-only pin keeps them."""
-    pinned = _profile_rules(adapter, profile)
-    return adapter.rules if pinned is None else pinned
-
-
 def machine_rule_digest(home: Path, pack: str) -> str:
     """The digest setup recorded for *pack*'s cache in ``<home>/.saga/machine.json``, or ``""``.
 
@@ -2334,7 +2328,7 @@ def machine_rule_digest(home: Path, pack: str) -> str:
         return ""
     caches = loaded.get("rule_caches") if isinstance(loaded, dict) else None
     digest = caches.get(pack) if isinstance(caches, dict) else None
-    return digest if isinstance(digest, str) and _SHA.match(digest) else ""
+    return digest if isinstance(digest, str) and _SHA.fullmatch(digest) else ""
 
 
 def _resolve_rules(
