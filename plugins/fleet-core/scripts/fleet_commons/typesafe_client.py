@@ -974,6 +974,8 @@ def answer_confidence(answer: Mapping[str, Any]) -> float | None:
             return abs(float(probability) - 0.5) * 2.0
         return None
     value = answer.get("confidence")
+    if isinstance(value, bool):
+        return None  # a bool is not a confidence, and float(True) would read as 1.0
     return float(value) if isinstance(value, (int, float)) else None
 
 

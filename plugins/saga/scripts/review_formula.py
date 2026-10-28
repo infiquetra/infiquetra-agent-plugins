@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import posixpath
 import sys
 from collections.abc import Mapping, Sequence
@@ -441,6 +442,16 @@ def lower_consequence(llm: str, jev: str) -> str:
     return jev if consequence_group(jev) > consequence_group(llm) else llm
 
 
+def is_confidence(value: Any) -> bool:
+    """Whether *value* is a finite real number from 0 to 1 (a bool or a string is not)."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and 0 <= value <= 1
+    )
+
+
 def apply_jev_pick(llm: str, jev: str, confidence: float | None) -> tuple[str, bool]:
     """The consequence the formula uses, and whether it is Jev's pick rather than the LLM's.
 
@@ -448,10 +459,11 @@ def apply_jev_pick(llm: str, jev: str, confidence: float | None) -> tuple[str, b
     least ``JEV_ACT_CONFIDENCE``. Otherwise the LLM's pick stands: it holds a failing test, while
     Jev reads a summary. A pick with no recorded confidence (a record from before the confidence
     field) counts as below the line, so the LLM's pick stands and the author sees the
-    disagreement; a proven harm is never dropped silently.
+    disagreement; a proven harm is never dropped silently. So does a confidence that is not a
+    finite number from 0 to 1 (see ``is_confidence``): a malformed value never lowers a harm.
     """
     lower = lower_consequence(llm, jev)
-    if lower != llm and confidence is not None and confidence >= JEV_ACT_CONFIDENCE:
+    if lower != llm and is_confidence(confidence) and confidence >= JEV_ACT_CONFIDENCE:
         return lower, True
     return llm, False
 

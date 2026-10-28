@@ -384,6 +384,17 @@ def test_apply_jev_pick_returns_the_pick_and_whether_it_came_from_jev(confidence
     assert F.apply_jev_pick(VISIBLE_PICK, HARM, confidence) == (VISIBLE_PICK, False)
 
 
+@pytest.mark.parametrize(
+    "confidence", [float("nan"), float("inf"), 1.5, 80, -0.1, True, "0.9", [0.9]],
+    ids=["nan", "inf", "1.5", "80", "-0.1", "true", "string", "list"],
+)
+def test_a_malformed_confidence_never_lowers_a_harm(confidence: Any) -> None:
+    assert F.apply_jev_pick(HARM, VISIBLE_PICK, confidence) == (HARM, False)
+    result = F.outcome(llm_finding(consequence=HARM, jev=VISIBLE_PICK, jev_confidence=confidence))
+    assert result["severity"] == "blocks"
+    assert "consequence-disagreement" in result["flags"]
+
+
 def test_llm_and_jev_agree_no_flag() -> None:
     result = F.outcome(llm_finding(consequence="money-or-resources-wrongly-moved"))
     assert result["severity"] == "blocks"

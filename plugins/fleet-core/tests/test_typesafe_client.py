@@ -178,6 +178,11 @@ def test_the_key_appears_only_in_the_authorization_header() -> None:
     assert SENTINEL_KEY not in calls[0]["url"]
 
 
+def test_a_bool_is_not_a_confidence() -> None:
+    assert tc.answer_confidence({"type": "choice", "choice": "a", "confidence": True}) is None
+    assert tc.answer_confidence({"type": "choice", "choice": "a", "confidence": 1}) == 1.0
+
+
 def test_answer_shapes_all_three_types_parse() -> None:
     result = _ask()
     assert tc.answer_value(result.answers["greeting"]) == 0.97

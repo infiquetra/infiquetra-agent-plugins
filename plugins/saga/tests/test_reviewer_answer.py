@@ -475,7 +475,9 @@ def test_a_severity_anywhere_in_the_answer_is_refused() -> None:
     assert "severity" in fields(A.check(labelled, ITEMS))
 
 
-@pytest.mark.parametrize("key", ["consequence_jev", "consequence_jev_confidence", "unconfirmed", "id", "source"])
+@pytest.mark.parametrize(
+    "key", ["consequence_jev", "consequence_jev_confidence", "unconfirmed", "id", "source"]
+)
 def test_fields_code_fills_are_refused(key: str) -> None:
     filled = answer()
     finding(filled, "double-charge")[key] = None
@@ -784,6 +786,25 @@ def test_when_jev_cannot_answer_the_reviewer_s_pick_is_unconfirmed(jev: Any) -> 
     assert out["consequence_picks"][0]["applied"] == "money-or-resources-wrongly-moved"
     assert out["consequence_picks"][0]["flag"] == "unconfirmed"
     assert R.validate(charge) == []
+    assert "unconfirmed" in computed(out, 0)["flags"]
+
+
+@pytest.mark.parametrize(
+    "confidence", [float("nan"), 1.2, 80, -0.1, True, "0.9", float("inf")],
+    ids=["nan", "1.2", "80", "-0.1", "true", "string", "inf"],
+)
+def test_a_malformed_jev_confidence_is_unconfirmed_not_a_failure(confidence: Any) -> None:
+    out = A.to_records(ANSWER, ITEMS, RESULT, ask=jev_says("misleads-a-person", confidence))
+    charge = out["findings"][0]
+    assert (charge["consequence_jev"], charge["consequence_jev_confidence"]) == (None, None)
+    assert charge["unconfirmed"] is True
+    assert R.validate(charge) == []
+    pick = out["consequence_picks"][0]
+    assert (pick["applied"], pick["flag"], pick["jev_status"]) == (
+        "money-or-resources-wrongly-moved", "unconfirmed", A.PICK_BELOW_FLOOR
+    )
+    assert pick["jev_confidence"] is None
+    json.dumps(pick, allow_nan=False)
     assert "unconfirmed" in computed(out, 0)["flags"]
 
 

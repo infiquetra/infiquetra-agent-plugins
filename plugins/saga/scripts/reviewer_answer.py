@@ -95,9 +95,8 @@ COMPUTED_ANYWHERE = frozenset(
 )
 #: Keys the record fills from the launch and Jev, never the reviewer.
 FILLED_BY_CODE = frozenset(
-    {"id", "kind", "subject", "source", "rule", "degraded", "consequence_jev", "consequence_jev_confidence",
-     "unconfirmed",
-     "merge_outcome"}
+    {"id", "kind", "subject", "source", "rule", "degraded", "consequence_jev",
+     "consequence_jev_confidence", "unconfirmed", "merge_outcome"}
 )
 
 #: A reproduction's test file must look like a test by its path.
@@ -714,6 +713,15 @@ def jev_pick(finding: Mapping[str, Any], ask: Asker | None = None) -> dict[str, 
     if value is None:
         return _pick(PICK_NO_ANSWER, "Jev gave no consequence", request=str(status), floor=floor)
     given = {"request": str(status), "value": value, "confidence": confidence, "floor": floor}
+    if confidence is not None and not formula.is_confidence(confidence):
+        # NaN, a percentage, a bool or a string is not a confidence: treated as no usable answer,
+        # and not recorded, so the record and the sidecar file stay valid.
+        shown = scrub_text(str(confidence))[0][:_VALUE_LIMIT]
+        return _pick(
+            PICK_BELOW_FLOOR,
+            f"Jev's confidence {shown!r} is not a number from 0 to 1",
+            **{**given, "confidence": None},
+        )
     if value not in formula.CONSEQUENCES:
         # The reason repeats Jev's answer, so it is scrubbed and cut like ``value``.
         shown = scrub_text(str(value))[0][:_VALUE_LIMIT]

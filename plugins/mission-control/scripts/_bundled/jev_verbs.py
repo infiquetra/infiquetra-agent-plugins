@@ -3,8 +3,8 @@
 # source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_verbs.py
-# source-sha256: d817cb281f2acf6af88ce227ee04c82cf4f7d4840c408016909eb1b709070bcc
-# output-sha256: d817cb281f2acf6af88ce227ee04c82cf4f7d4840c408016909eb1b709070bcc
+# source-sha256: 0fb48e0a627e2a4e4098ede45a7dd73be8141abc8ea1e878f9b3ce7aa79d6743
+# output-sha256: 0fb48e0a627e2a4e4098ede45a7dd73be8141abc8ea1e878f9b3ce7aa79d6743
 # --- end generated bundle stamp ---
 """The named-verb registry (plan U5, requirement R14).
 
@@ -403,8 +403,10 @@ VERBS: dict[str, Verb] = {
     ),
     # The consequence a reproduced review finding shows, from saga's closed list (saga's
     # review_formula.CONSEQUENCES, in the same order: harm, then visible, then upkeep). Saga's
-    # targeted-reviewer check asks it beside the reviewer's own pick, and the lower one applies;
-    # an answer below the floor counts as no answer, and the finding is marked "unconfirmed".
+    # targeted-reviewer check asks it beside the reviewer's own pick. Jev's pick replaces the
+    # reviewer's only when it is in a lower group and its confidence is at least 0.8; from the
+    # floor up to 0.8 the reviewer's pick stands, flagged. An answer below the floor counts as no
+    # answer, and the finding is marked "unconfirmed".
     "consequence": Verb(
         name="consequence",
         summary="Which consequence a reproduced review finding shows",
