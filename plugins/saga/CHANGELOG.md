@@ -88,7 +88,10 @@
   sees it. When Jev's pick applies, `severity_basis.modifiers` names `jev-lowered`. A finding
   record gains the code-filled `consequence_jev_confidence` (a number from 0 to 1, or `null`),
   optional in the schema; a Jev pick with no recorded confidence counts as below 0.8. One function,
-  `apply_jev_pick`, serves both the formula and the `consequence-picks` entries, so they agree.
+  `apply_jev_pick`, serves both the formula and the in-memory consequence-picks list, so they agree. A confidence
+  that is NaN, outside 0 to 1, a bool or a string counts as below the floor (the finding is
+  unconfirmed) rather than failing `finish`. The review state's disagreement mark shows Jev's
+  confidence and which pick applied.
 
 - The targeted reviewer prompt's reproduction guidance is rewritten so reviewers prove real harms
   in every language, not only Rust. It states that a correctness or security finding can block only
