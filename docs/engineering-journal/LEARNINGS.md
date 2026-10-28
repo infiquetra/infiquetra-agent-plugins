@@ -2,7 +2,7 @@
 
 ## 2026-10-27
 
-### A pack the licence keeps out of the repository cannot have a shipped digest, so the pin must come from the machine
+### A pack the licence keeps out of the repository cannot have a shipped digest, so the digest belongs in the machine record
 
 **Author.** Jeff Cox
 
@@ -12,32 +12,37 @@ with the sha256 the tool catalogue pins, and the catalogue can only pin a placeh
 Semgrep Rules License v1.0 forbids shipping the pack. A real cache can never match a placeholder, so
 every run degraded with `rule-cache-missing`, including a run on a machine that had the cache.
 
-The obvious fix, a profile pin, hit a second problem. `_rules_for` read the profile's rules by tool
-name, and the pattern row `semgrep-saga` shares the `semgrep` binary. A rules pin for the security
-pack under `semgrep` would also have replaced the pattern row's rules and broken it.
+Two first designs were wrong, and an independent review of the first one found why.
 
-Tests:
+- A rules pin under the tool name `semgrep` would also have replaced the pattern row's rules,
+  because the pattern row `semgrep-saga` shares the binary.
+- A pin under the adapter id in the repository's `.saga-profile.json` fixed that, but the profile
+  is committed and read from the reviewed repository's base commit. The cache digest is a fact
+  about one machine, so a repository with no committed pin (every third-party repository) still
+  degraded, two machines overwrote each other's committed digest, and refreshing the cache turned
+  the scanner off again until a new commit merged. A probe over real repositories showed it: only
+  an external profile file made the scanner run.
 
-- `plugins/saga/tests/test_review_adapters_all_languages.py`:
-  `test_an_adapter_id_rules_pin_reaches_the_security_row_only`,
-  `test_a_local_digest_pinned_under_the_adapter_id_runs_the_security_scan`,
-  `test_a_semgrep_hash_mismatch_does_not_download`.
-- `plugins/saga/tests/test_saga_setup.py`: `test_profile_write_records_the_local_rule_pack_digest`.
+Tests: `plugins/saga/tests/test_review_adapters_all_languages.py`
+(`test_a_repository_with_no_pin_runs_the_rules_from_the_machine_record`,
+`test_a_refreshed_cache_without_rerunning_setup_is_a_mismatch`,
+`test_a_profile_id_pin_overrides_the_machine_record`) and `plugins/saga/tests/test_saga_setup.py`
+(`test_survey_records_the_local_rule_pack_digest_in_the_machine_record`).
 
 **Mechanism.** A digest of bytes you may not ship has no committed value that can be right, so the
-only true value lives on the machine that holds the bytes. The fix has three parts. Setup digests
-the local cache and records it in the profile under the adapter id (`semgrep-security`). The runner
-reads a rules pin by adapter id first and by tool name second, so a row-specific pin reaches one row
-and a binary-wide pin still works. And a present cache with the wrong digest is now reason
-`rule-cache-mismatch`, kept apart from `rule-cache-missing`, so the two failures stop looking the
-same. Two other readers of `review_tools.pins` also had to learn the new key: the profile loader
-(`_pins`) and `review_calibration._refuse_pins` both rejected any key that was not a tool name.
+only true value lives on the machine that holds the bytes. Setup digests the local cache and
+records it in the machine record, `~/.saga/machine.json`, under `rule_caches`. The catalogue marks
+the committed digest `placeholder: true`, so the runner knows to accept the machine record's digest
+in its place and never infers it. A profile pin still wins, read under the adapter id before the
+tool name. A present cache with the wrong digest is `rule-cache-mismatch`, apart from
+`rule-cache-missing`. Every reader of `review_tools.pins` had to learn the row-id key: the profile
+loader and `review_calibration` both rejected any key that was not a tool name.
 
 **Generalizable rule.** When a licence stops you shipping an artifact, you also cannot ship its
-checksum. Record the checksum from the machine that has the artifact, key it to the one consumer
-that needs it, and give "present but wrong" its own reason word apart from "absent". A config key
-that several consumers share is a hazard: give the new setting the narrowest key that works, and
-search every reader of the old key's namespace.
+checksum. Record the checksum in the machine record on the machine that has the artifact, not in a
+repository file that every machine shares, and mark the committed value as a placeholder in the
+catalogue so the reader accepts the machine's value explicitly. Give "present but wrong" its own
+reason word apart from "absent". Before choosing where a value lives, ask whose fact it is.
 
 ### A security check over YAML must read YAML, not lines, and set-up between confined runs must trust nothing they wrote
 

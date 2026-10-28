@@ -5,7 +5,9 @@
 # (69eb7c264e464651a0cc32c4e486a91f7abb548e577947342b5ce88b491bff68).
 # It is not the Semgrep registry digest of p/security-audit. The Semgrep Rules
 # License v1.0 forbids shipping those rules in this repository. A missing cache
-# is a degraded input; this file does not fetch a pack.
+# is a degraded input; this file does not fetch a pack. A rule marked
+# ``placeholder: true`` takes the digest that /saga:setup recorded for its pack in
+# the machine record (``rule_caches`` in ~/.saga/machine.json) in place of ``sha256``.
 schema: review_tools.v1
 semgrep_level_map:
   ERROR: security.scanner-high
@@ -40,6 +42,7 @@ tools:
     rules:
       - pack: p/security-audit
         sha256: 69eb7c264e464651a0cc32c4e486a91f7abb548e577947342b5ce88b491bff68
+        placeholder: true
     env_dirs: []
     lockfiles: []
   - id: semgrep-saga

@@ -210,8 +210,36 @@ def write_machine(home: Path, record: dict[str, Any]) -> Path:
     return path
 
 
-def record_survey(home: Path, survey: Mapping[str, Any]) -> Path:
-    """Store *survey* without its questions and set ``ran``. ``offered`` is left as it was."""
+def rule_caches_for(rows: Sequence[Mapping[str, Any]], home: Path) -> dict[str, str]:
+    """The digest of each licence-blocked rule pack cached under *home*, by pack name.
+
+    The licence keeps these packs out of the repository, so the catalogue marks their digest as a
+    placeholder and the real one is a fact about this machine. A pack with no cache is left out.
+    Nothing is downloaded.
+    """
+    caches: dict[str, str] = {}
+    for row in rows:
+        for rule in row.get("rules") or []:
+            if not isinstance(rule, dict) or rule.get("placeholder") is not True:
+                continue
+            pack = str(rule.get("pack") or "")
+            cache = review_tools.semgrep_cache(Path(home), pack) if pack else None
+            digest = review_tools.digest_tree(cache) if cache is not None and cache.is_dir() else ""
+            if digest:
+                caches[pack] = digest
+    return dict(sorted(caches.items()))
+
+
+def record_survey(
+    home: Path,
+    survey: Mapping[str, Any],
+    rule_caches: Mapping[str, str] | None = None,
+) -> Path:
+    """Store *survey* without its questions and set ``ran``. ``offered`` is left as it was.
+
+    *rule_caches* is the digest of each cached rule pack. The record states what is on the machine
+    now, so a pack whose cache is gone drops out of it.
+    """
     previous = load_machine(home)
     offered = False
     if isinstance(previous, dict) and previous.get("offered") is True:
@@ -224,6 +252,8 @@ def record_survey(home: Path, survey: Mapping[str, Any]) -> Path:
         "survey": stored,
         "updated_at": _now(),
     }
+    if rule_caches:
+        record["rule_caches"] = dict(rule_caches)
     return write_machine(home, record)
 
 
@@ -774,9 +804,10 @@ def collect(
     languages = detect_languages(root)
     detected = set(languages)
     profile = _profile_object(root)
+    rows = _tool_rows(tools_path)
     tools = [
         _probe_row(row, runner=runner, env=env, cwd=root, profile=profile)
-        for row in _tool_rows(tools_path)
+        for row in rows
         if _selected(row, detected)
     ]
     document = {
@@ -805,7 +836,7 @@ def collect(
     if persist:
         if home is None:
             raise SetupError("survey needs a home directory to record")
-        record_survey(home, document)
+        record_survey(home, document, rule_caches_for(rows, home))
     return document
 
 
@@ -934,56 +965,6 @@ def pins_for(
     return pins
 
 
-def rule_pins_for(rows: Sequence[Mapping[str, Any]], home: Path) -> dict[str, Any]:
-    """Rules pins keyed by adapter id, from the pack caches already on this machine.
-
-    A pack the licence keeps out of the repository has no digest to ship, so the pin has to
-    come from the local cache. A row whose caches are not all present gets no pin, because
-    a partial rules list would drop a pack. Nothing is downloaded.
-    """
-    pins: dict[str, Any] = {}
-    for row in rows:
-        row_id = str(row.get("id") or "")
-        rules = row.get("rules")
-        if _saga_owned(row) or not row_id or not isinstance(rules, list):
-            continue
-        if not any(isinstance(rule, dict) and rule.get("pack") for rule in rules):
-            continue
-        recorded: list[dict[str, Any]] = []
-        for rule in rules:
-            if not isinstance(rule, dict):
-                break
-            pack = rule.get("pack")
-            if not pack:
-                recorded.append(dict(rule))
-                continue
-            cache = review_tools.semgrep_cache(home, str(pack))
-            digest = review_tools.digest_tree(cache) if cache.is_dir() else ""
-            if not digest:
-                break
-            recorded.append({"pack": pack, "sha256": digest})
-        else:
-            pins[row_id] = {"rules": recorded}
-    return pins
-
-
-def _apply_rule_pins(profile: dict[str, Any], pins: Mapping[str, Any]) -> None:
-    """Set ``rules`` on each pin, keeping any version already recorded under that key."""
-    if not pins:
-        return
-    block = profile.get("review_tools")
-    if not isinstance(block, dict):
-        block = profile["review_tools"] = {}
-    current = block.get("pins")
-    if not isinstance(current, dict):
-        current = block["pins"] = {}
-    for key, pin in pins.items():
-        entry = current.get(key)
-        merged = dict(entry) if isinstance(entry, dict) else {}
-        merged["rules"] = pin["rules"]
-        current[key] = merged
-
-
 def _apply_pins(profile: dict[str, Any], pins: Mapping[str, Any]) -> None:
     if not pins:
         return
@@ -1054,12 +1035,10 @@ def write_profile(
     tools_path: Path | None = None,
     extensions_path: Path | None = None,
     declaration_writer: Callable[..., Any] | None = None,
-    home: Path | None = None,
 ) -> Path:
     """Update the profile atomically, then hand a functional-test answer to its writer.
 
     A refusal happens before the temporary file is created. Survey does not call this.
-    With *home*, a rule pack cached under it is pinned by its digest; without it none is.
     """
     if not isinstance(answers, dict):
         raise SetupError("the answers must be one JSON object")
@@ -1102,8 +1081,6 @@ def write_profile(
     elif answers.get("visibility") in {"public", "private"}:
         profile["visibility"] = answers["visibility"]
     _apply_pins(profile, pins_for(rows, probed, profile))
-    if home is not None:
-        _apply_rule_pins(profile, rule_pins_for(rows, Path(home)))
     if "qa" in answers:
         profile["qa"] = answers["qa"]
     extensions = load_extensions(extensions_path)
@@ -1216,7 +1193,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     write = subcommands.add_parser("write", help="Record answers in the repository profile.")
     write.add_argument("--repo", default=None)
-    write.add_argument("--home", default=None, help="Home directory holding the rule pack caches.")
     write.add_argument("--answers", required=True)
     write.add_argument("--extensions", default=None)
     write.add_argument("--tools", default=None)
@@ -1302,7 +1278,6 @@ def main(
                 tools_path=Path(args.tools) if args.tools else None,
                 extensions_path=Path(args.extensions) if args.extensions else None,
                 declaration_writer=declaration_writer,
-                home=Path(args.home) if args.home else Path.home(),
             )
             return 0
         if args.command == "install":

@@ -492,7 +492,7 @@ def _prepare(
             repo, base, head, args, calibration, home, ask,
         )
         degraded.extend(sweep_degraded)
-        gaps = [entry for entry in degraded if entry.get("reason") in {"missing", "known-gap"}]
+        gaps = [entry for entry in degraded if entry.get("reason") in _GAP_REASONS]
         # The tool runner already wrote the scripted checks' own items (for instance the
         # machine-specific-value check) to this file; they join the sweep's items, not replaced.
         scripted = _read_json(staging / "where-to-look.json", "where-to-look")
@@ -744,6 +744,18 @@ def _merge_where_items(
     return merged
 
 
+#: Degraded reasons that become a check for the reviewer to answer by hand.
+_GAP_REASONS = frozenset({"missing", "known-gap", "rule-cache-missing", "rule-cache-mismatch"})
+
+#: Setup notices for a rule pack cache the scanner could not use. The path is where setup looks.
+_CACHE_NOTICES = {
+    "rule-cache-missing": "the rule pack cache at ~/.saga/semgrep-rules/p--security-audit is absent "
+    "or empty",
+    "rule-cache-mismatch": "the rule pack cache at ~/.saga/semgrep-rules/p--security-audit does "
+    "not match the digest setup recorded for it",
+}
+
+
 def _gap_item(entry: Mapping[str, Any]) -> dict[str, Any]:
     tool = str(entry.get("tool") or "tool")
     question = entry.get("input") or tool
@@ -762,12 +774,18 @@ def _gap_item(entry: Mapping[str, Any]) -> dict[str, Any]:
 def _gap_question(entry: Mapping[str, Any]) -> dict[str, str]:
     tool = str(entry.get("tool") or "tool")
     reason = str(entry.get("reason") or "")
+    question = f"The tool {tool} did not run ({reason}). Answer the check it would have run."
+    if reason in _CACHE_NOTICES:
+        question = (
+            f"The tool {tool} did not run ({reason}): {_CACHE_NOTICES[reason]}. "
+            "Run /saga:setup, then prepare again. Answer the check it would have run."
+        )
     return {
         "tool": tool,
         "lens": str(entry.get("lens") or ""),
         "language": str(entry.get("language") or ""),
         "reason": reason,
-        "question": f"The tool {tool} did not run ({reason}). Answer the check it would have run.",
+        "question": question,
     }
 
 

@@ -113,17 +113,28 @@
 - **The semgrep security rules can now run.** The security row compared the digest of the local
   `~/.saga/semgrep-rules/p--security-audit` cache with a placeholder, because the pack's licence
   forbids shipping it, so every review degraded with `rule-cache-missing` whatever the machine held.
-  `/saga:setup` (`saga_setup.py write`, new `--home`) now records the cache's own digest in the
-  profile as `review_tools.pins["semgrep-security"].rules`, only when the cache exists. It never
-  downloads or ships the pack.
-  - A rules pin is read by adapter id first, then by tool name. A pin under `semgrep-security`
-    reaches the security row alone; the pattern row `semgrep-saga`, which shares the `semgrep`
-    binary, keeps its own rules. A pin under `semgrep` still replaces the rules of both rows.
-  - A cache that exists but digests differently is now reason `rule-cache-mismatch`. An absent or
-    empty cache stays `rule-cache-missing`. `rule-cache-mismatch` is a new degraded reason word.
-  - The profile loader and `may-block` accept a pin keyed by a row id. For `may-block`, a
-    row-id pin that differs from the default only in the pack digest is not a change of tools, so
-    it does not turn the security lens to report only.
+  The digest of a cache is a fact about the machine, so it now lives in the machine record.
+  `/saga:setup` (`saga_setup.py survey`) records it in `~/.saga/machine.json` under `rule_caches`
+  when the cache exists, and drops it when the cache is gone. The catalogue marks the pack's
+  digest `placeholder: true`, and the runner accepts the machine record's digest in its place. A
+  machine with a valid cache therefore runs the rules on any repository, with or without a
+  profile. Setup never downloads or ships the pack and writes nothing about it into the repository.
+  - The digest comes from the first of: a rules pin in the reviewed repository's profile, the
+    machine record, the catalogue. A profile pin is read under the adapter id (`semgrep-security`)
+    first, then under the tool name. A pin under `semgrep-security` reaches the security row
+    alone; the pattern row `semgrep-saga`, which shares the `semgrep` binary, keeps its own rules.
+    A pin under `semgrep` still replaces the rules of both rows.
+  - Each run writes `rule-sources.json`, naming for each pack row the source used (`profile`,
+    `machine` or `catalogue`) and the digest it expected. The digest is part of the base-scan
+    cache key, so a changed cache never reuses an old scan.
+  - A cache that exists but digests differently, such as one refreshed without running setup
+    again, is now reason `rule-cache-mismatch`. An absent or empty cache stays
+    `rule-cache-missing`. `rule-cache-mismatch` is a new degraded reason word. Both now become a
+    question in the packet that names the cache path and says to run `/saga:setup`.
+  - The profile loader and `may-block` accept a rules pin keyed by a row id, and refuse a
+    `version` under one. `may-block` reads the row id's rules first, as the runner does. A
+    profile pin under a row id that differs from the catalogue still reports the lens only. The
+    machine record is not a profile pin and does not change any `may-block` answer.
 - A repeat `prepare` of the same head gives the same Python packages when two wheels ship the
   same file. uv installs wheels in parallel, so which copy of a shared file was left in
   `dependencies/python/site-packages` depended on timing, and two prepares could differ. Prepare

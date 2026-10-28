@@ -26,6 +26,8 @@ Run the survey with the live sandbox probe and print the table:
 python3 plugins/saga/scripts/saga_setup.py survey --repo <repository> --probe-sandbox live
 ```
 
+The survey also records, in the machine record `~/.saga/machine.json`, the digest of the rule pack cache at `~/.saga/semgrep-rules/p--security-audit` when that cache exists, so the security scanner can run on any repository. Run the survey again after refreshing the cache. It never downloads or ships the pack, and it writes nothing about the pack into the repository.
+
 Read the table. It names each selected tool, its lens, its status, and its pinned version. It names credential names only as present or absent. It names whether reproduction is available.
 
 ## Questions
@@ -38,7 +40,6 @@ Record the operator's answers:
 python3 plugins/saga/scripts/saga_setup.py write --repo <repository> --answers <answers.json>
 ```
 
-When `~/.saga/semgrep-rules/p--security-audit` exists, the write also records that cache's digest under `review_tools.pins["semgrep-security"]`, so the security scanner can run. It never downloads or ships the pack. Pass `--home <directory>` to read a different home.
 
 ## Install and steps
 
