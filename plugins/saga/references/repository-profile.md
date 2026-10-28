@@ -181,10 +181,12 @@ Optional. An absent block is valid: the runner uses the defaults in
 
 `languages` keys are formula languages. `test_command` and `coverage_report` are strings. `pins`
 are keyed by the binary name in the tool list (`tool`), so one semgrep pin covers every semgrep
-row. A version-only pin overrides that version and keeps the yaml rules. A `rules` list replaces
-the yaml rules for that binary; it does not merge. A pack rule needs a 64-character hex `sha256`.
+row. A `rules` list may instead be keyed by the row id (`semgrep-security`), which reaches that
+row alone; the id key is read first and the binary name is the fallback. A version-only pin
+overrides that version and keeps the yaml rules. A `rules` list replaces
+the yaml rules for that key; it does not merge. A pack rule needs a 64-character hex `sha256`.
 A path rule may omit it. The sha256 is the digest of the cached pack. The value in the yaml today
-is a placeholder, because the rule pack is not shipped in this repository.
+is a placeholder, because the rule pack is not shipped in this repository, so setup records the digest of the machine's own cache under `semgrep-security` when that cache exists.
 
 A malformed block exits 2 before any tool runs. That includes a non-string version, a rules entry
 without `pack` or `path`, a sha256 that is not 64 hex characters, an unknown tool, a language the
@@ -252,7 +254,7 @@ is noted and is not applied.
 
 `visibility` is `public` or `private`. Setup writes it from `gh repo view` when that command answers, and from the operator's answer when it does not. A failed lookup does not guess `public`.
 
-Setup writes version-only `review_tools.pins`. A pin records the version and omits `rules`, so the yaml rules stay in force. Setup does not write a pin for a saga-owned row or for a row with an empty `tool`. An existing recorded version is kept, including any `rules` already stored.
+Setup writes version-only `review_tools.pins`. A pin records the version and omits `rules`, so the yaml rules stay in force. The one exception is a rule pack the licence keeps out of the repository (`p/security-audit`): when its cache exists under the home directory (`~/.saga/semgrep-rules/p--security-audit`, or `--home`), setup also records that cache's digest as a `rules` pin under the row id (`semgrep-security`). With no cache it writes nothing and downloads nothing. Each run replaces the recorded digest with the cache's current one. Setup does not write a pin for a saga-owned row or for a row with an empty `tool`. An existing recorded version is kept, including any `rules` already stored.
 
 The remaining nine parameters come from elsewhere and are not the profile's business:
 `staffing_models_and_efforts` from the staffing component in fleet-core; `applicable_lenses` and

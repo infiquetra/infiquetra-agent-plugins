@@ -1003,8 +1003,14 @@ def _write(
     extensions: Path | None = None,
     runner: Any = None,
     declaration_writer: Any = None,
+    home: Path | None = None,
 ) -> tuple[int, str, str]:
-    argv = ["write", "--repo", str(repo), "--answers", str(repo / "answers.json")]
+    # An empty home by default, so no test reads the real rule pack cache.
+    home = home if home is not None else repo.parent / "no-cache-home"
+    argv = [
+        "write", "--repo", str(repo), "--home", str(home),
+        "--answers", str(repo / "answers.json"),
+    ]
     (repo / "answers.json").write_text(json.dumps(answers), encoding="utf-8")
     if tools is not None:
         argv += ["--tools", str(tools)]
@@ -1123,6 +1129,85 @@ def test_profile_write_pins_are_version_only(tmp_path: Path, capsys: pytest.Capt
         assert again["review_tools"]["pins"]["semgrep"]["version"] == "1.2.3"
     finally:
         _public.semgrep = "semgrep 1.2.3\n"  # type: ignore[attr-defined]
+
+
+RULE_TOOLS = PIN_TOOLS.replace(
+    '    lens: security\n',
+    '    lens: security\n    rules:\n      - pack: p/security-audit\n        sha256: "%s"\n'
+    % ("0" * 64),
+    1,
+)
+
+
+def _seeded_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    seeded = {
+        "schema": "repository_profile.v1",
+        "functional_test_environment": LOCAL,
+        "qa": QA_BLOCK,
+        "visibility": "public",
+    }
+    (repo / ".saga-profile.json").write_text(json.dumps(seeded), encoding="utf-8")
+    return repo
+
+
+def _stored_pins(repo: Path) -> dict[str, Any]:
+    stored = json.loads((repo / ".saga-profile.json").read_text(encoding="utf-8"))
+    return stored["review_tools"]["pins"]
+
+
+def test_profile_write_records_the_local_rule_pack_digest(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _seeded_repo(tmp_path)
+    home = tmp_path / "home"
+    cache = setup.review_tools.semgrep_cache(home, "p/security-audit")
+    cache.mkdir(parents=True)
+    (cache / "rules.yml").write_text("rules: []\n", encoding="utf-8")
+    digest = setup.review_tools.digest_tree(cache)
+    tools = _tools(tmp_path, RULE_TOOLS)
+    code, _out, err = _write(
+        repo, {}, capsys, tools=tools, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS),
+        home=home,
+    )
+    assert code == 0, err
+    pins = _stored_pins(repo)
+    assert pins["semgrep-security"] == {"rules": [{"pack": "p/security-audit", "sha256": digest}]}
+    assert pins["semgrep"] == {"version": "1.2.3"}
+    assert "semgrep-saga" not in pins
+
+
+def test_profile_write_leaves_the_rule_pack_alone_without_a_cache(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _seeded_repo(tmp_path)
+    tools = _tools(tmp_path, RULE_TOOLS)
+    code, _out, err = _write(
+        repo, {}, capsys, tools=tools, extensions=_extensions(tmp_path, EMPTY_EXTENSIONS),
+        home=tmp_path / "home",
+    )
+    assert code == 0, err
+    assert list(_stored_pins(repo)) == ["semgrep"]
+    assert not (tmp_path / "home").exists()
+
+
+def test_profile_write_refreshes_a_recorded_rule_digest(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = _seeded_repo(tmp_path)
+    home = tmp_path / "home"
+    cache = setup.review_tools.semgrep_cache(home, "p/security-audit")
+    cache.mkdir(parents=True)
+    (cache / "rules.yml").write_text("rules: []\n", encoding="utf-8")
+    tools = _tools(tmp_path, RULE_TOOLS)
+    extensions = _extensions(tmp_path, EMPTY_EXTENSIONS)
+    assert _write(repo, {}, capsys, tools=tools, extensions=extensions, home=home)[0] == 0
+    (cache / "rules.yml").write_text("rules: [] # newer\n", encoding="utf-8")
+    newer = setup.review_tools.digest_tree(cache)
+    assert _write(repo, {}, capsys, tools=tools, extensions=extensions, home=home)[0] == 0
+    rules = _stored_pins(repo)["semgrep-security"]["rules"]
+    assert rules == [{"pack": "p/security-audit", "sha256": newer}]
 
 
 def test_profile_write_visibility(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

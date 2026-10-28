@@ -2282,9 +2282,16 @@ def _pinned_version(adapter: Adapter, profile: Mapping[str, Any]) -> str:
 
 
 def _rules_for(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, ...]:
-    """A profile rules list replaces the yaml rules. A version-only pin keeps them."""
-    pin = (profile.get("pins") or {}).get(adapter.tool) or {}
-    rules = pin.get("rules") if isinstance(pin, Mapping) else None
+    """A profile rules list replaces the yaml rules. A version-only pin keeps them.
+
+    A pin under the adapter id wins over a pin under the tool name, so the security row
+    can hold a machine-local digest without replacing the rules of the other row that
+    shares the binary.
+    """
+    pins = profile.get("pins") or {}
+    rules = _pin_rules_of(pins.get(adapter.id))
+    if rules is None:
+        rules = _pin_rules_of(pins.get(adapter.tool))
     if rules is None:
         return adapter.rules
     return tuple(
@@ -2295,6 +2302,10 @@ def _rules_for(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, .
         )
         for item in rules
     )
+
+
+def _pin_rules_of(pin: object) -> object:
+    return pin.get("rules") if isinstance(pin, Mapping) else None
 
 
 def _shared_update_names(review: object) -> tuple[str, ...] | None:
@@ -2436,8 +2447,10 @@ def _rule_paths(
         if rule.pack:
             cache = semgrep_cache(home, rule.pack)
             digest = digest_tree(cache) if cache.is_dir() else ""
-            if not digest or digest != (rule.sha256 or ""):
+            if not digest:
                 return (), "rule-cache-missing"
+            if digest != (rule.sha256 or ""):
+                return (), "rule-cache-mismatch"
             paths.append(cache)
             continue
         if rule.path:
@@ -2662,7 +2675,9 @@ def _pins(value: Any) -> dict[str, dict[str, Any]]:
         return {}
     if not isinstance(value, dict):
         raise RunnerFailure(2, "review_tools.pins must be an object")
-    known = {str(row.get("tool")) for row in load_tool_list() if row.get("tool")}
+    rows = load_tool_list()
+    known = {str(row.get("tool")) for row in rows if row.get("tool")}
+    known |= {str(row.get("id")) for row in rows if row.get("id")}
     cleaned: dict[str, dict[str, Any]] = {}
     for tool, spec in value.items():
         if tool not in known:

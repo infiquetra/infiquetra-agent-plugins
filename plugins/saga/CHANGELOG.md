@@ -110,6 +110,20 @@
 
 ### Fixed
 
+- **The semgrep security rules can now run.** The security row compared the digest of the local
+  `~/.saga/semgrep-rules/p--security-audit` cache with a placeholder, because the pack's licence
+  forbids shipping it, so every review degraded with `rule-cache-missing` whatever the machine held.
+  `/saga:setup` (`saga_setup.py write`, new `--home`) now records the cache's own digest in the
+  profile as `review_tools.pins["semgrep-security"].rules`, only when the cache exists. It never
+  downloads or ships the pack.
+  - A rules pin is read by adapter id first, then by tool name. A pin under `semgrep-security`
+    reaches the security row alone; the pattern row `semgrep-saga`, which shares the `semgrep`
+    binary, keeps its own rules. A pin under `semgrep` still replaces the rules of both rows.
+  - A cache that exists but digests differently is now reason `rule-cache-mismatch`. An absent or
+    empty cache stays `rule-cache-missing`. `rule-cache-mismatch` is a new degraded reason word.
+  - The profile loader and `may-block` accept a pin keyed by a row id. For `may-block`, a
+    row-id pin that differs from the default only in the pack digest is not a change of tools, so
+    it does not turn the security lens to report only.
 - A repeat `prepare` of the same head gives the same Python packages when two wheels ship the
   same file. uv installs wheels in parallel, so which copy of a shared file was left in
   `dependencies/python/site-packages` depended on timing, and two prepares could differ. Prepare

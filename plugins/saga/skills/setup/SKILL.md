@@ -38,6 +38,8 @@ Record the operator's answers:
 python3 plugins/saga/scripts/saga_setup.py write --repo <repository> --answers <answers.json>
 ```
 
+When `~/.saga/semgrep-rules/p--security-audit` exists, the write also records that cache's digest under `review_tools.pins["semgrep-security"]`, so the security scanner can run. It never downloads or ships the pack. Pass `--home <directory>` to read a different home.
+
 ## Install and steps
 
 Run an install only for tool ids the operator names:

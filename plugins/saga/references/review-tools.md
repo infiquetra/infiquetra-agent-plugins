@@ -96,7 +96,9 @@ Every finding and measurement passes `review_records.py` validation before the f
 
 ## Semgrep
 
-The security row pins pack `p/security-audit` and the sha256 of the cached bytes. The committed hash is a placeholder, not the registry digest: the Semgrep Rules License v1.0 forbids shipping the pack in this repository. The cache directory is `~/.saga/semgrep-rules/p--security-audit` (a `/` in the pack name becomes `--`). The argument vector is `semgrep scan --metrics=off --json --config <cache> <root>`. `--config` is only that local directory. A missing cache or a hash mismatch is reason `rule-cache-missing` and does not download.
+The security row pins pack `p/security-audit` and the sha256 of the cached bytes. The committed hash is a placeholder, not the registry digest: the Semgrep Rules License v1.0 forbids shipping the pack in this repository. The cache directory is `~/.saga/semgrep-rules/p--security-audit` (a `/` in the pack name becomes `--`). The argument vector is `semgrep scan --metrics=off --json --config <cache> <root>`. `--config` is only that local directory. A missing or empty cache is reason `rule-cache-missing`. A cache whose digest differs from the pinned one is reason `rule-cache-mismatch`. Neither downloads.
+
+Because the committed digest is a placeholder, a machine with a valid cache pins the cache's own digest in the profile, under the adapter id: `review_tools.pins["semgrep-security"].rules`. `/saga:setup` records it (`saga_setup.py write` reads `--home`, default the real home). The runner reads a rules pin under the adapter id first and falls back to the tool name. The pattern row `semgrep-saga` shares the `semgrep` binary, so a pin under `semgrep` replaces its rules too; the adapter id pin does not.
 
 The saga row reads `plugins/saga/references/semgrep`. While that directory is missing or empty, the run records one `known-gap` per `correctness.pattern.*` row and does not invent a rule. When the directory is present, each result's `metadata.row` must be one of those rows.
 

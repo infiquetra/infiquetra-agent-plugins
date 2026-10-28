@@ -525,6 +525,23 @@ def test_pinned_tool_off_default_reports_only(tmp_path: Path) -> None:
     assert _answer(changed, lens="security") == "report-only pinned-tool semgrep"
 
 
+def test_a_machine_local_rule_digest_under_the_adapter_id_is_no_difference(
+    tmp_path: Path,
+) -> None:
+    same_pack = tmp_path / "same-pack"
+    _recorded(same_pack)
+    rules = _security_rules(same_pack)
+    local = [{**rules[0], "sha256": "d" * 64}]
+    _profile(same_pack, {"semgrep-security": {"rules": local}})
+    assert _answer(same_pack, lens="security") == "yes cleared"
+
+    other_pack = tmp_path / "other-pack"
+    _recorded(other_pack)
+    other = [{"pack": "p/other", "sha256": "d" * 64}]
+    _profile(other_pack, {"semgrep-security": {"rules": other}})
+    assert _answer(other_pack, lens="security") == "report-only pinned-tool semgrep-security"
+
+
 def test_pinned_tool_refuses_a_malformed_profile(tmp_path: Path) -> None:
     profiles = [
         "{",

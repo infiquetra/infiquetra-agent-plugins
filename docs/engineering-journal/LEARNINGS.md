@@ -2,6 +2,43 @@
 
 ## 2026-10-27
 
+### A pack the licence keeps out of the repository cannot have a shipped digest, so the pin must come from the machine
+
+**Author.** Jeff Cox
+
+**Evidence.** The semgrep security scanner never ran in a Saga review. `_rule_paths` in
+`plugins/saga/scripts/review_tools.py` compares the digest of `~/.saga/semgrep-rules/p--security-audit`
+with the sha256 the tool catalogue pins, and the catalogue can only pin a placeholder because the
+Semgrep Rules License v1.0 forbids shipping the pack. A real cache can never match a placeholder, so
+every run degraded with `rule-cache-missing`, including a run on a machine that had the cache.
+
+The obvious fix, a profile pin, hit a second problem. `_rules_for` read the profile's rules by tool
+name, and the pattern row `semgrep-saga` shares the `semgrep` binary. A rules pin for the security
+pack under `semgrep` would also have replaced the pattern row's rules and broken it.
+
+Tests:
+
+- `plugins/saga/tests/test_review_adapters_all_languages.py`:
+  `test_an_adapter_id_rules_pin_reaches_the_security_row_only`,
+  `test_a_local_digest_pinned_under_the_adapter_id_runs_the_security_scan`,
+  `test_a_semgrep_hash_mismatch_does_not_download`.
+- `plugins/saga/tests/test_saga_setup.py`: `test_profile_write_records_the_local_rule_pack_digest`.
+
+**Mechanism.** A digest of bytes you may not ship has no committed value that can be right, so the
+only true value lives on the machine that holds the bytes. The fix has three parts. Setup digests
+the local cache and records it in the profile under the adapter id (`semgrep-security`). The runner
+reads a rules pin by adapter id first and by tool name second, so a row-specific pin reaches one row
+and a binary-wide pin still works. And a present cache with the wrong digest is now reason
+`rule-cache-mismatch`, kept apart from `rule-cache-missing`, so the two failures stop looking the
+same. Two other readers of `review_tools.pins` also had to learn the new key: the profile loader
+(`_pins`) and `review_calibration._refuse_pins` both rejected any key that was not a tool name.
+
+**Generalizable rule.** When a licence stops you shipping an artifact, you also cannot ship its
+checksum. Record the checksum from the machine that has the artifact, key it to the one consumer
+that needs it, and give "present but wrong" its own reason word apart from "absent". A config key
+that several consumers share is a hazard: give the new setting the narrowest key that works, and
+search every reader of the old key's namespace.
+
 ### A security check over YAML must read YAML, not lines, and set-up between confined runs must trust nothing they wrote
 
 **Author.** Jeff Cox

@@ -241,7 +241,66 @@ def test_a_semgrep_hash_mismatch_does_not_download(tmp_path: Path) -> None:
     )
     assert code == 0
     assert runner.calls == []
-    assert _read(output, "degraded.json")[0]["reason"] == "rule-cache-missing"
+    assert _read(output, "degraded.json")[0]["reason"] == "rule-cache-mismatch"
+
+
+def _rules_pin(digest: str) -> dict[str, Any]:
+    return {"rules": [{"pack": "p/security-audit", "sha256": digest}]}
+
+
+def test_an_adapter_id_rules_pin_reaches_the_security_row_only() -> None:
+    digest = "a" * 64
+    profile = {"pins": {"semgrep-security": _rules_pin(digest)}}
+    security = T._rules_for(_adapter("semgrep-security"), profile)
+    assert [(rule.pack, rule.sha256) for rule in security] == [("p/security-audit", digest)]
+    assert T._rules_for(_adapter("semgrep-saga"), profile) == _adapter("semgrep-saga").rules
+
+
+def test_the_adapter_id_pin_wins_over_the_tool_name_pin() -> None:
+    profile = {"pins": {
+        "semgrep": _rules_pin("b" * 64),
+        "semgrep-security": _rules_pin("c" * 64),
+    }}
+    security = T._rules_for(_adapter("semgrep-security"), profile)
+    assert [rule.sha256 for rule in security] == ["c" * 64]
+
+
+def test_a_tool_name_rules_pin_still_applies_when_no_id_pin_exists() -> None:
+    profile = {"pins": {"semgrep": _rules_pin("b" * 64)}}
+    security = T._rules_for(_adapter("semgrep-security"), profile)
+    assert [rule.sha256 for rule in security] == ["b" * 64]
+    # A version-only id pin carries no rules, so the tool name pin still decides.
+    both = {"pins": {"semgrep": _rules_pin("b" * 64), "semgrep-security": {"version": "1.0.0"}}}
+    assert [r.sha256 for r in T._rules_for(_adapter("semgrep-security"), both)] == ["b" * 64]
+    assert T._rules_for(_adapter("semgrep-security"), {}) == _adapter("semgrep-security").rules
+
+
+def test_a_local_digest_pinned_under_the_adapter_id_runs_the_security_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, head = _changed_app(tmp_path)
+    plugin = tmp_path / "plugin"
+    plugin.mkdir(parents=True)
+    monkeypatch.setattr(T, "plugin_root", lambda: plugin)
+    home = tmp_path / "home"
+    digest = _pack(home)
+    profile = _profile(tmp_path / "profile.json", {
+        "semgrep": {"version": "1.0.0"},
+        "semgrep-security": _rules_pin(digest),
+    })
+    payload = (FIXTURES / "semgrep-security.json").read_text(encoding="utf-8")
+    runner = _Calls(base, payload)
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, home,
+        [_adapter("semgrep-security"), _adapter("semgrep-saga")], runner,
+    )
+    assert code == 0
+    reasons = {item["reason"] for item in _read(output, "degraded.json")}
+    assert not reasons & {"rule-cache-missing", "rule-cache-mismatch"}
+    assert any(
+        item["rule"]["row"] == "security.scanner-high" for item in _read(output, "findings.json")
+    )
 
 
 def test_missing_saga_rules_are_a_gap_and_security_still_runs(

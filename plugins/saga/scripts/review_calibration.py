@@ -518,6 +518,7 @@ def _load_tools(root: Path) -> list[dict[str, Any]]:
 
 def _refuse_pins(pins: Mapping[str, Any], tools: Sequence[Mapping[str, Any]]) -> None:
     known = {str(row.get("tool")) for row in tools if row.get("tool")}
+    known |= {str(row.get("id")) for row in tools if row.get("id")}
     for tool, spec in pins.items():
         if tool not in known:
             raise CalibrationError(f"unknown tool {tool!r}")
@@ -541,14 +542,27 @@ def _row_rules(row: Mapping[str, Any]) -> list[tuple[Any, Any, Any]]:
     return [_rule_identity(item) for item in rules if isinstance(item, Mapping)]
 
 
-def _pin_differs(row: Mapping[str, Any], pin: Mapping[str, Any]) -> bool:
+def _pin_differs(
+    row: Mapping[str, Any], pin: Mapping[str, Any], *, machine_digest: bool = False
+) -> bool:
+    """Whether the pin moves the row off its default.
+
+    ``machine_digest`` is for a pin keyed by the row id. Its pack digest is the one this
+    machine's cache has, because the committed digest is a placeholder, so the digest alone
+    is not a difference. A different pack or path still is.
+    """
     version = pin.get("version")
     if isinstance(version, str) and version != row.get("default_version"):
         return True
     rules = pin.get("rules") if "rules" in pin else None
     if not isinstance(rules, list):
         return False
-    return [_rule_identity(item) for item in rules if isinstance(item, Mapping)] != _row_rules(row)
+    pinned = [_rule_identity(item) for item in rules if isinstance(item, Mapping)]
+    wanted = _row_rules(row)
+    if machine_digest:
+        pinned = [(pack, path, None) for pack, path, _ in pinned]
+        wanted = [(pack, path, None) for pack, path, _ in wanted]
+    return pinned != wanted
 
 
 def differing_tool(
@@ -562,6 +576,9 @@ def differing_tool(
         pin = pins.get(str(tool))
         if isinstance(pin, Mapping) and _pin_differs(row, pin):
             return str(tool)
+        local = pins.get(str(row.get("id")))
+        if isinstance(local, Mapping) and _pin_differs(row, local, machine_digest=True):
+            return str(row.get("id"))
     return None
 
 
