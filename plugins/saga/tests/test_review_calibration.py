@@ -525,6 +525,62 @@ def test_pinned_tool_off_default_reports_only(tmp_path: Path) -> None:
     assert _answer(changed, lens="security") == "report-only pinned-tool semgrep"
 
 
+def test_a_row_id_rules_pin_with_a_new_digest_reports_only(tmp_path: Path) -> None:
+    root = tmp_path / "id-pin"
+    _recorded(root)
+    rules = _security_rules(root)
+    _profile(root, {"semgrep-security": {"rules": [{**rules[0], "sha256": "d" * 64}]}})
+    assert _answer(root, lens="security") == "report-only pinned-tool semgrep-security"
+
+    same = tmp_path / "same"
+    _recorded(same)
+    _profile(same, {"semgrep-security": {"rules": _security_rules(same)}})
+    assert _answer(same, lens="security") == "yes cleared"
+
+
+def test_the_row_id_rules_pin_is_read_before_the_tool_name_pin(tmp_path: Path) -> None:
+    root = tmp_path / "both"
+    _recorded(root)
+    other = [{"pack": "p/other", "sha256": "d" * 64}]
+    # The tool-name rules never reach the security row once the row id pins its own.
+    _profile(root, {
+        "semgrep": {"rules": other},
+        "semgrep-security": {"rules": _security_rules(root)},
+    })
+    assert _answer(root, lens="security") == "yes cleared"
+    # A tool-name version still counts, because a version is read under the tool name only.
+    _profile(root, {
+        "semgrep": {"version": "9.9.9"},
+        "semgrep-security": {"rules": _security_rules(root)},
+    })
+    assert _answer(root, lens="security") == "report-only pinned-tool semgrep"
+
+
+def test_a_version_under_a_row_id_is_refused(tmp_path: Path) -> None:
+    root = tmp_path / "id-version"
+    _recorded(root)
+    _profile(root, {"semgrep-security": {"version": "9.9.9"}})
+    with pytest.raises(calibration.CalibrationError, match="rules only"):
+        _answer(root, lens="security")
+
+
+def test_a_recorded_rule_digest_on_the_machine_changes_no_answer(tmp_path: Path) -> None:
+    import inspect
+
+    root = tmp_path / "machine"
+    _recorded(root)
+    without = _answer(root, lens="security")
+    home = tmp_path / "home"
+    (home / ".saga").mkdir(parents=True)
+    (home / ".saga" / "machine.json").write_text(
+        json.dumps({"rule_caches": {"p/security-audit": "d" * 64}}), encoding="utf-8"
+    )
+    # may-block takes no home, so the machine record cannot reach it: only the calibration
+    # file and the profile's pins decide.
+    assert "home" not in inspect.signature(calibration.may_block).parameters
+    assert _answer(root, lens="security") == without == "yes cleared"
+
+
 def test_pinned_tool_refuses_a_malformed_profile(tmp_path: Path) -> None:
     profiles = [
         "{",

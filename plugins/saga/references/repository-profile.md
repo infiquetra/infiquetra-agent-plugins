@@ -181,10 +181,15 @@ Optional. An absent block is valid: the runner uses the defaults in
 
 `languages` keys are formula languages. `test_command` and `coverage_report` are strings. `pins`
 are keyed by the binary name in the tool list (`tool`), so one semgrep pin covers every semgrep
-row. A version-only pin overrides that version and keeps the yaml rules. A `rules` list replaces
-the yaml rules for that binary; it does not merge. A pack rule needs a 64-character hex `sha256`.
+row. A `rules` list may instead be keyed by the row id (`semgrep-security`), which reaches that
+row alone; the id key is read first and the binary name is the fallback. A row id takes `rules`
+only: a `version` under one is refused. A version-only pin
+overrides that version and keeps the yaml rules. A `rules` list replaces
+the yaml rules for that key; it does not merge. A pack rule needs a 64-character hex `sha256`.
 A path rule may omit it. The sha256 is the digest of the cached pack. The value in the yaml today
-is a placeholder, because the rule pack is not shipped in this repository.
+is a placeholder, because the rule pack is not shipped in this repository. The digest of a
+machine's own cache is not a profile value: setup records it in the machine record (`rule_caches`
+in `~/.saga/machine.json`), and the runner reads it from there when the profile pins no rules.
 
 A malformed block exits 2 before any tool runs. That includes a non-string version, a rules entry
 without `pack` or `path`, a sha256 that is not 64 hex characters, an unknown tool, a language the

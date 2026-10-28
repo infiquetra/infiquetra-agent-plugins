@@ -492,7 +492,9 @@ def _prepare(
             repo, base, head, args, calibration, home, ask,
         )
         degraded.extend(sweep_degraded)
-        gaps = [entry for entry in degraded if entry.get("reason") in {"missing", "known-gap"}]
+        gaps = [entry for entry in degraded if entry.get("reason") in _GAP_REASONS]
+        for line in _cache_notices(degraded, home):
+            print(f"warning: {line}", file=sys.stderr)
         # The tool runner already wrote the scripted checks' own items (for instance the
         # machine-specific-value check) to this file; they join the sweep's items, not replaced.
         scripted = _read_json(staging / "where-to-look.json", "where-to-look")
@@ -742,6 +744,42 @@ def _merge_where_items(
         seen.add(key)
         merged.append(dict(item))
     return merged
+
+
+#: Degraded reasons that become a check for the reviewer to answer by hand.
+_GAP_REASONS = frozenset({"missing", "known-gap"})
+
+#: The rule pack whose local cache the security scanner reads, and the reasons it gives up with.
+_RULE_PACK = "p/security-audit"
+_CACHE_REASONS = frozenset({"rule-cache-missing", "rule-cache-mismatch"})
+
+
+def _cache_notices(degraded: Sequence[Mapping[str, Any]], home: Path) -> list[str]:
+    """Operator notices for a rule pack cache the scanner could not use.
+
+    These are for the person running prepare, who can run setup. The reviewer's packet is not
+    touched: the degraded record is all it carries.
+    """
+    cache = f"~/.saga/semgrep-rules/{_RULE_PACK.replace('/', '--')}"
+    reasons = {str(entry.get("reason")) for entry in degraded} & _CACHE_REASONS
+    notices: list[str] = []
+    if "rule-cache-missing" in reasons:
+        notices.append(
+            f"the security scanner did not run (rule-cache-missing): the rule pack cache at "
+            f"{cache} is absent or empty. Put the pack there, then run /saga:setup."
+        )
+    if "rule-cache-mismatch" in reasons:
+        if review_tools.machine_rule_digest(home, _RULE_PACK):
+            notices.append(
+                f"the security scanner did not run (rule-cache-mismatch): the cache at {cache} "
+                "doesn't match the recorded digest. If you refreshed it, run /saga:setup."
+            )
+        else:
+            notices.append(
+                f"the security scanner did not run (rule-cache-mismatch): the cache at {cache} "
+                "has no digest recorded on this machine; run /saga:setup."
+            )
+    return notices
 
 
 def _gap_item(entry: Mapping[str, Any]) -> dict[str, Any]:

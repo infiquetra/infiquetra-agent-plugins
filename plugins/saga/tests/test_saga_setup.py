@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import shutil
 import socket
 import stat
 import subprocess
@@ -545,6 +546,89 @@ def test_machine_record_offer_survives_a_later_survey(tmp_path: Path) -> None:
     assert again["offered"] is True
     assert again["ran"] is True
     assert "questions" not in again["survey"]
+
+
+RULE_TOOLS = """
+schema: review_tools.v1
+tools:
+  - id: semgrep-security
+    tool: semgrep
+    languages: ["*"]
+    lens: security
+    default_version: "not-recorded"
+    version_mode: exact
+    install: "Not installed by setup."
+    install_argv: null
+    rules:
+      - pack: p/security-audit
+        sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        placeholder: true
+"""
+
+
+def _survey_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], home: Path
+) -> dict[str, Any]:
+    repo = tmp_path / "repo"
+    repo.mkdir(exist_ok=True)
+    tools = _tools(tmp_path, RULE_TOOLS)
+    code, _raw, err = _run(
+        ["survey", "--repo", str(repo), "--home", str(home), "--tools", str(tools),
+         "--format", "json"],
+        capsys,
+        runner=lambda argv, cwd=None, env=None, timeout=30: Result(0, "semgrep 1.2.3\n"),
+    )
+    assert code == 0, err
+    return json.loads((home / ".saga" / "machine.json").read_text(encoding="utf-8"))
+
+
+def _rule_cache(home: Path, body: str) -> str:
+    cache = setup.review_tools.semgrep_cache(home, "p/security-audit")
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "rules.yml").write_text(body, encoding="utf-8")
+    return setup.review_tools.digest_tree(cache)
+
+
+def test_survey_records_the_local_rule_pack_digest_in_the_machine_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    digest = _rule_cache(home, "rules: []\n")
+    record = _survey_record(tmp_path, capsys, home)
+    assert record["rule_caches"] == {"p/security-audit": digest}
+    # Setup does not write the digest into the repository's profile.
+    assert not (tmp_path / "repo" / ".saga-profile.json").exists()
+
+
+def test_survey_without_a_cache_records_none_and_a_gone_cache_drops_out(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    assert "rule_caches" not in _survey_record(tmp_path, capsys, home)
+    assert not setup.review_tools.semgrep_cache(home, "p/security-audit").exists()
+    _rule_cache(home, "rules: []\n")
+    assert "rule_caches" in _survey_record(tmp_path, capsys, home)
+    shutil.rmtree(setup.review_tools.semgrep_cache(home, "p/security-audit"))
+    assert "rule_caches" not in _survey_record(tmp_path, capsys, home)
+
+
+def test_survey_refreshes_the_recorded_digest_and_keeps_the_offer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    setup.record_offer(home)
+    _rule_cache(home, "rules: []\n")
+    _survey_record(tmp_path, capsys, home)
+    newer = _rule_cache(home, "rules: [] # newer\n")
+    record = _survey_record(tmp_path, capsys, home)
+    assert record["rule_caches"] == {"p/security-audit": newer}
+    assert record["offered"] is True
+    # A later offer keeps the recorded digests.
+    setup.record_offer(home)
+    assert setup.load_machine(home)["rule_caches"] == {"p/security-audit": newer}  # type: ignore[index]
 
 
 def test_sandbox_failure_marks_reproduction_unavailable(

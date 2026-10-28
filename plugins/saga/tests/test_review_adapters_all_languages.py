@@ -241,7 +241,199 @@ def test_a_semgrep_hash_mismatch_does_not_download(tmp_path: Path) -> None:
     )
     assert code == 0
     assert runner.calls == []
-    assert _read(output, "degraded.json")[0]["reason"] == "rule-cache-missing"
+    assert _read(output, "degraded.json")[0]["reason"] == "rule-cache-mismatch"
+
+
+def _rules_pin(digest: str) -> dict[str, Any]:
+    return {"rules": [{"pack": "p/security-audit", "sha256": digest}]}
+
+
+def _rules(home: Path, adapter: Any, profile: dict[str, Any]) -> Any:
+    return T._resolve_rules(adapter, profile, home)[0]
+
+
+def test_an_adapter_id_rules_pin_reaches_the_security_row_only(tmp_path: Path) -> None:
+    digest = "a" * 64
+    profile = {"pins": {"semgrep-security": _rules_pin(digest)}}
+    security = _rules(tmp_path, _adapter("semgrep-security"), profile)
+    assert [(rule.pack, rule.sha256) for rule in security] == [("p/security-audit", digest)]
+    assert _rules(tmp_path, _adapter("semgrep-saga"), profile) == _adapter("semgrep-saga").rules
+
+
+def test_the_adapter_id_pin_wins_over_the_tool_name_pin(tmp_path: Path) -> None:
+    profile = {"pins": {
+        "semgrep": _rules_pin("b" * 64),
+        "semgrep-security": _rules_pin("c" * 64),
+    }}
+    security = _rules(tmp_path, _adapter("semgrep-security"), profile)
+    assert [rule.sha256 for rule in security] == ["c" * 64]
+
+
+def test_a_tool_name_rules_pin_still_applies_when_no_id_pin_exists(tmp_path: Path) -> None:
+    profile = {"pins": {"semgrep": _rules_pin("b" * 64)}}
+    security = _rules(tmp_path, _adapter("semgrep-security"), profile)
+    assert [rule.sha256 for rule in security] == ["b" * 64]
+    # A version-only id pin carries no rules, so the tool name pin still decides.
+    both = {"pins": {"semgrep": _rules_pin("b" * 64), "semgrep-security": {"version": "1.0.0"}}}
+    assert [r.sha256 for r in _rules(tmp_path, _adapter("semgrep-security"), both)] == ["b" * 64]
+    assert _rules(tmp_path, _adapter("semgrep-security"), {}) == _adapter("semgrep-security").rules
+
+
+def test_a_local_digest_pinned_under_the_adapter_id_runs_the_security_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base, head = _changed_app(tmp_path)
+    plugin = tmp_path / "plugin"
+    plugin.mkdir(parents=True)
+    monkeypatch.setattr(T, "plugin_root", lambda: plugin)
+    home = tmp_path / "home"
+    digest = _pack(home)
+    profile = _profile(tmp_path / "profile.json", {
+        "semgrep": {"version": "1.0.0"},
+        "semgrep-security": _rules_pin(digest),
+    })
+    payload = (FIXTURES / "semgrep-security.json").read_text(encoding="utf-8")
+    runner = _Calls(base, payload)
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, home,
+        [_adapter("semgrep-security"), _adapter("semgrep-saga")], runner,
+    )
+    assert code == 0
+    reasons = {item["reason"] for item in _read(output, "degraded.json")}
+    assert not reasons & {"rule-cache-missing", "rule-cache-mismatch"}
+    assert any(
+        item["rule"]["row"] == "security.scanner-high" for item in _read(output, "findings.json")
+    )
+
+
+def _machine_record(home: Path, digest: str) -> None:
+    """What `/saga:setup` records for the cached pack, without the survey."""
+    record = home / ".saga" / "machine.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(
+        json.dumps({"schema": "machine_record.v1", "rule_caches": {"p/security-audit": digest}}),
+        encoding="utf-8",
+    )
+
+
+def _security_run(
+    tmp_path: Path, home: Path, pins: dict[str, Any]
+) -> tuple[_Calls, Path, int]:
+    repo, base, head = _changed_app(tmp_path)
+    profile = _profile(tmp_path / "profile.json", pins)
+    payload = (FIXTURES / "semgrep-security.json").read_text(encoding="utf-8")
+    runner = _Calls(base, payload)
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, home, [_adapter("semgrep-security")], runner,
+    )
+    return runner, output, code
+
+
+def _degraded_reasons(output: Path) -> set[str]:
+    return {item["reason"] for item in _read(output, "degraded.json")}
+
+
+def test_a_repository_with_no_pin_runs_the_rules_from_the_machine_record(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    digest = _pack(home)
+    _machine_record(home, digest)
+    runner, output, code = _security_run(tmp_path, home, {})
+    assert code == 0
+    assert any("scan" in argv for argv in runner.calls)
+    assert not _degraded_reasons(output) & {"rule-cache-missing", "rule-cache-mismatch"}
+    assert _read(output, "rule-sources.json") == {"semgrep-security": {
+        "source": "machine",
+        "rules": [{"pack": "p/security-audit", "sha256": digest}],
+    }}
+
+
+def test_a_refreshed_cache_without_rerunning_setup_is_a_mismatch(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _machine_record(home, _pack(home))
+    (T.semgrep_cache(home, "p/security-audit") / "rules.yml").write_text(
+        "rules: [] # refreshed\n", encoding="utf-8"
+    )
+    runner, output, code = _security_run(tmp_path, home, {})
+    assert code == 0
+    assert runner.calls == []
+    assert _degraded_reasons(output) == {"rule-cache-mismatch"}
+
+
+def test_a_cache_with_no_recorded_digest_is_a_mismatch_from_the_catalogue(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    _pack(home)
+    runner, output, code = _security_run(tmp_path, home, {})
+    assert code == 0
+    assert runner.calls == []
+    assert _degraded_reasons(output) == {"rule-cache-mismatch"}
+    assert _read(output, "rule-sources.json")["semgrep-security"]["source"] == "catalogue"
+
+
+def test_no_cache_is_missing_even_with_a_recorded_digest(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _machine_record(home, "e" * 64)
+    runner, output, code = _security_run(tmp_path, home, {})
+    assert code == 0
+    assert runner.calls == []
+    assert _degraded_reasons(output) == {"rule-cache-missing"}
+
+
+def test_a_profile_id_pin_overrides_the_machine_record(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    digest = _pack(home)
+    _machine_record(home, "f" * 64)
+    pins = {"semgrep-security": _rules_pin(digest)}
+    runner, output, code = _security_run(tmp_path, home, pins)
+    assert code == 0
+    assert any("scan" in argv for argv in runner.calls)
+    assert _read(output, "rule-sources.json")["semgrep-security"]["source"] == "profile"
+
+    # The other way round: the profile's wrong digest wins over a right machine record.
+    other = tmp_path / "other"
+    other.mkdir()
+    right = _pack(other / "home")
+    _machine_record(other / "home", right)
+    runner, output, code = _security_run(other, other / "home", {
+        "semgrep-security": _rules_pin("a" * 64),
+    })
+    assert code == 0
+    assert runner.calls == []
+    assert _degraded_reasons(output) == {"rule-cache-mismatch"}
+
+
+def test_a_changed_cache_does_not_reuse_the_cached_base_scan(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    first = _pack(home)
+    key_one = T._rules_digest(T._resolve_rules(_adapter("semgrep-security"), {}, home)[0])
+    _machine_record(home, first)
+    key_two = T._rules_digest(T._resolve_rules(_adapter("semgrep-security"), {}, home)[0])
+    assert key_one != key_two
+    (T.semgrep_cache(home, "p/security-audit") / "rules.yml").write_text(
+        "rules: [] # newer\n", encoding="utf-8"
+    )
+    _machine_record(home, T.digest_tree(T.semgrep_cache(home, "p/security-audit")))
+    key_three = T._rules_digest(T._resolve_rules(_adapter("semgrep-security"), {}, home)[0])
+    assert key_three not in {key_one, key_two}
+
+
+def test_a_recorded_digest_with_a_trailing_newline_is_not_accepted(tmp_path: Path) -> None:
+    _machine_record(tmp_path, "a" * 64)
+    assert T.machine_rule_digest(tmp_path, "p/security-audit") == "a" * 64
+    _machine_record(tmp_path, "a" * 64 + "\n")
+    assert T.machine_rule_digest(tmp_path, "p/security-audit") == ""
+
+
+def test_a_version_under_a_row_id_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(T.RunnerFailure, match="rules only"):
+        T._pins({"semgrep-security": {"version": "1.0.0"}})
+    # A row whose id is also its tool name still takes a version.
+    assert T._pins({"gitleaks": {"version": "1.0.0"}})["gitleaks"]["version"] == "1.0.0"
 
 
 def test_missing_saga_rules_are_a_gap_and_security_still_runs(

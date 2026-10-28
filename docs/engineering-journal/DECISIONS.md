@@ -2,6 +2,39 @@
 
 ## 2026-10-27
 
+### The machine record's rule pack digest does not change may-block, and a profile pin under a row id still reports the lens only
+
+**Decision.** `review_calibration` (`may-block`) keeps its rule: a profile pin that moves a row off
+the catalogue's version or rules makes the lenses that row serves report only. It gains one change,
+to read a rules pin under the row id before the tool name, as the runner does, and it refuses a
+`version` under a row id. It does not exempt a pack digest that differs from the catalogue's.
+
+The machine record's `rule_caches` digest is not a profile pin and `may-block` never reads it
+(`may_block` takes no home). On a machine with a recorded digest `may-block` therefore answers
+exactly what it answers without one, from the calibration file and the profile's pins alone. The
+committed calibration says `no-run`, so every lens, security included, answers `report-only
+no-run`: the scanner's findings are reported and block nothing. A calibration run that has the
+scanner active records its own answers, and from then on those decide.
+
+**Rationale.** The security lens's recorded answers were measured while the scanner always
+degraded, so no scanner finding was ever in them. Treating a different digest as no difference
+would let the first real scanner hit block a merge on a lens never calibrated with it. A review
+of the first version of this change called that out. The cheapest safe option is to leave the
+lens reporting until a calibration run includes the scanner.
+
+**Rejected.** Exempting a digest-only difference under a row id (it hides the one signal that the
+tools differ from what was calibrated). Keeping the exemption but capping `security.scanner-high`
+at fix later (more code, and the cap would need its own removal).
+
+**Cache reasons are operator notices.** `rule-cache-missing` and `rule-cache-mismatch` add no
+where-to-look item and no `missing-tools.json` entry. A reviewer cannot run setup, and an extra
+item would change every packet made on a machine without the cache. Prepare prints a `warning:`
+line for the operator instead.
+
+**Revisit when** the private calibration run is made with the pack's cache present and recorded
+by setup, so the scanner's rows are measured. Then decide whether the calibration should also
+record the pack digest it measured with, so a later refresh of the rules is a visible change.
+
 ### A Dart review packet carries a pruned pub cache; reviewer and re-run get a dart-only bin and their own writable cache
 
 **Decision.** Jeff Cox approved this build on 2026-10-26.

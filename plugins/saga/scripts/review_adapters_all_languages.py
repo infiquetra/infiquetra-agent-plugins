@@ -544,6 +544,7 @@ def _rules(row: Mapping[str, object]) -> tuple[RulePin, ...]:
             pack=entry.get("pack"),
             sha256=entry.get("sha256"),
             path=entry.get("path"),
+            placeholder=entry.get("placeholder") is True,
         ))
     return tuple(pins)
 

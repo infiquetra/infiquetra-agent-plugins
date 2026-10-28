@@ -210,8 +210,36 @@ def write_machine(home: Path, record: dict[str, Any]) -> Path:
     return path
 
 
-def record_survey(home: Path, survey: Mapping[str, Any]) -> Path:
-    """Store *survey* without its questions and set ``ran``. ``offered`` is left as it was."""
+def rule_caches_for(rows: Sequence[Mapping[str, Any]], home: Path) -> dict[str, str]:
+    """The digest of each licence-blocked rule pack cached under *home*, by pack name.
+
+    The licence keeps these packs out of the repository, so the catalogue marks their digest as a
+    placeholder and the real one is a fact about this machine. A pack with no cache is left out.
+    Nothing is downloaded.
+    """
+    caches: dict[str, str] = {}
+    for row in rows:
+        for rule in row.get("rules") or []:
+            if not isinstance(rule, dict) or rule.get("placeholder") is not True:
+                continue
+            pack = str(rule.get("pack") or "")
+            cache = review_tools.semgrep_cache(Path(home), pack) if pack else None
+            digest = review_tools.digest_tree(cache) if cache is not None and cache.is_dir() else ""
+            if digest:
+                caches[pack] = digest
+    return dict(sorted(caches.items()))
+
+
+def record_survey(
+    home: Path,
+    survey: Mapping[str, Any],
+    rule_caches: Mapping[str, str] | None = None,
+) -> Path:
+    """Store *survey* without its questions and set ``ran``. ``offered`` is left as it was.
+
+    *rule_caches* is the digest of each cached rule pack. The record states what is on the machine
+    now, so a pack whose cache is gone drops out of it.
+    """
     previous = load_machine(home)
     offered = False
     if isinstance(previous, dict) and previous.get("offered") is True:
@@ -224,6 +252,8 @@ def record_survey(home: Path, survey: Mapping[str, Any]) -> Path:
         "survey": stored,
         "updated_at": _now(),
     }
+    if rule_caches:
+        record["rule_caches"] = dict(rule_caches)
     return write_machine(home, record)
 
 
@@ -774,9 +804,10 @@ def collect(
     languages = detect_languages(root)
     detected = set(languages)
     profile = _profile_object(root)
+    rows = _tool_rows(tools_path)
     tools = [
         _probe_row(row, runner=runner, env=env, cwd=root, profile=profile)
-        for row in _tool_rows(tools_path)
+        for row in rows
         if _selected(row, detected)
     ]
     document = {
@@ -805,7 +836,7 @@ def collect(
     if persist:
         if home is None:
             raise SetupError("survey needs a home directory to record")
-        record_survey(home, document)
+        record_survey(home, document, rule_caches_for(rows, home))
     return document
 
 

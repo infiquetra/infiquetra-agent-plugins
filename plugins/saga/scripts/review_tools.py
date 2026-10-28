@@ -259,6 +259,9 @@ class RulePin:
     pack: str | None = None
     sha256: str | None = None
     path: str | None = None
+    #: The catalogue's sha256 is a stand-in, because the licence keeps the pack out of the
+    #: repository. The machine record's digest for the pack is accepted in its place.
+    placeholder: bool = False
 
 
 @dataclass(frozen=True)
@@ -1160,6 +1163,7 @@ def _run(
     pending: list[Hit] = []
     items: list[Mapping[str, Any]] = []
     degraded: list[dict[str, str]] = list(profile_notes)
+    rule_sources: dict[str, dict[str, Any]] = {}
     deadline = time.monotonic() + MUTATION_CAP_SECONDS
     tool_env, tool_temps = _tool_env(home)
     base_markers = _tree_markers(repo, base_sha)
@@ -1184,7 +1188,7 @@ def _run(
                         adapter, repo, base_sha, head_sha, head_root, change, home, profile,
                         process, tool_env, deadline, degraded, items, base_markers,
                         head_markers, head_languages,
-                        diagnostics_directory,
+                        diagnostics_directory, rule_sources,
                     ))
                 finally:
                     residue.clear(adapter.id, diagnostics_directory)
@@ -1201,6 +1205,7 @@ def _run(
             findings = _findings_from(pending) + cov_findings
             _emit(
                 output, findings, measurements, degraded, builder_record, items, change.touched(),
+                rule_sources,
             )
             return 0
     finally:
@@ -1509,6 +1514,7 @@ def _run_adapter(
     head_markers: frozenset[str] | None,
     head_languages: frozenset[str] | None = None,
     diagnostics_directory: Path | None = None,
+    rule_sources: dict[str, dict[str, Any]] | None = None,
 ) -> list[Hit]:
     if _markers_removed(adapter, base_markers, head_markers):
         degraded.append(
@@ -1532,7 +1538,14 @@ def _run_adapter(
         for row in rows:
             degraded.append(_degraded(adapter, row, "known-gap"))
         return []
-    rules = _rules_for(adapter, profile)
+    rules, rules_source = _resolve_rules(adapter, profile, home)
+    if rule_sources is not None and any(rule.pack for rule in rules):
+        rule_sources[adapter.id] = {
+            "source": rules_source,
+            "rules": [
+                {"pack": rule.pack, "sha256": rule.sha256} for rule in rules if rule.pack
+            ],
+        }
     review = profile.get("review") if isinstance(profile, Mapping) else None
     with _rule_config(adapter, rules, repo, home, base_sha, review) as (
         configs,
@@ -2281,12 +2294,18 @@ def _pinned_version(adapter: Adapter, profile: Mapping[str, Any]) -> str:
     return adapter.default_version
 
 
-def _rules_for(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, ...]:
-    """A profile rules list replaces the yaml rules. A version-only pin keeps them."""
-    pin = (profile.get("pins") or {}).get(adapter.tool) or {}
-    rules = pin.get("rules") if isinstance(pin, Mapping) else None
+def _profile_rules(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, ...] | None:
+    """The rules a profile pins for this adapter, or None when it pins none.
+
+    A pin under the adapter id wins over a pin under the tool name, so one row can pin its
+    own rules without replacing the rules of the other row that shares the binary.
+    """
+    pins = profile.get("pins") or {}
+    rules = _pin_rules_of(pins.get(adapter.id))
     if rules is None:
-        return adapter.rules
+        rules = _pin_rules_of(pins.get(adapter.tool))
+    if rules is None:
+        return None
     return tuple(
         RulePin(
             pack=item.get("pack") if isinstance(item, Mapping) else None,
@@ -2295,6 +2314,47 @@ def _rules_for(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, .
         )
         for item in rules
     )
+
+
+def machine_rule_digest(home: Path, pack: str) -> str:
+    """The digest setup recorded for *pack*'s cache in ``<home>/.saga/machine.json``, or ``""``.
+
+    The licence keeps the pack out of the repository, so the committed digest is a stand-in and
+    the real one is a fact about this machine's cache.
+    """
+    try:
+        loaded = json.loads((Path(home) / ".saga" / "machine.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    caches = loaded.get("rule_caches") if isinstance(loaded, dict) else None
+    digest = caches.get(pack) if isinstance(caches, dict) else None
+    return digest if isinstance(digest, str) and _SHA.fullmatch(digest) else ""
+
+
+def _resolve_rules(
+    adapter: Adapter, profile: Mapping[str, Any], home: Path
+) -> tuple[tuple[RulePin, ...], str]:
+    """The rules to run and where their digests came from: profile, machine or catalogue.
+
+    A profile pin wins. Otherwise a catalogue digest marked as a placeholder is replaced by the
+    machine record's digest for that pack, when the record has one.
+    """
+    pinned = _profile_rules(adapter, profile)
+    if pinned is not None:
+        return pinned, "profile"
+    source = "catalogue"
+    resolved: list[RulePin] = []
+    for rule in adapter.rules:
+        digest = machine_rule_digest(home, rule.pack) if rule.placeholder and rule.pack else ""
+        if digest:
+            rule = replace(rule, sha256=digest, placeholder=False)
+            source = "machine"
+        resolved.append(rule)
+    return tuple(resolved), source
+
+
+def _pin_rules_of(pin: object) -> object:
+    return pin.get("rules") if isinstance(pin, Mapping) else None
 
 
 def _shared_update_names(review: object) -> tuple[str, ...] | None:
@@ -2436,8 +2496,10 @@ def _rule_paths(
         if rule.pack:
             cache = semgrep_cache(home, rule.pack)
             digest = digest_tree(cache) if cache.is_dir() else ""
-            if not digest or digest != (rule.sha256 or ""):
+            if not digest:
                 return (), "rule-cache-missing"
+            if digest != (rule.sha256 or ""):
+                return (), "rule-cache-mismatch"
             paths.append(cache)
             continue
         if rule.path:
@@ -2662,7 +2724,10 @@ def _pins(value: Any) -> dict[str, dict[str, Any]]:
         return {}
     if not isinstance(value, dict):
         raise RunnerFailure(2, "review_tools.pins must be an object")
-    known = {str(row.get("tool")) for row in load_tool_list() if row.get("tool")}
+    rows = load_tool_list()
+    known = {str(row.get("tool")) for row in rows if row.get("tool")}
+    ids = {str(row.get("id")) for row in rows if row.get("id")} - known
+    known |= ids
     cleaned: dict[str, dict[str, Any]] = {}
     for tool, spec in value.items():
         if tool not in known:
@@ -2670,6 +2735,8 @@ def _pins(value: Any) -> dict[str, dict[str, Any]]:
         if not isinstance(spec, dict):
             raise RunnerFailure(2, f"pin {tool} must be an object")
         version = spec.get("version")
+        if tool in ids and version is not None:
+            raise RunnerFailure(2, f"pin {tool}: a row id takes rules only, not a version")
         if version is not None and not isinstance(version, str):
             raise RunnerFailure(2, f"pin {tool}.version must be a string")
         cleaned[str(tool)] = {"version": version, "rules": _pin_rules(str(tool), spec.get("rules"))}
@@ -3187,6 +3254,7 @@ def _emit(
     builder: Mapping[str, Any] | None,
     items: Sequence[Mapping[str, Any]] = (),
     changed_lines: Mapping[str, Any] | None = None,
+    rule_sources: Mapping[str, Any] | None = None,
 ) -> None:
     for record in (*findings, *measurements):
         problems = review_records.validate(record)
@@ -3211,6 +3279,7 @@ def _emit(
     _write_json(output / "degraded.json", stable_degraded(degraded))
     _write_json(output / "outcomes.json", outcomes)
     _write_json(output / "where-to-look.json", stable_order(items))
+    _write_json(output / "rule-sources.json", dict(sorted((rule_sources or {}).items())))
 
 
 def stable_order(records: Sequence[Any]) -> list[Any]:

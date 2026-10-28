@@ -518,12 +518,16 @@ def _load_tools(root: Path) -> list[dict[str, Any]]:
 
 def _refuse_pins(pins: Mapping[str, Any], tools: Sequence[Mapping[str, Any]]) -> None:
     known = {str(row.get("tool")) for row in tools if row.get("tool")}
+    ids = {str(row.get("id")) for row in tools if row.get("id")} - known
+    known |= ids
     for tool, spec in pins.items():
         if tool not in known:
             raise CalibrationError(f"unknown tool {tool!r}")
         if not isinstance(spec, dict):
             raise CalibrationError(f"pin {tool} must be an object")
         version = spec.get("version")
+        if tool in ids and version is not None:
+            raise CalibrationError(f"pin {tool}: a row id takes rules only, not a version")
         if version is not None and not isinstance(version, str):
             raise CalibrationError(f"pin {tool}.version must be a string")
         if "rules" in spec and spec.get("rules") is not None:
@@ -554,12 +558,24 @@ def _pin_differs(row: Mapping[str, Any], pin: Mapping[str, Any]) -> bool:
 def differing_tool(
     tools: Sequence[Mapping[str, Any]], lens: str, pins: Mapping[str, Any]
 ) -> str | None:
-    """The first tool, in tool-list order, whose pin differs for a row that serves ``lens``."""
+    """The first tool, in tool-list order, whose pin differs for a row that serves ``lens``.
+
+    Rules are read as the runner reads them: a pin under the row id first, the tool name second.
+    A version is read under the tool name only.
+    """
     for row in tools:
         tool = row.get("tool")
         if row.get("lens") != lens or not tool:
             continue
         pin = pins.get(str(tool))
+        local = pins.get(str(row.get("id")))
+        local_rules = local.get("rules") if isinstance(local, Mapping) else None
+        if isinstance(local_rules, list):
+            if _pin_differs(row, {"rules": local_rules}):
+                return str(row.get("id"))
+            if isinstance(pin, Mapping) and _pin_differs(row, {"version": pin.get("version")}):
+                return str(tool)
+            continue
         if isinstance(pin, Mapping) and _pin_differs(row, pin):
             return str(tool)
     return None

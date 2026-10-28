@@ -637,6 +637,75 @@ def test_prepare_packet_names_every_where_to_look_item(tmp_path: Path) -> None:
     assert (again / "grades.json").read_bytes() == (out / "grades.json").read_bytes()
 
 
+def _cache_adapter() -> Any:
+    """A scanner whose rule pack is the licence-blocked placeholder, as the security row is."""
+    base = _adapter(start=2, hit=False)
+    return T.Adapter(
+        id=base.id, tool=base.tool, invoke=base.invoke, parse=base.parse,
+        default_version=base.default_version, rows=base.rows, lens=base.lens,
+        comparison=base.comparison,
+        rules=(T.RulePin(pack="p/security-audit", sha256="0" * 64, placeholder=True),),
+    )
+
+
+@pytest.mark.parametrize(
+    ("reason", "state", "wanted"),
+    [
+        ("rule-cache-missing", "none", "is absent or empty"),
+        ("rule-cache-mismatch", "unrecorded", "has no digest recorded on this machine; run /saga:setup"),
+        ("rule-cache-mismatch", "recorded", "doesn't match the recorded digest"),
+    ],
+)
+def test_a_missing_or_mismatched_rule_cache_is_an_operator_notice_only(
+    tmp_path: Path, reason: str, state: str, wanted: str
+) -> None:
+    repo, base, head = _repo(tmp_path, function=True)
+    profile = _profile(tmp_path / "outside")
+    builder = _builder(tmp_path / "builder.json")
+    bank = _bank(tmp_path / "bank.json")
+    argv = [
+        "prepare", "--repo", str(repo), "--base", base, "--head", head, "--profile", str(profile),
+        "--builder-record", str(builder), "--bank", str(bank),
+    ]
+    plain_home = tmp_path / "plain-home"
+    plain_home.mkdir()
+    code, err = _main(
+        [*argv, "--out", str(tmp_path / "plain"), "--home", str(plain_home)],
+        adapters=[_adapter(start=2, hit=False)], runner=_Runner(), ask=_ask(),
+    )
+    assert code == 0, err
+    assert "security scanner" not in err
+
+    home = tmp_path / "home"
+    home.mkdir()
+    if state != "none":
+        cache = T.semgrep_cache(home, "p/security-audit")
+        cache.mkdir(parents=True)
+        (cache / "rules.yml").write_text("rules: []\n", encoding="utf-8")
+    if state == "recorded":
+        record = home / ".saga" / "machine.json"
+        record.parent.mkdir(exist_ok=True)
+        record.write_text(
+            json.dumps({"rule_caches": {"p/security-audit": "e" * 64}}), encoding="utf-8"
+        )
+    out = tmp_path / "packet"
+    code, err = _main(
+        [*argv, "--out", str(out), "--home", str(home)],
+        adapters=[_cache_adapter()], runner=_Runner(), ask=_ask(),
+    )
+    assert code == 0, err
+    # The operator sees the notice. The reviewer's packet carries only the degraded record.
+    notice = [line for line in err.splitlines() if "security scanner" in line]
+    assert len(notice) == 1
+    assert notice[0].startswith("warning: ")
+    assert f"({reason})" in notice[0] and wanted in notice[0]
+    assert "~/.saga/semgrep-rules/p--security-audit" in notice[0]
+    assert [item["reason"] for item in _read(out / "degraded.json")] == [reason]
+    for name in ("where-to-look.json", "missing-tools.json"):
+        assert (out / name).read_bytes() == (tmp_path / "plain" / name).read_bytes()
+    assert _read(out / "missing-tools.json") == []
+
+
 def test_prepare_packet_grades_match_on_a_second_run(tmp_path: Path) -> None:
     repo, base, head = _repo(tmp_path, function=True)
     profile = _profile(tmp_path / "outside")

@@ -96,7 +96,15 @@ Every finding and measurement passes `review_records.py` validation before the f
 
 ## Semgrep
 
-The security row pins pack `p/security-audit` and the sha256 of the cached bytes. The committed hash is a placeholder, not the registry digest: the Semgrep Rules License v1.0 forbids shipping the pack in this repository. The cache directory is `~/.saga/semgrep-rules/p--security-audit` (a `/` in the pack name becomes `--`). The argument vector is `semgrep scan --metrics=off --json --config <cache> <root>`. `--config` is only that local directory. A missing cache or a hash mismatch is reason `rule-cache-missing` and does not download.
+The security row pins pack `p/security-audit` and the sha256 of the cached bytes. The committed hash is a placeholder, not the registry digest: the Semgrep Rules License v1.0 forbids shipping the pack in this repository. The cache directory is `~/.saga/semgrep-rules/p--security-audit` (a `/` in the pack name becomes `--`). The argument vector is `semgrep scan --metrics=off --json --config <cache> <root>`. `--config` is only that local directory. A missing or empty cache is reason `rule-cache-missing`. A cache whose digest differs from the pinned one is reason `rule-cache-mismatch`. Neither downloads.
+
+Because the committed digest is a placeholder (the catalogue marks the rule `placeholder: true`), the digest of the cache is a fact about the machine that holds it. `/saga:setup` records it in the machine record, `~/.saga/machine.json`, under `rule_caches` (`{"p/security-audit": "<sha256>"}`), when the cache exists, and drops the entry when the cache is gone. The runner reads that record from `home`, so a machine with a valid cache runs the security rules on any repository, with or without a profile. The digest of the rules comes from the first of these that has one:
+
+1. A rules pin in the reviewed repository's profile, under the adapter id (`review_tools.pins["semgrep-security"].rules`) or under the tool name (`semgrep`). The adapter id is read first. A pin under `semgrep` replaces the rules of every semgrep row, including the pattern row `semgrep-saga`; a pin under `semgrep-security` reaches the security row alone. A row id takes `rules` only, never a `version`.
+2. The machine record's digest for the pack, when the catalogue's rule is a placeholder.
+3. The catalogue's own digest, which no real cache matches.
+
+Each run writes `rule-sources.json` beside the other records: per adapter with a pack, the source used (`profile`, `machine` or `catalogue`) and the pack's expected digest. The digest is part of the base-scan cache key, so a refreshed cache never reuses an earlier scan. A refreshed cache that setup has not been re-run on no longer matches the recorded digest and is `rule-cache-mismatch`. A prepare that cannot use the cache prints a `warning:` line on stderr for the operator, naming the cache path and saying to run `/saga:setup`. The reviewer's packet carries only the degraded record.
 
 The saga row reads `plugins/saga/references/semgrep`. While that directory is missing or empty, the run records one `known-gap` per `correctness.pattern.*` row and does not invent a rule. When the directory is present, each result's `metadata.row` must be one of those rows.
 
