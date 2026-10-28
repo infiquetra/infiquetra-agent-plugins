@@ -17,7 +17,9 @@ judged-findings table with its fixed base outcome. An LLM finding cites ``judged
 the ``judged.*`` row from its consequence, trigger and evidence. The order a finding's outcome is
 computed in, each step named in ``severity_basis.modifiers`` when it changed something:
 
-1. the base outcome of the row;
+1. the base outcome of the row, which for a reproduced LLM finding depends on the consequence
+   picked: Jev's pick replaces the reviewer's only when it is in a lower group and Jev's
+   confidence is at least ``JEV_ACT_CONFIDENCE``, and the modifier ``jev-lowered`` says so;
 2. ``reproduced``: a row that blocks when reproduced, and was;
 3. ``excused``: a builder reason of the kind the row allows makes it a note;
 4. caps that lower ``blocks`` to ``fix-later``: ``degraded``, ``classifier-only``,
@@ -45,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import posixpath
 import sys
 from collections.abc import Mapping, Sequence
@@ -84,6 +87,10 @@ HARMS: tuple[str, ...] = (
 VISIBLE: tuple[str, ...] = ("fails-loudly-and-recoverably", "misleads-a-person")
 UPKEEP: tuple[str, ...] = ("costs-future-work", "style")
 CONSEQUENCES: tuple[str, ...] = HARMS + VISIBLE + UPKEEP
+
+#: Jev's confidence at which its lower consequence pick applies: the operator's act band for Jev
+#: answers (act at 0.8 and above, confirm from the 0.6 floor up to 0.8).
+JEV_ACT_CONFIDENCE = 0.8
 
 #: The harms that block even on a lens that only reports, when reproduced.
 ALWAYS_BLOCKING: tuple[str, ...] = ("data-lost-or-corrupted", "security-boundary-crossed")
@@ -435,20 +442,47 @@ def lower_consequence(llm: str, jev: str) -> str:
     return jev if consequence_group(jev) > consequence_group(llm) else llm
 
 
-def _applied_consequence(finding: Mapping[str, Any]) -> tuple[str | None, list[str]]:
-    """The consequence the formula uses, and any flags the pick raised."""
+def is_confidence(value: Any) -> bool:
+    """Whether *value* is a finite real number from 0 to 1 (a bool or a string is not)."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and 0 <= value <= 1
+    )
+
+
+def apply_jev_pick(llm: str, jev: str, confidence: float | None) -> tuple[str, bool]:
+    """The consequence the formula uses, and whether it is Jev's pick rather than the LLM's.
+
+    Jev's pick wins only when it is in a lower group than the LLM's and Jev's confidence is at
+    least ``JEV_ACT_CONFIDENCE``. Otherwise the LLM's pick stands: it holds a failing test, while
+    Jev reads a summary. A pick with no recorded confidence (a record from before the confidence
+    field) counts as below the line, so the LLM's pick stands and the author sees the
+    disagreement; a proven harm is never dropped silently. So does a confidence that is not a
+    finite number from 0 to 1 (see ``is_confidence``): a malformed value never lowers a harm.
+    """
+    lower = lower_consequence(llm, jev)
+    if lower != llm and is_confidence(confidence) and confidence >= JEV_ACT_CONFIDENCE:
+        return lower, True
+    return llm, False
+
+
+def _applied_consequence(finding: Mapping[str, Any]) -> tuple[str | None, list[str], list[str]]:
+    """The consequence the formula uses, with any flags and modifiers the pick raised."""
     llm = finding.get("consequence")
     if llm is None:
-        return None, []
+        return None, [], []
     source_kind = (finding.get("source") or {}).get("kind")
     if source_kind != "llm" or finding.get("evidence") != "reproduced":
-        return llm, []
+        return llm, [], []
     jev = finding.get("consequence_jev")
     if jev is None:
-        return llm, []  # Jev could not answer: the finding is marked "unconfirmed"
-    if jev != llm:
-        return lower_consequence(llm, jev), ["consequence-disagreement"]
-    return llm, []
+        return llm, [], []  # Jev could not answer: the finding is marked "unconfirmed"
+    if jev == llm:
+        return llm, [], []
+    applied, from_jev = apply_jev_pick(llm, jev, finding.get("consequence_jev_confidence"))
+    return applied, ["consequence-disagreement"], ["jev-lowered"] if from_jev else []
 
 
 def judged_row(consequence: str, trigger: str | None, evidence: str) -> str:
@@ -501,7 +535,7 @@ def outcome(
     ranges = changed_ranges(changed_lines)
     cited = (finding.get("rule") or {}).get("row")
     evidence = finding.get("evidence")
-    consequence, flags = _applied_consequence(finding)
+    consequence, flags, pick_modifiers = _applied_consequence(finding)
     if cited == JUDGED:
         if consequence is None:
             raise FormulaError("consequence: a judged finding needs one")
@@ -512,7 +546,7 @@ def outcome(
     if row is None:
         raise FormulaError(f"rule.row: {cited!r} is not a row the formula knows")
 
-    modifiers: list[str] = []
+    modifiers: list[str] = list(pick_modifiers)
     severity = row.outcome
     if row.blocks_when_reproduced and evidence == "reproduced":
         severity = "blocks"

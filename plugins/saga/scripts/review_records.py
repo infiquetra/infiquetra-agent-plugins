@@ -415,6 +415,16 @@ def _check_finding(
                 check.add(f"{prefix}{name}", "required on an LLM finding")
         else:
             check.choice(value, allowed, f"{prefix}{name}")
+    confidence = finding.get("consequence_jev_confidence")
+    if confidence is not None:
+        # Optional: a record from before the field has none, and the formula then treats Jev's
+        # pick as below ``JEV_ACT_CONFIDENCE``.
+        if check.number(confidence, f"{prefix}consequence_jev_confidence") and not (
+            0 <= confidence <= 1
+        ):
+            check.add(f"{prefix}consequence_jev_confidence", "must be between 0 and 1")
+        if finding.get("consequence_jev") is None:
+            check.add(f"{prefix}consequence_jev_confidence", "must be null without a Jev pick")
     if "evidence" in finding:
         check.choice(finding["evidence"], formula.EVIDENCE, f"{prefix}evidence")
     if "proof" in finding:

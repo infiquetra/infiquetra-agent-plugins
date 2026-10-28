@@ -47,6 +47,7 @@ no known kind.
 | `language` | `python`, `typescript`, `dart`, `rust`, `swift`, `markdown`, `shell`, `github-workflow`, `cdk`, `cloudformation`, `none` |
 | `statement` | one sentence, on one line |
 | `consequence`, `consequence_jev` | the closed list below, or `null`; required on an LLM finding |
+| `consequence_jev_confidence` | Jev's confidence in `consequence_jev`, a number from 0 to 1, or `null`. Filled by code, never the reviewer. Optional: a record without it counts as below 0.8 |
 | `trigger` | `normal-use`, `retry`, `interrupt`, `concurrency`, `old-data`, `other-caller`, `misuse-only`, or `null` |
 | `evidence` | `reproduced`, `traced`, `suspected`, `tool-result` |
 | `proof` | `test` or `output` when reproduced; `steps` (file-and-line) when traced; `raw_output`, a SHA-256 of the tool's raw output, for a tool result |
@@ -155,16 +156,22 @@ These rows also serve the security and correctness tables' "an LLM finding it re
 | `judged.visible` | visible | fix later |
 | `judged.upkeep` | upkeep | note |
 
-For a reproduced LLM finding the LLM and Jev each pick the consequence. The lower group applies
-(harm, then visible, then upkeep), and a disagreement is flagged for merge confirmation; between
-two harms the LLM's pick stands, still flagged. When Jev cannot answer, the LLM's pick applies and
-the finding is marked `unconfirmed`.
+For a reproduced LLM finding the LLM and Jev each pick the consequence. A disagreement is flagged
+`consequence-disagreement` for merge confirmation. Jev's pick replaces the LLM's only when it is in
+a lower group (harm, then visible, then upkeep) and Jev's confidence is at least 0.8
+(`JEV_ACT_CONFIDENCE`, the act band for Jev answers); the modifier `jev-lowered` then names it.
+Below 0.8, down to the 0.6 floor, the LLM's pick stands and the finding keeps the flag, so a
+reproduced harm can still block and the author sees the disagreement. Between two picks in the same
+group the LLM's pick stands, still flagged. A Jev pick with no recorded confidence (a record from
+before `consequence_jev_confidence`) counts as below 0.8. When Jev cannot answer, the LLM's pick
+applies and the finding is marked `unconfirmed`. The LLM holds a failing test; Jev reads a summary.
 
 ### The order of computation
 
 `severity_basis.modifiers` names each step that changed the outcome:
 
-1. The row's base outcome.
+1. The row's base outcome. For a reproduced LLM finding, `jev-lowered` is named here when Jev's
+   lower pick (confidence at least 0.8) chose the row.
 2. `reproduced`: a row that blocks when reproduced, and was.
 3. `excused`: a builder reason of the row's kind, naming this finding's identity, makes it a note.
 4. Caps that lower blocks to fix later: `degraded`; `classifier-only` (Jev never blocks);

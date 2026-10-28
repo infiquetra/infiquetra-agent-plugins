@@ -11,6 +11,12 @@ The catalog requires `python>=3.12`.
 
 ## [Unreleased]
 
+### Fixed
+
+- `answer_confidence` no longer reads a boolean confidence as 1.0; it gives `None`, so a
+  malformed answer cannot clear a confidence floor. The `consequence` verb's comment now states
+  saga's rule: Jev's lower pick applies only at confidence 0.8 or more.
+
 ### Added
 
 - The sweep's language list gains `cdk`, and the workflow id is `github-workflow`

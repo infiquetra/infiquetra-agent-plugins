@@ -395,8 +395,10 @@ VERBS: dict[str, Verb] = {
     ),
     # The consequence a reproduced review finding shows, from saga's closed list (saga's
     # review_formula.CONSEQUENCES, in the same order: harm, then visible, then upkeep). Saga's
-    # targeted-reviewer check asks it beside the reviewer's own pick, and the lower one applies;
-    # an answer below the floor counts as no answer, and the finding is marked "unconfirmed".
+    # targeted-reviewer check asks it beside the reviewer's own pick. Jev's pick replaces the
+    # reviewer's only when it is in a lower group and its confidence is at least 0.8; from the
+    # floor up to 0.8 the reviewer's pick stands, flagged. An answer below the floor counts as no
+    # answer, and the finding is marked "unconfirmed".
     "consequence": Verb(
         name="consequence",
         summary="Which consequence a reproduced review finding shows",

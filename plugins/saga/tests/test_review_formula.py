@@ -144,6 +144,7 @@ def llm_finding(
     trigger: str = "normal-use",
     evidence: str = "reproduced",
     jev: str | None = "same",
+    jev_confidence: float | None = 0.9,
     ident: str = "rf:2",
     **over: Any,
 ) -> dict[str, Any]:
@@ -158,6 +159,7 @@ def llm_finding(
         "evidence": evidence,
         "degraded": False,
         "consequence_jev": consequence if jev == "same" else jev,
+        "consequence_jev_confidence": None if jev is None else jev_confidence,
         "unconfirmed": jev is None and evidence == "reproduced",
     }
     finding.update(over)
@@ -320,6 +322,76 @@ def test_llm_and_jev_disagree_the_lower_applies_and_is_flagged() -> None:
     )
     assert result["severity"] == "fix-later"
     assert result["severity_basis"]["row"] == "judged.visible"
+    assert result["severity_basis"]["modifiers"] == ["jev-lowered"]
+    assert "consequence-disagreement" in result["flags"]
+
+
+HARM = "money-or-resources-wrongly-moved"
+VISIBLE_PICK = "misleads-a-person"
+
+
+def test_a_confident_enough_jev_pick_below_the_line_leaves_the_harm_blocking() -> None:
+    result = F.outcome(llm_finding(consequence=HARM, jev=VISIBLE_PICK, jev_confidence=0.78))
+    assert result["severity"] == "blocks"
+    assert result["severity_basis"]["row"] == "judged.harm-reproduced"
+    assert "jev-lowered" not in result["severity_basis"]["modifiers"]
+    assert "consequence-disagreement" in result["flags"]
+
+
+def test_jev_at_085_lowers_the_harm_to_visible_and_is_flagged() -> None:
+    result = F.outcome(llm_finding(consequence=HARM, jev=VISIBLE_PICK, jev_confidence=0.85))
+    assert result["severity_basis"]["row"] == "judged.visible"
+    assert result["severity"] == "fix-later"
+    assert "consequence-disagreement" in result["flags"]
+
+
+def test_jev_at_exactly_the_line_applies() -> None:
+    assert F.JEV_ACT_CONFIDENCE == 0.8
+    result = F.outcome(llm_finding(consequence=HARM, jev=VISIBLE_PICK, jev_confidence=0.8))
+    assert result["severity_basis"]["row"] == "judged.visible"
+    assert result["severity_basis"]["modifiers"] == ["jev-lowered"]
+
+
+def test_a_jev_pick_with_no_recorded_confidence_does_not_lower_the_harm() -> None:
+    finding = llm_finding(consequence=HARM, jev=VISIBLE_PICK)
+    del finding["consequence_jev_confidence"]  # a record from before the field
+    result = F.outcome(finding)
+    assert result["severity"] == "blocks"
+    assert result["severity_basis"]["row"] == "judged.harm-reproduced"
+    assert "consequence-disagreement" in result["flags"]
+    assert F.outcome(llm_finding(consequence=HARM, jev=VISIBLE_PICK, jev_confidence=None)) == result
+
+
+@pytest.mark.parametrize("confidence", [0.6, 0.78, 0.8, 1.0])
+def test_a_same_group_disagreement_keeps_the_llm_pick_at_any_confidence(confidence: float) -> None:
+    result = F.outcome(
+        llm_finding(
+            consequence="data-lost-or-corrupted", jev="break-in-supported-use",
+            jev_confidence=confidence,
+        )
+    )
+    assert result["severity_basis"]["row"] == "judged.harm-reproduced"
+    assert result["severity_basis"]["modifiers"] == ["always-blocks"]
+    assert result["flags"] == ["consequence-disagreement"]
+
+
+@pytest.mark.parametrize("confidence", [0.6, 0.79, 0.8, 0.95])
+def test_apply_jev_pick_returns_the_pick_and_whether_it_came_from_jev(confidence: float) -> None:
+    applied, from_jev = F.apply_jev_pick(HARM, VISIBLE_PICK, confidence)
+    assert (applied, from_jev) == (
+        (VISIBLE_PICK, True) if confidence >= 0.8 else (HARM, False)
+    )
+    assert F.apply_jev_pick(VISIBLE_PICK, HARM, confidence) == (VISIBLE_PICK, False)
+
+
+@pytest.mark.parametrize(
+    "confidence", [float("nan"), float("inf"), 1.5, 80, -0.1, True, "0.9", [0.9]],
+    ids=["nan", "inf", "1.5", "80", "-0.1", "true", "string", "list"],
+)
+def test_a_malformed_confidence_never_lowers_a_harm(confidence: Any) -> None:
+    assert F.apply_jev_pick(HARM, VISIBLE_PICK, confidence) == (HARM, False)
+    result = F.outcome(llm_finding(consequence=HARM, jev=VISIBLE_PICK, jev_confidence=confidence))
+    assert result["severity"] == "blocks"
     assert "consequence-disagreement" in result["flags"]
 
 

@@ -3,8 +3,8 @@
 # source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/typesafe_client.py
-# source-sha256: 3be5eab2a2ccc014357755566cb088108463ea1514d757cd5e3df571ce92b259
-# output-sha256: 3be5eab2a2ccc014357755566cb088108463ea1514d757cd5e3df571ce92b259
+# source-sha256: 1956ebcf5f3e3171173a20baa5aa0764f95bdeeafe10ce0237440e8d253c674a
+# output-sha256: 1956ebcf5f3e3171173a20baa5aa0764f95bdeeafe10ce0237440e8d253c674a
 # --- end generated bundle stamp ---
 """Client for the TypeSafe System One evaluation endpoint (plan U2 + U3).
 
@@ -982,6 +982,8 @@ def answer_confidence(answer: Mapping[str, Any]) -> float | None:
             return abs(float(probability) - 0.5) * 2.0
         return None
     value = answer.get("confidence")
+    if isinstance(value, bool):
+        return None  # a bool is not a confidence, and float(True) would read as 1.0
     return float(value) if isinstance(value, (int, float)) else None
 
 

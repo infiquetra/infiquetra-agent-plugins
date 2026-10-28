@@ -260,13 +260,15 @@ def test_render_marks_disputes_disagreements_and_unconfirmed_with_both_picks(
     assert len(document["disputes"]) == 1
     assert document["consequence_disagreements"] == [
         {"id": document["consequence_disagreements"][0]["id"],
-         "llm": "wrong-result-reported-as-success", "jev": "misleads-a-person"}
+         "llm": "wrong-result-reported-as-success", "jev": "misleads-a-person",
+         "jev_confidence": 0.9, "jev_applied": True}
     ]
     assert len(document["unconfirmed"]) == 1
     markdown = review_state.render_markdown(document)
     assert "dispute" in markdown and "disagreement" in markdown and "unconfirmed" in markdown
     assert "wrong-result-reported-as-success" in markdown
     assert "misleads-a-person" in markdown
+    assert "jev-confidence=0.9 applied=jev" in markdown
 
 
 def test_render_round_deltas_name_new_and_cleared_blocking(

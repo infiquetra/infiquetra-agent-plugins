@@ -478,7 +478,9 @@ def test_a_severity_anywhere_in_the_answer_is_refused() -> None:
     assert "severity" in fields(A.check(labelled, ITEMS))
 
 
-@pytest.mark.parametrize("key", ["consequence_jev", "unconfirmed", "id", "source"])
+@pytest.mark.parametrize(
+    "key", ["consequence_jev", "consequence_jev_confidence", "unconfirmed", "id", "source"]
+)
 def test_fields_code_fills_are_refused(key: str) -> None:
     filled = answer()
     finding(filled, "double-charge")[key] = None
@@ -728,6 +730,40 @@ def test_the_lower_consequence_applies() -> None:
     assert "consequence-disagreement" in graded["flags"]
 
 
+def test_a_mid_confidence_jev_pick_leaves_the_reviewer_s_harm_and_stays_flagged() -> None:
+    harm = answer()
+    finding(harm, "double-charge")["consequence"] = "wrong-result-reported-as-success"
+    out = A.to_records(harm, ITEMS, RESULT, ask=jev_says("misleads-a-person", confidence=0.7))
+    record = out["findings"][0]
+    assert (record["consequence_jev"], record["consequence_jev_confidence"]) == (
+        "misleads-a-person", 0.7
+    )
+    assert R.validate(record) == []
+    pick = out["consequence_picks"][0]
+    assert (pick["applied"], pick["flag"]) == (
+        "wrong-result-reported-as-success", "consequence-disagreement"
+    )
+    graded = computed(out, 0)
+    assert graded["severity_basis"]["row"] == "judged.harm-reproduced"
+    assert graded["severity"] == "blocks"
+    assert "consequence-disagreement" in graded["flags"]
+
+
+@pytest.mark.parametrize("confidence", [0.6, 0.7, 0.79, 0.8, 0.85, 0.99])
+@pytest.mark.parametrize("llm", ["wrong-result-reported-as-success", "data-lost-or-corrupted"])
+@pytest.mark.parametrize("jev", ["misleads-a-person", "break-in-supported-use", "style"])
+def test_the_consequence_pick_entry_and_the_formula_agree(
+    confidence: float, llm: str, jev: str
+) -> None:
+    harm = answer()
+    finding(harm, "double-charge")["consequence"] = llm
+    out = A.to_records(harm, ITEMS, RESULT, ask=jev_says(jev, confidence=confidence))
+    applied = out["consequence_picks"][0]["applied"]
+    row = computed(out, 0)["severity_basis"]["row"]
+    trigger = out["findings"][0]["trigger"]
+    assert row == F.judged_row(applied, trigger, "reproduced")
+
+
 def test_within_one_group_the_reviewer_s_pick_stands_flagged() -> None:
     harm = answer()
     finding(harm, "double-charge")["consequence"] = "data-lost-or-corrupted"
@@ -753,6 +789,25 @@ def test_when_jev_cannot_answer_the_reviewer_s_pick_is_unconfirmed(jev: Any) -> 
     assert out["consequence_picks"][0]["applied"] == "money-or-resources-wrongly-moved"
     assert out["consequence_picks"][0]["flag"] == "unconfirmed"
     assert R.validate(charge) == []
+    assert "unconfirmed" in computed(out, 0)["flags"]
+
+
+@pytest.mark.parametrize(
+    "confidence", [float("nan"), 1.2, 80, -0.1, True, "0.9", float("inf")],
+    ids=["nan", "1.2", "80", "-0.1", "true", "string", "inf"],
+)
+def test_a_malformed_jev_confidence_is_unconfirmed_not_a_failure(confidence: Any) -> None:
+    out = A.to_records(ANSWER, ITEMS, RESULT, ask=jev_says("misleads-a-person", confidence))
+    charge = out["findings"][0]
+    assert (charge["consequence_jev"], charge["consequence_jev_confidence"]) == (None, None)
+    assert charge["unconfirmed"] is True
+    assert R.validate(charge) == []
+    pick = out["consequence_picks"][0]
+    assert (pick["applied"], pick["flag"], pick["jev_status"]) == (
+        "money-or-resources-wrongly-moved", "unconfirmed", A.PICK_BELOW_FLOOR
+    )
+    assert pick["jev_confidence"] is None
+    json.dumps(pick, allow_nan=False)
     assert "unconfirmed" in computed(out, 0)["flags"]
 
 

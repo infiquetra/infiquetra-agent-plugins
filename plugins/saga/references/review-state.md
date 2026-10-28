@@ -44,7 +44,7 @@ run, or an answer that cannot be recorded), 3 an unknown record version.
 | `merge_blocking` | the enforced blocking identities the merge question covers |
 | `merge` | `{waiting, reason}`: whether the merge waits, and why |
 | `disputes` | identities disputing a builder declaration |
-| `consequence_disagreements` | `{id, llm, jev}` where the two consequence picks disagreed |
+| `consequence_disagreements` | `{id, llm, jev, jev_confidence, jev_applied}` where the two consequence picks disagreed; `jev_applied` is true when Jev's lower pick (confidence 0.8 or more) was the one used, false when the reviewer's pick stood |
 | `unconfirmed` | identities whose Jev pick never arrived |
 | `where_to_look` | each item's location, state (`answered` with the finding identity, `cleared` with the reason) and fired questions |
 | `tools` | `ran` tool versions, C3's `missing_notice` text verbatim, `missing_tools` |

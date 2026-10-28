@@ -466,7 +466,14 @@ def build_document(
 
     document["disputes"] = [f.get("id") for f in findings if _row(f).endswith(".dispute")]
     document["consequence_disagreements"] = [
-        {"id": f.get("id"), "llm": f.get("consequence"), "jev": f.get("consequence_jev")}
+        {
+            "id": f.get("id"),
+            "llm": f.get("consequence"),
+            "jev": f.get("consequence_jev"),
+            "jev_confidence": f.get("consequence_jev_confidence"),
+            "jev_applied": "jev-lowered"
+            in ((f.get("severity_basis") or {}).get("modifiers") or []),
+        }
         for f in findings
         if "consequence-disagreement" in (f.get("flags") or [])
     ]
@@ -559,8 +566,12 @@ def render_markdown(document: Mapping[str, Any]) -> str:
             marks.append("[disputed builder declaration]")
         if finding.get("id") in disagreements:
             entry = disagreements[finding.get("id")]
+            confidence = entry.get("jev_confidence")
+            detail = "" if confidence is None else f" jev-confidence={confidence}"
+            detail += " applied=jev" if entry.get("jev_applied") else " applied=llm"
             marks.append(
-                f"[consequence disagreement: llm={entry.get('llm')} jev={entry.get('jev')}]"
+                f"[consequence disagreement: llm={entry.get('llm')} jev={entry.get('jev')}"
+                f"{detail}]"
             )
         if finding.get("id") in unconfirmed:
             marks.append("[unconfirmed consequence]")

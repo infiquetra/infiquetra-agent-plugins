@@ -293,6 +293,26 @@ def test_a_reproduced_llm_finding_without_jev_must_be_unconfirmed() -> None:
     assert problems_for({**finding, "unconfirmed": True}) == []
 
 
+def test_jev_confidence_is_optional_and_a_number_from_zero_to_one() -> None:
+    finding = copy.deepcopy(VALID["finding"])
+    assert "consequence_jev_confidence" not in finding  # a record from before the field
+    assert problems_for(finding) == []
+    for good in (0, 0.6, 0.8, 1, None):
+        assert problems_for({**finding, "consequence_jev_confidence": good}) == []
+    for bad in (-0.1, 1.01, "0.9", True):
+        assert names({**finding, "consequence_jev_confidence": bad}) == [
+            "consequence_jev_confidence"
+        ], bad
+
+
+def test_jev_confidence_without_a_jev_pick_is_refused() -> None:
+    finding = {
+        **VALID["finding"], "consequence_jev": None, "unconfirmed": True,
+        "consequence_jev_confidence": 0.9,
+    }
+    assert names(finding) == ["consequence_jev_confidence"]
+
+
 def test_unconfirmed_with_a_jev_answer_is_refused() -> None:
     assert names({**VALID["finding"], "unconfirmed": True}) == ["unconfirmed"]
 

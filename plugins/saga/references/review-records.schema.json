@@ -232,6 +232,15 @@
             null
           ]
         },
+        "consequence_jev_confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Jev's confidence in consequence_jev. Optional: a record from before this field has none, and Jev's pick then counts as below the 0.8 line at which it can lower the consequence."
+        },
         "trigger": {
           "enum": [
             "normal-use",

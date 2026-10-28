@@ -19,9 +19,10 @@ This module does three things with an answer, and the review command (card C10a)
   finding's statement, dispute text, location and proof, and each cleared item's reason) with a
   marker naming their kind (``[scrubbed:github-token]``), so neither the record nor Jev's state
   carries what a test printed. For each reproduced finding it asks Jev (TypeSafe's classifier,
-  through fleet-core's ``consequence`` verb) for the consequence. The lower of the two picks
-  applies, which C1's formula computes; when Jev cannot answer, the finding is marked
-  ``unconfirmed`` and the reviewer's pick applies.
+  through fleet-core's ``consequence`` verb) for the consequence. Jev's pick applies only when it
+  is in a lower group and Jev is at least 0.8 confident, which C1's formula computes; otherwise
+  the reviewer's pick stands, still flagged when the two differ. When Jev cannot answer, the
+  finding is marked ``unconfirmed`` and the reviewer's pick applies.
 * ``paths`` prints where saga's prompt and schema are, with their fingerprints, so the caller can
   hand them to agent-launcher without guessing where saga is installed.
 
@@ -94,8 +95,8 @@ COMPUTED_ANYWHERE = frozenset(
 )
 #: Keys the record fills from the launch and Jev, never the reviewer.
 FILLED_BY_CODE = frozenset(
-    {"id", "kind", "subject", "source", "rule", "degraded", "consequence_jev", "unconfirmed",
-     "merge_outcome"}
+    {"id", "kind", "subject", "source", "rule", "degraded", "consequence_jev",
+     "consequence_jev_confidence", "unconfirmed", "merge_outcome"}
 )
 
 #: A reproduction's test file must look like a test by its path.
@@ -712,6 +713,15 @@ def jev_pick(finding: Mapping[str, Any], ask: Asker | None = None) -> dict[str, 
     if value is None:
         return _pick(PICK_NO_ANSWER, "Jev gave no consequence", request=str(status), floor=floor)
     given = {"request": str(status), "value": value, "confidence": confidence, "floor": floor}
+    if confidence is not None and not formula.is_confidence(confidence):
+        # NaN, a percentage, a bool or a string is not a confidence: treated as no usable answer,
+        # and not recorded, so the record and the sidecar file stay valid.
+        shown = scrub_text(str(confidence))[0][:_VALUE_LIMIT]
+        return _pick(
+            PICK_BELOW_FLOOR,
+            f"Jev's confidence {shown!r} is not a number from 0 to 1",
+            **{**given, "confidence": None},
+        )
     if value not in formula.CONSEQUENCES:
         # The reason repeats Jev's answer, so it is scrubbed and cut like ``value``.
         shown = scrub_text(str(value))[0][:_VALUE_LIMIT]
@@ -796,6 +806,7 @@ def to_records(
             "introduced": finding["introduced"],
             "degraded": False,
             "consequence_jev": None,
+            "consequence_jev_confidence": None,
             "unconfirmed": False,
             "merge_outcome": None,
         }
@@ -814,10 +825,13 @@ def to_records(
             )
             jev = outcome["pick"]
             record["consequence_jev"] = jev
+            record["consequence_jev_confidence"] = None if jev is None else outcome["confidence"]
             record["unconfirmed"] = jev is None
             applied = (
                 finding["consequence"] if jev is None
-                else formula.lower_consequence(finding["consequence"], jev)
+                else formula.apply_jev_pick(
+                    finding["consequence"], jev, record["consequence_jev_confidence"]
+                )[0]
             )
             flag = (
                 "unconfirmed" if jev is None
