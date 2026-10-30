@@ -642,25 +642,6 @@ class StageMusePluginTests(MuseStagingCase):
         staged = sm.stage_muse_plugin(package, self.root / "staged" / "alpha")
         self.assertEqual((staged / "alias.md").read_text(encoding="utf-8"), "Readme.\n")
 
-    def test_a_staged_saga_still_reports_the_saga_version(self) -> None:
-        """A staged copy drops the root manifest, so a reader of it must have a fallback."""
-        staged = sm.stage_muse_plugin(ROOT / "plugins" / "saga", self.root / "staged" / "saga")
-        self.assertFalse((staged / "plugin.json").exists())
-        expected = json.loads((ROOT / "plugins/saga/plugin.json").read_text(encoding="utf-8"))
-        program = (
-            "import sys; sys.path.insert(0, sys.argv[1]); import review_command; "
-            "print(review_command._saga_version())"
-        )
-        completed = subprocess.run(
-            [sys.executable, "-I", "-c", program, str(staged / "scripts")],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stdout.strip(), expected["version"])
-
 
 class StageMuseMarketplaceTests(MuseStagingCase):
     def setUp(self) -> None:

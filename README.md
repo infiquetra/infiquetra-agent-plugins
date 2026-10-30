@@ -193,6 +193,18 @@ uploaded even after test failures and retained for 14 days; timings are observat
 not a savings estimate. Provisioning is bounded by five-minute installer steps;
 root, plugin, and CLI jobs have five-, twenty-, and ten-minute deadlines respectively.
 
+Four dependency-backed repository checks live in the provisioned plugin lane:
+[the two independent template audits](plugins/mission-control/tests/test_template_sync_audit.py),
+[documented command execution](plugins/mission-control/tests/test_readme_commands.py),
+and [the staged Saga version check](plugins/saga/tests/test_staged_saga_version.py).
+Their assertion bodies and original fixture/absence conditions are retained.
+The remaining root tests import with the standard library alone; plugin tests use
+real installed dependencies, including PyYAML. Template audits use the canonical
+checkout selected by `INFIQUETRA_SDLC_PATH` and keep their original per-case
+absence conditions. Integration requires the existing `Ported plugin tests` job
+as a required check alongside `Repository validation`; this prerequisite does not
+change workflow commands or branch protection.
+
 ## Development
 
 - Read [`AGENTS.md`](AGENTS.md) before changing the repository.

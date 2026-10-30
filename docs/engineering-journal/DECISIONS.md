@@ -1,5 +1,38 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-30
+
+### Keep dependency-backed repository assertions in the provisioned plugin lane
+
+**Decision.** Transfer four exact cases from the root suite to independently
+collected plugin files: the two Mission Control template-sync audits, its README
+fenced-command execution check, and the staged Saga version check. Remove the
+unrelated module-level template-sync import from the remaining 39 root audit
+cases. Runtime, vendored helpers, manifests, workflows and requirements stay
+unchanged. The root lane remains standard-library-only, while the plugin lane
+provides real PyYAML and the existing plugin dependencies.
+
+The transferred methods retain their assertion bodies, subprocess commands,
+fixtures and original absence conditions. The template cases have no broader
+module skip. README and staging tests share only existing support functions or
+fixtures through module aliases; they do not inherit root test classes and
+re-run their other cases. Separate ownership controls check importability without
+site packages and the exact four-case placement within the existing plugin glob.
+
+**Evidence and limits.** Focused qualification uses the real canonical SDLC
+snapshot through the existing environment override and exercises positive,
+injected-drift rejection and restoration assertions without editing maintained
+canonical inputs. This is a test-ownership prerequisite, not a runtime change or
+full-suite/hosted completion claim. Integration requires the existing provisioned
+`Ported plugin tests` check to be required alongside `Repository validation`,
+preserving strict enforcement; the coordinating maintainer owns that settings
+change and complete exact-source qualification.
+
+**Refs.** [Ownership controls](../../tests/test_dependency_test_ownership.py),
+[template audits](../../plugins/mission-control/tests/test_template_sync_audit.py),
+[README execution](../../plugins/mission-control/tests/test_readme_commands.py),
+[staged Saga](../../plugins/saga/tests/test_staged_saga_version.py).
+
 ## 2026-10-29
 
 ### Limit root runner observations to timings and result counts
