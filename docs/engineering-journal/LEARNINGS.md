@@ -1,5 +1,23 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-30
+
+### A per-rule wall-clock limit can make scanner output depend on load
+
+**Evidence.** Repeated Semgrep scans of the same trees produced different timeout
+errors under concurrent load. Disabling per-rule timeouts and bounding worker
+count produced identical normalized results in the measured runs. The adapter
+tests cover both Semgrep configurations and the whole-scan timeout path.
+
+**Mechanism.** A rule that exceeds a wall-clock limit can finish on an idle
+machine and be omitted on a busy one. Removing timing fields from the result
+does not restore the omitted work. An outer deadline is different: the runner
+discards interrupted output and reports a degraded scanner.
+
+**Generalizable rule.** When results must be comparable, avoid time-based
+cutoffs within individual units of work. Bound concurrency and fail visibly
+when the complete operation exceeds its deadline.
+
 ## 2026-10-27
 
 ### A pack the licence keeps out of the repository cannot have a shipped digest, so the digest belongs in the machine record

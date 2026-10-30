@@ -2,6 +2,22 @@
 
 ## 2026-10-30
 
+### Bound whole Semgrep scans instead of individual rules
+
+**Decision.** Disable Semgrep's per-rule timeout and timeout threshold for both
+Saga scanners, use four workers, and allow a whole-scan deadline of 600 seconds.
+The deadline retains a wide margin over the measured completed scans. On expiry,
+the runner discards partial output and marks the scanner degraded. This bounds
+resource use without accepting a load-dependent subset as a finished scan.
+
+**Limits.** Measurements establish stability for the observed scans, not a
+guarantee for all rules, repositories, or machines. Revisit the deadline and
+worker count when the workload or execution environment changes materially.
+
+**Refs.** [Semgrep adapter](../../plugins/saga/scripts/review_adapters_all_languages.py),
+[tool catalogue](../../plugins/saga/references/review-tools.yaml),
+[adapter tests](../../plugins/saga/tests/test_review_adapters_all_languages.py).
+
 ### Give static packaging and installed validation separate test owners
 
 **Decision.** Keep all 35 static Claude packaging cases in the dependency-free

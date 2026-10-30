@@ -50,7 +50,12 @@ def _document() -> dict[str, object]:
 
 
 def _semgrep_argv(context: ScanContext) -> list[str]:
-    argv = ["semgrep", "scan", "--metrics=off", "--disable-nosem", "--disable-version-check", "--json"]
+    # Per-rule wall-clock cutoffs make the files and findings depend on load.
+    # Bound parallelism; the adapter's outer timeout fails the whole scan.
+    argv = [
+        "semgrep", "scan", "--metrics=off", "--disable-nosem", "--disable-version-check",
+        "--json", "--timeout", "0", "--timeout-threshold", "0", "--jobs", "4",
+    ]
     for config in context.configs:
         argv.extend(["--config", str(config)])
     argv.append(str(context.root))
