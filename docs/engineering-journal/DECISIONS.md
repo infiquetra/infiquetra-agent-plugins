@@ -2,6 +2,47 @@
 
 ## 2026-10-30
 
+### Give static packaging and installed validation separate test owners
+
+**Decision.** Keep all 35 static Claude packaging cases in the dependency-free
+root gate. Move the single installed-validator case from `AgentsDeclarationTests`
+to `tests/installed_claude_validation.py`, whose filename is outside default root
+discovery. Each existing floor/pin/newest lane passes its expected build to that
+entrypoint. The live entrypoint imports the static module only as a module for
+pure catalogue/floor/version definitions; it does not load its static TestCases.
+The original static agents-path case stays in its original class.
+
+Every Claude manifest remains in the independent installed validator's subject,
+including non-mod packages. A missing CLI, malformed/failing version probe, wrong
+or below-floor build, empty catalogue, failed validation or missing success
+message fails the intended installed lane. The former optional/below-floor skip
+paths are replaced by mandatory failure for these promised matrix builds. The
+original version-readable and validation-success assertions are retained, with
+additional exact-build and exit-code checks. No replacement skip can admit a
+broken lane.
+
+**Preservation.** The 2.1.286/2.1.289/2.1.296 matrix and every shipped mod's real
+`claude plugin validate --strict` and `claude plugin test` commands remain.
+Plugin discovery, Python floor/importlib, provisioning, caches, constraints,
+action pins, deadlines, release/runtime/manifests and required contexts are
+unchanged. Only the matrix's packaging-test entrypoint and its ownership guard
+change; the workflow hash naturally changes the existing npm cache key.
+
+**Controls and limits.** Root stdlib controls exercise the actual live parser and
+TestProgram using in-memory command transport injection, covering missing/wrong
+CLI, version/output failures, empty/invalid subjects and timeout propagation.
+They verify one live case, every current manifest exactly once, and exclusion
+from ordinary root discovery without re-running the valid static suite inside a
+control. These are entrypoint/ownership controls, not genuine CLI compatibility
+proof. Root owns exact-source real validation for all three builds, full hosted
+and integration qualification. No timing/savings or whole-unit completion is
+inferred from this source split.
+
+**Refs.** [Static cases](../../tests/test_claude_plugin_packaging.py),
+[live entrypoint](../../tests/installed_claude_validation.py),
+[ownership controls](../../tests/test_claude_validation_ownership.py),
+[CI workflow](../../.github/workflows/ci.yml).
+
 ### Select disposable cache roots after the runner starts
 
 **Correction.** The hosted workflow parser rejected `runner.temp` in job-level
