@@ -1270,7 +1270,7 @@ def test_semgrep_disables_internal_timeouts_and_limits_workers(tmp_path: Path, t
     assert argv[argv.index("--timeout-threshold") + 1] == "0"
     assert argv[argv.index("--jobs") + 1] == "4"
     assert argv[argv.index("--config") + 1] == str(rules)
-    assert _adapter(tool_id).timeout_seconds == 600
+    assert _adapter(tool_id).timeout_seconds == 120
 
 
 def test_semgrep_whole_scan_timeout_discards_partial_findings(tmp_path: Path) -> None:

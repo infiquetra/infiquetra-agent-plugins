@@ -5,14 +5,22 @@
 ### Bound whole Semgrep scans instead of individual rules
 
 **Decision.** Disable Semgrep's per-rule timeout and timeout threshold for both
-Saga scanners, use four workers, and allow a whole-scan deadline of 600 seconds.
-The deadline retains a wide margin over the measured completed scans. On expiry,
+Saga scanners, use four workers, and retain the whole-scan deadline of 120 seconds.
+The deadline retains a margin over the measured completed scans. On expiry,
 the runner discards partial output and marks the scanner degraded. This bounds
 resource use without accepting a load-dependent subset as a finished scan.
 
+**Alternatives.** A longer per-rule timeout still makes rule completion depend on
+load. Reducing harness parallelism alone cannot remove that dependence. Treating
+timeout-only differences as equal would hide missing work. A 600-second whole-scan
+deadline was rejected because successful scans could consume the shared mutation
+deadline before mutation starts; the existing 120-second limit avoids widening
+that exposure without redesigning the mutation budget in this change.
+
 **Limits.** Measurements establish stability for the observed scans, not a
-guarantee for all rules, repositories, or machines. Revisit the deadline and
-worker count when the workload or execution environment changes materially.
+guarantee for all rules, repositories, or machines. Revisit the deadline if a
+measured scan exceeds 60 seconds or the mutation deadline becomes independent.
+Revisit the worker count when the workload or execution environment changes materially.
 
 **Refs.** [Semgrep adapter](../../plugins/saga/scripts/review_adapters_all_languages.py),
 [tool catalogue](../../plugins/saga/references/review-tools.yaml),
