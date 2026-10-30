@@ -2,6 +2,22 @@
 
 ## 2026-10-30
 
+### Select disposable cache roots after the runner starts
+
+**Correction.** The hosted workflow parser rejected `runner.temp` in job-level
+`env`; the initial draft ran no jobs. GitHub makes runner context available in
+steps, after routing. Local YAML/static validation did not establish that server
+context boundary.
+
+**Decision.** Set the same pip and npm cache roots through `GITHUB_ENV` in early
+runner steps using the quoted `RUNNER_TEMP` variable. Paths, keys, cache roles,
+mandatory installs, validation commands and deadlines remain unchanged. Keep the
+failed hosted receipt, validate both actual shell assignments, and require a new
+exact-head complete hosted graph before integration.
+
+**Refs.** [GitHub context availability](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability),
+[rejected draft run](https://github.com/infiquetra/infiquetra-agent-plugins/actions/runs/41008451578).
+
 ### Keep dependency-backed repository assertions in the provisioned plugin lane
 
 **Decision.** Transfer four exact cases from the root suite to independently

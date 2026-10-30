@@ -50,8 +50,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      # Only pip downloads/wheels; no venv, installed tools, config or credentials.
-      PIP_CACHE_DIR: ${{ runner.temp }}/plugin-pip-downloads
       PIP_DISABLE_PIP_VERSION_CHECK: '1'
     steps:
       - name: Check out repository
@@ -70,6 +68,12 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
+
+      # Runner paths are available after job routing, not in jobs.<job_id>.env.
+      # Only pip downloads/wheels; no venv, installed tools, config or credentials.
+      - name: Select Python download cache directory
+        run: |
+          printf 'PIP_CACHE_DIR=%s/plugin-pip-downloads\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Identify Python download cache platform
         id: pip-platform
@@ -128,10 +132,6 @@ jobs:
     name: Claude Code mods (${{ matrix.claude-code }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      # Only _cacache below is shared. npm logs, global installs, native linked
-      # binaries, home, credentials and configuration never enter the cache.
-      npm_config_cache: ${{ runner.temp }}/claude-npm-downloads
     # A separate job because the Claude Code CLI is a dependency, and the
     # `validate` job above stays the hermetic, standard-library-only baseline.
     #
@@ -154,6 +154,12 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
+
+      # Only _cacache below is shared. npm logs, global installs, native linked
+      # binaries, home, credentials and configuration never enter the cache.
+      - name: Select npm download cache directory
+        run: |
+          printf 'npm_config_cache=%s/claude-npm-downloads\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Identify qualified npm download cache platform
         id: npm-platform
