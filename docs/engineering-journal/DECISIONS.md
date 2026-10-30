@@ -1,5 +1,55 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-29
+
+### Bound CI provisioning and reuse downloads while preserving every validation lane
+
+**Decision.** Keep the dependency-free root gate, Python floor, all plugin suites
+with importlib isolation, and all three real Claude jobs. Constrain plugin test
+packages to the 73 versions observed in successful run `40693572474`, job
+`122834314372`, at source `aec9d9abc62c739797865ab2cef49403c286d373`.
+`requirements-plugin-tests.txt` still owns dependency intent and additions, including
+MCP's major-version bound and Semgrep 1.179.0. Updating the constraints requires a
+fresh resolution on the floor and actual suite proof; this is not a universal lock
+or wheel hash attestation. Remove pip's self-upgrade.
+
+Cache only pip downloads/wheels and npm's isolated `_cacache`, with exact input,
+interpreter/platform, and Node/npm/CLI policy keys. Installs and integrity checks
+remain mandatory. Restrict optional caches to known hosted PR/main contexts; the
+Claude cache is qualified for Linux x64 glibc with Node 22 and a numeric npm version.
+No installed environment, linked native binary, global bin, auth, home, or config
+enters a cache. There is no privileged release consumer in this workflow.
+
+**Evidence.** A separately staged Python 3.12.3 pip dry-run with `--ignore-installed`
+resolved all 73 constrained packages successfully. This proves resolution, not
+installation or runtime equivalence. The authentic npm wrapper tarballs for
+2.1.286, 2.1.289, and 2.1.296 passed registry SHA512 integrity checks. Their inspected
+`package.json` files name exact-version native optional dependencies, and their
+`install.cjs` files link/copy those npm-installed binaries rather than fetch an
+independent native archive. npm's normal integrity checks therefore cover the
+download payload cache; CLI version stdout is not treated as an archive attestation.
+Cold/warm native execution remains acceptance work, not an asserted result.
+
+**Bounds and diagnostics.** Accept preinstalled Universal Ctags only after an actual
+identity and JSON/field/parser probe. Otherwise use signed apt with one network
+retry, 15-second network and lock bounds, two 90-second privileged operation
+timeouts, and a 270-second outer bound. Failed installation or a failed final probe
+is fatal. Keep the original real-binary tests. Installer steps have five-minute
+deadlines and root/plugin/CLI jobs have five/twenty/ten-minute deadlines, above the
+observed successful job times of 60/363/40–58 seconds. Official actions are pinned
+within their existing majors. Add JUnit and bounded plugin duration output and a
+stdlib full-discovery root runner with module test-call timings; retain failure
+reports with unconditional artifact uploads. No selection, sharding, or static/live
+packaging deduplication is part of this change.
+
+**Revisit when.** Ordinary hosted cold/warm runs establish matching suite inventory,
+mandatory installation and real-tool behavior, cache scope, and failure artifacts.
+The source change alone is not measured savings or completion of every T06 gate.
+
+**Refs.** [CI workflow](../../.github/workflows/ci.yml),
+[controls](../../tests/test_ci_tooling.py),
+[validation guidance](../../README.md#validation).
+
 ## 2026-10-27
 
 ### The machine record's rule pack digest does not change may-block, and a profile pin under a row id still reports the lens only
