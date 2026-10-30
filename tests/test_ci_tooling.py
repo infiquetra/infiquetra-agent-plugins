@@ -393,7 +393,7 @@ class WorkflowPreservationControls(unittest.TestCase):
         self.assertNotIn("pip install", root)
         self.assertIn("pytest plugins/*/tests -q --import-mode=importlib", plugin)
         self.assertIn("['2.1.286', '2.1.289', '2.1.296']", vendor)
-        for command in ("npm install", 'claude --version || node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs"', 'grep -Fx', "claude plugin validate --strict", "claude plugin test", "for required in saga orchestrate", "python3 -m unittest tests.test_claude_plugin_packaging -v"):
+        for command in ("npm install", 'claude --version || node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs"', 'grep -Fx', "claude plugin validate --strict", "claude plugin test", "for required in saga orchestrate", "python3 tests/installed_claude_validation.py --expected-version"):
             self.assertIn(command, vendor)
         self.assertNotIn("continue-on-error", text)
         self.assertNotIn("cache-hit", text)

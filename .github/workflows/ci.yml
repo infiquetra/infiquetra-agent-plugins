@@ -223,7 +223,7 @@ jobs:
             esac
           done
 
-      # Run with the CLI on PATH, so the validator test in this module runs
-      # instead of skipping.
+      # Static assertions run once in the stdlib root gate. This explicit
+      # entrypoint requires the installed matrix build and validates every manifest.
       - name: Run the packaging tests against this build
-        run: python3 -m unittest tests.test_claude_plugin_packaging -v
+        run: python3 tests/installed_claude_validation.py --expected-version "${{ matrix.claude-code }}"

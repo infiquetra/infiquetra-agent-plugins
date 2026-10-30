@@ -52,8 +52,6 @@ Standard library only, matching the rest of this suite.
 from __future__ import annotations
 
 import json
-import subprocess
-import shutil
 import re
 import sys
 import unittest
@@ -733,14 +731,6 @@ class ClaudeCodeFloorTests(unittest.TestCase):
         self.assertIn(f"Claude Code {CLAUDE_CODE_FLOOR_VERSION}", decisions)
 
 
-def installed_claude_version(cli: str) -> tuple[int, int, int] | None:
-    completed = subprocess.run(
-        [cli, "--version"], capture_output=True, text=True, timeout=60, check=False
-    )
-    match = CLAUDE_VERSION.search(completed.stdout)
-    if match is None:
-        return None
-    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
 class InstalledVersionParsingTests(unittest.TestCase):
@@ -772,34 +762,6 @@ class AgentsDeclarationTests(unittest.TestCase):
                     self.assertTrue(entry.startswith("./com.infiquetra.claude/agents/"), entry)
                     self.assertTrue((package_root / entry[2:]).is_file(), entry)
 
-    def test_every_root_manifest_passes_the_cli_validator_when_the_cli_is_present(self) -> None:
-        cli = shutil.which("claude")
-        if cli is None:
-            self.skipTest("the claude CLI is not on PATH; the validator cannot be exercised here")
-        version = installed_claude_version(cli)
-        # An unreadable version is a failure, not a skip: continuous integration
-        # installs the CLI so this test runs, and a skip would pass silently.
-        self.assertIsNotNone(version, f"could not read a version from `{cli} --version`")
-        assert version is not None
-        below_floor = version < CLAUDE_CODE_FLOOR
-        mod_packages = set(ModuleDeclarationTests().module_packages())
-        for package_root in sorted(ROOT.glob("plugins/*")):
-            if not (package_root / ".claude-plugin" / "plugin.json").is_file():
-                continue
-            with self.subTest(package=package_root.name):
-                if below_floor and package_root.name in mod_packages:
-                    # Below the floor the validator does not know the mods' API,
-                    # and these packages promise nothing there beyond their
-                    # command hooks. Every other package is still validated.
-                    self.skipTest(
-                        f"claude {version} is below the mods floor {CLAUDE_CODE_FLOOR_VERSION}"
-                    )
-                completed = subprocess.run(
-                    [cli, "plugin", "validate", str(package_root)],
-                    capture_output=True, text=True, timeout=120, check=False,
-                )
-                self.assertIn("Validation passed", completed.stdout + completed.stderr,
-                              (completed.stdout + completed.stderr)[-600:])
 
 
 if __name__ == "__main__":
