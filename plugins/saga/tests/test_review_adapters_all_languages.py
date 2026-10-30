@@ -1258,3 +1258,41 @@ def test_jscpd_runs_differing_only_in_detection_date_record_identical_bytes(
         outputs.append(output)
     assert _read(outputs[0], "findings.json")
     _packets_match(*outputs)
+
+
+@pytest.mark.parametrize("tool_id", ["semgrep-security", "semgrep-saga"])
+def test_semgrep_disables_internal_timeouts_and_limits_workers(tmp_path: Path, tool_id: str) -> None:
+    rules = tmp_path / "rules.yaml"
+    rules.write_text("rules: []\n", encoding="utf-8")
+    context = T.ScanContext(tmp_path, tmp_path, tmp_path, (rules,))
+    argv = _adapter(tool_id).invoke(context)
+    assert argv[argv.index("--timeout") + 1] == "0"
+    assert argv[argv.index("--timeout-threshold") + 1] == "0"
+    assert argv[argv.index("--jobs") + 1] == "4"
+    assert argv[argv.index("--config") + 1] == str(rules)
+    assert _adapter(tool_id).timeout_seconds == 120
+
+
+def test_semgrep_whole_scan_timeout_discards_partial_findings(tmp_path: Path) -> None:
+    repo, base, head = _changed_app(tmp_path)
+    home = tmp_path / "home"
+    profile = _semgrep_profile(home, tmp_path)
+    payload = (FIXTURES / "semgrep-security.json").read_text(encoding="utf-8")
+    timeouts: list[int] = []
+
+    def interrupted(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool) -> Any:
+        assert not shell
+        if "--version" in argv:
+            return T.ProcessResult(0, "1.0.0\n")
+        timeouts.append(timeout)
+        raise subprocess.TimeoutExpired(argv, timeout, output=payload)
+
+    output = tmp_path / "out"
+    code = _run(repo, base, head, profile, output, home, [_adapter("semgrep-security")],
+                interrupted)
+    assert code == 0  # The prepare completes with an explicitly degraded scanner.
+    assert timeouts == [_adapter("semgrep-security").timeout_seconds]
+    assert _read(output, "findings.json") == []
+    assert any(row["tool"] == "semgrep" and row["reason"] == "timeout"
+               for row in _read(output, "degraded.json"))
+    assert not any(row["reason"] == "semgrep-error" for row in _read(output, "degraded.json"))
