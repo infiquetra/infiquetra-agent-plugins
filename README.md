@@ -184,7 +184,10 @@ policy. Unknown Claude cache platforms run without that optional cache. No insta
 environment, global binary, credentials, or configuration is cached.
 
 The root job uses the standard-library-only `scripts/ci/run_root_tests.py` wrapper
-for full unittest discovery and per-module test-call timings. The plugin job emits
+for full unittest discovery and per-module test-call timings.
+The wrapper delegates execution and exit policy to unittest and records IDs only
+when tests start, preserving their order and duplicates without prewalking suites.
+The plugin job emits
 JUnit and the 25 slowest durations. Root timing and plugin JUnit artifacts are
 uploaded even after test failures and retained for 14 days; timings are observations,
 not a savings estimate. Provisioning is bounded by five-minute installer steps;

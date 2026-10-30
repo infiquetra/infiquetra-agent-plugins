@@ -22,10 +22,12 @@ class TimedResult(unittest.TextTestResult):
         super().__init__(*args, **kwargs)
         self.modules: dict[str, dict[str, float | int]] = {}
         self.subtests = 0
+        self.test_ids: list[str] = []
 
     def startTest(self, test):
         super().startTest(test)
         self.started = time.perf_counter()
+        self.test_ids.append(test.id())
 
     def stopTest(self, test):
         elapsed = time.perf_counter() - self.started
@@ -39,14 +41,6 @@ class TimedResult(unittest.TextTestResult):
         super().addSubTest(test, subtest, err)
 
 
-def test_ids(suite):
-    for test in suite:
-        if isinstance(test, unittest.TestSuite):
-            yield from test_ids(test)
-        else:
-            yield test.id()
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-s", "--start-directory", default="tests")
@@ -56,22 +50,31 @@ def main() -> int:
     # Running a script normally puts its directory first; `-m unittest` puts
     # the working directory there. Retain the latter's import environment.
     sys.path[0] = str(Path.cwd())
-    # Match `python3 -m unittest discover -s tests -v`, including its sys.path
-    # handling and load_tests hooks; do not flatten or rebuild the suite.
-    suite = unittest.defaultTestLoader.discover(args.start_directory, pattern=args.pattern)
-    inventory = list(test_ids(suite))
-    result = unittest.TextTestRunner(
-        verbosity=2, resultclass=TimedResult,
-        warnings=None if sys.warnoptions else "default",
-    ).run(suite)
-    # Match unittest's CLI, including its no-tests exit (also used when a
-    # class/module fixture fails before any test can start).
-    if result.testsRun == 0 and not result.skipped:
-        exit_code = 5
-    else:
-        exit_code = 0 if result.wasSuccessful() else 1
+    result = None
+
+    class TimedRunner(unittest.TextTestRunner):
+        resultclass = TimedResult
+
+        def run(self, test):
+            nonlocal result
+            result = super().run(test)
+            return result
+
+    # Let the original stdlib program own discovery, warnings, fixtures and
+    # exit policy. Never inspect/iterate the suite before it executes: even
+    # one extra traversal can consume a lazy load_tests suite and hide red.
+    try:
+        unittest.main(
+            module=None, testRunner=TimedRunner,
+            argv=["unittest", "discover", "-s", args.start_directory, "-p", args.pattern, "-v"],
+        )
+    except SystemExit as exited:
+        if result is None:
+            raise
+        exit_code = exited.code
     report = {
-        "test_ids": inventory,
+        "test_ids": result.test_ids,
+        "test_id_scope": "startTest callbacks in execution order, including duplicates; not a planned inventory",
         "tests_run": result.testsRun,
         "failures": len(result.failures),
         "errors": len(result.errors),

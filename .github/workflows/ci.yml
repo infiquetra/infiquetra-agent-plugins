@@ -96,10 +96,13 @@ jobs:
       # may need its own test-time package; every one of them editing this
       # workflow is twelve conflicts on one line. A requirements file is
       # appended to instead.
+      # Hard deadlines kill the owned installer process group. TERM followed
+      # by a delayed kill can leave children alive if the leader exits first.
+      # Processes that deliberately detach are outside this group contract.
       - name: Install plugin test dependencies
         timeout-minutes: 5
         run: |
-          timeout --signal=TERM --kill-after=5s 240s python -m pip install --timeout 20 --retries 2 -r requirements-plugin-tests.txt -c constraints-plugin-tests.txt
+          timeout --signal=KILL 240s python -m pip install --timeout 20 --retries 2 -r requirements-plugin-tests.txt -c constraints-plugin-tests.txt
 
       # The sweep's real-ctags tests run the actual Universal Ctags binary, because the mocked
       # unit tests cannot see a flag the real tool rejects. With CI set those tests fail rather
@@ -107,7 +110,7 @@ jobs:
       - name: Install Universal Ctags
         timeout-minutes: 5
         run: |
-          timeout --signal=TERM --kill-after=5s 270s python3 scripts/ci/provision_ctags.py
+          timeout --signal=KILL 270s python3 scripts/ci/provision_ctags.py
 
       - name: Run ported plugin tests
         run: python -m pytest plugins/*/tests -q --import-mode=importlib --junitxml="${{ runner.temp }}/ci-reports/plugin-junit.xml" --durations=25 --durations-min=0.1
@@ -186,7 +189,7 @@ jobs:
       - name: Install Claude Code ${{ matrix.claude-code }}
         timeout-minutes: 5
         run: |
-          timeout --signal=TERM --kill-after=5s 270s bash -euo pipefail -c '
+          timeout --signal=KILL 270s bash -euo pipefail -c '
             npm install --prefer-offline --fetch-retries=1 --fetch-timeout=20000 -g "@anthropic-ai/claude-code@${{ matrix.claude-code }}"
             claude --version || node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs"
             claude --version | grep -Fx "${{ matrix.claude-code }} (Claude Code)"

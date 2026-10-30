@@ -23,7 +23,10 @@ WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 class RootRunnerControls(unittest.TestCase):
-    def compare(self, source: str, extras: dict[str, str] | None = None) -> tuple[dict, str]:
+    def compare(
+        self, source: str, extras: dict[str, str] | None = None,
+        *, expected_ids: list[str] | None = None,
+    ) -> tuple[dict, str]:
         """Compare the actual new command with the original unittest command."""
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -39,15 +42,26 @@ class RootRunnerControls(unittest.TestCase):
             env = {**os.environ, "GITHUB_STEP_SUMMARY": str(summary)}
             old = subprocess.run(
                 [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
-                cwd=directory, env=env, text=True, capture_output=True, timeout=15,
+                cwd=directory, env={**env, "EXECUTION_LOG": str(directory / "old.jsonl")},
+                text=True, capture_output=True, timeout=15,
             )
             new = subprocess.run(
                 [sys.executable, str(RUNNER), "--report", str(report)],
-                cwd=directory, env=env, text=True, capture_output=True, timeout=15,
+                cwd=directory, env={**env, "EXECUTION_LOG": str(directory / "new.jsonl")},
+                text=True, capture_output=True, timeout=15,
             )
+            if expected_ids is not None:
+                executed = []
+                for name in ("old.jsonl", "new.jsonl"):
+                    path = directory / name
+                    executed.append([json.loads(line) for line in path.read_text().splitlines()] if path.exists() else [])
+                self.assertEqual(executed[0], expected_ids, old.stderr)
+                self.assertEqual(executed[1], executed[0], (old.stderr, new.stderr))
             self.assertEqual(new.returncode, old.returncode, (old.stderr, new.stderr))
             self.assertTrue(report.is_file(), new.stderr)
             data = json.loads(report.read_text(encoding="utf-8"))
+            if expected_ids is not None:
+                self.assertEqual(data["test_ids"], executed[1])
             # Ignore timings alone: names, failures, tracebacks, skip and
             # subtest output must still match the original command exactly.
             normalize = lambda text: re.sub(r"Ran (\d+) tests? in [\d.]+s", r"Ran \1 tests", text)
@@ -117,6 +131,7 @@ class RootRunnerControls(unittest.TestCase):
                 )
                 self.assertEqual(data["errors"], 1)
                 self.assertEqual(data["tests_run"], 0)
+                self.assertEqual(data["test_ids"], [])
 
     def test_empty_discovery_keeps_unittest_no_tests_exit(self):
         data, _ = self.compare("# No test cases in this control.\n")
@@ -128,6 +143,108 @@ class RootRunnerControls(unittest.TestCase):
             "class Control(unittest.TestCase):\n def test_a(self): pass\n"
         )
         self.assertEqual(data["skipped"], 1)
+
+    # The independent execution log comes from the test itself, not from
+    # traversing a suite or trusting the candidate's reported inventory.
+    RECORDED_CASE = '''import json, os, unittest
+class Control(unittest.TestCase):
+ def setUp(self):
+  with open(os.environ['EXECUTION_LOG'], 'a', encoding='utf-8') as log:
+   log.write(json.dumps(self.id()) + '\\n')
+ def test_pass(self): pass
+ def test_failure(self): self.fail('example hidden failure must execute')
+'''
+
+    def test_stateful_nested_suite_cannot_hide_a_failure(self):
+        data, _ = self.compare(self.RECORDED_CASE + '''
+class Stateful(unittest.TestSuite):
+ _cleanup = False
+ def __init__(self):
+  super().__init__()
+  self.iterations = 0
+ def __iter__(self):
+  self.iterations += 1
+  return iter([Control('test_failure')] if self.iterations <= 2 else [])
+def load_tests(loader, tests, pattern):
+ return unittest.TestSuite([Control('test_pass'), Stateful()])
+''', expected_ids=["test_control.Control.test_pass", "test_control.Control.test_failure"])
+        self.assertEqual((data["tests_run"], data["failures"], data["exit_code"]), (2, 1, 1))
+
+    def test_lazy_nested_suite_cannot_hide_a_failure(self):
+        data, _ = self.compare(self.RECORDED_CASE + '''
+class Lazy(unittest.TestSuite):
+ _cleanup = False
+ def __init__(self):
+  super().__init__()
+  self.pending = iter([Control('test_failure')])
+ def __iter__(self): return self.pending
+def load_tests(loader, tests, pattern):
+ return unittest.TestSuite([Control('test_pass'), Lazy()])
+''', expected_ids=["test_control.Control.test_pass", "test_control.Control.test_failure"])
+        self.assertEqual((data["tests_run"], data["failures"], data["exit_code"]), (2, 1, 1))
+
+    def test_callable_duck_suite_needs_no_id_method(self):
+        data, _ = self.compare(self.RECORDED_CASE + '''
+class DuckSuite:
+ def __iter__(self): return iter([Control('test_pass')])
+ def __call__(self, result): return Control('test_pass')(result)
+ def countTestCases(self): return 1
+def load_tests(loader, tests, pattern): return DuckSuite()
+''', expected_ids=["test_control.Control.test_pass"])
+        self.assertEqual((data["tests_run"], data["exit_code"]), (1, 0))
+
+    def test_base_suite_returned_by_load_tests_is_preserved(self):
+        data, _ = self.compare(self.RECORDED_CASE + '''
+def load_tests(loader, tests, pattern):
+ return unittest.BaseTestSuite([Control('test_pass')])
+''', expected_ids=["test_control.Control.test_pass"])
+        self.assertEqual((data["tests_run"], data["exit_code"]), (1, 0))
+
+    def test_load_tests_error_blocks_and_writes_report(self):
+        data, stderr = self.compare(
+            "def load_tests(loader, tests, pattern): raise RuntimeError('example load_tests diagnostic')\n"
+        )
+        self.assertEqual((data["errors"], data["exit_code"]), (1, 1))
+        self.assertIn("example load_tests diagnostic", stderr)
+
+    def test_execution_order_and_duplicate_ids_are_retained(self):
+        data, _ = self.compare(self.RECORDED_CASE + '''
+def load_tests(loader, tests, pattern):
+ return unittest.TestSuite([Control('test_pass'), Control('test_failure'), Control('test_pass')])
+''', expected_ids=["test_control.Control.test_pass", "test_control.Control.test_failure", "test_control.Control.test_pass"])
+        self.assertEqual((data["tests_run"], data["failures"], data["exit_code"]), (3, 1, 1))
+
+    def test_module_skip_reports_no_started_test_ids(self):
+        data, _ = self.compare(
+            "import unittest\ndef setUpModule(): raise unittest.SkipTest('example module skip')\n"
+            "class Control(unittest.TestCase):\n def test_a(self): pass\n"
+        )
+        self.assertEqual((data["tests_run"], data["skipped"], data["exit_code"]), (0, 1, 0))
+        self.assertEqual(data["test_ids"], [])
+
+    def test_teardown_and_cleanup_failures_still_report_started_tests(self):
+        for fixture in (
+            "def tearDownModule(): raise RuntimeError('module teardown diagnostic')\n",
+            "",
+        ):
+            with self.subTest(fixture=fixture):
+                data, _ = self.compare(
+                    "import unittest\n" + fixture +
+                    "class Control(unittest.TestCase):\n"
+                    " @classmethod\n def tearDownClass(cls): raise RuntimeError('class teardown diagnostic')\n"
+                    " def test_a(self): self.addCleanup(self.fail, 'cleanup diagnostic')\n"
+                )
+                self.assertFalse(data["successful"])
+                self.assertEqual(data["tests_run"], 1)
+                self.assertEqual(data["test_ids"], ["test_control.Control.test_a"])
+
+    def test_default_warning_policy_matches_unittest(self):
+        data, stderr = self.compare(
+            "import unittest, warnings\nclass Control(unittest.TestCase):\n"
+            " def test_a(self): warnings.warn('example warning', DeprecationWarning)\n"
+        )
+        self.assertEqual(data["tests_run"], 1)
+        self.assertIn("DeprecationWarning: example warning", stderr)
 
 
 class CtagsProvisioningControls(unittest.TestCase):
@@ -166,7 +283,7 @@ class CtagsProvisioningControls(unittest.TestCase):
             self.assertEqual(provision_ctags.main(), 0)
         self.assertEqual(run.call_count, 2)
         for call in run.call_args_list:
-            self.assertEqual(call.args[0][:6], ["sudo", "-n", "timeout", "--signal=TERM", "--kill-after=5s", "90s"])
+            self.assertEqual(call.args[0][:5], ["sudo", "-n", "timeout", "--signal=KILL", "90s"])
             for option in ("Acquire::Retries=1", "Acquire::http::Timeout=15", "Acquire::https::Timeout=15", "DPkg::Lock::Timeout=15", "Acquire::AllowInsecureRepositories=false", "APT::Get::AllowUnauthenticated=false"):
                 self.assertIn(option, call.args[0])
             self.assertEqual(call.kwargs, {"check": True, "timeout": 100})
@@ -184,6 +301,45 @@ class CtagsProvisioningControls(unittest.TestCase):
         with mock.patch.object(provision_ctags, "probe", return_value=False), mock.patch.object(provision_ctags.subprocess, "run") as run:
             self.assertEqual(provision_ctags.main(), 1)
             self.assertEqual(run.call_count, 2)
+
+    INVALID_JSON_RECORDS = (
+        "[]\n", "null\n", "false\n", "1\n", '"example"\n',
+        '{"_type":"tag","name":"ci_probe","line":1}\n[]\n',
+        '[]\n{"_type":"tag","name":"ci_probe","line":1}\n',
+    )
+
+    def test_nonobject_and_mixed_json_fail_probe(self):
+        for output in self.INVALID_JSON_RECORDS:
+            with self.subTest(output=output):
+                results = [subprocess.CompletedProcess([], 0, "Universal Ctags 5.9.0\n"),
+                           subprocess.CompletedProcess([], 0, output)]
+                with mock.patch.object(provision_ctags.subprocess, "run", side_effect=results):
+                    self.assertFalse(provision_ctags.probe())
+
+    def test_nonobject_output_enters_real_probe_fallback_path(self):
+        for output in self.INVALID_JSON_RECORDS:
+            with self.subTest(output=output):
+                version = subprocess.CompletedProcess([], 0, "Universal Ctags 5.9.0\n")
+                invalid = subprocess.CompletedProcess([], 0, output)
+                valid = subprocess.CompletedProcess([], 0, '{"_type":"tag","name":"ci_probe","line":1}\n')
+                results = [version, invalid, None, None, version, valid, valid, valid]
+                with mock.patch.object(provision_ctags.subprocess, "run", side_effect=results) as run:
+                    self.assertEqual(provision_ctags.main(), 0)
+                apt_calls = [call for call in run.call_args_list if call.args[0][0] == "sudo"]
+                self.assertEqual(len(apt_calls), 2)
+                self.assertIn("--error-on=any", apt_calls[0].args[0])
+                self.assertEqual(apt_calls[1].args[0][-3:], ["install", "-y", "universal-ctags"])
+                self.assertEqual(run.call_count, 8)
+
+    def test_postinstall_nonobject_output_is_fatal(self):
+        for output in self.INVALID_JSON_RECORDS:
+            with self.subTest(output=output):
+                version = subprocess.CompletedProcess([], 0, "Universal Ctags 5.9.0\n")
+                invalid = subprocess.CompletedProcess([], 0, output)
+                results = [version, invalid, None, None, version, invalid]
+                with mock.patch.object(provision_ctags.subprocess, "run", side_effect=results) as run:
+                    self.assertEqual(provision_ctags.main(), 1)
+                self.assertEqual(run.call_count, 6)
 
 
 class WorkflowPreservationControls(unittest.TestCase):

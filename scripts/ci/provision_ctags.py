@@ -3,6 +3,9 @@
 The caller also applies a 270s outer timeout and a five minute step deadline.
 Each apt operation is capped at 90s, with one acquisition retry, 15s network
 timeouts and a 15s lock wait. Failures remain fatal; there is no fallback binary.
+The hard deadline kills the owned apt process group, including a TERM-resistant
+child even when its parent exits first. Deliberately detached processes are
+outside this contract; actual privileged-host qualification is separate.
 """
 
 from __future__ import annotations
@@ -42,6 +45,8 @@ def probe() -> bool:
                     check=True, capture_output=True, text=True, timeout=5,
                 ).stdout
                 tags = [json.loads(line) for line in output.splitlines() if line.strip()]
+                if any(not isinstance(tag, dict) for tag in tags):
+                    raise ValueError(f"ctags {language} JSON records must be objects")
                 if not any(tag.get("_type") == "tag" and tag.get("name") == "ci_probe"
                            and tag.get("line") == 1 for tag in tags):
                     raise ValueError(f"ctags {language} JSON/line probe failed")
@@ -67,7 +72,7 @@ def main() -> int:
             # timeout runs under sudo too, so it can terminate apt and its
             # privileged descendants. Python's timeout is a second bound.
             subprocess.run(
-                ["sudo", "-n", "timeout", "--signal=TERM", "--kill-after=5s", "90s",
+                ["sudo", "-n", "timeout", "--signal=KILL", "90s",
                  "apt-get", *options, *operation], check=True, timeout=100,
             )
     except (OSError, subprocess.SubprocessError) as error:

@@ -2,6 +2,67 @@
 
 ## 2026-10-29
 
+### Enforce installer deadlines with a hard kill of the owned process group
+
+**Correction.** GNU `timeout --signal=TERM --kill-after=5s` can return as soon as
+the leader exits on TERM, before the delayed kill runs. A TERM-ignoring child can
+then survive. The first installer bounds did not establish descendant termination
+at the deadline, even with timeout running under sudo.
+
+**Decision.** Use `timeout --signal=KILL` for the CI-only pip, Ctags and Claude
+installer groups, including both privileged apt operations. Retain the 240/270s
+outer budgets, apt's 90s hard deadline and Python's 100s bound, all network/retry/
+lock/signature controls, and fatal nonzero timeout status. This qualifies the
+owned process-group deadline; it does not promise cleanup of a process that
+deliberately detaches into another session. Ephemeral CI installer groups may be
+terminated immediately at the budget. All installation and validation commands
+remain mandatory.
+
+**Evidence and limits.** Finite unprivileged controls read the actual timeout
+arguments from all three workflow wrappers and both constructed apt commands.
+Only durations are scaled. Each Python child acknowledges its group and TERM
+handler, has a two-second lifetime and a mandatory late marker, and runs within
+a four-second outer watchdog. All five old boundaries leave the child running
+and produce the marker; the hard cutoff terminates the started child with fatal
+status and no late marker. Only the control's own group is signalled. Real apt,
+native CLI/cache and exact-source hosted qualification remain Root-owned work.
+The earlier observational unittest and Ctags JSON-shape fixes remain in place;
+explicit BaseTestSuite and `load_tests` error controls also pass.
+
+**Refs.** [Timeout controls](../../tests/test_ci_timeouts.py),
+[CI workflow](../../.github/workflows/ci.yml),
+[apt boundary](../../scripts/ci/provision_ctags.py).
+
+### Observe root test execution without traversing the discovered suite
+
+**Correction.** The first timing wrapper walked the discovered suite to collect
+IDs before running it. A stateful or lazy nested suite returned by `load_tests`
+can be consumed by that extra walk: the original unittest command fails, but the
+wrapper can execute only a passing case and report success. A callable duck-typed
+suite also need not expose an `id()` method. Planned inventory was therefore both
+unsafe to collect in production and insufficient evidence of execution.
+
+**Decision.** Delegate discovery, warnings, runner construction and exit policy to
+stdlib `unittest.TestProgram`. Record test IDs only from actual `startTest`
+callbacks, preserving order and duplicates. Fixture errors or module skips before
+a test starts do not produce a started-test ID. Keep the original suites intact;
+do not inspect, flatten or rebuild them before execution. Regression controls run
+the actual wrapper against the original unittest command with independent test
+execution logs for stateful, lazy, duck-typed and duplicate-ID suites.
+
+The Ctags JSON probe also validates every decoded record is an object before
+reading fields. Scalar, list and mixed output fails the probe, enters the existing
+bounded signed-apt fallback, and remains fatal if still invalid after installation.
+These paths are controlled without running apt or substituting a tool binary.
+
+**Evidence and limits.** All 27 focused tooling controls pass after the repair;
+the prior runner and provisioner fail the new regressions. Full root/plugin suites,
+real Ctags and CLI/cache/hosted qualification remain separate acceptance work.
+
+**Refs.** [Runner](../../scripts/ci/run_root_tests.py),
+[provisioner](../../scripts/ci/provision_ctags.py),
+[controls](../../tests/test_ci_tooling.py).
+
 ### Bound CI provisioning and reuse downloads while preserving every validation lane
 
 **Decision.** Keep the dependency-free root gate, Python floor, all plugin suites
