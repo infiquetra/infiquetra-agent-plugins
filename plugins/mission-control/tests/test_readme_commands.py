@@ -71,4 +71,3 @@ class ProvisionedReadmeTests(unittest.TestCase):
                 )
                 ran += 1
             self.assertGreater(ran, 0, "every documented command was skipped rather than run")
-

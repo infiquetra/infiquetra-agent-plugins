@@ -36,4 +36,3 @@ class ProvisionedStageMusePluginTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.strip(), expected["version"])
-

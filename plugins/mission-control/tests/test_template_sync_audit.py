@@ -52,4 +52,3 @@ class TemplateSyncAuditTests(unittest.TestCase):
             real_path.read_text(encoding="utf-8"),
             "the drift marker leaked into the tracked reference file",
         )
-
