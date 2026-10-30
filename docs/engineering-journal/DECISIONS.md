@@ -2,6 +2,22 @@
 
 ## 2026-10-30
 
+### Select disposable cache roots after the runner starts
+
+**Correction.** The hosted workflow parser rejected `runner.temp` in job-level
+`env`; the initial draft ran no jobs. GitHub makes runner context available in
+steps, after routing. Local YAML/static validation did not establish that server
+context boundary.
+
+**Decision.** Set the same pip and npm cache roots through `GITHUB_ENV` in early
+runner steps using the quoted `RUNNER_TEMP` variable. Paths, keys, cache roles,
+mandatory installs, validation commands and deadlines remain unchanged. Keep the
+failed hosted receipt, validate both actual shell assignments, and require a new
+exact-head complete hosted graph before integration.
+
+**Refs.** [GitHub context availability](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability),
+[rejected draft run](https://github.com/infiquetra/infiquetra-agent-plugins/actions/runs/41008451578).
+
 ### Keep dependency-backed repository assertions in the provisioned plugin lane
 
 **Decision.** Transfer four exact cases from the root suite to independently
@@ -32,6 +48,143 @@ change and complete exact-source qualification.
 [template audits](../../plugins/mission-control/tests/test_template_sync_audit.py),
 [README execution](../../plugins/mission-control/tests/test_readme_commands.py),
 [staged Saga](../../plugins/saga/tests/test_staged_saga_version.py).
+
+## 2026-10-29
+
+### Limit root runner observations to timings and result counts
+
+**Correction.** Recording IDs from `startTest` still invokes test-owned `id()`
+before unittest resolves the selected method. An override can change that method
+and hide a required failure. A valid callable leaf may also have no `id()`.
+The earlier move from prewalking suites to callback-based IDs was insufficient.
+
+**Decision.** Remove test-ID collection and both identity fields from the report.
+Do not substitute another test-owned attribute or callback to synthesize an
+identity. Retain timing, module test counts, result counts and subtest observations;
+stdlib unittest continues to own discovery, execution, warnings and exit policy.
+Inventory comparisons belong in separate qualification evidence.
+
+**Evidence and limits.** Actual-entrypoint controls compare the original command
+with the wrapper for an ID override that switches a failing method to a passing
+one, and for an ID-less callable leaf. Independent fixture logs verify execution;
+the repaired wrapper preserves the failure and accepts the leaf. No full suite,
+installer or hosted qualification is claimed by these bounded controls.
+
+**Refs.** [Runner](../../scripts/ci/run_root_tests.py),
+[controls](../../tests/test_ci_tooling.py).
+
+### Enforce installer deadlines with a hard kill of the owned process group
+
+**Correction.** GNU `timeout --signal=TERM --kill-after=5s` can return as soon as
+the leader exits on TERM, before the delayed kill runs. A TERM-ignoring child can
+then survive. The first installer bounds did not establish descendant termination
+at the deadline, even with timeout running under sudo.
+
+**Decision.** Use `timeout --signal=KILL` for the CI-only pip, Ctags and Claude
+installer groups, including both privileged apt operations. Retain the 240/270s
+outer budgets, apt's 90s hard deadline and Python's 100s bound, all network/retry/
+lock/signature controls, and fatal nonzero timeout status. This qualifies the
+owned process-group deadline; it does not promise cleanup of a process that
+deliberately detaches into another session. Ephemeral CI installer groups may be
+terminated immediately at the budget. All installation and validation commands
+remain mandatory.
+
+**Evidence and limits.** Finite unprivileged controls read the actual timeout
+arguments from all three workflow wrappers and both constructed apt commands.
+Only durations are scaled. Each Python child acknowledges its group and TERM
+handler, has a two-second lifetime and a mandatory late marker, and runs within
+a four-second outer watchdog. All five old boundaries leave the child running
+and produce the marker; the hard cutoff terminates the started child with fatal
+status and no late marker. Only the control's own group is signalled. Real apt,
+native CLI/cache and exact-source hosted qualification remain Root-owned work.
+The earlier observational unittest and Ctags JSON-shape fixes remain in place;
+explicit BaseTestSuite and `load_tests` error controls also pass.
+
+**Refs.** [Timeout controls](../../tests/test_ci_timeouts.py),
+[CI workflow](../../.github/workflows/ci.yml),
+[apt boundary](../../scripts/ci/provision_ctags.py).
+
+### Observe root test execution without traversing the discovered suite
+
+**Superseded observation scope.** The callback-based ID collection below was
+removed by [the timing/count-only correction](#limit-root-runner-observations-to-timings-and-result-counts).
+The stdlib delegation and Ctags JSON-shape repairs remain in place.
+
+**Correction.** The first timing wrapper walked the discovered suite to collect
+IDs before running it. A stateful or lazy nested suite returned by `load_tests`
+can be consumed by that extra walk: the original unittest command fails, but the
+wrapper can execute only a passing case and report success. A callable duck-typed
+suite also need not expose an `id()` method. Planned inventory was therefore both
+unsafe to collect in production and insufficient evidence of execution.
+
+**Decision.** Delegate discovery, warnings, runner construction and exit policy to
+stdlib `unittest.TestProgram`. Record test IDs only from actual `startTest`
+callbacks, preserving order and duplicates. Fixture errors or module skips before
+a test starts do not produce a started-test ID. Keep the original suites intact;
+do not inspect, flatten or rebuild them before execution. Regression controls run
+the actual wrapper against the original unittest command with independent test
+execution logs for stateful, lazy, duck-typed and duplicate-ID suites.
+
+The Ctags JSON probe also validates every decoded record is an object before
+reading fields. Scalar, list and mixed output fails the probe, enters the existing
+bounded signed-apt fallback, and remains fatal if still invalid after installation.
+These paths are controlled without running apt or substituting a tool binary.
+
+**Evidence and limits.** All 27 focused tooling controls pass after the repair;
+the prior runner and provisioner fail the new regressions. Full root/plugin suites,
+real Ctags and CLI/cache/hosted qualification remain separate acceptance work.
+
+**Refs.** [Runner](../../scripts/ci/run_root_tests.py),
+[provisioner](../../scripts/ci/provision_ctags.py),
+[controls](../../tests/test_ci_tooling.py).
+
+### Bound CI provisioning and reuse downloads while preserving every validation lane
+
+**Decision.** Keep the dependency-free root gate, Python floor, all plugin suites
+with importlib isolation, and all three real Claude jobs. Constrain plugin test
+packages to the 73 versions observed in successful run `40693572474`, job
+`122834314372`, at source `aec9d9abc62c739797865ab2cef49403c286d373`.
+`requirements-plugin-tests.txt` still owns dependency intent and additions, including
+MCP's major-version bound and Semgrep 1.179.0. Updating the constraints requires a
+fresh resolution on the floor and actual suite proof; this is not a universal lock
+or wheel hash attestation. Remove pip's self-upgrade.
+
+Cache only pip downloads/wheels and npm's isolated `_cacache`, with exact input,
+interpreter/platform, and Node/npm/CLI policy keys. Installs and integrity checks
+remain mandatory. Restrict optional caches to known hosted PR/main contexts; the
+Claude cache is qualified for Linux x64 glibc with Node 22 and a numeric npm version.
+No installed environment, linked native binary, global bin, auth, home, or config
+enters a cache. There is no privileged release consumer in this workflow.
+
+**Evidence.** A separately staged Python 3.12.3 pip dry-run with `--ignore-installed`
+resolved all 73 constrained packages successfully. This proves resolution, not
+installation or runtime equivalence. The authentic npm wrapper tarballs for
+2.1.286, 2.1.289, and 2.1.296 passed registry SHA512 integrity checks. Their inspected
+`package.json` files name exact-version native optional dependencies, and their
+`install.cjs` files link/copy those npm-installed binaries rather than fetch an
+independent native archive. npm's normal integrity checks therefore cover the
+download payload cache; CLI version stdout is not treated as an archive attestation.
+Cold/warm native execution remains acceptance work, not an asserted result.
+
+**Bounds and diagnostics.** Accept preinstalled Universal Ctags only after an actual
+identity and JSON/field/parser probe. Otherwise use signed apt with one network
+retry, 15-second network and lock bounds, two 90-second privileged operation
+timeouts, and a 270-second outer bound. Failed installation or a failed final probe
+is fatal. Keep the original real-binary tests. Installer steps have five-minute
+deadlines and root/plugin/CLI jobs have five/twenty/ten-minute deadlines, above the
+observed successful job times of 60/363/40–58 seconds. Official actions are pinned
+within their existing majors. Add JUnit and bounded plugin duration output and a
+stdlib full-discovery root runner with module test-call timings; retain failure
+reports with unconditional artifact uploads. No selection, sharding, or static/live
+packaging deduplication is part of this change.
+
+**Revisit when.** Ordinary hosted cold/warm runs establish matching suite inventory,
+mandatory installation and real-tool behavior, cache scope, and failure artifacts.
+The source change alone is not measured savings or completion of every T06 gate.
+
+**Refs.** [CI workflow](../../.github/workflows/ci.yml),
+[controls](../../tests/test_ci_tooling.py),
+[validation guidance](../../README.md#validation).
 
 ## 2026-10-27
 

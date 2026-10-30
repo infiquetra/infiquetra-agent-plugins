@@ -161,8 +161,11 @@ frontmatter, and that no TypeScript or JavaScript module source (nor the
 `tsconfig.json` Claude Code writes at a package root) sits outside a Claude
 adapter. It installs nothing and makes no network call, so this baseline
 cannot be broken by a package index outage. A second continuous integration job
-pins the catalog's declared floor, `python>=3.12`, installs `requests`,
-`urllib3`, and `pytest`, and runs the ported plugin tests. The pin is the floor
+pins the catalog's declared floor, `python>=3.12`, installs
+[`requirements-plugin-tests.txt`](requirements-plugin-tests.txt) under the observed
+[`constraints-plugin-tests.txt`](constraints-plugin-tests.txt) resolution, and runs
+all ported plugin tests with importlib isolation. Requirements remain the owner of
+dependency intent and additions; constraints select the tested versions. The pin is the floor
 itself rather than the newest interpreter, because a floor that is never
 exercised is not a floor. The floor is a single value with a single owner,
 [`tests/test_python_floor.py`](tests/test_python_floor.py), and every place the
@@ -173,6 +176,22 @@ recorded floor build (2.1.286) and at the pinned build (2.1.289) and, for every
 package whose Claude adapter names a hooks module, runs
 `claude plugin validate --strict` and `claude plugin test`. Neither command
 needs a login.
+
+CI caches only pip downloads/wheels and the versioned Claude npm download cache;
+every install, postinstall check, and live validation still runs. Cache keys include
+exact requirement/constraint inputs or CLI version and interpreter/platform/tool
+policy. Unknown Claude cache platforms run without that optional cache. No installed
+environment, global binary, credentials, or configuration is cached.
+
+The root job uses the standard-library-only `scripts/ci/run_root_tests.py` wrapper
+for full unittest discovery and per-module test-call timings.
+The wrapper delegates execution and exit policy to unittest and reports timings
+and result counts without collecting test identities or prewalking suites.
+The plugin job emits
+JUnit and the 25 slowest durations. Root timing and plugin JUnit artifacts are
+uploaded even after test failures and retained for 14 days; timings are observations,
+not a savings estimate. Provisioning is bounded by five-minute installer steps;
+root, plugin, and CLI jobs have five-, twenty-, and ten-minute deadlines respectively.
 
 Four dependency-backed repository checks live in the provisioned plugin lane:
 [the two independent template audits](plugins/mission-control/tests/test_template_sync_audit.py),
