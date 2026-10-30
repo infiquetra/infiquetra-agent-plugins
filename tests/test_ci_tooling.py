@@ -60,8 +60,8 @@ class RootRunnerControls(unittest.TestCase):
             self.assertEqual(new.returncode, old.returncode, (old.stderr, new.stderr))
             self.assertTrue(report.is_file(), new.stderr)
             data = json.loads(report.read_text(encoding="utf-8"))
-            if expected_ids is not None:
-                self.assertEqual(data["test_ids"], executed[1])
+            self.assertNotIn("test_ids", data)
+            self.assertNotIn("test_id_scope", data)
             # Ignore timings alone: names, failures, tracebacks, skip and
             # subtest output must still match the original command exactly.
             normalize = lambda text: re.sub(r"Ran (\d+) tests? in [\d.]+s", r"Ran \1 tests", text)
@@ -83,7 +83,7 @@ class RootRunnerControls(unittest.TestCase):
              "import unittest\nclass Nested(unittest.TestCase):\n def test_b(self): pass\n"},
         )
         self.assertEqual(data["tests_run"], 3)
-        self.assertEqual(len(data["test_ids"]), 3)
+        self.assertEqual(sum(row["tests"] for row in data["modules"].values()), 3)
         self.assertEqual(set(data["modules"]), {"test_control", "nested.test_nested"})
         self.assertTrue(all(row["seconds"] >= 0 for row in data["modules"].values()))
 
@@ -131,7 +131,7 @@ class RootRunnerControls(unittest.TestCase):
                 )
                 self.assertEqual(data["errors"], 1)
                 self.assertEqual(data["tests_run"], 0)
-                self.assertEqual(data["test_ids"], [])
+                self.assertEqual(data["modules"], {})
 
     def test_empty_discovery_keeps_unittest_no_tests_exit(self):
         data, _ = self.compare("# No test cases in this control.\n")
@@ -220,7 +220,7 @@ def load_tests(loader, tests, pattern):
             "class Control(unittest.TestCase):\n def test_a(self): pass\n"
         )
         self.assertEqual((data["tests_run"], data["skipped"], data["exit_code"]), (0, 1, 0))
-        self.assertEqual(data["test_ids"], [])
+        self.assertEqual(data["modules"], {})
 
     def test_teardown_and_cleanup_failures_still_report_started_tests(self):
         for fixture in (
@@ -236,7 +236,7 @@ def load_tests(loader, tests, pattern):
                 )
                 self.assertFalse(data["successful"])
                 self.assertEqual(data["tests_run"], 1)
-                self.assertEqual(data["test_ids"], ["test_control.Control.test_a"])
+                self.assertEqual(sum(row["tests"] for row in data["modules"].values()), 1)
 
     def test_default_warning_policy_matches_unittest(self):
         data, stderr = self.compare(
@@ -245,6 +245,45 @@ def load_tests(loader, tests, pattern):
         )
         self.assertEqual(data["tests_run"], 1)
         self.assertIn("DeprecationWarning: example warning", stderr)
+
+    def test_side_effectful_id_cannot_change_the_failing_method(self):
+        data, stderr = self.compare('''import json, os, unittest
+def record(event):
+ with open(os.environ['EXECUTION_LOG'], 'a', encoding='utf-8') as log:
+  log.write(json.dumps(event) + '\\n')
+class Control(unittest.TestCase):
+ def id(self):
+  record('id called')
+  self._testMethodName = 'test_success'
+  return super().id()
+ def test_failure(self):
+  record('failure executed')
+  self.fail('required failure')
+ def test_success(self): record('success executed')
+def load_tests(loader, tests, pattern):
+ return unittest.TestSuite([Control('test_failure')])
+''', expected_ids=["failure executed"])
+        self.assertEqual((data["tests_run"], data["failures"], data["exit_code"]), (1, 1, 1))
+        self.assertIn("required failure", stderr)
+
+    def test_idless_callable_leaf_passes_like_unittest(self):
+        data, _ = self.compare('''import json, os, unittest
+class Leaf:
+ def __str__(self): return 'example callable leaf'
+ def shortDescription(self): return None
+ def __call__(self, result):
+  result.startTest(self)
+  try:
+   with open(os.environ['EXECUTION_LOG'], 'a', encoding='utf-8') as log:
+    log.write(json.dumps('leaf executed') + '\\n')
+   result.addSuccess(self)
+  finally:
+   result.stopTest(self)
+def load_tests(loader, tests, pattern):
+ return unittest.BaseTestSuite([Leaf()])
+''', expected_ids=["leaf executed"])
+        self.assertEqual((data["tests_run"], data["failures"], data["errors"], data["exit_code"]), (1, 0, 0, 0))
+        self.assertEqual(data["modules"]["test_control"]["tests"], 1)
 
 
 class CtagsProvisioningControls(unittest.TestCase):

@@ -22,12 +22,10 @@ class TimedResult(unittest.TextTestResult):
         super().__init__(*args, **kwargs)
         self.modules: dict[str, dict[str, float | int]] = {}
         self.subtests = 0
-        self.test_ids: list[str] = []
 
     def startTest(self, test):
         super().startTest(test)
         self.started = time.perf_counter()
-        self.test_ids.append(test.id())
 
     def stopTest(self, test):
         elapsed = time.perf_counter() - self.started
@@ -73,8 +71,6 @@ def main() -> int:
             raise
         exit_code = exited.code
     report = {
-        "test_ids": result.test_ids,
-        "test_id_scope": "startTest callbacks in execution order, including duplicates; not a planned inventory",
         "tests_run": result.testsRun,
         "failures": len(result.failures),
         "errors": len(result.errors),

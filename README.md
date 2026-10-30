@@ -185,8 +185,8 @@ environment, global binary, credentials, or configuration is cached.
 
 The root job uses the standard-library-only `scripts/ci/run_root_tests.py` wrapper
 for full unittest discovery and per-module test-call timings.
-The wrapper delegates execution and exit policy to unittest and records IDs only
-when tests start, preserving their order and duplicates without prewalking suites.
+The wrapper delegates execution and exit policy to unittest and reports timings
+and result counts without collecting test identities or prewalking suites.
 The plugin job emits
 JUnit and the 25 slowest durations. Root timing and plugin JUnit artifacts are
 uploaded even after test failures and retained for 14 days; timings are observations,

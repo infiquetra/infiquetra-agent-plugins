@@ -2,6 +2,28 @@
 
 ## 2026-10-29
 
+### Limit root runner observations to timings and result counts
+
+**Correction.** Recording IDs from `startTest` still invokes test-owned `id()`
+before unittest resolves the selected method. An override can change that method
+and hide a required failure. A valid callable leaf may also have no `id()`.
+The earlier move from prewalking suites to callback-based IDs was insufficient.
+
+**Decision.** Remove test-ID collection and both identity fields from the report.
+Do not substitute another test-owned attribute or callback to synthesize an
+identity. Retain timing, module test counts, result counts and subtest observations;
+stdlib unittest continues to own discovery, execution, warnings and exit policy.
+Inventory comparisons belong in separate qualification evidence.
+
+**Evidence and limits.** Actual-entrypoint controls compare the original command
+with the wrapper for an ID override that switches a failing method to a passing
+one, and for an ID-less callable leaf. Independent fixture logs verify execution;
+the repaired wrapper preserves the failure and accepts the leaf. No full suite,
+installer or hosted qualification is claimed by these bounded controls.
+
+**Refs.** [Runner](../../scripts/ci/run_root_tests.py),
+[controls](../../tests/test_ci_tooling.py).
+
 ### Enforce installer deadlines with a hard kill of the owned process group
 
 **Correction.** GNU `timeout --signal=TERM --kill-after=5s` can return as soon as
@@ -34,6 +56,10 @@ explicit BaseTestSuite and `load_tests` error controls also pass.
 [apt boundary](../../scripts/ci/provision_ctags.py).
 
 ### Observe root test execution without traversing the discovered suite
+
+**Superseded observation scope.** The callback-based ID collection below was
+removed by [the timing/count-only correction](#limit-root-runner-observations-to-timings-and-result-counts).
+The stdlib delegation and Ctags JSON-shape repairs remain in place.
 
 **Correction.** The first timing wrapper walked the discovered suite to collect
 IDs before running it. A stateful or lazy nested suite returned by `load_tests`
