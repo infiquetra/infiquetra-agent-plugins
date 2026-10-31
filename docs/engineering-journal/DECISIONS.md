@@ -2,6 +2,12 @@
 
 ## 2026-10-31
 
+### Keep Redis protocol vectors with the current producer
+
+**Decision.** Keep literal vectors and digest/ID guards with redis-channel.
+Retain every old test and runtime behavior. Consumer pins follow producer proof;
+full consumer, cross-Redis and Hermes gates remain. No savings or whole-T09 claim.
+
 ### Prepare vendor selection without enabling reduced execution
 
 **Decision.** Add candidate-bound NUL-diff evidence and an always-evaluated

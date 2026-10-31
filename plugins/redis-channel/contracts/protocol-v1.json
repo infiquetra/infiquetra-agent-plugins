@@ -1,0 +1,19 @@
+{
+  "schema": "redis-channel.protocol-vectors",
+  "fixture_version": 1,
+  "protocol_version": 1,
+  "vectors": [
+    {"id":"model.registry","kind":"model","model":"RegistryEntry","input":{"session_name":"s","host":"example","cwd":"/example","pid":1,"started_at":0.0},"expected":{"v":1,"session_name":"s","host":"example","cwd":"/example","git_branch":null,"pid":1,"started_at":0.0,"capabilities":[]}},
+    {"id":"model.inbound","kind":"model","model":"Inbound","input":{"router":"example","endpoint":"e","source":"voice","chat_id":"c","user_id":"u","username":"example","text":"hi","ts":0.0},"expected":{"v":1,"router":"example","endpoint":"e","source":"voice","chat_id":"c","user_id":"u","username":"example","text":"hi","confidence":null,"ts":0.0,"metadata":{}}},
+    {"id":"model.outbound","kind":"model","model":"Outbound","input":{"v":2,"future":"ok","session_name":"s","endpoint":"e","chat_id":"c","text":"hi","ts":0.0},"expected":{"v":2,"future":"ok","session_name":"s","endpoint":"e","chat_id":"c","text":"hi","voice":false,"in_reply_to":null,"ts":0.0}},
+    {"id":"model.request","kind":"model","model":"PermissionRequest","input":{"session_name":"s","endpoint":"e","request_id":"r","tool_name":"Read","input_preview":"","destructive":false,"originating_chat_id":"c","ts":0.0},"expected":{"v":1,"session_name":"s","endpoint":"e","request_id":"r","tool_name":"Read","input_preview":"","description":null,"destructive":false,"originating_chat_id":"c","ts":0.0}},
+    {"id":"model.verdict","kind":"model","model":"PermissionVerdict","input":{"session_name":"s","endpoint":"e","request_id":"r","verdict":"allow","source":"voice","ts":0.0},"expected":{"v":1,"session_name":"s","endpoint":"e","request_id":"r","verdict":"allow","source":"voice","voice_confidence":null,"echo_confirm_outcome":"not_required","ts":0.0}},
+    {"id":"model.lifecycle","kind":"model","model":"LifecycleEvent","input":{"type":"presence_ping","ts":0.0},"expected":{"v":1,"type":"presence_ping","session_name":null,"endpoint":null,"payload":{},"ts":0.0}},
+    {"id":"model.invalid-source","kind":"invalid","model":"Inbound","input":{"router":"example","endpoint":"e","source":"telegram","chat_id":"c","user_id":"u","username":"example","text":"hi","ts":0.0}},
+    {"id":"wire.sorted","kind":"wire","input":{"b":2,"a":1,"c":3},"wire":"{\"a\":1,\"b\":2,\"c\":3}"},
+    {"id":"wire.nested","kind":"wire","input":{"v":1,"data":{"items":[1,"café",null]}},"wire":"{\"data\":{\"items\":[1,\"caf\\u00e9\",null]},\"v\":1}"},
+    {"id":"envelope.missing","kind":"drop","fields":{}},
+    {"id":"envelope.invalid-json","kind":"drop","fields":{"payload":"not-json"}},
+    {"id":"envelope.non-object","kind":"drop","fields":{"payload":"[1,2,3]"}}
+  ]
+}
