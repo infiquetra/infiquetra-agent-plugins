@@ -1,5 +1,32 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-10-31
+
+### Prepare vendor selection without enabling reduced execution
+
+**Decision.** Add candidate-bound NUL-diff evidence and an always-evaluated
+`Vendor compatibility validation` aggregate alongside the unchanged repository,
+ported-plugin and three-build Claude jobs. Every original child remains
+mandatory in this phase, including floor 2.1.286, pin 2.1.289 and newest 2.1.296,
+both mod loops and all-manifest installed validation. The aggregate rejects
+failed/cancelled/skipped/missing children and malformed or mismatched evidence.
+
+No individual portable document has a proved dependency exemption. Consequently
+the selector currently recommends FULL even for documentation; SKILL Markdown,
+shared/generated/runtime/configuration inputs, unknown paths and incomplete or
+failed diff history cannot authorize a skip. Rename evidence carries both paths.
+An unavailable history can accompany successful full validation, but an unchecked
+candidate cannot. This is preparation, not evidence of reduced-route safety.
+
+**Migration.** Preserve the existing required Repository validation and Ported
+plugin tests contexts and their App binding. After genuine full-matrix candidate
+CI has exercised the new aggregate, its exact context/App enforcement cutover is
+a separate owner-controlled gate. Eligible genuine skip proof, scheduled full and
+full exact-SHA release evidence remain separate unqualified obligations. No
+workflow trigger, installed CLI promise, prior 35-case ownership, permission,
+deadline or download-cache trust boundary changes here. Roll back to full
+execution on uncertainty; never make a skipped child stand in for compatibility.
+
 ## 2026-10-30
 
 ### Reserve mutation time independently of other scanners
