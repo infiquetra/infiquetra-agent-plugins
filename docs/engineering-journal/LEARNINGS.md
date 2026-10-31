@@ -1,5 +1,22 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-10-31
+
+### Extract bounded identifiers once before testing a set of names
+
+**Evidence.** A check that searches for many removed names could exceed its
+deadline while an equivalent token-based search completed sooner. Generated
+trees and repeated scans produced identical ordered results for both searches.
+
+**Mechanism.** Searching each line separately for every identifier repeats the
+same boundary work. Maximal ASCII identifier runs already encode those boundaries,
+so one scan of a line and set membership checks preserve the matches. Names with
+other characters still require their original boundary-aware search.
+
+**Generalizable rule.** When repeated patterns share a boundary rule, extract
+the bounded units once and look them up, while retaining a compatible fallback
+for inputs outside that rule. Test the full result, including ordering and skips.
+
 ## 2026-10-30
 
 ### Finding order can change a scanner report digest

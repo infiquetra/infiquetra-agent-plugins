@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import random
+import re
 import socket
 import subprocess
 import sys
@@ -31,6 +33,70 @@ OLD = "def old_name():\n    return 1\n"
 NEW = "def new_name():\n    return 1\n"
 CALLER = "import a\n\nvalue = a.old_name()\n"
 STATEMENT = "A mention of a removed name remains outside the edited lines."
+
+
+def test_generated_mentions_match_the_original_boundary_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compare the complete result to the former per-name search on varied trees."""
+    rng = random.Random(3917)
+    paths = [tmp_path / name for name in (
+        "src/a.py", "notes.md", "AGENTS.md", "skills/guide.md", "data.json",
+    )]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    covered = {path.relative_to(tmp_path).as_posix(): {2, 5} for path in paths}
+
+    class Change:
+        def lines_for(self, path: str) -> set[int]:
+            return covered.get(path, set())
+
+    change = Change()
+    removed: dict[str, bool] = {}
+    monkeypatch.setattr(H.C.review_diff, "read", lambda *_args: change)
+    monkeypatch.setattr(H.C, "_removed_names", lambda *_args: removed)
+    monkeypatch.setattr(H.C, "_walk", lambda _root: iter(reversed(paths)))
+
+    def old() -> dict[str, Any]:
+        patterns = {name: re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])")
+                    for name in sorted(removed)}
+        seen: set[tuple[str, str]] = set()
+        hits: list[dict[str, Any]] = []
+        for path in H.C._walk(tmp_path):
+            rel = path.relative_to(tmp_path).as_posix()
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if number in change.lines_for(rel):
+                    continue
+                for name, pattern in patterns.items():
+                    if (rel, name) in seen or pattern.search(line) is None:
+                        continue
+                    seen.add((rel, name))
+                    hits.append(H.C._hit(
+                        rule_id=name, path=rel, statement=STATEMENT, anchor=name,
+                        row=H.C._row_for_mention(rel), language=H.C.language_for(rel),
+                        degraded=removed[name],
+                    ))
+        hits.sort(key=lambda hit: (hit["path"], hit["rule_id"]))
+        return {"hits": hits, "where_to_look": [], "gaps": []}
+
+    names = ["", "a", "ab", "abc", "a_b", "7", "77", "_", "--flag", "a-b",
+             "key.value", "é", "x/y", "[x]", "quote\"key"]
+    fragments = ["", "a", "ab", "abc", "a_b", "7", "77", "_", "--flag", "a-b",
+                 "key.value", "é", "界", "٣", "x/y", "[x]", "quote\"key", ".", " ", "!", "\t"]
+    for iteration in range(60):
+        removed.clear()
+        removed.update({name: bool(rng.getrandbits(1)) for name in rng.sample(names, rng.randrange(1, len(names) + 1))})
+        for path in paths:
+            lines = ["".join(rng.choices(fragments, k=rng.randrange(0, 7))) for _ in range(9)]
+            lines[0] = "éa٣ !ab! _abc_ 77"
+            lines[1] = "--flag a-b key.value"
+            lines[2] = ""
+            lines[3] = "a a abc --flag --flag"
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        actual = H.C.changed_names(tmp_path, "base")
+        expected = old()
+        assert actual == expected, f"generated tree {iteration}"
+        assert json.dumps(actual) == json.dumps(expected), f"generated tree {iteration}"
 
 
 @pytest.fixture(autouse=True)
