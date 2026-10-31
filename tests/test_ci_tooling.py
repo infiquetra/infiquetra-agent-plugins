@@ -386,7 +386,10 @@ class WorkflowPreservationControls(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("contents: read", text)
         self.assertIn("group: validate-${{ github.ref }}\n  cancel-in-progress: true", text)
-        self.assertEqual(re.findall(r"^  ([a-z-]+):\n    name:", text, re.M), ["validate", "plugin-tests", "claude-mods"])
+        self.assertEqual(
+            re.findall(r"^  ([a-z-]+):\n    name:", text, re.M),
+            ["vendor-selection", "validate", "plugin-tests", "vendor-validation", "claude-mods"],
+        )
         root, plugin, vendor = text.split("  validate:", 1)[1].split("  plugin-tests:")[0], text.split("  plugin-tests:")[1].split("  claude-mods:")[0], text.split("  claude-mods:")[1]
         for command in ("python3 scripts/check_repo.py", "scripts/ci/run_root_tests.py", "git diff --check"):
             self.assertIn(command, root)

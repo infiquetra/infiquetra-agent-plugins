@@ -14,6 +14,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  vendor-selection:
+    name: Vendor compatibility selection
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      evidence: ${{ steps.select.outputs.evidence }}
+    steps:
+      - name: Check out candidate and history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Record conservative vendor recommendation
+        id: select
+        env:
+          SELECT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SELECT_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          SELECT_CANDIDATE: ${{ github.sha }}
+          SELECT_EVENT: ${{ github.event_name }}
+        run: python3 scripts/ci/select_vendor_compatibility.py select
+
   validate:
     name: Repository validation
     runs-on: ubuntu-latest
@@ -128,6 +148,24 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  vendor-validation:
+    name: Vendor compatibility validation
+    if: always()
+    needs: [vendor-selection, validate, plugin-tests, claude-mods]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Admit complete phase-one vendor validation
+        env:
+          SELECT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SELECT_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          SELECT_CANDIDATE: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 scripts/ci/select_vendor_compatibility.py aggregate
+
+  # Phase one never conditions this original matrix on selector output.
   claude-mods:
     name: Claude Code mods (${{ matrix.claude-code }})
     runs-on: ubuntu-latest
