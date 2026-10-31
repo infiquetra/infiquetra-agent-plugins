@@ -1806,6 +1806,24 @@ def test_importing_review_tools_does_not_import_the_adapters() -> None:
     assert completed.returncode == 0, completed.stderr
 
 
+def test_cli_records_python_known_gap(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"languages": {"python": {"test_command": ""}}}
+    })
+    output = tmp_path / "output"
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPTS / "review_tools.py"), "run",
+         "--repo", str(repo), "--base", base, "--head", head,
+         "--profile", str(profile), "--output", str(output),
+         "--home", str(tmp_path / "home")],
+        capture_output=True, text=True, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    degraded = json.loads((output / "degraded.json").read_text(encoding="utf-8"))
+    assert any(item["reason"] == "known-gap" for item in degraded)
+
+
 def test_docs_cover_the_framework() -> None:
     guide = (REFERENCES / "review-tools.md").read_text(encoding="utf-8")
     for phrase in (
