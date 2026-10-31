@@ -402,6 +402,8 @@ class Adapter:
     def __post_init__(self) -> None:
         if self.stream not in ("stdout", "stderr", "both"):
             raise RunnerFailure(2, f"{self.id}: stream must be stdout, stderr or both")
+        if self.mutation and (self.comparison == "base-head" or self.type_checker):
+            raise RunnerFailure(2, f"{self.id}: mutation adapters cannot use base-head comparison")
 
 
 def load_tool_list(path: Path | None = None) -> list[dict[str, Any]]:
@@ -1571,8 +1573,11 @@ def _run_adapter(
             version, problem = None, None
         else:
             version, problem = _read_version(
-                adapter, profile, process, env, head_root, timeout=probe_timeout,
+                adapter, profile, process, env, head_root, timeout=probe_timeout, deadline=deadline,
             )
+        if problem == "cap":
+            degraded.append(_problem_entry(adapter, problem))
+            return []
         if problem in {"missing", "timeout"}:
             degraded.append(_degraded(adapter, _primary_row(adapter), problem))
             return []
@@ -1690,6 +1695,9 @@ def _once(
     try:
         if failure in adapter.retry_failures:
             retried = _retry(adapter, context, process, env, timeout, label, deadline)
+            if retried == "cap":
+                degraded.append(_problem_entry(adapter, "cap"))
+                return (), {}
             if retried is not None:
                 result, parsed = retried
                 failure = None
@@ -1735,27 +1743,27 @@ def _retry(
     context: ScanContext,
     process: Process,
     env: Mapping[str, str],
-    timeout: int,
+    timeout: float,
     label: str,
     deadline: float | None = None,
-) -> tuple[ProcessResult, ParseResult] | None:
+) -> tuple[ProcessResult, ParseResult] | Literal["cap"] | None:
     """One more run of the command after a failure the adapter calls flaky (issue 260).
 
     The result and its parse when the second run succeeds, else None, so the first failure is
     what gets recorded. A second run that declines or cannot run is the same as a second failure.
     A mutation tool's retry stays inside the mutation cap: its timeout is clamped to the time
-    left before ``deadline``, and with under a second left there is no retry.
+    left before ``deadline``; an exhausted allowance is reported as a cap.
     """
     diagnostic = _attempt_diagnostic(adapter, context, label, "retry", deadline)
     if adapter.mutation and deadline is not None:
-        left = int(deadline - time.monotonic())
-        if left < 1:
+        left = deadline - time.monotonic()
+        if left <= 0:
             if diagnostic is not None:
                 diagnostic.finish("skipped", "budget-exhausted")
-            return None
+            return "cap"
         timeout = min(timeout, left)
     try:
-        result, problem, ran = _capture(adapter, context, process, env, timeout, diagnostic)
+        result, problem, ran = _capture(adapter, context, process, env, timeout, diagnostic, deadline)
     except ToolGap as exc:
         if diagnostic is not None:
             diagnostic.finish("skipped", exc.reason)
@@ -1765,9 +1773,15 @@ def _retry(
             reason = "cancelled" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "execution-error"
             diagnostic.finish("failed", reason)
         raise
+    if adapter.mutation and deadline is not None and time.monotonic() > deadline:
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code if result is not None else None)
+        return "cap"
     if not ran or problem is not None or result is None:
         if diagnostic is not None:
             diagnostic.finish("failed" if ran else "skipped", problem or "not-invoked")
+        if adapter.mutation and problem == "cap":
+            return "cap"
         return None
     try:
         parsed, failure = _parsed(adapter, result, label)
@@ -1967,7 +1981,9 @@ def _capture(
             # timeout calculated before the adapter prepared its command.
             timeout = min(timeout, left)
         executed = True
-        result, problem = _execute(adapter, argv, scan.root, process, env, timeout, diagnostic)
+        result, problem = _execute(
+            adapter, argv, scan.root, process, env, timeout, diagnostic, deadline,
+        )
         if result is not None and problem is None:
             if adapter.report_file is not None:
                 report = scan.root / adapter.report_file
@@ -2010,6 +2026,7 @@ def _execute(
     env: Mapping[str, str],
     timeout: float,
     diagnostic: review_diagnostics.Attempt | None = None,
+    deadline: float | None = None,
 ) -> tuple[ProcessResult | None, str | None]:
     if isinstance(argv, str) or not isinstance(argv, list):
         raise RunnerFailure(1, f"{adapter.id}: invoke returned a string command")
@@ -2034,6 +2051,11 @@ def _execute(
         temps.append(cargo_home)
         run_env = {**run_env, "CARGO_HOME": str(cargo_home)}
     try:
+        if deadline is not None and adapter.mutation:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None, "cap"
+            timeout = min(timeout, left)
         try:
             result = process(argv, cwd=cwd, env=run_env, timeout=timeout, shell=False)
         except FileNotFoundError:
@@ -2108,6 +2130,7 @@ def _read_version(
     env: Mapping[str, str],
     root: Path,
     timeout: float | None = None,
+    deadline: float | None = None,
 ) -> tuple[str | None, str | None]:
     pinned = _pinned_version(adapter, profile)
     if not adapter.tool:
@@ -2133,6 +2156,11 @@ def _read_version(
             probe_env = env
         if adapter.tool == "semgrep":
             probe_env = {**probe_env, "SEMGREP_ENABLE_VERSION_CHECK": "0"}
+        if adapter.mutation and deadline is not None:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None, "cap"
+            timeout = min(adapter.timeout_seconds if timeout is None else timeout, left)
         try:
             result = process(
                 probe_argv,

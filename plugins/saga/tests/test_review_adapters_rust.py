@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-import re
 import shutil
 import socket
 import subprocess
@@ -1424,15 +1423,24 @@ def test_mutants_retry_is_clamped_to_the_time_left_under_the_cap(
     assert len(_read(output, "findings.json")) == 5
 
 
-def test_mutants_retry_is_skipped_when_no_time_is_left_under_the_cap(
+def test_mutants_retry_uses_fractional_time_left_under_the_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output, runner = _slow_baseline(
         tmp_path, monkeypatch, spend=T.MUTATION_CAP_SECONDS - 0.5,
     )
+    assert runner.timeouts == [600, 0.5]
+    assert len(_read(output, "findings.json")) == 5
+    assert [item["reason"] for item in _degraded(output, "cargo-mutants")] == ["baseline-flaky"]
+
+
+def test_mutants_retry_is_capped_when_no_time_is_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output, runner = _slow_baseline(tmp_path, monkeypatch, spend=T.MUTATION_CAP_SECONDS)
     assert len(runner.timeouts) == 1
     assert _read(output, "findings.json") == []
-    assert [item["reason"] for item in _degraded(output, "cargo-mutants")] == ["baseline-failed"]
+    assert [item["reason"] for item in _degraded(output, "cargo-mutants")] == ["cap"]
 
 
 def _in_diff_context(tmp_path: Path, scratch: Path) -> Any:

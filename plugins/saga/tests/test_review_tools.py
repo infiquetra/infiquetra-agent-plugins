@@ -815,6 +815,68 @@ def test_mutation_version_probe_is_bounded_by_the_remaining_budget(
     assert _reasons(output) == [("second", "testing.surviving-mutant", "timeout")]
 
 
+@pytest.mark.parametrize("comparison,type_checker", [("base-head", False), ("lines", True)])
+def test_mutation_adapters_refuse_base_head_comparison(comparison: str, type_checker: bool) -> None:
+    with pytest.raises(T.RunnerFailure, match="mutation adapters cannot use base-head"):
+        _stub(mutation=True, comparison=comparison, type_checker=type_checker)
+    assert all(not adapter.mutation or (adapter.comparison != "base-head" and not adapter.type_checker)
+               for adapter in T.default_adapters())
+
+
+@pytest.mark.parametrize("setup,expected", [(75, 25.0), (100, None), (99.75, 0.25)])
+def test_mutation_launch_clamps_after_environment_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setup: float, expected: float | None,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+
+    def env_setup() -> tuple[dict[str, str], list[Path]]:
+        clock[0] += setup
+        return {}, []
+
+    monkeypatch.setattr(T, "_relocated_env", env_setup)
+    calls: list[float] = []
+
+    def process(_argv: list[str], **kwargs: Any) -> Any:
+        calls.append(kwargs["timeout"])
+        return T.ProcessResult(0, "ok")
+
+    result, problem = T._execute(_stub(mutation=True, narrow_env=True), ["stub"], tmp_path,
+                                 process, {}, 100, deadline=200)
+    if expected is None:
+        assert result is None and problem == "cap" and calls == []
+    else:
+        assert result is not None and problem is None and calls == [expected]
+
+
+@pytest.mark.parametrize("setup,expected", [(75, 25.0), (100, None), (99.75, 0.25)])
+def test_mutation_version_probe_clamps_after_probe_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setup: float, expected: float | None,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    mkdtemp = T.tempfile.mkdtemp
+
+    def make_probe(*args: Any, **kwargs: Any) -> str:
+        path = mkdtemp(*args, **kwargs)
+        clock[0] += setup
+        return path
+
+    monkeypatch.setattr(T.tempfile, "mkdtemp", make_probe)
+    calls: list[float] = []
+
+    def process(_argv: list[str], **kwargs: Any) -> Any:
+        calls.append(kwargs["timeout"])
+        return T.ProcessResult(0, "1.0.0")
+
+    version, problem = T._read_version(_stub(mutation=True), {}, process, {}, tmp_path,
+                                       timeout=100, deadline=200)
+    if expected is None:
+        assert version is None and problem == "cap" and calls == []
+    else:
+        assert version == "1.0.0" and problem is None and calls == [expected]
+
+
 def test_scan_folders_are_fresh_per_scan_and_live_under_scratch(tmp_path: Path) -> None:
     """Issue 147: adapters copied files into a persistent folder under the runner home and scanned
     the whole folder, so a file copied by one scan was scanned again by the next."""
