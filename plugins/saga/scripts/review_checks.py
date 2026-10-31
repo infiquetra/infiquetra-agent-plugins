@@ -64,6 +64,7 @@ END_KINDS = frozenset({"terminal", "undefined_route"})
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _FLAG = re.compile(r"(?<![A-Za-z0-9_])(--[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_])")
 _TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_NAME_RUN = re.compile(r"[A-Za-z0-9_]+")
 _UNIX_PATH = re.compile(r"(?<![A-Za-z0-9_])(/(?:[A-Za-z0-9._-]+)){2,}")
 _WINDOWS_PATH = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z]:\\[^\s\"']+)")
 _UNC_PATH = re.compile(r"(\\\\[^\s\\'\"]+\\[^\s\\'\"]+)")
@@ -1167,9 +1168,10 @@ def changed_names(root: Path, base: str) -> dict[str, Any]:
     change = review_diff.read(root, base, "HEAD")
     removed = _removed_names(root, base, change)
     hits: list[dict[str, Any]] = []
+    identifiers = {name for name in removed if _NAME_RUN.fullmatch(name)}
     patterns = {
         name: re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])")
-        for name in sorted(removed)
+        for name in sorted(removed) if name not in identifiers
     }
     seen: set[tuple[str, str]] = set()
     for path in _walk(root):
@@ -1182,8 +1184,11 @@ def changed_names(root: Path, base: str) -> dict[str, Any]:
         for number, line in enumerate(text.splitlines(), start=1):
             if number in covered:
                 continue
-            for name, pattern in patterns.items():
-                if (rel, name) in seen or pattern.search(line) is None:
+            matches = {match.group() for match in _NAME_RUN.finditer(line)} & identifiers
+            matches.update(name for name, pattern in patterns.items()
+                           if (rel, name) not in seen and pattern.search(line))
+            for name in matches:
+                if (rel, name) in seen:
                     continue
                 seen.add((rel, name))
                 hits.append(_hit(

@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -60,9 +61,7 @@ def test_initial_and_retry_evidence_survive_independently(tmp_path: Path, retry:
         return T.ProcessResult(0 if calls == 2 and retry == "success" else 4,
                                f"console {calls}", f"stderr {calls}")
 
-    # The initial attempt runs whenever the tool has work and the budget is not spent yet (the
-    # budget is checked after the tool returns an argument vector, issue 147); "budget" leaves the
-    # retry nothing.
+    # The budget case returns after the deadline, so the initial attempt is capped.
     deadline = time.monotonic() + (1 if retry == "budget" else 30)
     degraded: list[Any] = []
     T._once(_adapter(), context, process, {}, 5, "head", degraded, [], deadline)
@@ -73,21 +72,85 @@ def test_initial_and_retry_evidence_survive_independently(tmp_path: Path, retry:
         assert record["elapsed_seconds"] >= 0
         assert record["remaining_budget_seconds"] >= 0
     initial_path, initial = attempts["initial"]
-    assert initial["status"] == "failed" and initial["reason"] == "baseline-failed"
+    assert initial["status"] == "failed"
+    assert initial["reason"] == ("cap" if retry == "budget" else "baseline-failed")
     assert (initial_path / "stdout.txt").read_text() == "console 1"
     baseline = next(initial_path.glob("baseline-*.log"))
     assert baseline.read_text() == "attempt 1 test failure"
-    retry_path, record = attempts["retry"]
-    expected = {"failure": ("failed", "baseline-failed"), "timeout": ("failed", "timeout"),
-                "success": ("succeeded", None), "budget": ("skipped", "budget-exhausted")}
-    assert (record["status"], record["reason"]) == expected[retry]
+    if retry == "budget":
+        assert "retry" not in attempts
+    else:
+        retry_path, record = attempts["retry"]
+        expected = {"failure": ("failed", "baseline-failed"), "timeout": ("failed", "timeout"),
+                    "success": ("succeeded", None)}
+        assert (record["status"], record["reason"]) == expected[retry]
     assert calls == (1 if retry == "budget" else 2)
-    assert degraded[0]["reason"] == ("baseline-flaky" if retry == "success" else "baseline-failed")
+    reason = {"success": "baseline-flaky", "budget": "cap"}.get(retry, "baseline-failed")
+    assert degraded[0]["reason"] == reason
     if retry == "timeout":
         assert (retry_path / "stdout.txt").read_bytes() == b"retry partial"
     assert diagnostics.stat().st_mode & 0o777 == 0o700
     for path in diagnostics.rglob("*"):
         assert path.stat().st_mode & 0o777 == (0o700 if path.is_dir() else 0o600)
+
+
+@pytest.mark.parametrize("setup,cleanup,expected,late", [
+    (50, 25, 25, False), (50, 25, 25, True), (100, 0, None, False), (50, 50, None, False),
+])
+def test_retry_obeys_deadline_after_setup_and_report_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setup: int, cleanup: int,
+    expected: int | None, late: bool,
+) -> None:
+    scan, home = tmp_path / "scan", tmp_path / "home"
+    scan.mkdir()
+    home.mkdir()
+    clock = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    invocations = [0]
+    calls: list[float] = []
+    remove_tree = T._remove_tree
+
+    def invoke(_context: Any) -> list[str]:
+        invocations[0] += 1
+        if invocations[0] == 2:
+            clock[0] += setup
+        return ["fixture"]
+
+    def remove(path: Path) -> None:
+        if invocations[0] == 2:
+            clock[0] += cleanup
+        remove_tree(path)
+
+    monkeypatch.setattr(T, "_remove_tree", remove)
+
+    def process(_argv: list[str], **kwargs: Any) -> Any:
+        calls.append(kwargs["timeout"])
+        report = scan / "mutants.out" / "outcomes.json"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text('{"outcomes": []}', encoding="utf-8")
+        if len(calls) == 1:
+            clock[0] = 100
+            return T.ProcessResult(4, "baseline failed")
+        if late:
+            clock[0] += 50
+        return T.ProcessResult(0, "success")
+
+    adapter = replace(_adapter(), invoke=invoke)
+    degraded: list[Any] = []
+    hits, digests = T._once(adapter, T.ScanContext(scan, scan, home), process, {},
+                            200, "head", degraded, [], 200)
+    assert hits == ()
+    if expected is None or late:
+        if late:
+            assert calls == [200, expected]
+        else:
+            assert len(calls) == 1
+        assert digests == {}
+        assert [entry["reason"] for entry in degraded] == ["cap"]
+    else:
+        assert calls == [200, expected]
+        assert digests
+        assert [entry["reason"] for entry in degraded] == ["baseline-flaky"]
 
 
 @pytest.mark.skipif(os.name != "posix", reason="safe descriptor reads are POSIX")

@@ -402,6 +402,8 @@ class Adapter:
     def __post_init__(self) -> None:
         if self.stream not in ("stdout", "stderr", "both"):
             raise RunnerFailure(2, f"{self.id}: stream must be stdout, stderr or both")
+        if self.mutation and (self.comparison == "base-head" or self.type_checker):
+            raise RunnerFailure(2, f"{self.id}: mutation adapters cannot use base-head comparison")
 
 
 def load_tool_list(path: Path | None = None) -> list[dict[str, Any]]:
@@ -983,7 +985,7 @@ def subprocess_runner(
     *,
     cwd: Path,
     env: Mapping[str, str],
-    timeout: int,
+    timeout: float,
     shell: bool,
     umask: int | None = None,
 ) -> ProcessResult:
@@ -1164,7 +1166,7 @@ def _run(
     items: list[Mapping[str, Any]] = []
     degraded: list[dict[str, str]] = list(profile_notes)
     rule_sources: dict[str, dict[str, Any]] = {}
-    deadline = time.monotonic() + MUTATION_CAP_SECONDS
+    mutation_remaining = float(MUTATION_CAP_SECONDS)
     tool_env, tool_temps = _tool_env(home)
     base_markers = _tree_markers(repo, base_sha)
     head_markers = _tree_markers(repo, head_sha)
@@ -1183,15 +1185,34 @@ def _run(
             for adapter in adapters:
                 if adapter.mode == "fix" or not adapter.tool:
                     continue
+                mutation_start = time.monotonic() if adapter.mutation else None
+                deadline = (mutation_start + mutation_remaining
+                            if mutation_start is not None else None)
+                degraded_start, items_start = len(degraded), len(items)
                 try:
-                    pending.extend(_run_adapter(
-                        adapter, repo, base_sha, head_sha, head_root, change, home, profile,
-                        process, tool_env, deadline, degraded, items, base_markers,
-                        head_markers, head_languages,
-                        diagnostics_directory, rule_sources,
-                    ))
+                    try:
+                        adapter_hits = _run_adapter(
+                            adapter, repo, base_sha, head_sha, head_root, change, home, profile,
+                            process, tool_env, deadline, degraded, items, base_markers,
+                            head_markers, head_languages,
+                            diagnostics_directory, rule_sources,
+                        )
+                        if _mutation_past_deadline(adapter, deadline):
+                            del degraded[degraded_start:]
+                            del items[items_start:]
+                            degraded.append(_problem_entry(adapter, "cap"))
+                        else:
+                            pending.extend(adapter_hits)
+                    except Exception:
+                        if not _mutation_past_deadline(adapter, deadline):
+                            raise
+                        del degraded[degraded_start:]
+                        del items[items_start:]
+                        degraded.append(_problem_entry(adapter, "cap"))
                 finally:
                     residue.clear(adapter.id, diagnostics_directory)
+                    if mutation_start is not None:
+                        mutation_remaining -= max(0.0, time.monotonic() - mutation_start)
             measurements: list[dict[str, Any]] = []
             cov_findings: list[dict[str, Any]] = []
             if framework:
@@ -1507,7 +1528,7 @@ def _run_adapter(
     profile: Mapping[str, Any],
     process: Process,
     env: dict[str, str],
-    deadline: float,
+    deadline: float | None,
     degraded: list[dict[str, str]],
     items: list[Mapping[str, Any]],
     base_markers: frozenset[str] | None,
@@ -1556,7 +1577,29 @@ def _run_adapter(
         if cache_problem is not None:
             degraded.append(_degraded(adapter, _primary_row(adapter), cache_problem))
             return []
-        version, problem = _read_version(adapter, profile, process, env, head_root)
+        probe_timeout: float | None = None
+        if adapter.mutation:
+            assert deadline is not None
+            probe_timeout = deadline - time.monotonic()
+        if probe_timeout is not None and probe_timeout <= 0:
+            # Still ask the adapter whether it has work: an empty invocation must
+            # not be reported as a capped scan.
+            version, problem = None, None
+        else:
+            try:
+                version, problem = _read_version(
+                    adapter, profile, process, env, head_root,
+                    timeout=probe_timeout, deadline=deadline,
+                )
+            except Exception:
+                if not _mutation_past_deadline(adapter, deadline):
+                    raise
+                version, problem = None, "cap"
+            if _mutation_past_deadline(adapter, deadline):
+                version, problem = None, "cap"
+        if problem == "cap":
+            degraded.append(_problem_entry(adapter, problem))
+            return []
         if problem in {"missing", "timeout"}:
             degraded.append(_degraded(adapter, _primary_row(adapter), problem))
             return []
@@ -1566,6 +1609,7 @@ def _run_adapter(
         # The budget is checked in ``_once``, after the tool says whether it has anything to run.
         timeout = adapter.timeout_seconds
         if adapter.mutation:
+            assert deadline is not None
             timeout = max(1, min(timeout, int(deadline - time.monotonic())))
         ran = version or adapter.default_version
         comparison = "base-head" if adapter.type_checker else adapter.comparison
@@ -1624,6 +1668,11 @@ def _run_adapter(
         return kept
 
 
+def _mutation_past_deadline(adapter: Adapter, deadline: float | None) -> bool:
+    """A completed mutation step is late only strictly after its deadline."""
+    return deadline is not None and adapter.mutation and time.monotonic() > deadline
+
+
 def _once(
     adapter: Adapter,
     context: ScanContext,
@@ -1641,15 +1690,30 @@ def _once(
             adapter, context, process, env, timeout, diagnostic, deadline,
         )
     except ToolGap as exc:
+        if _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap")
+            degraded.append(_problem_entry(adapter, "cap"))
+            return (), {}
         if diagnostic is not None:
             diagnostic.finish("skipped", exc.reason)
         degraded.append(_degraded(adapter, exc.row, exc.reason))
         return (), {}
     except BaseException as exc:
+        if isinstance(exc, Exception) and _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap")
+            degraded.append(_problem_entry(adapter, "cap"))
+            return (), {}
         if diagnostic is not None:
             reason = "cancelled" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "execution-error"
             diagnostic.finish("failed", reason)
         raise
+    if _mutation_past_deadline(adapter, deadline):
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code if result is not None else None)
+        degraded.append(_problem_entry(adapter, "cap"))
+        return (), {}
     if not ran:
         if diagnostic is not None:
             diagnostic.finish("skipped", "not-invoked")
@@ -1663,9 +1727,26 @@ def _once(
     try:
         parsed, failure = _parsed(adapter, result, label)
     except ToolGap as exc:
+        if _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap", result.code)
+            degraded.append(_problem_entry(adapter, "cap"))
+            return (), {}
         if diagnostic is not None:
             diagnostic.finish("skipped", exc.reason, result.code)
         degraded.append(_degraded(adapter, exc.row, exc.reason))
+        return (), {}
+    except Exception:
+        if not _mutation_past_deadline(adapter, deadline):
+            raise
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code)
+        degraded.append(_problem_entry(adapter, "cap"))
+        return (), {}
+    if _mutation_past_deadline(adapter, deadline):
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code)
+        degraded.append(_problem_entry(adapter, "cap"))
         return (), {}
     if diagnostic is not None:
         reason = failure or (parsed.gap[0] if parsed is not None and parsed.gap else None)
@@ -1673,12 +1754,21 @@ def _once(
     try:
         if failure in adapter.retry_failures:
             retried = _retry(adapter, context, process, env, timeout, label, deadline)
+            if retried == "cap" or _mutation_past_deadline(adapter, deadline):
+                degraded.append(_problem_entry(adapter, "cap"))
+                return (), {}
             if retried is not None:
                 result, parsed = retried
                 failure = None
                 degraded.append(_degraded(adapter, _primary_row(adapter), "baseline-flaky"))
     except ToolGap as exc:
-        degraded.append(_degraded(adapter, exc.row, exc.reason))
+        degraded.append(_problem_entry(adapter, "cap") if _mutation_past_deadline(adapter, deadline)
+                        else _degraded(adapter, exc.row, exc.reason))
+        return (), {}
+    except Exception:
+        if not _mutation_past_deadline(adapter, deadline):
+            raise
+        degraded.append(_problem_entry(adapter, "cap"))
         return (), {}
     if parsed is not None:
         _note_problems(adapter, parsed, degraded, context.root)
@@ -1718,46 +1808,74 @@ def _retry(
     context: ScanContext,
     process: Process,
     env: Mapping[str, str],
-    timeout: int,
+    timeout: float,
     label: str,
     deadline: float | None = None,
-) -> tuple[ProcessResult, ParseResult] | None:
+) -> tuple[ProcessResult, ParseResult] | Literal["cap"] | None:
     """One more run of the command after a failure the adapter calls flaky (issue 260).
 
     The result and its parse when the second run succeeds, else None, so the first failure is
     what gets recorded. A second run that declines or cannot run is the same as a second failure.
     A mutation tool's retry stays inside the mutation cap: its timeout is clamped to the time
-    left before ``deadline``, and with under a second left there is no retry.
+    left before ``deadline``; an exhausted allowance is reported as a cap.
     """
     diagnostic = _attempt_diagnostic(adapter, context, label, "retry", deadline)
     if adapter.mutation and deadline is not None:
-        left = int(deadline - time.monotonic())
-        if left < 1:
+        left = deadline - time.monotonic()
+        if left <= 0:
             if diagnostic is not None:
                 diagnostic.finish("skipped", "budget-exhausted")
-            return None
+            return "cap"
         timeout = min(timeout, left)
     try:
-        result, problem, ran = _capture(adapter, context, process, env, timeout, diagnostic)
+        result, problem, ran = _capture(adapter, context, process, env, timeout, diagnostic, deadline)
     except ToolGap as exc:
+        if _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap")
+            return "cap"
         if diagnostic is not None:
             diagnostic.finish("skipped", exc.reason)
         return None
     except BaseException as exc:
+        if isinstance(exc, Exception) and _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap")
+            return "cap"
         if diagnostic is not None:
             reason = "cancelled" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "execution-error"
             diagnostic.finish("failed", reason)
         raise
+    if _mutation_past_deadline(adapter, deadline):
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code if result is not None else None)
+        return "cap"
     if not ran or problem is not None or result is None:
         if diagnostic is not None:
             diagnostic.finish("failed" if ran else "skipped", problem or "not-invoked")
+        if adapter.mutation and problem == "cap":
+            return "cap"
         return None
     try:
         parsed, failure = _parsed(adapter, result, label)
     except ToolGap as exc:
+        if _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap", result.code)
+            return "cap"
         if diagnostic is not None:
             diagnostic.finish("skipped", exc.reason, result.code)
         raise
+    except Exception:
+        if not _mutation_past_deadline(adapter, deadline):
+            raise
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code)
+        return "cap"
+    if _mutation_past_deadline(adapter, deadline):
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code)
+        return "cap"
     if diagnostic is not None:
         reason = failure or (parsed.gap[0] if parsed is not None and parsed.gap else None)
         diagnostic.finish("failed" if reason else "succeeded", reason, result.code)
@@ -1910,7 +2028,7 @@ def _capture(
     context: ScanContext,
     process: Process,
     env: Mapping[str, str],
-    timeout: int,
+    timeout: float,
     diagnostic: review_diagnostics.Attempt | None = None,
     deadline: float | None = None,
 ) -> tuple[ProcessResult | None, str | None, bool]:
@@ -1942,8 +2060,17 @@ def _capture(
             if not _within_root(scan.root, report.parent):
                 return None, "unparseable", True
             _remove_tree(report)
+        if adapter.mutation and deadline is not None:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None, "cap", True
+            # Invocation setup also spends mutation time. Do not use the stale
+            # timeout calculated before the adapter prepared its command.
+            timeout = min(timeout, left)
         executed = True
-        result, problem = _execute(adapter, argv, scan.root, process, env, timeout, diagnostic)
+        result, problem = _execute(
+            adapter, argv, scan.root, process, env, timeout, diagnostic, deadline,
+        )
         if result is not None and problem is None:
             if adapter.report_file is not None:
                 report = scan.root / adapter.report_file
@@ -1984,8 +2111,9 @@ def _execute(
     cwd: Path,
     process: Process,
     env: Mapping[str, str],
-    timeout: int,
+    timeout: float,
     diagnostic: review_diagnostics.Attempt | None = None,
+    deadline: float | None = None,
 ) -> tuple[ProcessResult | None, str | None]:
     if isinstance(argv, str) or not isinstance(argv, list):
         raise RunnerFailure(1, f"{adapter.id}: invoke returned a string command")
@@ -2010,6 +2138,11 @@ def _execute(
         temps.append(cargo_home)
         run_env = {**run_env, "CARGO_HOME": str(cargo_home)}
     try:
+        if deadline is not None and adapter.mutation:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None, "cap"
+            timeout = min(timeout, left)
         try:
             result = process(argv, cwd=cwd, env=run_env, timeout=timeout, shell=False)
         except FileNotFoundError:
@@ -2083,6 +2216,8 @@ def _read_version(
     process: Process,
     env: Mapping[str, str],
     root: Path,
+    timeout: float | None = None,
+    deadline: float | None = None,
 ) -> tuple[str | None, str | None]:
     pinned = _pinned_version(adapter, profile)
     if not adapter.tool:
@@ -2108,10 +2243,17 @@ def _read_version(
             probe_env = env
         if adapter.tool == "semgrep":
             probe_env = {**probe_env, "SEMGREP_ENABLE_VERSION_CHECK": "0"}
+        if adapter.mutation and deadline is not None:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None, "cap"
+            timeout = min(adapter.timeout_seconds if timeout is None else timeout, left)
         try:
             result = process(
                 probe_argv,
-                cwd=probe, env=probe_env, timeout=adapter.timeout_seconds,
+                cwd=probe, env=probe_env,
+                timeout=(adapter.timeout_seconds if timeout is None
+                         else min(adapter.timeout_seconds, timeout)),
                 shell=False,
             )
         except FileNotFoundError:

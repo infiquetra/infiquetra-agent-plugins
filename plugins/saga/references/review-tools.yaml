@@ -77,7 +77,7 @@ tools:
     install: Install gitleaks on the operator machine. This card does not install it.
     default_version: "not-recorded"
     version_args: ["--version"]
-    timeout_seconds: 120
+    timeout_seconds: 600
     platforms: []
     comparison: lines
     type_checker: false

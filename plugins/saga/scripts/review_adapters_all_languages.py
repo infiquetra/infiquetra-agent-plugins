@@ -282,6 +282,67 @@ def _invoke_gitleaks(context: ScanContext) -> list[str]:
     ]
 
 
+_GITLEAKS_IDENTITY = (
+    "File", "StartLine", "StartColumn", "EndLine", "EndColumn", "RuleID", "Fingerprint",
+)
+
+
+def _gitleaks_order(item: object) -> tuple[str, ...]:
+    """Order by finding identity, then by the complete finding to break ties."""
+    values = item if isinstance(item, dict) else {}
+    return (*(
+        json.dumps(values.get(field), sort_keys=True) for field in _GITLEAKS_IDENTITY
+    ), json.dumps(item, sort_keys=True))
+
+
+def _stable_gitleaks(text: str) -> str:
+    """Reorder findings without rewriting their bytes, separators or wrapper."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    position = text.index("[") if isinstance(data, list) else -1
+    if isinstance(data, dict):
+        key = "findings" if data.get("findings") else "leaks"
+        findings = data.get(key)
+        if not isinstance(findings, list):
+            return text
+        decoder = json.JSONDecoder()
+        cursor = text.index("{") + 1
+        while True:
+            while text[cursor].isspace() or text[cursor] == ",":
+                cursor += 1
+            if text[cursor] == "}":
+                break
+            name, cursor = decoder.raw_decode(text, cursor)
+            while text[cursor].isspace() or text[cursor] == ":":
+                cursor += 1
+            start = cursor
+            _, cursor = decoder.raw_decode(text, cursor)
+            if name == key:
+                position = start
+        data = findings
+    if not isinstance(data, list) or len(data) < 2:
+        return text
+    decoder = json.JSONDecoder()
+    position += 1
+    spans: list[tuple[int, int]] = []
+    for _ in data:
+        while text[position].isspace() or text[position] == ",":
+            position += 1
+        start = position
+        _, position = decoder.raw_decode(text, position)
+        spans.append((start, position))
+    elements = [text[start:end] for start, end in spans]
+    ordered = sorted(zip(data, elements), key=lambda pair: (*_gitleaks_order(pair[0]), pair[1]))
+    pieces = [text[:spans[0][0]]]
+    for index, (_, element) in enumerate(ordered):
+        pieces.append(element)
+        end = spans[index][1]
+        pieces.append(text[end:spans[index + 1][0]] if index + 1 < len(spans) else text[end:])
+    return "".join(pieces)
+
+
 def _parse_gitleaks(text: str) -> ParseResult:
     """Read RuleID, File and the line range. Match and Secret are never copied."""
     try:
@@ -293,7 +354,7 @@ def _parse_gitleaks(text: str) -> ParseResult:
     if not isinstance(data, list):
         raise ValueError("gitleaks output must be a list")
     hits: list[Hit] = []
-    for item in data:
+    for item in sorted(data, key=_gitleaks_order):
         if not isinstance(item, dict):
             continue
         rule_id = str(item.get("RuleID") or "gitleaks")
@@ -567,6 +628,7 @@ _STABLE_RAW_FOR_CHANGE: dict[str, Callable[[str, frozenset[str], frozenset[str]]
 _STABLE_RAW: dict[str, Callable[[str], str]] = {
     "semgrep-security": _stable_semgrep,
     "semgrep-saga": _stable_semgrep,
+    "gitleaks": _stable_gitleaks,
     "jscpd": _stable_jscpd,
 }
 
