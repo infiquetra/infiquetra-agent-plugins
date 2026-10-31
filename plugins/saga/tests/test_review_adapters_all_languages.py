@@ -564,6 +564,30 @@ def test_gitleaks_shuffled_findings_have_same_raw_digest_and_hits(tmp_path: Path
     _packets_match(*outputs)
 
 
+@pytest.mark.parametrize("key", ["findings", "leaks"])
+def test_gitleaks_wrapped_findings_preserve_wrapper_and_canonicalize(key: str) -> None:
+    first = '{"File":"b.py", "RuleID":"b", "StartLine":2}'
+    second = '{"File":"a.py", "RuleID":"a", "StartLine":1}'
+    prefix = '{ "metadata": {"items":[3,2]}, "' + key + '": [\n  '
+    suffix = '\n ], "tail": "unchanged" }\n'
+    a = prefix + first + ',\n  ' + second + suffix
+    b = prefix + second + ',\n  ' + first + suffix
+    assert A._parse_gitleaks(a).hits == A._parse_gitleaks(b).hits
+    canonical = A._stable_gitleaks(a)
+    assert canonical == A._stable_gitleaks(b)
+    assert canonical == b
+    assert T._stable_raw(_adapter("gitleaks"), a) == T._stable_raw(_adapter("gitleaks"), b)
+
+
+def test_gitleaks_wrapped_findings_follow_parser_fallback_and_last_key() -> None:
+    a = '{"findings":[],"leaks":[{"File":"z"},{"File":"a"}]}'
+    b = '{"findings":[],"leaks":[{"File":"a"},{"File":"z"}]}'
+    assert A._stable_gitleaks(a) == b
+    duplicate = '{"findings":[{"File":"z"}],"findings":[{"File":"z"},{"File":"a"}]}'
+    expected = '{"findings":[{"File":"z"}],"findings":[{"File":"a"},{"File":"z"}]}'
+    assert A._stable_gitleaks(duplicate) == expected
+
+
 def test_gitleaks_timeout_discards_partial_report(tmp_path: Path) -> None:
     repo, base, head = _changed_app(tmp_path)
     profile = _profile(tmp_path / "profile.json", {"gitleaks": {"version": "1.0.0"}})

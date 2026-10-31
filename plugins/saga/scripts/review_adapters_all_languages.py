@@ -296,15 +296,36 @@ def _gitleaks_order(item: object) -> tuple[str, ...]:
 
 
 def _stable_gitleaks(text: str) -> str:
-    """Reorder array elements without rewriting their bytes or the array's separators."""
+    """Reorder findings without rewriting their bytes, separators or wrapper."""
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         return text
+    position = text.index("[") if isinstance(data, list) else -1
+    if isinstance(data, dict):
+        key = "findings" if data.get("findings") else "leaks"
+        findings = data.get(key)
+        if not isinstance(findings, list):
+            return text
+        decoder = json.JSONDecoder()
+        cursor = text.index("{") + 1
+        while True:
+            while text[cursor].isspace() or text[cursor] == ",":
+                cursor += 1
+            if text[cursor] == "}":
+                break
+            name, cursor = decoder.raw_decode(text, cursor)
+            while text[cursor].isspace() or text[cursor] == ":":
+                cursor += 1
+            start = cursor
+            _, cursor = decoder.raw_decode(text, cursor)
+            if name == key:
+                position = start
+        data = findings
     if not isinstance(data, list) or len(data) < 2:
         return text
     decoder = json.JSONDecoder()
-    position = text.index("[") + 1
+    position += 1
     spans: list[tuple[int, int]] = []
     for _ in data:
         while text[position].isspace() or text[position] == ",":

@@ -671,6 +671,150 @@ def test_an_unfinished_mutation_run_is_capped(tmp_path: Path) -> None:
     assert _severity(output, row="testing.surviving-mutant") == "fix-later"
 
 
+def test_nonmutation_time_does_not_spend_the_shared_mutation_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    profile = _bare_profile(tmp_path)
+    now = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: now[0])
+
+    def adapter(name: str, mutation: bool) -> Any:
+        return _stub(
+            id=name, tool=name, mutation=mutation,
+            invoke=lambda _context: [name, "scan"],
+            timeout_seconds=900,
+            lens="testing" if mutation else "security",
+            rows=(("testing.surviving-mutant",) if mutation
+                  else ("security.scanner-medium-low",)),
+            parse=(lambda _text: T.ParseResult((
+                _hit(rule_id=name, anchor=name, row="testing.surviving-mutant"),
+            ))) if mutation else (lambda _text: T.ParseResult()),
+        )
+
+    adapters = [adapter("earlier", False), adapter("first-mutant", True),
+                adapter("between", False), adapter("second-mutant", True)]
+    packets = []
+    for run, earlier_seconds in enumerate((200, 850)):
+        now[0] = 0.0
+        timeouts: list[int] = []
+
+        def process(argv: list[str], *, cwd: Path, env: dict[str, str],
+                    timeout: int, shell: bool) -> Any:
+            if _version(argv):
+                return T.ProcessResult(0, "1.0.0")
+            if argv[0] in {"earlier", "between"}:
+                now[0] += earlier_seconds
+            else:
+                timeouts.append(timeout)
+                if timeout < 200:
+                    raise subprocess.TimeoutExpired(argv, timeout, output="partial")
+                now[0] += 200
+            return T.ProcessResult(0, "stable report")
+
+        output, home = tmp_path / f"out-{run}", tmp_path / f"home-{run}"
+        assert _run(repo, base, head, profile, output, home,
+                    adapters=adapters, runner=process) == 0
+        assert timeouts == [900, 700]
+        assert _reasons(output) == []
+        findings = _read(output, "findings.json")
+        assert len(findings) == 2
+        packets.append(([(output / name).read_bytes() for name in _FOUR], [
+            (home / ".saga" / "review-output" / f["proof"]["raw_output"]).read_bytes()
+            for f in findings
+        ]))
+    assert packets[0] == packets[1]
+
+    now[0] = 0.0
+    spent_timeouts: list[int] = []
+
+    def spent(argv: list[str], *, cwd: Path, env: dict[str, str],
+              timeout: int, shell: bool) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if argv[0] == "first-mutant":
+            now[0] += 750
+        elif argv[0] == "second-mutant":
+            spent_timeouts.append(timeout)
+            raise subprocess.TimeoutExpired(argv, timeout, output="partial")
+        return T.ProcessResult(0, "stable report")
+
+    output = tmp_path / "out-spent"
+    assert _run(repo, base, head, profile, output, tmp_path / "home-spent",
+                adapters=adapters, runner=spent) == 0
+    assert spent_timeouts == [150]
+    assert _reasons(output) == [("second-mutant", "testing.surviving-mutant", "cap")]
+
+
+def test_mutation_setup_time_reduces_the_scan_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    now = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: now[0])
+    timeouts: list[int] = []
+    remove_tree = T._remove_tree
+
+    def remove(path: Path) -> None:
+        if path.name == "report.json":
+            now[0] += 100
+        remove_tree(path)
+
+    monkeypatch.setattr(T, "_remove_tree", remove)
+
+    def invoke(_context: Any) -> list[str]:
+        now[0] += 750
+        return ["mutant", "scan"]
+
+    def process(argv: list[str], *, cwd: Path, env: dict[str, str],
+                timeout: int, shell: bool) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        timeouts.append(timeout)
+        raise subprocess.TimeoutExpired(argv, timeout, output="partial")
+
+    output = tmp_path / "out"
+    mutant = _stub(id="mutant", tool="mutant", mutation=True, lens="testing",
+                   rows=("testing.surviving-mutant",), timeout_seconds=900, invoke=invoke,
+                   report_file="report.json")
+    assert _run(repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+                adapters=[mutant], runner=process) == 0
+    assert timeouts == [50]
+    assert _reasons(output) == [("mutant", "testing.surviving-mutant", "cap")]
+    assert _read(output, "findings.json") == []
+
+
+def test_mutation_version_probe_is_bounded_by_the_remaining_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    now = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: now[0])
+    probes: list[tuple[str, float]] = []
+
+    def process(argv: list[str], *, cwd: Path, env: dict[str, str],
+                timeout: float, shell: bool) -> Any:
+        if _version(argv):
+            probes.append((argv[0], timeout))
+            if argv[0] == "second":
+                now[0] += timeout
+                raise subprocess.TimeoutExpired(argv, timeout)
+            return T.ProcessResult(0, "1.0.0")
+        now[0] += 750
+        return T.ProcessResult(0, "stable report")
+
+    def mutant(name: str) -> Any:
+        return _stub(id=name, tool=name, mutation=True, lens="testing",
+                     rows=("testing.surviving-mutant",), timeout_seconds=900,
+                     invoke=lambda _context: [name, "scan"])
+
+    output = tmp_path / "out"
+    assert _run(repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+                adapters=[mutant("first"), mutant("second")], runner=process) == 0
+    assert probes == [("first", 900), ("second", 150)]
+    assert _reasons(output) == [("second", "testing.surviving-mutant", "timeout")]
+
+
 def test_scan_folders_are_fresh_per_scan_and_live_under_scratch(tmp_path: Path) -> None:
     """Issue 147: adapters copied files into a persistent folder under the runner home and scanned
     the whole folder, so a file copied by one scan was scanned again by the next."""

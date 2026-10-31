@@ -2,23 +2,48 @@
 
 ## 2026-10-30
 
+### Reserve mutation time independently of other scanners
+
+**Decision.** Keep a shared 900-second mutation budget, counting each mutation
+adapter's active interval and pausing it while other adapters run. Retain the
+existing per-tool and per-mutant limits, timeout reporting, and cap degradation.
+
+**Rationale.** Mutation adapters are interleaved with other tools. An elapsed
+deadline started before the first mutation scan makes their available time depend
+on unrelated setup and scanner duration, changing outcomes under load. Pausing
+the budget gives mutation the same allowance regardless of that unrelated time.
+
+**Alternatives.** Starting one continuous deadline at the first mutation adapter
+still charges intervening non-mutation adapters. Giving every mutation adapter a
+fresh 900 seconds would increase the shared allocation. Reordering adapters could
+change their execution dependencies and cleanup behavior.
+
+**Limits and revisit when.** Adapter setup, version probes and cleanup are counted
+in the active interval; mutation probes and scans are clamped to the remaining
+time. Revisit when a single prepare-wide wall-clock budget is introduced, or
+evidence supports changing the mutation allowance.
+
+**Refs.** [Runner](../../plugins/saga/scripts/review_tools.py),
+[runner tests](../../plugins/saga/tests/test_review_tools.py).
+
 ### Canonicalize Gitleaks finding order and bound the whole scan
 
 **Decision.** Sort Gitleaks report elements by finding identity, with the complete
 finding as a tie-breaker, before hashing the stored report. Preserve each element
 and the report separators as emitted. Build hits in the same deterministic order.
-Set the outer whole-scan deadline to 600 seconds; an interrupted scan is degraded
-and its partial report is excluded from findings and proof.
+Set the tool timeout to 600 seconds for both the whole scan and its version probe;
+an interrupted scan is degraded and its partial report is excluded from findings
+and proof.
 
 **Rationale.** Scanner findings can be identical but arrive in a different order,
 changing the stored report digest. Sorting the elements preserves the evidence
 while making that digest independent of arrival order. The longer deadline adds
 margin for contention after a whole scan exceeded the earlier limit.
 
-**Limits.** A longer scanner deadline can consume time from the shared mutation
-budget. Measurements on particular trees cannot guarantee completion on larger
-histories or under heavier load. Revisit the deadline when the mutation budget is
-independent or new measurements justify a different limit.
+**Limits.** Measurements on particular trees cannot guarantee completion on larger
+histories or under heavier load. Revisit the deadline when new measurements justify
+a different limit. The separate mutation-budget decision above isolates mutation
+time from this scanner.
 
 **Refs.** [Adapter](../../plugins/saga/scripts/review_adapters_all_languages.py),
 [tool catalogue](../../plugins/saga/references/review-tools.yaml),

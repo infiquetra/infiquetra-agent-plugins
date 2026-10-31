@@ -983,7 +983,7 @@ def subprocess_runner(
     *,
     cwd: Path,
     env: Mapping[str, str],
-    timeout: int,
+    timeout: float,
     shell: bool,
     umask: int | None = None,
 ) -> ProcessResult:
@@ -1164,7 +1164,7 @@ def _run(
     items: list[Mapping[str, Any]] = []
     degraded: list[dict[str, str]] = list(profile_notes)
     rule_sources: dict[str, dict[str, Any]] = {}
-    deadline = time.monotonic() + MUTATION_CAP_SECONDS
+    mutation_remaining = float(MUTATION_CAP_SECONDS)
     tool_env, tool_temps = _tool_env(home)
     base_markers = _tree_markers(repo, base_sha)
     head_markers = _tree_markers(repo, head_sha)
@@ -1183,6 +1183,9 @@ def _run(
             for adapter in adapters:
                 if adapter.mode == "fix" or not adapter.tool:
                     continue
+                mutation_start = time.monotonic() if adapter.mutation else None
+                deadline = (mutation_start + mutation_remaining
+                            if mutation_start is not None else None)
                 try:
                     pending.extend(_run_adapter(
                         adapter, repo, base_sha, head_sha, head_root, change, home, profile,
@@ -1192,6 +1195,8 @@ def _run(
                     ))
                 finally:
                     residue.clear(adapter.id, diagnostics_directory)
+                    if mutation_start is not None:
+                        mutation_remaining -= max(0.0, time.monotonic() - mutation_start)
             measurements: list[dict[str, Any]] = []
             cov_findings: list[dict[str, Any]] = []
             if framework:
@@ -1507,7 +1512,7 @@ def _run_adapter(
     profile: Mapping[str, Any],
     process: Process,
     env: dict[str, str],
-    deadline: float,
+    deadline: float | None,
     degraded: list[dict[str, str]],
     items: list[Mapping[str, Any]],
     base_markers: frozenset[str] | None,
@@ -1556,7 +1561,18 @@ def _run_adapter(
         if cache_problem is not None:
             degraded.append(_degraded(adapter, _primary_row(adapter), cache_problem))
             return []
-        version, problem = _read_version(adapter, profile, process, env, head_root)
+        probe_timeout: float | None = None
+        if adapter.mutation:
+            assert deadline is not None
+            probe_timeout = deadline - time.monotonic()
+        if probe_timeout is not None and probe_timeout <= 0:
+            # Still ask the adapter whether it has work: an empty invocation must
+            # not be reported as a capped scan.
+            version, problem = None, None
+        else:
+            version, problem = _read_version(
+                adapter, profile, process, env, head_root, timeout=probe_timeout,
+            )
         if problem in {"missing", "timeout"}:
             degraded.append(_degraded(adapter, _primary_row(adapter), problem))
             return []
@@ -1566,6 +1582,7 @@ def _run_adapter(
         # The budget is checked in ``_once``, after the tool says whether it has anything to run.
         timeout = adapter.timeout_seconds
         if adapter.mutation:
+            assert deadline is not None
             timeout = max(1, min(timeout, int(deadline - time.monotonic())))
         ran = version or adapter.default_version
         comparison = "base-head" if adapter.type_checker else adapter.comparison
@@ -1910,7 +1927,7 @@ def _capture(
     context: ScanContext,
     process: Process,
     env: Mapping[str, str],
-    timeout: int,
+    timeout: float,
     diagnostic: review_diagnostics.Attempt | None = None,
     deadline: float | None = None,
 ) -> tuple[ProcessResult | None, str | None, bool]:
@@ -1942,6 +1959,13 @@ def _capture(
             if not _within_root(scan.root, report.parent):
                 return None, "unparseable", True
             _remove_tree(report)
+        if adapter.mutation and deadline is not None:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None, "cap", True
+            # Invocation setup also spends mutation time. Do not use the stale
+            # timeout calculated before the adapter prepared its command.
+            timeout = min(timeout, left)
         executed = True
         result, problem = _execute(adapter, argv, scan.root, process, env, timeout, diagnostic)
         if result is not None and problem is None:
@@ -1984,7 +2008,7 @@ def _execute(
     cwd: Path,
     process: Process,
     env: Mapping[str, str],
-    timeout: int,
+    timeout: float,
     diagnostic: review_diagnostics.Attempt | None = None,
 ) -> tuple[ProcessResult | None, str | None]:
     if isinstance(argv, str) or not isinstance(argv, list):
@@ -2083,6 +2107,7 @@ def _read_version(
     process: Process,
     env: Mapping[str, str],
     root: Path,
+    timeout: float | None = None,
 ) -> tuple[str | None, str | None]:
     pinned = _pinned_version(adapter, profile)
     if not adapter.tool:
@@ -2111,7 +2136,9 @@ def _read_version(
         try:
             result = process(
                 probe_argv,
-                cwd=probe, env=probe_env, timeout=adapter.timeout_seconds,
+                cwd=probe, env=probe_env,
+                timeout=(adapter.timeout_seconds if timeout is None
+                         else min(adapter.timeout_seconds, timeout)),
                 shell=False,
             )
         except FileNotFoundError:
