@@ -1188,13 +1188,27 @@ def _run(
                 mutation_start = time.monotonic() if adapter.mutation else None
                 deadline = (mutation_start + mutation_remaining
                             if mutation_start is not None else None)
+                degraded_start, items_start = len(degraded), len(items)
                 try:
-                    pending.extend(_run_adapter(
-                        adapter, repo, base_sha, head_sha, head_root, change, home, profile,
-                        process, tool_env, deadline, degraded, items, base_markers,
-                        head_markers, head_languages,
-                        diagnostics_directory, rule_sources,
-                    ))
+                    try:
+                        adapter_hits = _run_adapter(
+                            adapter, repo, base_sha, head_sha, head_root, change, home, profile,
+                            process, tool_env, deadline, degraded, items, base_markers,
+                            head_markers, head_languages,
+                            diagnostics_directory, rule_sources,
+                        )
+                        if _mutation_past_deadline(adapter, deadline):
+                            del degraded[degraded_start:]
+                            del items[items_start:]
+                            degraded.append(_problem_entry(adapter, "cap"))
+                        else:
+                            pending.extend(adapter_hits)
+                    except Exception:
+                        if not _mutation_past_deadline(adapter, deadline):
+                            raise
+                        del degraded[degraded_start:]
+                        del items[items_start:]
+                        degraded.append(_problem_entry(adapter, "cap"))
                 finally:
                     residue.clear(adapter.id, diagnostics_directory)
                     if mutation_start is not None:
@@ -1572,9 +1586,17 @@ def _run_adapter(
             # not be reported as a capped scan.
             version, problem = None, None
         else:
-            version, problem = _read_version(
-                adapter, profile, process, env, head_root, timeout=probe_timeout, deadline=deadline,
-            )
+            try:
+                version, problem = _read_version(
+                    adapter, profile, process, env, head_root,
+                    timeout=probe_timeout, deadline=deadline,
+                )
+            except Exception:
+                if not _mutation_past_deadline(adapter, deadline):
+                    raise
+                version, problem = None, "cap"
+            if _mutation_past_deadline(adapter, deadline):
+                version, problem = None, "cap"
         if problem == "cap":
             degraded.append(_problem_entry(adapter, problem))
             return []
@@ -1646,6 +1668,11 @@ def _run_adapter(
         return kept
 
 
+def _mutation_past_deadline(adapter: Adapter, deadline: float | None) -> bool:
+    """A completed mutation step is late only strictly after its deadline."""
+    return deadline is not None and adapter.mutation and time.monotonic() > deadline
+
+
 def _once(
     adapter: Adapter,
     context: ScanContext,
@@ -1663,15 +1690,30 @@ def _once(
             adapter, context, process, env, timeout, diagnostic, deadline,
         )
     except ToolGap as exc:
+        if _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap")
+            degraded.append(_problem_entry(adapter, "cap"))
+            return (), {}
         if diagnostic is not None:
             diagnostic.finish("skipped", exc.reason)
         degraded.append(_degraded(adapter, exc.row, exc.reason))
         return (), {}
     except BaseException as exc:
+        if isinstance(exc, Exception) and _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap")
+            degraded.append(_problem_entry(adapter, "cap"))
+            return (), {}
         if diagnostic is not None:
             reason = "cancelled" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "execution-error"
             diagnostic.finish("failed", reason)
         raise
+    if _mutation_past_deadline(adapter, deadline):
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code if result is not None else None)
+        degraded.append(_problem_entry(adapter, "cap"))
+        return (), {}
     if not ran:
         if diagnostic is not None:
             diagnostic.finish("skipped", "not-invoked")
@@ -1685,9 +1727,26 @@ def _once(
     try:
         parsed, failure = _parsed(adapter, result, label)
     except ToolGap as exc:
+        if _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap", result.code)
+            degraded.append(_problem_entry(adapter, "cap"))
+            return (), {}
         if diagnostic is not None:
             diagnostic.finish("skipped", exc.reason, result.code)
         degraded.append(_degraded(adapter, exc.row, exc.reason))
+        return (), {}
+    except Exception:
+        if not _mutation_past_deadline(adapter, deadline):
+            raise
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code)
+        degraded.append(_problem_entry(adapter, "cap"))
+        return (), {}
+    if _mutation_past_deadline(adapter, deadline):
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code)
+        degraded.append(_problem_entry(adapter, "cap"))
         return (), {}
     if diagnostic is not None:
         reason = failure or (parsed.gap[0] if parsed is not None and parsed.gap else None)
@@ -1695,7 +1754,7 @@ def _once(
     try:
         if failure in adapter.retry_failures:
             retried = _retry(adapter, context, process, env, timeout, label, deadline)
-            if retried == "cap":
+            if retried == "cap" or _mutation_past_deadline(adapter, deadline):
                 degraded.append(_problem_entry(adapter, "cap"))
                 return (), {}
             if retried is not None:
@@ -1703,7 +1762,13 @@ def _once(
                 failure = None
                 degraded.append(_degraded(adapter, _primary_row(adapter), "baseline-flaky"))
     except ToolGap as exc:
-        degraded.append(_degraded(adapter, exc.row, exc.reason))
+        degraded.append(_problem_entry(adapter, "cap") if _mutation_past_deadline(adapter, deadline)
+                        else _degraded(adapter, exc.row, exc.reason))
+        return (), {}
+    except Exception:
+        if not _mutation_past_deadline(adapter, deadline):
+            raise
+        degraded.append(_problem_entry(adapter, "cap"))
         return (), {}
     if parsed is not None:
         _note_problems(adapter, parsed, degraded, context.root)
@@ -1765,15 +1830,23 @@ def _retry(
     try:
         result, problem, ran = _capture(adapter, context, process, env, timeout, diagnostic, deadline)
     except ToolGap as exc:
+        if _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap")
+            return "cap"
         if diagnostic is not None:
             diagnostic.finish("skipped", exc.reason)
         return None
     except BaseException as exc:
+        if isinstance(exc, Exception) and _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap")
+            return "cap"
         if diagnostic is not None:
             reason = "cancelled" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "execution-error"
             diagnostic.finish("failed", reason)
         raise
-    if adapter.mutation and deadline is not None and time.monotonic() > deadline:
+    if _mutation_past_deadline(adapter, deadline):
         if diagnostic is not None:
             diagnostic.finish("failed", "cap", result.code if result is not None else None)
         return "cap"
@@ -1786,9 +1859,23 @@ def _retry(
     try:
         parsed, failure = _parsed(adapter, result, label)
     except ToolGap as exc:
+        if _mutation_past_deadline(adapter, deadline):
+            if diagnostic is not None:
+                diagnostic.finish("failed", "cap", result.code)
+            return "cap"
         if diagnostic is not None:
             diagnostic.finish("skipped", exc.reason, result.code)
         raise
+    except Exception:
+        if not _mutation_past_deadline(adapter, deadline):
+            raise
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code)
+        return "cap"
+    if _mutation_past_deadline(adapter, deadline):
+        if diagnostic is not None:
+            diagnostic.finish("failed", "cap", result.code)
+        return "cap"
     if diagnostic is not None:
         reason = failure or (parsed.gap[0] if parsed is not None and parsed.gap else None)
         diagnostic.finish("failed" if reason else "succeeded", reason, result.code)

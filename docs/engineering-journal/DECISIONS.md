@@ -19,12 +19,15 @@ fresh 900 seconds would increase the shared allocation. Reordering adapters coul
 change their execution dependencies and cleanup behavior.
 
 **Limits and revisit when.** Adapter setup, version probes and cleanup are counted
-in the active interval; mutation probes and initial and retry scans are clamped
-again immediately before launch, and a retry result arriving after the deadline
-is capped. Cleanup and process termination after a deadline can still take time.
-Mutation adapters using base-head comparison are refused
-until that path supports the budget. Revisit when a single prepare-wide wall-clock
-budget is introduced, or evidence supports changing the mutation allowance.
+in the active interval. Before calling the process runner, Saga clamps mutation
+probes and scans to the remaining time; process startup occurs after that clamp.
+A mutation step that returns or fails strictly after its deadline is capped;
+a result at the deadline is accepted. Cleanup and process termination can still
+take time after the deadline. A step whose duration is close to the deadline may
+fall on different sides in repeated prepares; this rule does not eliminate that
+timing dependence. Mutation adapters using base-head comparison are refused until
+that path supports the budget. Revisit when a single prepare-wide wall-clock budget
+is introduced, or evidence supports changing the mutation allowance.
 
 **Refs.** [Runner](../../plugins/saga/scripts/review_tools.py),
 [runner tests](../../plugins/saga/tests/test_review_tools.py).

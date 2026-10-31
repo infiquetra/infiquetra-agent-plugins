@@ -877,6 +877,163 @@ def test_mutation_version_probe_clamps_after_probe_setup(
         assert version == "1.0.0" and problem is None and calls == [expected]
 
 
+@pytest.mark.parametrize("finished,expected", [(200.0, "accepted"), (200.01, "cap")])
+def test_initial_mutation_result_uses_post_return_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finished: float, expected: str,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    home = tmp_path / "home"
+    home.mkdir()
+    adapter = _stub(mutation=True, lens="testing", rows=("testing.surviving-mutant",),
+                    parse=lambda _text: T.ParseResult((
+                        _hit(row="testing.surviving-mutant"),
+                    )))
+
+    def process(_argv: list[str], **_kwargs: Any) -> Any:
+        clock[0] = finished
+        return T.ProcessResult(0, "report")
+
+    degraded: list[dict[str, str]] = []
+    hits, digests = T._once(adapter, T.ScanContext(tmp_path, tmp_path, home), process,
+                            {}, 100, "head", degraded, [], 200)
+    if expected == "accepted":
+        assert len(hits) == 1 and digests and degraded == []
+    else:
+        assert hits == () and digests == {}
+        assert [item["reason"] for item in degraded] == ["cap"]
+
+
+@pytest.mark.parametrize("finished", [199.0, 201.0])
+@pytest.mark.parametrize("gap", [True, False])
+def test_initial_mutation_exception_respects_post_return_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finished: float, gap: bool,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def invoke(_context: Any) -> list[str]:
+        clock[0] = finished
+        if gap:
+            raise T.ToolGap("setup-gap", "testing.surviving-mutant")
+        raise RuntimeError("setup failed")
+
+    adapter = _stub(mutation=True, lens="testing", rows=("testing.surviving-mutant",),
+                    invoke=invoke)
+    context = T.ScanContext(tmp_path, tmp_path, home)
+    degraded: list[dict[str, str]] = []
+    if not gap and finished <= 200:
+        with pytest.raises(RuntimeError, match="setup failed"):
+            T._once(adapter, context, _Calls(_ok()), {}, 100, "head", degraded, [], 200)
+    else:
+        hits, digests = T._once(adapter, context, _Calls(_ok()), {}, 100, "head",
+                                degraded, [], 200)
+        assert hits == () and digests == {}
+        assert [item["reason"] for item in degraded] == ["cap" if finished > 200 else "setup-gap"]
+
+
+@pytest.mark.parametrize("finished,expected", [(199.0, "baseline-failed"), (201.0, "cap")])
+def test_retry_setup_gap_respects_post_return_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finished: float, expected: str,
+) -> None:
+    clock = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    home = tmp_path / "home"
+    home.mkdir()
+    invocations = [0]
+
+    def invoke(_context: Any) -> list[str]:
+        invocations[0] += 1
+        if invocations[0] == 2:
+            clock[0] = finished
+            raise T.ToolGap("setup-gap", "testing.surviving-mutant")
+        return ["mutant", "scan"]
+
+    def process(_argv: list[str], **_kwargs: Any) -> Any:
+        clock[0] = 100
+        return T.ProcessResult(4, "baseline report")
+
+    adapter = _stub(mutation=True, lens="testing", rows=("testing.surviving-mutant",),
+                    invoke=invoke, exit_reasons=((4, "baseline-failed"),),
+                    retry_failures=("baseline-failed",))
+    degraded: list[dict[str, str]] = []
+    hits, digests = T._once(adapter, T.ScanContext(tmp_path, tmp_path, home), process,
+                            {}, 200, "head", degraded, [], 200)
+    assert hits == () and digests == {}
+    assert [item["reason"] for item in degraded] == [expected]
+
+
+@pytest.mark.parametrize("finished", [199.0, 201.0])
+def test_retry_setup_exception_only_becomes_cap_after_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finished: float,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def invoke(_context: Any) -> list[str]:
+        clock[0] = finished
+        raise RuntimeError("setup failed")
+
+    adapter = _stub(mutation=True, invoke=invoke)
+    context = T.ScanContext(tmp_path, tmp_path, home)
+    if finished <= 200:
+        with pytest.raises(RuntimeError, match="setup failed"):
+            T._retry(adapter, context, _Calls(_ok()), {}, 100, "head", 200)
+    else:
+        assert T._retry(adapter, context, _Calls(_ok()), {}, 100, "head", 200) == "cap"
+
+
+@pytest.mark.parametrize("failure", ["result", "exception"])
+def test_late_mutation_version_probe_is_capped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    clock = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+
+    def process(argv: list[str], **_kwargs: Any) -> Any:
+        assert _version(argv)
+        clock[0] = 901
+        if failure == "exception":
+            raise RuntimeError("probe failed")
+        return T.ProcessResult(0, "1.0.0")
+
+    adapter = _stub(mutation=True, lens="testing", rows=("testing.surviving-mutant",))
+    output = tmp_path / "out"
+    assert _run(repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+                adapters=[adapter], runner=process) == 0
+    assert [reason for _, _, reason in _reasons(output)] == ["cap"]
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_late_mutation_adapter_setup_outcome_is_capped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: bool,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    clock = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    present = T._present
+
+    def probe(path: Path) -> bool:
+        if path.name == "missing-marker":
+            clock[0] = 901
+            if failure:
+                raise RuntimeError("setup failed")
+        return present(path)
+
+    monkeypatch.setattr(T, "_present", probe)
+    adapter = _stub(mutation=True, lens="testing", rows=("testing.surviving-mutant",),
+                    gap_path="missing-marker")
+    output = tmp_path / "out"
+    assert _run(repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+                adapters=[adapter], runner=_Calls(_ok())) == 0
+    assert [reason for _, _, reason in _reasons(output)] == ["cap"]
+
+
 def test_scan_folders_are_fresh_per_scan_and_live_under_scratch(tmp_path: Path) -> None:
     """Issue 147: adapters copied files into a persistent folder under the runner home and scanned
     the whole folder, so a file copied by one scan was scanned again by the next."""
@@ -897,11 +1054,10 @@ def test_scan_folders_are_fresh_per_scan_and_live_under_scratch(tmp_path: Path) 
     assert scratch in again.parents and list(home.iterdir()) == []
 
 
-def test_a_mutation_tool_with_nothing_to_run_records_no_cap(
+def test_a_mutation_tool_with_nothing_to_run_after_the_deadline_records_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Issue 147: the budget was checked before the tool said whether it had work, so a spent
-    budget recorded ``cap`` for a tool that would have run nothing, on one run and not the next."""
+    """A returned mutation step after the deadline is capped even when it has no command."""
     monkeypatch.setattr(T, "MUTATION_CAP_SECONDS", -1)
     repo, base, head = _pair(tmp_path)
     runner = _Calls(_ok())
@@ -914,7 +1070,7 @@ def test_a_mutation_tool_with_nothing_to_run_records_no_cap(
         repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
         adapters=[adapter], runner=runner,
     ) == 0
-    assert _reasons(output) == []
+    assert _reasons(output) == [("mutant", "testing.surviving-mutant", "cap")]
     assert all(_version(call["argv"]) for call in runner.calls)
 
 

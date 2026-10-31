@@ -61,9 +61,7 @@ def test_initial_and_retry_evidence_survive_independently(tmp_path: Path, retry:
         return T.ProcessResult(0 if calls == 2 and retry == "success" else 4,
                                f"console {calls}", f"stderr {calls}")
 
-    # The initial attempt runs whenever the tool has work and the budget is not spent yet (the
-    # budget is checked after the tool returns an argument vector, issue 147); "budget" leaves the
-    # retry nothing.
+    # The budget case returns after the deadline, so the initial attempt is capped.
     deadline = time.monotonic() + (1 if retry == "budget" else 30)
     degraded: list[Any] = []
     T._once(_adapter(), context, process, {}, 5, "head", degraded, [], deadline)
@@ -74,14 +72,18 @@ def test_initial_and_retry_evidence_survive_independently(tmp_path: Path, retry:
         assert record["elapsed_seconds"] >= 0
         assert record["remaining_budget_seconds"] >= 0
     initial_path, initial = attempts["initial"]
-    assert initial["status"] == "failed" and initial["reason"] == "baseline-failed"
+    assert initial["status"] == "failed"
+    assert initial["reason"] == ("cap" if retry == "budget" else "baseline-failed")
     assert (initial_path / "stdout.txt").read_text() == "console 1"
     baseline = next(initial_path.glob("baseline-*.log"))
     assert baseline.read_text() == "attempt 1 test failure"
-    retry_path, record = attempts["retry"]
-    expected = {"failure": ("failed", "baseline-failed"), "timeout": ("failed", "timeout"),
-                "success": ("succeeded", None), "budget": ("skipped", "budget-exhausted")}
-    assert (record["status"], record["reason"]) == expected[retry]
+    if retry == "budget":
+        assert "retry" not in attempts
+    else:
+        retry_path, record = attempts["retry"]
+        expected = {"failure": ("failed", "baseline-failed"), "timeout": ("failed", "timeout"),
+                    "success": ("succeeded", None)}
+        assert (record["status"], record["reason"]) == expected[retry]
     assert calls == (1 if retry == "budget" else 2)
     reason = {"success": "baseline-flaky", "budget": "cap"}.get(retry, "baseline-failed")
     assert degraded[0]["reason"] == reason
