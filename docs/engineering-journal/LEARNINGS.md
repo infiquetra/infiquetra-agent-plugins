@@ -2,6 +2,19 @@
 
 ## 2026-10-30
 
+### Finding order can change a scanner report digest
+
+**Evidence.** Repeated scans produced the same findings in different orders,
+so their stored report digests differed. Sorting complete report elements and
+building hits in a consistent order made the tested reports and hits agree.
+
+**Mechanism.** A digest covers the report's ordering as well as its findings.
+Parallel discovery can change that ordering without changing any finding.
+
+**Generalizable rule.** Canonicalize unordered report collections before hashing,
+while retaining each finding's evidence. Treat an interrupted whole scan as
+degraded rather than accepting a partial report as complete.
+
 ### A per-rule wall-clock limit can make scanner output depend on load
 
 **Evidence.** Repeated Semgrep scans of the same trees produced different timeout

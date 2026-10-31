@@ -2,6 +2,28 @@
 
 ## 2026-10-30
 
+### Canonicalize Gitleaks finding order and bound the whole scan
+
+**Decision.** Sort Gitleaks report elements by finding identity, with the complete
+finding as a tie-breaker, before hashing the stored report. Preserve each element
+and the report separators as emitted. Build hits in the same deterministic order.
+Set the outer whole-scan deadline to 600 seconds; an interrupted scan is degraded
+and its partial report is excluded from findings and proof.
+
+**Rationale.** Scanner findings can be identical but arrive in a different order,
+changing the stored report digest. Sorting the elements preserves the evidence
+while making that digest independent of arrival order. The longer deadline adds
+margin for contention after a whole scan exceeded the earlier limit.
+
+**Limits.** A longer scanner deadline can consume time from the shared mutation
+budget. Measurements on particular trees cannot guarantee completion on larger
+histories or under heavier load. Revisit the deadline when the mutation budget is
+independent or new measurements justify a different limit.
+
+**Refs.** [Adapter](../../plugins/saga/scripts/review_adapters_all_languages.py),
+[tool catalogue](../../plugins/saga/references/review-tools.yaml),
+[adapter tests](../../plugins/saga/tests/test_review_adapters_all_languages.py).
+
 ### Bound whole Semgrep scans instead of individual rules
 
 **Decision.** Disable Semgrep's per-rule timeout and timeout threshold for both

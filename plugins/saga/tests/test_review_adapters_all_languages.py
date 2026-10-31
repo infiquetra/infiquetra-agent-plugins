@@ -532,6 +532,58 @@ def test_gitleaks_record_holds_no_secret_and_the_raw_bytes_are_on_disk(tmp_path:
     assert _severity(output, "example-rule") == "blocks"
 
 
+def test_gitleaks_shuffled_findings_have_same_raw_digest_and_hits(tmp_path: Path) -> None:
+    repo, base, head = _changed_app(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {"gitleaks": {"version": "1.0.0"}})
+    findings = [
+        {"File": "src/app.py", "StartLine": 4, "EndLine": 4, "StartColumn": column,
+         "EndColumn": column + 1, "RuleID": rule, "Fingerprint": rule, "Description": desc}
+        for column, rule, desc in ((3, "b", "one"), (1, "a", "two"), (1, "a", "one"))
+    ]
+    fragments = [json.dumps(item, indent=2) for item in findings]
+    reports = ["[\n" + ",\n".join(parts) + "\n]\n"
+               for parts in (fragments, list(reversed(fragments)))]
+    assert A._parse_gitleaks(reports[0]).hits == A._parse_gitleaks(reports[1]).hits
+    outputs = []
+    stored = []
+    for index, report in enumerate(reports):
+        home = tmp_path / f"home-{index}"
+        output = tmp_path / f"out-{index}"
+        assert _run(repo, base, head, profile, output, home,
+                    [_adapter("gitleaks")], _Calls(base, report)) == 0
+        records = _read(output, "findings.json")
+        assert records
+        digest = records[0]["proof"]["raw_output"]
+        stored.append((digest, (home / ".saga" / "review-output" / digest).read_text()))
+        outputs.append(output)
+    assert stored[0] == stored[1]
+    assert all(fragment in stored[0][1] for fragment in fragments)
+    assert sorted(json.loads(stored[0][1]), key=A._gitleaks_order) == sorted(
+        findings, key=A._gitleaks_order,
+    )
+    _packets_match(*outputs)
+
+
+def test_gitleaks_timeout_discards_partial_report(tmp_path: Path) -> None:
+    repo, base, head = _changed_app(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {"gitleaks": {"version": "1.0.0"}})
+    timeouts: list[int] = []
+
+    def interrupted(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool) -> Any:
+        if "--version" in argv:
+            return T.ProcessResult(0, "1.0.0\n")
+        timeouts.append(timeout)
+        raise subprocess.TimeoutExpired(argv, timeout, output='[{"RuleID":"example"}]')
+
+    output = tmp_path / "out"
+    assert _run(repo, base, head, profile, output, tmp_path / "home",
+                [_adapter("gitleaks")], interrupted) == 0
+    assert timeouts == [600]
+    assert _read(output, "findings.json") == []
+    assert any(row["tool"] == "gitleaks" and row["reason"] == "timeout"
+               for row in _read(output, "degraded.json"))
+
+
 def test_osv_scanner_skips_npm_and_maps_scores(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init(repo)
