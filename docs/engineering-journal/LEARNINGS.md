@@ -1,5 +1,15 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-06
+
+### A blocking tool grade needs evidence that the tool finds what blocks are for
+
+**Evidence.** In a measured review run, unused-import, unused-variable, bugbear and silent-skip hits blocked clean changes, and none of them produced a block at a planted correctness defect. SwiftLint and actionlint did, so their grades stay.
+
+**Mechanism.** A family map that sends a whole linter family to `error` makes style-level hits as strong as a proven failure. An unresolved import has the same effect from another direction: it reports what the review environment lacks, not what the code does.
+
+**Generalizable rule.** Before a tool rule may block, measure whether it ever blocks a known defect; grade it by that record, not by the tool's own family name.
+
 ## 2026-10-31
 
 ### Extract bounded identifiers once before testing a set of names

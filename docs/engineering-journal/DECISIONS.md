@@ -1,5 +1,19 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-06
+
+### Keep lint-level tool hits out of the blocking grade
+
+**Decision.** Ruff's bugbear family and `F401`, `F405` and `F841` grade as warnings, `correctness.pattern.silent-skip` fixes later, and mypy's `import-not-found` and `import-untyped` diagnostics grade as style. Every other Ruff `F` code, every other mypy error and every other pattern check still blocks.
+
+**Rejected alternatives.** Demoting the whole `F` family would stop `F821` (undefined name) from blocking, which is a real failure. Narrowing Ruff's `--select ALL` would hide findings instead of grading them, and they stay useful as fix-later items.
+
+**Rationale.** In a measured run these hits blocked clean changes and never blocked at a planted correctness defect, so their blocking grade cost trust and bought no catches.
+
+**Revisit when.** A measured run shows one of these rules blocking a real defect that nothing else catches.
+
+---
+
 ## 2026-10-31
 
 ### Keep Redis protocol vectors with the current producer

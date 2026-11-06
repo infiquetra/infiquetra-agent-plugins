@@ -275,7 +275,10 @@ tools:
     mode: report
     family_map:
       F: error
-      B: error
+      F401: warning
+      F405: warning
+      F841: warning
+      B: warning
       S: security
       C4: warning
       UP: warning

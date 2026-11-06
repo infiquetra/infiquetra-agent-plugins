@@ -168,7 +168,9 @@ def test_rule_files_carry_identity_message_languages_and_metadata() -> None:
         assert metadata["lens"] == "correctness", stem
         assert metadata["defect"] == DEFECTS[stem], stem
         assert metadata["harm"] == harm, stem
-        assert metadata["outcome"] == OUTCOME, stem
+        assert metadata["outcome"] == (
+            "fix-later unless the builder records a reason" if stem == "silent-skip" else OUTCOME
+        ), stem
         assert metadata["row"] == row, stem
 
 
@@ -184,10 +186,12 @@ def test_each_rule_language_has_a_marked_test_file() -> None:
 
 
 def test_rule_metadata_stays_in_step_with_the_formula() -> None:
-    """U2: each cited row blocks in the formula, excused by a pattern-check reason."""
+    """Each cited row has its intended outcome and accepts a pattern-check reason."""
     for stem, row, _, _ in RULE_TABLE:
         assert _load_rule(stem)["metadata"]["row"] == row
-        assert review_formula.ROWS[row].outcome == "blocks", row
+        assert review_formula.ROWS[row].outcome == (
+            "fix-later" if stem == "silent-skip" else "blocks"
+        ), row
         assert review_formula.ROWS[row].excused_by == "pattern-check", row
 
 
@@ -435,7 +439,7 @@ def _profile_with_key() -> dict[str, Any]:
 
 
 def test_recorded_output_becomes_validated_correctness_findings(tmp_path: Path) -> None:
-    """U3: each rule's recorded hit becomes a validated finding that blocks."""
+    """Each recorded hit becomes a validated finding with its row outcome."""
     code, output = _run_saga(tmp_path, _payload(), _profile_with_key(), {4, 5, 6, 7, 8, 9})
     assert code == 0
     findings = _read(output, "findings.json")
@@ -452,8 +456,10 @@ def test_recorded_output_becomes_validated_correctness_findings(tmp_path: Path) 
         assert finding["source"]["version"] == pin
         assert "severity" not in finding
         assert review_records.validate(finding) == []
-    severities = {item["severity"] for item in _read(output, "outcomes.json")["findings"]}
-    assert severities == {"blocks"}
+    outcomes = {item["rule"]["row"]: item["severity"]
+                for item in _read(output, "outcomes.json")["findings"]}
+    assert outcomes["correctness.pattern.silent-skip"] == "fix-later"
+    assert outcomes["correctness.pattern.swallowed-error"] == "blocks"
     assert _read(output, "degraded.json") == []
 
 
@@ -488,7 +494,7 @@ def test_builder_reason_excuses_one_pattern_finding(tmp_path: Path) -> None:
         item["id"]: item["severity"] for item in _read(output, "outcomes.json")["findings"]
     }
     assert severities[excused] == "note"
-    assert set(severities.values()) == {"blocks", "note"}
+    assert set(severities.values()) == {"blocks", "fix-later", "note"}
 
     other = excused[:-1] + ("0" if excused[-1] != "0" else "1")
     code, output = _run_saga(
@@ -496,8 +502,10 @@ def test_builder_reason_excuses_one_pattern_finding(tmp_path: Path) -> None:
         builder=builder_for(other),
     )
     assert code == 0
-    severities = {item["severity"] for item in _read(output, "outcomes.json")["findings"]}
-    assert severities == {"blocks"}
+    outcomes = {item["rule"]["row"]: item["severity"]
+                for item in _read(output, "outcomes.json")["findings"]}
+    assert outcomes["correctness.pattern.silent-skip"] == "fix-later"
+    assert outcomes["correctness.pattern.swallowed-error"] == "blocks"
 
 
 def test_match_outside_the_change_yields_nothing(tmp_path: Path) -> None:
@@ -885,7 +893,8 @@ def test_review_tools_lists_the_six_rules() -> None:
         rule = _load_rule(stem)
         entry = entries[f"{stem}.yaml"]
         assert entry["harm"] == rule["metadata"]["harm"] == harm
-        assert entry["outcome"] == rule["metadata"]["outcome"] == OUTCOME
+        expected = "fix-later unless the builder records a reason" if stem == "silent-skip" else OUTCOME
+        assert entry["outcome"] == rule["metadata"]["outcome"] == expected
         assert entry["languages"] == rule["languages"] == list(languages)
 
 
