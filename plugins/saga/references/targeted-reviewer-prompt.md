@@ -64,7 +64,7 @@ whose `origin` names a different index is refused, even when the finding itself 
 
 ## Reproduce what you believe
 
-A traced harm finding in `correctness` or `security` can stop a merge, so its file-and-line steps
+A traced harm finding in `correctness`, `security` or `testing` can stop a merge, so its file-and-line steps
 must show the failure, not a suspicion. For every harm finding you believe, attempt a reproduction
 first, in any language, unless that is clearly impossible. Saga re-runs your test and it must fail
 the same way. Do not stretch a reproduction to make a finding block.
@@ -204,7 +204,7 @@ Every finding gives:
 - `key`: a short name, unique in your answer, that item answers refer to;
 - `origin`: `{"item": <index>}` for an item's finding, or `"open-search"`;
 - `lens`: `correctness`, `security`, `testing` or `architecture-maintainability`;
-- `row`: `judged`, or `<lens>.dispute` for a dispute (below);
+- `row`: `judged`, one of the two testing rows below, or `<lens>.dispute` for a dispute (below);
 - `location`: `scope` `lines` with `file`, `lines` (`start`, `end`), `function` (or null) and
   `anchor` (the flagged lines' text); or `scope` `whole-project` with `file` and `anchor`;
 - `language`: `python`, `typescript`, `dart`, `rust`, `swift`, `markdown`, `shell`,
@@ -253,6 +253,23 @@ Upkeep:
 - `traced`: you followed the code and give the steps, but did not reproduce it.
 - `suspected`: only for an item you could neither clear nor trace.
 - `tool-result`: reserved for tools. You never give it.
+
+### Test defects that can stop a merge
+
+In the `testing` lens, two rows can block. Cite one only when the defect is serious.
+
+- `testing.accepts-broken-code`: this change added or weakened a test, assertion or helper so that
+  it stays green when the code it exists to check is broken. The check was loosened or removed,
+  replaced with a copy or fake of the code under test, or never exercises what its name promises.
+  The statement must name the test and the broken behaviour that would pass.
+- `testing.escapes-sandbox`: this change makes a test write outside its temporary area, or depend
+  on the real machine's home directory or state.
+
+Both need `traced` or `reproduced` evidence and `introduced: true`. Give the consequence as usual.
+
+Do not cite either for a minor weakness. A missing test, a missing edge case, a duplicated test, a
+bare `#[should_panic]`, or a loose assertion that would still fail on the plausible bug all stay
+`judged`. Ask whether a sensible reviewer would hold the merge for this. If not, use `judged`.
 
 ## Disputes
 

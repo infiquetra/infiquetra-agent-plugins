@@ -121,6 +121,13 @@ def test_prompt_requires_every_item_answered() -> None:
     assert "Skipping an\nitem" in text or "Skipping an item" in text
 
 
+def test_prompt_describes_serious_testing_rows() -> None:
+    text = _section("Test defects that can stop a merge")
+    assert "testing.accepts-broken-code" in text
+    assert "testing.escapes-sandbox" in text
+    assert "minor weakness" in text
+
+
 def test_prompt_requires_a_sandboxed_reproduction_with_test_command_and_output() -> None:
     text = _section("Reproduce what you believe")
     assert "scratch copy" in text and "Only test files may change" in text
@@ -526,6 +533,19 @@ def test_a_dispute_names_what_it_disputes_on_its_own_lens() -> None:
     assert A.check(dispute, ITEMS) == []
     found["row"] = "security.dispute"
     assert "findings.stale-readme.row" in fields(A.check(dispute, ITEMS))
+
+
+@pytest.mark.parametrize("row", ["testing.accepts-broken-code", "testing.escapes-sandbox"])
+def test_serious_testing_row_requires_testing_lens_and_no_dispute(row: str) -> None:
+    result = answer()
+    found = finding(result, "stale-readme")
+    found["row"] = row
+    problems = A.check(result, ITEMS)
+    assert any("requires the testing lens" in problem for problem in problems)
+    found["lens"] = "testing"
+    assert A.check(result, ITEMS) == []
+    found["disputes"] = "example"
+    assert "findings.stale-readme.disputes" in fields(A.check(result, ITEMS))
 
 
 def test_a_scratch_copy_changed_outside_the_tests_is_refused() -> None:

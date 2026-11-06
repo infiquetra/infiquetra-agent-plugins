@@ -67,8 +67,9 @@ JEV_VERB = "consequence"
 
 #: The evidence a reviewer may give; ``tool-result`` is reserved for tools.
 REVIEWER_EVIDENCE: tuple[str, ...] = tuple(e for e in formula.EVIDENCE if e != "tool-result")
-#: The rows a reviewer may cite: ``judged`` (code picks the judged row) or a lens's dispute row.
-REVIEWER_ROWS: tuple[str, ...] = (formula.JUDGED,) + tuple(
+#: The rows a reviewer may cite, including the two serious testing defects.
+TESTING_ROWS = ("testing.accepts-broken-code", "testing.escapes-sandbox")
+REVIEWER_ROWS: tuple[str, ...] = (formula.JUDGED,) + TESTING_ROWS + tuple(
     f"{lens}.dispute" for lens in formula.LENSES
 )
 
@@ -458,7 +459,9 @@ def _check_finding(
         check.choice(lens, formula.LENSES, f"{path}.lens")
     row = finding.get("row")
     if "row" in finding and check.choice(row, REVIEWER_ROWS, f"{path}.row"):
-        if row != formula.JUDGED:
+        if row in TESTING_ROWS and lens != "testing":
+            check.add(f"{path}.row", f"{row!r} requires the testing lens")
+        if row.endswith(".dispute"):
             if row != f"{lens}.dispute":
                 check.add(f"{path}.row", f"{row!r} is another lens's dispute row")
             check.text(finding.get("disputes"), f"{path}.disputes")
