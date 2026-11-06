@@ -1477,3 +1477,14 @@ def test_output_match_reports_an_unreadable_input(tmp_path: Path) -> None:
 def test_output_match_is_listed_in_the_help() -> None:
     assert "output-match" in _cli("--help").stdout
     assert "Advisory" in _cli("output-match", "--help").stdout
+
+
+@pytest.mark.parametrize("row", ["testing.accepts-broken-code", "testing.escapes-sandbox"])
+def test_a_serious_testing_row_keeps_the_open_search_rule_ref(row: str) -> None:
+    finding = {"row": row, "origin": "open-search"}
+    assert A._rule_ref(finding, []) == A._rule_ref({"row": "judged", "origin": "open-search"}, [])
+    assert A._rule_ref(finding, []) != "None"
+
+
+def test_a_dispute_rule_ref_is_what_it_disputes() -> None:
+    assert A._rule_ref({"row": "testing.dispute", "disputes": "t1"}, []) == "t1"

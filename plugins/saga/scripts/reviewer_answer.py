@@ -749,7 +749,7 @@ def _reviewer_source(result: Mapping[str, Any]) -> dict[str, str]:
 
 def _rule_ref(finding: Mapping[str, Any], items: Sequence[Any]) -> str:
     """The question behind a finding: its item's likeliest question, or the open search."""
-    if finding.get("row") != formula.JUDGED:
+    if str(finding.get("row")).endswith(".dispute"):
         return str(finding.get("disputes"))
     origin = finding.get("origin")
     if isinstance(origin, Mapping):
