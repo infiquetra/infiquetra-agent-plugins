@@ -23,7 +23,7 @@ computed in, each step named in ``severity_basis.modifiers`` when it changed som
 2. ``reproduced``: a row that blocks when reproduced, and was;
 3. ``excused``: a builder reason of the kind the row allows makes it a note;
 4. caps that lower ``blocks`` to ``fix-later``: ``degraded``, ``classifier-only``,
-   ``unreproduced`` (an LLM finding nobody reproduced except blocking traced harm) and
+   ``unreproduced`` (an LLM finding without qualifying reproduced or traced evidence) and
    ``pre-existing``. A finding is pre-existing only when BOTH hold: the reviewer marked it
    ``introduced: false`` AND Saga's own
    changed lines place its location outside the change. Neither alone is enough. The reviewer
@@ -248,6 +248,8 @@ ROWS: Mapping[str, Row] = _rows(
     Row("testing.test-passes-before-change", "testing", "blocks",
         excused_by="test-passes-before-change"),
     Row("testing.test-skipped-in-ci", "testing", "blocks", excused_by="test-skipped-in-ci"),
+    Row("testing.accepts-broken-code", "testing", "blocks"),
+    Row("testing.escapes-sandbox", "testing", "blocks"),
     Row("testing.flaky-order-or-network", "testing", "fix-later"),
     Row("testing.fakes-code-under-test", "testing", "fix-later"),
     Row("testing.writes-live-system", "testing", "fix-later", blocks_when_reproduced=True),
@@ -313,6 +315,12 @@ ROWS: Mapping[str, Row] = _rows(
     Row("judged.visible", None, "fix-later"),
     Row("judged.upkeep", None, "note"),
 )
+
+TRACE_BLOCKING_ROWS = frozenset({
+    "judged.harm-traced-blocking",
+    "testing.accepts-broken-code",
+    "testing.escapes-sandbox",
+})
 
 #: The keys the formula computes on a finding; a finding handed in carrying one is refused.
 COMPUTED_FINDING_KEYS: tuple[str, ...] = ("severity", "severity_basis", "flags", "enforced")
@@ -497,7 +505,7 @@ def judged_row(consequence: str, trigger: str | None, evidence: str, lens: str) 
             return "judged.harm-misuse"
         if evidence == "reproduced":
             return "judged.harm-reproduced"
-        if evidence == "traced" and lens in ("correctness", "security"):
+        if evidence == "traced" and lens in ("correctness", "security", "testing"):
             return "judged.harm-traced-blocking"
         return "judged.harm-traced"
     if consequence in VISIBLE:
@@ -574,7 +582,7 @@ def outcome(
         elif (
             source_kind == "llm"
             and evidence != "reproduced"
-            and row_id != "judged.harm-traced-blocking"
+            and not (evidence == "traced" and row_id in TRACE_BLOCKING_ROWS)
         ):
             severity = "fix-later"
             modifiers.append("unreproduced")
