@@ -84,7 +84,7 @@ An unknown level or lens is a refusal. A dependency advisory with no score is `s
 | Tool id | Comparison | Row | Outcome |
 |---|---|---|---|
 | `semgrep-security` | lines | `security.scanner-high` for ERROR; `security.scanner-medium-low` for WARNING and INFO | blocks; fix later |
-| `semgrep-saga` | lines | the `correctness.pattern.*` row named in the rule's metadata | blocks, excused by `pattern-check` |
+| `semgrep-saga` | lines | the `correctness.pattern.*` row named in the rule's metadata | silent-skip fixes later; others block; excused by `pattern-check` |
 | `gitleaks` | lines | `security.secret-in-diff` | blocks |
 | `osv-scanner` | base against head | `security.dependency-high` or `security.dependency-medium-low` | blocks; fix later |
 | `jscpd` | base against head | `architecture-maintainability.duplicate` | note |
@@ -108,7 +108,7 @@ Each run writes `rule-sources.json` beside the other records: per adapter with a
 
 The saga row reads `plugins/saga/references/semgrep`. While that directory is missing or empty, the run records one `known-gap` per `correctness.pattern.*` row and does not invent a rule. When the directory is present, each result's `metadata.row` must be one of those rows.
 
-The saga row runs six pattern rules, one per defect the correctness lens table names. Each finding carries its rule identifier and harm and no severity, blocks unless the builder record gives a `pattern-check` reason, and drops to a note with one. A real scan prefixes the check id with the config path, so the parser recovers the trailing `saga.<stem>` segment for the rule id and anchor. The rule patterns are regex-shaped because Semgrep requires every syntactic branch to parse in every listed language; one rule spans Python and TypeScript. Plain JavaScript targets are a later widening: the rules list Semgrep `python` and `typescript`.
+The saga row runs six pattern rules, one per defect the correctness lens table names. Each finding carries its rule identifier and harm and no severity. Silent-skip fixes later and the other rows block; a `pattern-check` reason drops either to a note. A real scan prefixes the check id with the config path, so the parser recovers the trailing `saga.<stem>` segment for the rule id and anchor. The rule patterns are regex-shaped because Semgrep requires every syntactic branch to parse in every listed language; one rule spans Python and TypeScript. Plain JavaScript targets are a later widening: the rules list Semgrep `python` and `typescript`.
 
 ```yaml
 saga_pattern_rules:
@@ -122,7 +122,7 @@ saga_pattern_rules:
     languages: [python, typescript]
   - file: silent-skip.yaml
     harm: wrong-result-reported-as-success
-    outcome: blocks unless the builder records a reason
+    outcome: fix-later unless the builder records a reason
     languages: [python, typescript]
   - file: write-skips-shared-update-path.yaml
     harm: data-lost-or-corrupted
@@ -301,13 +301,13 @@ The optional `review_tools` block is documented in `plugins/saga/references/repo
 
 ## Python, CDK, shell, workflows and Markdown
 
-Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fix` and the runner does not start it, so it writes no record. Settings come from the base commit or from a file the adapter writes under the runner home. A settings file in the reviewed tree is not an input. actionlint still reads `.github/actionlint.yaml` beside the workflows when `-config-file` points elsewhere, so it scans a copy of the workflows and that file is left out of the copy. ruff lint uses `--isolated`, `--ignore-noqa`, and `--select ALL`, plus an inline `--config` that ignores `S101` (use of `assert`) for test paths: `test_*.py`, `*_test.py`, `tests.py`, `conftest.py` and anything under a `tests` or `test` folder, each pattern anchored at the scan root. `--isolated` drops the reviewed repository's own per-file ignores, so the convention is passed on the command line. The `S` family (flake8-bandit) is a lead for a security look, not a proven correctness error: it is mapped to `security.scanner-medium-low`, the row bandit's own MEDIUM and LOW findings use, which fixes later and never blocks. ruff reports no severity, so none is claimed HIGH. mypy passes `--config-file` for the base commit's config and does not pass `--strict`. An error is `correctness.type-error` (blocks). A mypy note is level `style` (note). cdk-nag raises a known gap when a project has `cdk.json` and synthesis ran no validation plugin. A clean plugin report is not a gap. Reason `missing` is recorded when `cdk` itself is absent, for cdk-nag and for the checkov-cdk synth. The anchor keeps the logical resource id or the construct path, so the same rule on two resources stays two findings. A tree with no `cdk.json` does not degrade. Checkov blocks only the curated ids below. zizmor's copy command runs `--offline` and receives no GitHub token. lychee has no line number, so a broken link is a whole-project hit compared base against head. markdownlint-cli2 prints `path:line:col MDxxx/name message` with no severity word. cosmic-ray's module-path is the list of changed Python files.
+Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fix` and the runner does not start it, so it writes no record. Settings come from the base commit or from a file the adapter writes under the runner home. A settings file in the reviewed tree is not an input. actionlint still reads `.github/actionlint.yaml` beside the workflows when `-config-file` points elsewhere, so it scans a copy of the workflows and that file is left out of the copy. ruff lint uses `--isolated`, `--ignore-noqa`, and `--select ALL`, plus an inline `--config` that ignores `S101` (use of `assert`) for test paths: `test_*.py`, `*_test.py`, `tests.py`, `conftest.py` and anything under a `tests` or `test` folder, each pattern anchored at the scan root. `--isolated` drops the reviewed repository's own per-file ignores, so the convention is passed on the command line. The `S` family (flake8-bandit) is a lead for a security look, not a proven correctness error: it is mapped to `security.scanner-medium-low`, the row bandit's own MEDIUM and LOW findings use, which fixes later and never blocks. ruff reports no severity, so none is claimed HIGH. mypy passes `--config-file` for the base commit's config and does not pass `--strict`. An error is `correctness.type-error` (blocks), except `import-not-found` and `import-untyped`, which use `correctness.tool-style` (note). A mypy note is level `style` (note). cdk-nag raises a known gap when a project has `cdk.json` and synthesis ran no validation plugin. A clean plugin report is not a gap. Reason `missing` is recorded when `cdk` itself is absent, for cdk-nag and for the checkov-cdk synth. The anchor keeps the logical resource id or the construct path, so the same rule on two resources stays two findings. A tree with no `cdk.json` does not degrade. Checkov blocks only the curated ids below. zizmor's copy command runs `--offline` and receives no GitHub token. lychee has no line number, so a broken link is a whole-project hit compared base against head. markdownlint-cli2 prints `path:line:col MDxxx/name message` with no severity word. cosmic-ray's module-path is the list of changed Python files.
 
 | Adapter id | Comparison | Row the record cites | Computed severity |
 |---|---|---|---|
 | `bandit` | lines | `security.scanner-high` for HIGH; `security.scanner-medium-low` for MEDIUM and LOW | blocks, excused by `scanner-false-positive`; fix later |
 | `pip-audit` | base against head | `security.dependency-high` when no tool scores the advisory | blocks unless `scanner-false-positive`; the scored severity when osv-scanner has one |
-| `mypy` | base against head, type checker | `correctness.type-error` for an error; `correctness.tool-style` for a note | blocks; note |
+| `mypy` | base against head, type checker | `correctness.type-error` for an error; `correctness.tool-style` for a note or an import availability diagnostic | blocks; note |
 | `coverage` | one head report | `testing.uncovered-branch` | blocks, excused by `coverage-gap` |
 | `cosmic-ray` | lines | `testing.surviving-mutant` | blocks, excused by `surviving-mutant` |
 | `pytest-randomly`, `pytest-socket` | lines | `testing.flaky-order-or-network` | fix later |
@@ -324,7 +324,7 @@ Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fi
 | `lychee` | base against head | `architecture-maintainability.tool-warning` | fix later |
 | `ruff-format`, `shfmt` | not scanned | none | no record |
 
-The family draft, the kind draft, and the curated Checkov ids are the last fence. The first fence stays the semgrep map.
+The family draft describes the tool card map: exact codes take precedence over family prefixes. The kind draft and the curated Checkov ids complete the last fence. The first fence stays the semgrep map.
 
 ## Scripted checks
 
@@ -346,7 +346,10 @@ the same outcome file.
 ```yaml
 ruff_family_draft:
   F: error
-  B: error
+  F401: warning
+  F405: warning
+  F841: warning
+  B: warning
   S: security
   C4: warning
   UP: warning

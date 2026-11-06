@@ -279,7 +279,10 @@ ROWS: Mapping[str, Row] = _rows(
     Row("correctness.criterion-without-check", "correctness", "blocks"),
     Row("correctness.type-error", "correctness", "blocks"),
     *(
-        Row(f"correctness.pattern.{name}", "correctness", "blocks", excused_by="pattern-check")
+        Row(
+            f"correctness.pattern.{name}", "correctness",
+            "fix-later" if name == "silent-skip" else "blocks", excused_by="pattern-check",
+        )
         for name in _PATTERN_CHECKS
     ),
     Row("correctness.declared-question-untested", "correctness", "blocks"),

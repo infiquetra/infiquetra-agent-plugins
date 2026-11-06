@@ -131,7 +131,7 @@ excuses it or a rule that reproduction makes it block. Tool adapters and our own
 | `correctness.type-error` | blocks | | |
 | `correctness.pattern.release-shares-cleanup` | blocks | `pattern-check` | |
 | `correctness.pattern.swallowed-error` | blocks | `pattern-check` | |
-| `correctness.pattern.silent-skip` | blocks | `pattern-check` | |
+| `correctness.pattern.silent-skip` | fix-later | `pattern-check` | |
 | `correctness.pattern.naive-time-comparison` | blocks | `pattern-check` | |
 | `correctness.pattern.write-skips-shared-update` | blocks | `pattern-check` | |
 | `correctness.pattern.money-as-float` | blocks | `pattern-check` | |

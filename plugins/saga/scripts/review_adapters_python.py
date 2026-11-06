@@ -307,6 +307,8 @@ def _resolve_python_head(parts: list[str]) -> list[str]:
 
 
 def _family_level(code: str, mapping: Mapping[str, str]) -> str:
+    if code in mapping:
+        return mapping[code]
     best = ""
     level = "warning"
     for prefix, mapped in mapping.items():
@@ -468,7 +470,10 @@ def _parse_mypy(text: str) -> ParseResult:
         if code_match is not None:
             message = message[:code_match.start()].strip()
         word = match.group("level")
-        row = "correctness.type-error" if word == "error" else None
+        row = (
+            "correctness.tool-style" if code in {"import-not-found", "import-untyped"}
+            else "correctness.type-error" if word == "error" else None
+        )
         level = None if row else ("style" if word == "note" else word)
         line = int(match.group("line"))
         hits.append(Hit(

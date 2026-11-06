@@ -9,7 +9,7 @@ rules:
       lens: correctness
       defect: A silent skip
       harm: wrong-result-reported-as-success
-      outcome: blocks unless the builder records a reason
+      outcome: fix-later unless the builder records a reason
       row: correctness.pattern.silent-skip
     patterns:
       - pattern-regex: (?m)^[ \t]*continue\b

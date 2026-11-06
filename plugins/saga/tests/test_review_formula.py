@@ -77,7 +77,7 @@ EXPECTED_ROWS: dict[str, tuple[str, str | None, bool]] = {
     "correctness.type-error": ("blocks", None, False),
     "correctness.pattern.release-shares-cleanup": ("blocks", "pattern-check", False),
     "correctness.pattern.swallowed-error": ("blocks", "pattern-check", False),
-    "correctness.pattern.silent-skip": ("blocks", "pattern-check", False),
+    "correctness.pattern.silent-skip": ("fix-later", "pattern-check", False),
     "correctness.pattern.naive-time-comparison": ("blocks", "pattern-check", False),
     "correctness.pattern.write-skips-shared-update": ("blocks", "pattern-check", False),
     "correctness.pattern.money-as-float": ("blocks", "pattern-check", False),

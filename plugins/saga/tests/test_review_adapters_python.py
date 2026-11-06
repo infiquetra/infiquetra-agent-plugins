@@ -720,6 +720,34 @@ def test_mypy_decoy_config_does_not_hide_the_error(tmp_path: Path) -> None:
     assert _severity(output, "assignment") == "blocks"
 
 
+def test_mypy_import_availability_diagnostics_do_not_block(tmp_path: Path) -> None:
+    repo, base, head = _changed(tmp_path)
+    payload = (
+        "app.py:1:1: error: missing dependency  [import-not-found]\n"
+        "app.py:1:1: error: missing stubs  [import-untyped]\n"
+        "app.py:1:1: error: incompatible assignment  [assignment]\n"
+    )
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("mypy")], _Calls(base, payload, base_payload=""),
+    )
+    assert code == 0
+    for rule in ("import-not-found", "import-untyped"):
+        assert _row(output, rule) == "correctness.tool-style"
+        assert _severity(output, rule) == "note"
+    assert _row(output, "assignment") == "correctness.type-error"
+    assert _severity(output, "assignment") == "blocks"
+    _valid(output)
+
+
+def test_ruff_exact_code_precedes_prefix_regardless_of_map_order() -> None:
+    assert P._family_level("F401", {"F401": "style", "F": "error"}) == "style"
+    assert P._family_level("F401", {"F": "error", "F401": "style"}) == "style"
+    assert P._family_level("F4010", {"F401": "style", "F": "error"}) == "style"
+    assert P._family_level("F821", {"F401": "style", "F": "error"}) == "error"
+
+
 def test_ruff_families_map_to_error_warning_and_style(tmp_path: Path) -> None:
     repo, base, head = _changed(tmp_path)
     payload = json.dumps([
@@ -730,7 +758,7 @@ def test_ruff_families_map_to_error_warning_and_style(tmp_path: Path) -> None:
             "location": {"row": 1},
             "end_location": {"row": 1},
         }
-        for code in ("F401", "E501", "UP032", "ZZZ999")
+        for code in ("F401", "F405", "F841", "F821", "B905", "E501", "UP032", "ZZZ999")
     ])
 
     def choose(argv: list[str], _cwd: Path) -> Any:
@@ -745,8 +773,11 @@ def test_ruff_families_map_to_error_warning_and_style(tmp_path: Path) -> None:
         [_adapter("ruff-lint")], runner,
     )
     assert code == 0
-    assert _row(output, "F401") == "correctness.tool-error"
-    assert _severity(output, "F401") == "blocks"
+    for rule in ("F401", "F405", "F841", "B905"):
+        assert _row(output, rule) == "correctness.tool-warning"
+        assert _severity(output, rule) == "fix-later"
+    assert _row(output, "F821") == "correctness.tool-error"
+    assert _severity(output, "F821") == "blocks"
     assert _row(output, "E501") == "correctness.tool-style"
     assert _severity(output, "E501") == "note"
     assert _row(output, "UP032") == "correctness.tool-warning"
@@ -778,7 +809,7 @@ def test_ruff_bandit_rules_are_security_leads_that_fix_later_never_blocks(
     for rule in ("S101", "S607", "S603"):
         assert _row(output, rule) == "security.scanner-medium-low"
         assert _severity(output, rule) == "fix-later"
-    assert _severity(output, "F401") == "blocks"
+    assert _severity(output, "F401") == "fix-later"
     _valid(output)
 
 
@@ -874,7 +905,7 @@ def test_ruff_isolated_selects_all_and_ignores_a_decoy(tmp_path: Path) -> None:
         ),
     )
     assert code == 0
-    assert _severity(output, "F401") == "blocks"
+    assert _severity(output, "F401") == "fix-later"
 
 
 class _PinnedRuffCalls(_Calls):
@@ -932,7 +963,7 @@ def test_pinned_ruff_runs_the_pin_despite_path_ruff(tmp_path: Path) -> None:
         [_adapter("ruff-lint")], runner,
     )
     assert code == 0
-    assert _severity(output, "F401") == "blocks"
+    assert _severity(output, "F401") == "fix-later"
     assert "version-mismatch" not in _reasons(output)
     inner = _ruff_scan_inner(runner.calls)
     assert inner[:4] == ["uv", "run", "--with", "ruff==0.15.18"]
