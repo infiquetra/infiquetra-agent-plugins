@@ -113,6 +113,7 @@ EXPECTED_ROWS: dict[str, tuple[str, str | None, bool]] = {
 FIXED_ROWS = sorted(EXPECTED_ROWS)
 JUDGED_ROWS = {
     "judged.harm-reproduced",
+    "judged.harm-traced-blocking",
     "judged.harm-traced",
     "judged.harm-misuse",
     "judged.visible",
@@ -261,7 +262,7 @@ def test_row_blocks_when_reproduced(row: str) -> None:
         ("harm-legitimate-condition-reproduced", "two-holders-of-one-exclusive-thing",
          "concurrency", "reproduced", "judged.harm-reproduced", "blocks"),
         ("harm-traced", "money-or-resources-wrongly-moved", "retry", "traced",
-         "judged.harm-traced", "fix-later"),
+         "judged.harm-traced-blocking", "blocks"),
         ("harm-suspected", "required-behaviour-missing", "normal-use", "suspected",
          "judged.harm-traced", "fix-later"),
         ("harm-misuse-reproduced", "security-boundary-crossed", "misuse-only", "reproduced",
@@ -299,9 +300,9 @@ def test_a_preset_computed_field_is_refused(key: str) -> None:
 # --- the unreproduced-LLM cap and Jev ----------------------------------------------------------
 
 
-def test_an_unreproduced_llm_finding_is_never_worse_than_fix_later() -> None:
+def test_weaker_evidence_and_other_lenses_are_never_worse_than_fix_later() -> None:
     for consequence, trigger, evidence in itertools.product(
-        F.CONSEQUENCES, F.TRIGGERS, ("traced", "suspected")
+        F.CONSEQUENCES, F.TRIGGERS, ("suspected",)
     ):
         assert severity(
             llm_finding(consequence=consequence, trigger=trigger, evidence=evidence, jev=None,
@@ -314,6 +315,40 @@ def test_an_unreproduced_llm_finding_is_never_worse_than_fix_later() -> None:
             evidence="traced",
         )
         assert severity(finding) in ("fix-later", "note"), row
+
+
+@pytest.mark.parametrize("lens,blocking", [("correctness", True), ("security", True),
+                                           ("testing", False), ("architecture-maintainability", False)])
+def test_traced_harm_respects_lens_and_calibration(lens: str, blocking: bool) -> None:
+    finding = llm_finding(lens=lens, evidence="traced", jev=None)
+    report = F.outcome(finding)
+    assert report["severity"] == ("blocks" if blocking else "fix-later")
+    assert report["severity_basis"]["row"] == (
+        "judged.harm-traced-blocking" if blocking else "judged.harm-traced"
+    )
+    assert not report["enforced"]
+    assert F.outcome(finding, may_block={lens: {"python": True}})["enforced"] is blocking
+    assert not F.outcome(finding, may_block={lens: {"swift": True}})["enforced"]
+
+
+@pytest.mark.parametrize("lens", ["correctness", "security"])
+def test_traced_harm_misuse_and_suspicion_do_not_block(lens: str) -> None:
+    misuse = F.outcome(llm_finding(lens=lens, evidence="traced", trigger="misuse-only"))
+    assert misuse["severity"] == "fix-later"
+    assert misuse["severity_basis"]["row"] == "judged.harm-misuse"
+    assert severity(llm_finding(lens=lens, evidence="suspected")) == "fix-later"
+
+
+def test_traced_harm_pre_existing_cap() -> None:
+    finding = llm_finding(evidence="traced", introduced=False,
+                          location={"scope": "lines", "file": "src/app.py",
+                                    "lines": {"start": 30, "end": 30}})
+    result = F.outcome(finding, changed_lines={"src/app.py": [[10, 20]]},
+                       may_block={"correctness": {"python": True}})
+    assert result["severity"] == "fix-later"
+    assert result["severity_basis"] == {"row": "judged.harm-traced-blocking",
+                                        "modifiers": ["pre-existing"]}
+    assert not result["enforced"]
 
 
 def test_llm_and_jev_disagree_the_lower_applies_and_is_flagged() -> None:
@@ -788,7 +823,7 @@ def test_worked_example_blocks_retry_charges_twice() -> None:
     }
 
 
-def test_worked_example_passes_with_fix_later_items() -> None:
+def test_worked_example_reports_traced_security_harm_without_calibration() -> None:
     scanner = tool_finding("security.scanner-medium-low", "rf:s")
     tenant = llm_finding(
         lens="security", consequence="security-boundary-crossed", evidence="traced",
@@ -798,9 +833,10 @@ def test_worked_example_passes_with_fix_later_items() -> None:
         "correctness.unupdated-mention-in-document", "rf:r", language="markdown"
     )
     result = F.compute({"findings": [scanner, tenant, readme]})
-    assert grades(result)["security"] == "B"
+    assert grades(result)["security"] == "D"
     assert grades(result)["correctness"] == "B"
     assert result["merge"]["allowed"] is True
+    assert result["merge"]["report_only_blocks"] == ["rf:t"]
 
 
 def test_worked_example_degraded_swift_change() -> None:

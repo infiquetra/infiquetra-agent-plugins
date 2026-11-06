@@ -144,19 +144,19 @@ excuses it or a rule that reproduction makes it block. Tool adapters and our own
 
 ### Judged findings
 
-An LLM finding cites `judged`, and code picks the row from its consequence, trigger and evidence.
-These rows also serve the security and correctness tables' "an LLM finding it reproduced" and
-"couldn't reproduce" rows, so on every lens a reproduced finding blocks only when it shows a harm.
+An LLM finding cites `judged`, and code picks the row from its consequence, trigger, evidence and lens.
 
 | Row | When | Outcome |
 |---|---|---|
 | `judged.harm-reproduced` | harm, normal use or a legitimate condition, reproduced | blocks |
-| `judged.harm-traced` | harm, normal use or a legitimate condition, traced or suspected | fix later |
+| `judged.harm-traced-blocking` | harm, normal use or a legitimate condition, traced in correctness or security | blocks |
+| `judged.harm-traced` | harm, normal use or a legitimate condition, suspected in any lens or traced in another lens | fix later |
 | `judged.harm-misuse` | harm, misuse only | fix later |
 | `judged.visible` | visible | fix later |
 | `judged.upkeep` | upkeep | note |
 
-For a reproduced LLM finding the LLM and Jev each pick the consequence. A disagreement is flagged
+For a reproduced LLM finding the LLM and Jev each pick the consequence. Jev is not asked about a
+traced finding, so a traced block rests on the reviewer's file-and-line steps alone. A disagreement is flagged
 `consequence-disagreement` for merge confirmation. Jev's pick replaces the LLM's only when it is in
 a lower group (harm, then visible, then upkeep) and Jev's confidence is at least 0.8
 (`JEV_ACT_CONFIDENCE`, the act band for Jev answers); the modifier `jev-lowered` then names it.
@@ -175,7 +175,7 @@ applies and the finding is marked `unconfirmed`. The LLM holds a failing test; J
 2. `reproduced`: a row that blocks when reproduced, and was.
 3. `excused`: a builder reason of the row's kind, naming this finding's identity, makes it a note.
 4. Caps that lower blocks to fix later: `degraded`; `classifier-only` (Jev never blocks);
-   `unreproduced` (an LLM finding nobody reproduced); `pre-existing` (BOTH the finding's
+   `unreproduced` (an LLM finding nobody reproduced, except the blocking traced-harm row); `pre-existing` (BOTH the finding's
    `introduced` is false AND its `lines` location shares no line with the lines the change added or modified, plus the line on either side of a removal; the
    reviewer's word alone cannot lower a block, and a regression the change caused at an unchanged
    caller stays `introduced: true` and blocks). A pre-existing finding is reported and never
