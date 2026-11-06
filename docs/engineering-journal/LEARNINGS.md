@@ -2,6 +2,17 @@
 
 ## 2026-11-06
 
+### A code trace can show harm when reproduction is unavailable
+
+**Evidence.** In a measured run, code-traced findings were frequently correct even
+when missing dependencies or an unavailable workflow prevented reproduction.
+
+**Mechanism.** A reproduction-only grade can leave a defect below the blocking
+threshold even when the code path shows the failure.
+
+**Generalizable rule.** Require concrete file-and-line steps for a trace, retain
+reproduction as the first choice, and apply the existing scope and calibration limits.
+
 ### A blocking tool grade needs evidence that the tool finds what blocks are for
 
 **Evidence.** In a measured review run, unused-import, unused-variable, bugbear and silent-skip hits blocked clean changes, and none of them produced a block at a planted correctness defect. SwiftLint and actionlint did, so their grades stay.

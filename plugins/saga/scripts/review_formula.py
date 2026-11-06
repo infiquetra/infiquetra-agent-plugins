@@ -23,8 +23,9 @@ computed in, each step named in ``severity_basis.modifiers`` when it changed som
 2. ``reproduced``: a row that blocks when reproduced, and was;
 3. ``excused``: a builder reason of the kind the row allows makes it a note;
 4. caps that lower ``blocks`` to ``fix-later``: ``degraded``, ``classifier-only``,
-   ``unreproduced`` (an LLM finding nobody reproduced) and ``pre-existing``. A finding is
-   pre-existing only when BOTH hold: the reviewer marked it ``introduced: false`` AND Saga's own
+   ``unreproduced`` (an LLM finding nobody reproduced except blocking traced harm) and
+   ``pre-existing``. A finding is pre-existing only when BOTH hold: the reviewer marked it
+   ``introduced: false`` AND Saga's own
    changed lines place its location outside the change. Neither alone is enough. The reviewer
    cannot downgrade a block by itself, and a regression the change caused that surfaces at an
    unchanged caller stays ``introduced: true`` and blocks. A pre-existing finding is reported and
@@ -306,6 +307,7 @@ ROWS: Mapping[str, Row] = _rows(
     Row("security.workflow-infra-medium-low", "security", "fix-later"),
     # Judged findings, any lens
     Row("judged.harm-reproduced", None, "blocks"),
+    Row("judged.harm-traced-blocking", None, "blocks"),
     Row("judged.harm-traced", None, "fix-later"),
     Row("judged.harm-misuse", None, "fix-later"),
     Row("judged.visible", None, "fix-later"),
@@ -488,13 +490,15 @@ def _applied_consequence(finding: Mapping[str, Any]) -> tuple[str | None, list[s
     return applied, ["consequence-disagreement"], ["jev-lowered"] if from_jev else []
 
 
-def judged_row(consequence: str, trigger: str | None, evidence: str) -> str:
-    """The judged-findings table: which ``judged.*`` row a consequence, trigger and evidence fit."""
+def judged_row(consequence: str, trigger: str | None, evidence: str, lens: str) -> str:
+    """The judged-findings row for a consequence, trigger, evidence and lens."""
     if consequence in HARMS:
         if trigger == "misuse-only":
             return "judged.harm-misuse"
         if evidence == "reproduced":
             return "judged.harm-reproduced"
+        if evidence == "traced" and lens in ("correctness", "security"):
+            return "judged.harm-traced-blocking"
         return "judged.harm-traced"
     if consequence in VISIBLE:
         return "judged.visible"
@@ -542,7 +546,9 @@ def outcome(
     if cited == JUDGED:
         if consequence is None:
             raise FormulaError("consequence: a judged finding needs one")
-        row_id = judged_row(consequence, finding.get("trigger"), str(evidence))
+        row_id = judged_row(
+            consequence, finding.get("trigger"), str(evidence), str(finding.get("lens"))
+        )
     else:
         row_id = str(cited)
     row = ROWS.get(row_id)
@@ -565,7 +571,11 @@ def outcome(
         elif source_kind == "classifier":
             severity = "fix-later"
             modifiers.append("classifier-only")
-        elif source_kind == "llm" and evidence != "reproduced":
+        elif (
+            source_kind == "llm"
+            and evidence != "reproduced"
+            and row_id != "judged.harm-traced-blocking"
+        ):
             severity = "fix-later"
             modifiers.append("unreproduced")
         elif (

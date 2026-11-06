@@ -64,11 +64,10 @@ whose `origin` names a different index is refused, even when the finding itself 
 
 ## Reproduce what you believe
 
-A harm finding (`correctness` or `security`) can block a merge only when you reproduced it: saga
-re-runs your test and it must fail the same way. A traced harm is capped at fix later. That rule
-keeps clean changes from being blocked, so a reproduction has to be real. For every harm finding
-you believe, attempt a reproduction, in any language, unless that is clearly impossible. Do not
-stretch a reproduction to make a finding block.
+A traced harm finding in `correctness` or `security` can stop a merge, so its file-and-line steps
+must show the failure, not a suspicion. For every harm finding you believe, attempt a reproduction
+first, in any language, unless that is clearly impossible. Saga re-runs your test and it must fail
+the same way. Do not stretch a reproduction to make a finding block.
 
 The test must execute the code under review and fail because of the harmful behaviour; the same test
 must pass on correct code. A test that only reads, greps or parses the source text of the change

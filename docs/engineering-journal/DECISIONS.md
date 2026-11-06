@@ -2,6 +2,22 @@
 
 ## 2026-11-06
 
+### Allow traced harms in correctness and security to block
+
+**Decision.** Grade traced judged harms in correctness and security as blocks, subject to
+the existing misuse, pre-existing, degraded and lens-and-language calibration limits.
+Suspected harms and traced harms in other lenses stay fix later. Jev is still asked only about
+reproduced findings, so a traced block rests on the reviewer's trace alone.
+
+**Rationale.** A measured run showed that code traces can reveal real harm when a
+reproduction cannot run. The trace must show the failure through file-and-line steps.
+Reproduction remains the first choice, and the cycle-cap exception still requires it.
+
+**Revisit when.** Review evidence shows traced harms blocking clean changes or the
+calibration policy changes. Ask Jev about traced findings if false traced blocks appear.
+
+---
+
 ### Keep lint-level tool hits out of the blocking grade
 
 **Decision.** Ruff's bugbear family and `F401`, `F405` and `F841` grade as warnings, `correctness.pattern.silent-skip` fixes later, and mypy's `import-not-found` and `import-untyped` diagnostics grade as style. Every other Ruff `F` code, every other mypy error and every other pattern check still blocks.

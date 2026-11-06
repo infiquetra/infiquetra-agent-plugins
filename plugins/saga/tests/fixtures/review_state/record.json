@@ -826,15 +826,15 @@
             ]
           },
           "introduced": true,
-          "degraded": false,
+          "degraded": true,
           "consequence_jev": null,
           "unconfirmed": false,
           "merge_outcome": null,
           "id": "rf:e4720f9987af89f4f311f18ec2b66be1",
           "severity": "fix-later",
           "severity_basis": {
-            "row": "judged.harm-traced",
-            "modifiers": []
+            "row": "judged.harm-traced-blocking",
+            "modifiers": ["degraded"]
           },
           "flags": [],
           "enforced": false
@@ -863,7 +863,7 @@
           "fix_later": 3,
           "notes": 0,
           "grade": "D",
-          "degraded_inputs": [],
+          "degraded_inputs": [{"finding_id": "rf:e4720f9987af89f4f311f18ec2b66be1"}],
           "may_block": {
             "python": true
           }

@@ -179,7 +179,8 @@ def test_prompt_states_the_rules_finish_applies_to_a_reproduction() -> None:
 
 def test_prompt_requires_the_test_to_run_the_code_and_a_named_blocker_when_traced() -> None:
     reproduce = " ".join(_section("Reproduce what you believe").split())
-    assert "can block a merge only when you reproduced it" in reproduce
+    assert "can stop a merge" in reproduce
+    assert "must show the failure, not a suspicion" in reproduce
     assert "attempt a reproduction" in reproduce
     assert "must execute the code under review" in reproduce
     assert "only reads, greps or parses the source text" in reproduce
@@ -761,7 +762,7 @@ def test_the_consequence_pick_entry_and_the_formula_agree(
     applied = out["consequence_picks"][0]["applied"]
     row = computed(out, 0)["severity_basis"]["row"]
     trigger = out["findings"][0]["trigger"]
-    assert row == F.judged_row(applied, trigger, "reproduced")
+    assert row == F.judged_row(applied, trigger, "reproduced", out["findings"][0]["lens"])
 
 
 def test_within_one_group_the_reviewer_s_pick_stands_flagged() -> None:
