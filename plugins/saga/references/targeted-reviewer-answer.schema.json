@@ -138,6 +138,8 @@
         "row": {
           "enum": [
             "judged",
+            "testing.accepts-broken-code",
+            "testing.escapes-sandbox",
             "correctness.dispute",
             "security.dispute",
             "testing.dispute",

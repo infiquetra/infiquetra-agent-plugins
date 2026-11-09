@@ -2,6 +2,17 @@
 
 ## 2026-11-06
 
+### Serious test defects need a narrower blocking path
+
+**Evidence.** Reviews identified serious test defects under upkeep, while broad blocking of
+upkeep also stopped clean changes.
+
+**Mechanism.** A test can accept broken behavior or escape isolation even when its consequence
+is described as future work; minor test weaknesses do not necessarily warrant holding a merge.
+
+**Generalizable rule.** Give narrowly defined serious defects explicit rows and require a trace
+or reproduction, while keeping existing scope and reliability caps.
+
 ### A code trace can show harm when reproduction is unavailable
 
 **Evidence.** In a measured run, code-traced findings were frequently correct even

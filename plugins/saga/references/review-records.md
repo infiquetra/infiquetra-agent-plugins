@@ -111,6 +111,8 @@ excuses it or a rule that reproduction makes it block. Tool adapters and our own
 | `testing.surviving-mutant` | blocks | `surviving-mutant` | |
 | `testing.test-passes-before-change` | blocks | `test-passes-before-change` | |
 | `testing.test-skipped-in-ci` | blocks | `test-skipped-in-ci` | |
+| `testing.accepts-broken-code` | blocks | | |
+| `testing.escapes-sandbox` | blocks | | |
 | `testing.flaky-order-or-network` | fix later | | |
 | `testing.fakes-code-under-test` | fix later | | |
 | `testing.writes-live-system` | fix later | | yes |
@@ -142,6 +144,11 @@ excuses it or a rule that reproduction makes it block. Tool adapters and our own
 | `correctness.ci-matrix-fails` | blocks | | |
 | `<lens>.dispute`, for each lens | fix later, flagged for merge confirmation | | |
 
+The reviewer may cite `testing.accepts-broken-code` for a serious newly added or weakened
+test that passes broken behavior, and `testing.escapes-sandbox` for a test that writes outside
+its temporary area or depends on real home-directory or machine state. Both need a trace or
+reproduction to escape the unreproduced cap and remain subject to the other caps.
+
 ### Judged findings
 
 An LLM finding cites `judged`, and code picks the row from its consequence, trigger, evidence and lens.
@@ -149,7 +156,7 @@ An LLM finding cites `judged`, and code picks the row from its consequence, trig
 | Row | When | Outcome |
 |---|---|---|
 | `judged.harm-reproduced` | harm, normal use or a legitimate condition, reproduced | blocks |
-| `judged.harm-traced-blocking` | harm, normal use or a legitimate condition, traced in correctness or security | blocks |
+| `judged.harm-traced-blocking` | harm, normal use or a legitimate condition, traced in correctness, security or testing | blocks |
 | `judged.harm-traced` | harm, normal use or a legitimate condition, suspected in any lens or traced in another lens | fix later |
 | `judged.harm-misuse` | harm, misuse only | fix later |
 | `judged.visible` | visible | fix later |
@@ -175,7 +182,7 @@ applies and the finding is marked `unconfirmed`. The LLM holds a failing test; J
 2. `reproduced`: a row that blocks when reproduced, and was.
 3. `excused`: a builder reason of the row's kind, naming this finding's identity, makes it a note.
 4. Caps that lower blocks to fix later: `degraded`; `classifier-only` (Jev never blocks);
-   `unreproduced` (an LLM finding nobody reproduced, except the blocking traced-harm row); `pre-existing` (BOTH the finding's
+   `unreproduced` (an LLM finding not reproduced, except a trace on the blocking traced-harm row or either serious testing row); `pre-existing` (BOTH the finding's
    `introduced` is false AND its `lines` location shares no line with the lines the change added or modified, plus the line on either side of a removal; the
    reviewer's word alone cannot lower a block, and a regression the change caused at an unchanged
    caller stays `introduced: true` and blocks). A pre-existing finding is reported and never

@@ -2,6 +2,20 @@
 
 ## 2026-11-06
 
+### Let serious test defects block
+
+**Decision.** Allow traced harms in testing to block and add two testing rows for checks
+that accept broken code and tests that escape their sandbox. Require qualifying evidence and
+retain the existing scope, degraded-input, classifier and calibration limits.
+
+**Rationale.** Serious test defects can permit broken behavior or affect the real environment,
+while broad blocking of upkeep findings would also stop clean changes.
+
+**Revisit when.** Review evidence shows these rows blocking minor weaknesses or missing serious
+test defects.
+
+---
+
 ### Allow traced harms in correctness and security to block
 
 **Decision.** Grade traced judged harms in correctness and security as blocks, subject to

@@ -54,6 +54,8 @@ EXPECTED_ROWS: dict[str, tuple[str, str | None, bool]] = {
     "testing.surviving-mutant": ("blocks", "surviving-mutant", False),
     "testing.test-passes-before-change": ("blocks", "test-passes-before-change", False),
     "testing.test-skipped-in-ci": ("blocks", "test-skipped-in-ci", False),
+    "testing.accepts-broken-code": ("blocks", None, False),
+    "testing.escapes-sandbox": ("blocks", None, False),
     "testing.flaky-order-or-network": ("fix-later", None, False),
     "testing.fakes-code-under-test": ("fix-later", None, False),
     "testing.writes-live-system": ("fix-later", None, True),
@@ -309,6 +311,8 @@ def test_weaker_evidence_and_other_lenses_are_never_worse_than_fix_later() -> No
                         unconfirmed=False)
         ) in ("fix-later", "note"), (consequence, trigger, evidence)
     for row in FIXED_ROWS:
+        if row in F.TRACE_BLOCKING_ROWS:
+            continue
         finding = tool_finding(
             row,
             source={"kind": "llm", "name": "reviewer", "model": "example-model"},
@@ -318,7 +322,7 @@ def test_weaker_evidence_and_other_lenses_are_never_worse_than_fix_later() -> No
 
 
 @pytest.mark.parametrize("lens,blocking", [("correctness", True), ("security", True),
-                                           ("testing", False), ("architecture-maintainability", False)])
+                                           ("testing", True), ("architecture-maintainability", False)])
 def test_traced_harm_respects_lens_and_calibration(lens: str, blocking: bool) -> None:
     finding = llm_finding(lens=lens, evidence="traced", jev=None)
     report = F.outcome(finding)
@@ -331,7 +335,7 @@ def test_traced_harm_respects_lens_and_calibration(lens: str, blocking: bool) ->
     assert not F.outcome(finding, may_block={lens: {"swift": True}})["enforced"]
 
 
-@pytest.mark.parametrize("lens", ["correctness", "security"])
+@pytest.mark.parametrize("lens", ["correctness", "security", "testing"])
 def test_traced_harm_misuse_and_suspicion_do_not_block(lens: str) -> None:
     misuse = F.outcome(llm_finding(lens=lens, evidence="traced", trigger="misuse-only"))
     assert misuse["severity"] == "fix-later"
@@ -349,6 +353,35 @@ def test_traced_harm_pre_existing_cap() -> None:
     assert result["severity_basis"] == {"row": "judged.harm-traced-blocking",
                                         "modifiers": ["pre-existing"]}
     assert not result["enforced"]
+
+
+@pytest.mark.parametrize("row", ["testing.accepts-broken-code", "testing.escapes-sandbox"])
+@pytest.mark.parametrize(
+    ("evidence", "overrides", "expected", "modifier"),
+    [
+        ("traced", {}, "blocks", None),
+        ("reproduced", {}, "blocks", None),
+        ("suspected", {}, "fix-later", "unreproduced"),
+        ("traced", {"degraded": True}, "fix-later", "degraded"),
+        ("traced", {"source": {"kind": "classifier"}}, "fix-later", "classifier-only"),
+        ("traced", {"introduced": False}, "fix-later", "pre-existing"),
+    ],
+)
+def test_serious_testing_rows_respect_evidence_and_caps(
+    row: str, evidence: str, overrides: dict[str, Any], expected: str, modifier: str | None
+) -> None:
+    finding = llm_finding(
+        lens="testing", evidence=evidence, rule={"row": row, "ref": "example"},
+        location={"scope": "lines", "file": "tests/test_app.py",
+                  "lines": {"start": 30, "end": 30}},
+        introduced=True,
+    )
+    finding.update(overrides)
+    result = F.outcome(finding, changed_lines={"tests/test_app.py": [[10, 20]]})
+    assert result["severity"] == expected
+    assert result["severity_basis"]["row"] == row
+    if modifier:
+        assert modifier in result["severity_basis"]["modifiers"]
 
 
 def test_llm_and_jev_disagree_the_lower_applies_and_is_flagged() -> None:
