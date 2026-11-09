@@ -128,6 +128,16 @@ def test_prompt_describes_serious_testing_rows() -> None:
     assert "minor weakness" in text
 
 
+def test_prompt_checks_the_change_tests_outside_the_scratch_copy() -> None:
+    text = " ".join(_section("Check that the change's tests check the change").split())
+    assert "draft folder" in text and "change nothing in the scratch copy" in text
+    assert "git apply -R" in text and "`diff.patch`" in text
+    assert "testing.accepts-broken-code" in text
+    assert "`traced` evidence" in text and "write no test file for this check" in text
+    assert "at most two branches" in text
+    assert "A module with no tests at all is a missing test, which stays `judged`" in text
+
+
 def test_prompt_requires_a_sandboxed_reproduction_with_test_command_and_output() -> None:
     text = _section("Reproduce what you believe")
     assert "scratch copy" in text and "Only test files may change" in text

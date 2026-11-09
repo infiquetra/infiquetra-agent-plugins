@@ -145,7 +145,10 @@ excuses it or a rule that reproduction makes it block. Tool adapters and our own
 | `<lens>.dispute`, for each lens | fix later, flagged for merge confirmation | | |
 
 The reviewer may cite `testing.accepts-broken-code` for a serious newly added or weakened
-test that passes broken behavior, and `testing.escapes-sandbox` for a test that writes outside
+test that passes broken behavior, or for a change whose purpose no test checks. The reviewer
+prompt has it show this by running the change's tests on a copy in its draft folder with the
+change's code undone, or with the branch the change exists to add broken; tests that stay green
+are recorded as traced steps. It cites `testing.escapes-sandbox` for a test that writes outside
 its temporary area or depends on real home-directory or machine state. Both need a trace or
 reproduction to escape the unreproduced cap and remain subject to the other caps.
 

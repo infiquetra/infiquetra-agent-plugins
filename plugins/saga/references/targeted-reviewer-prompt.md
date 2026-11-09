@@ -261,15 +261,60 @@ In the `testing` lens, two rows can block. Cite one only when the defect is seri
 - `testing.accepts-broken-code`: this change added or weakened a test, assertion or helper so that
   it stays green when the code it exists to check is broken. The check was loosened or removed,
   replaced with a copy or fake of the code under test, or never exercises what its name promises.
-  The statement must name the test and the broken behaviour that would pass.
+  It also covers a change whose purpose no test checks: with that behaviour undone or broken, every
+  test still passes (see the check below). The statement must name the test, or the behaviour no
+  test checks, and the broken behaviour that would pass.
 - `testing.escapes-sandbox`: this change makes a test write outside its temporary area, or depend
   on the real machine's home directory or state.
 
 Both need `traced` or `reproduced` evidence and `introduced: true`. Give the consequence as usual.
 
-Do not cite either for a minor weakness. A missing test, a missing edge case, a duplicated test, a
+A test that no longer exercises what it names, or that passes without the code it checks, is
+`testing.accepts-broken-code`, not upkeep, even when the item that led you there asked about
+something else. Do not file it as `judged` with `costs-future-work`.
+
+Do not cite either for a minor weakness. A missing test for an edge case, a duplicated test, a
 bare `#[should_panic]`, or a loose assertion that would still fail on the plausible bug all stay
-`judged`. Ask whether a sensible reviewer would hold the merge for this. If not, use `judged`.
+`judged`. A missing test is not minor when the check below shows that nothing fails with the
+change's purpose undone or broken. Ask whether a sensible reviewer would hold the merge for this.
+If not, use `judged`.
+
+### Check that the change's tests check the change
+
+Reading a test rarely shows that it passes without the code it checks; running it does. Run this
+check in your draft folder, the folder `TMPDIR` names, and change nothing in the scratch copy for
+it. If your launch message names no draft folder, skip it and judge the tests by reading them.
+
+1. **Undo the code, keep the tests.** When the change edits code and also adds or edits tests,
+   copy the scratch copy into the draft folder (`cp -R . "$TMPDIR/undone"` keeps links as links).
+   In that copy, reverse the change with `git apply -R` and the packet's `diff.patch`, adding
+   `--exclude=<path>` for any file your launch message lists as withheld. Then copy the test files
+   the change added or edited back from the scratch copy. The copy now holds the code from before
+   the change and the tests from after it.
+2. **Run those tests in the copy,** with the runner the recipes above give for the language.
+3. **Read the result.**
+   - A test that exists to check behaviour the change adds or fixes, and still passes, does not
+     check it. Cite `testing.accepts-broken-code`, naming the test and the behaviour it lets
+     through.
+   - A test that fails, or a copy that cannot build or import because the tests need the change,
+     is the expected result: no finding from this step.
+   - Tests for behaviour the change leaves alone, such as a refactor's or a rename's, should pass
+     both ways: no finding.
+4. **Break the change's purpose.** When step 3 has not already shown a gap, take the branch or
+   behaviour the change exists to add or fix: the one its diff and description are about, never
+   an incidental line. When that code's module has tests, in the change or already in the
+   project, break only that branch in a second copy of the scratch copy: make its condition false,
+   return before it, or drop the line that does the work. Run the change's tests and that
+   module's existing tests. If every test still passes, nothing checks the change's purpose: cite
+   `testing.accepts-broken-code`, naming the branch and how you broke it. Do this for at most two
+   branches. A module with no tests at all is a missing test, which stays `judged`.
+
+Give a finding from this check `traced` evidence. Its `proof.steps` name what you undid or broke,
+by file and line, the exact command you ran, and the runner's summary line, such as `5 passed`. A
+test that stays green cannot be re-run by saga as a failing test, so write no test file for this
+check. For Rust, point `CARGO_TARGET_DIR` at one folder inside the draft folder so both copies
+share one build. When the check cannot run, say why in the finding's first step, as for any traced
+finding.
 
 ## Disputes
 

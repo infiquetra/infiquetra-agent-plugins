@@ -1,5 +1,30 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-09
+
+### Have the reviewer run the change's tests against the change undone
+
+**Decision.** The reviewer prompt adds a check that runs in the reviewer's draft folder: undo the
+change's code in a copy while keeping its tests, run those tests, and, when that shows no gap,
+break the branch the change exists to add and run the module's tests. Tests that stay green
+support `testing.accepts-broken-code` with traced steps that record the command and its result.
+The scratch copy is never edited for it, and no saga code changes.
+
+**Rationale.** A measured run after the previous decision showed the testing lens blocking most
+serious test defects, but the reviewer still filed several weak tests as upkeep and never cited
+the new row. Reading alone did not show that a test passes without the code it checks. Running
+it does, and the draft folder lets the reviewer run it without touching the compared copy.
+
+**Rejected.** A meta-test that saga re-runs as a failing reproduction: reliable, but complex to
+write within the 120-second re-run limit, and too slow for Rust. A new evidence kind that saga
+re-runs on a mutated copy: a larger change to the re-run machinery before the prompt-only version
+has been measured.
+
+**Revisit when.** Review evidence shows the break step blocking clean changes whose purpose is
+untested only incidentally, or the check pushing the median review cost past its limit.
+
+---
+
 ## 2026-11-06
 
 ### Let serious test defects block

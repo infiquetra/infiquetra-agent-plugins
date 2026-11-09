@@ -1,5 +1,21 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-09
+
+### A reviewer sees a weak test but rarely proves it accepts broken code
+
+**Evidence.** In a measured run with blocking testing rows available, the reviewer noted
+several weak tests in the right file but filed them as upkeep, and cited neither new row. The
+prompt change is in `plugins/saga/references/targeted-reviewer-prompt.md`, under "Check that the
+change's tests check the change".
+
+**Mechanism.** A test that passes without the code it checks looks like a working test when
+read. Its defect shows only when the code is undone or broken and the test is run, so a reviewer
+that only reads grades it as a style concern.
+
+**Generalizable rule.** When a defect is defined by what a test fails to notice, have the reviewer
+run the test against the broken code, outside the copy that is compared, and record the result.
+
 ## 2026-11-06
 
 ### Serious test defects need a narrower blocking path
