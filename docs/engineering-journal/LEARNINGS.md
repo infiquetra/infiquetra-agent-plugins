@@ -1,5 +1,15 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-10
+
+### Ambient ~/workspace/infiquetra/infiquetra-sdlc checkouts mask vendored project-mapping changes in local tests
+
+**Evidence.** Running `pytest` in `plugins/mission-control/tests/` and `plugins/saga/tests/test_review_state.py` without setting `INFIQUETRA_SDLC_PATH` read the workstation's unmerged `~/workspace/infiquetra/infiquetra-sdlc/config/project-mappings.json`, hiding eleven test fixtures that still passed retired `--project operations` or `--project asgard` (`plugins/mission-control/scripts/sdlc_manager.py:142-148`, `plugins/saga/scripts/board_progression.py:794-815`).
+
+**Mechanism.** `get_sdlc_path()` defaults to `~/workspace/infiquetra/infiquetra-sdlc` when `INFIQUETRA_SDLC_PATH` is unset, and `_resolve_project_mappings()` checks that external override before the vendored `config/project-mappings.json`. On CI runners the external checkout is absent so vendored mappings govern; on an operator machine with an older `infiquetra-sdlc` checkout, unset `INFIQUETRA_SDLC_PATH` silently overrides vendored changes—and if a resolver appends `~/workspace/infiquetra/infiquetra-sdlc` after a nonexistent `INFIQUETRA_SDLC_PATH`, even explicit overrides leak back to the workstation checkout.
+
+**Generalizable rule.** Treat an explicit `INFIQUETRA_SDLC_PATH` as replacing `~/workspace/infiquetra/infiquetra-sdlc` rather than falling through to it, stop at the first readable `project-mappings.json`, and run vendored-config test suites with `INFIQUETRA_SDLC_PATH` pointed at a nonexistent path (as well as the target SDLC worktree) before declaring parity with CI.
+
 ## 2026-11-06
 
 ### Serious test defects need a narrower blocking path

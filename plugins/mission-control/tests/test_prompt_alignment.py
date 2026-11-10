@@ -184,7 +184,7 @@ def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
     schema = json.loads(_read(PLUGIN_ROOT / "config/sdlc-schema.json"))
     roles = schema["work_hierarchy"]["roles"]
 
-    assert schema["schema_version"] == "2026-09-07.5"
+    assert schema["schema_version"] == "2026-11-10"
     assert roles["objective"]["project_view_group_by"] == "Objective"
     assert roles["outcome"]["required_by_default"] is False
     assert roles["capability"]["default_parent_role"] is None
@@ -194,13 +194,14 @@ def test_asgard_campps_model_retires_olympus_as_active_target() -> None:
     assert schema["teams"]["olympus"]["board"] is None
     assert "olympus" not in schema["boards"]
     assert schema["boards"]["campps"]["status"] == "active"
-    # The Asgard field set slimmed to the lifecycle pair (Stage/Status) +
+    assert schema["boards"]["agent-platform"]["status"] == "active"
+    # The active board field set slimmed to the lifecycle pair (Stage/Status) +
     # Objective/Priority; Mode, target surface, risk and transfer intent moved
     # into the issue body per the card contract, and the retired
     # target_team_values list was deleted from team_routing.
-    assert "Stage" in schema["fields"]["asgard"]
-    assert "Transfer Target" not in schema["fields"]["asgard"]
-    assert "Promotion Target" not in schema["fields"]["asgard"]
+    assert "Stage" in schema["fields"]["campps"]
+    assert "Transfer Target" not in schema["fields"]["campps"]
+    assert "Promotion Target" not in schema["fields"]["campps"]
     assert "cross_team_transfer_rule" in schema["team_routing"]
     assert "asgard_to_olympus_rule" not in schema["team_routing"]
     assert "target_team_values" not in schema["team_routing"]

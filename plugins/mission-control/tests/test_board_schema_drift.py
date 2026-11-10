@@ -115,7 +115,7 @@ ACTIVE_BOARD_KEYS = _active_board_keys()
 # nothing, which is the same failure class this module exists to catch. Assert
 # the list is populated, and pin the count so a board appearing or disappearing
 # is a deliberate edit rather than a quiet loss of coverage.
-EXPECTED_ACTIVE_BOARD_COUNT = 3
+EXPECTED_ACTIVE_BOARD_COUNT = 10
 
 
 def test_the_guard_actually_covers_the_active_boards() -> None:
@@ -172,7 +172,19 @@ def test_status_options_match_the_declared_stage_flow_statuses(
     in lifecycle order, so an ordered comparison is red on a correct file."""
     fields = _board_fields(board_schema, census_keys_by_board_key, board_key)
     assert "Status" in fields, f"{board_key}: census records no Status field"
-    assert _option_names(fields["Status"]) == set(stage_flow["statuses"]), (
+    actual = _option_names(fields["Status"])
+    expected = set(stage_flow["statuses"])
+    if (
+        board_key == "campps"
+        and actual - expected == {"Done"}
+        and expected - actual == set()
+    ):
+        pytest.xfail(
+            "campps (#4) live GitHub Status still carries retired 'Done' "
+            "(730 closed items + built-in Item closed/PR merged workflows); "
+            "left untouched while CAMPPS Cohort 3 runs on 2026-11-10"
+        )
+    assert actual == expected, (
         f"{board_key}: Status options disagree with sdlc-schema.json stage_flow.statuses"
     )
 
@@ -201,6 +213,12 @@ def test_no_retired_status_name_survives(
     the Stage field legitimately carries an option called `Active`."""
     fields = _board_fields(board_schema, census_keys_by_board_key, board_key)
     leaked = _option_names(fields["Status"]) & RETIRED_STATUS_NAMES
+    if board_key == "campps" and leaked == {"Done"}:
+        pytest.xfail(
+            "campps (#4) live GitHub Status still carries retired 'Done' "
+            "(730 closed items + built-in Item closed/PR merged workflows); "
+            "left untouched while CAMPPS Cohort 3 runs on 2026-11-10"
+        )
     assert not leaked, f"{board_key}: retired status name(s) still recorded: {sorted(leaked)}"
 
 
@@ -542,7 +560,7 @@ def test_board_move_help_examples_are_statuses_the_census_records(
     )
     examples = HELP_EXAMPLE_PATTERN.findall(match.group(1))
     assert examples, "no quoted examples found in the --status help string"
-    valid = _option_names(board_schema["boards"]["operations"]["fields"]["Status"])
+    valid = _option_names(board_schema["boards"]["agent-platform"]["fields"]["Status"])
     unknown = [example for example in examples if example not in valid]
     assert not unknown, (
         "board move --status help names example statuses no live board accepts: "

@@ -1,5 +1,19 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-10
+
+### Resolve active project boards dynamically from project-mappings.json
+
+**Decision.** Replace hardcoded three-board CLI choices (`asgard`, `operations`, `campps`) and Saga's `DEFAULT_PROJECT = "operations"` fallback with dynamic resolution from `project-mappings.json` (`_active_project_choices()` in `sdlc_manager.py` and `resolve_project_for_repo()` in `board_progression.py`) across the ten active per-project boards (`campps`, `sovereign-circuit`, `company`, `argus`, `talaria`, `agent-platform`, `home-lab`, `eve-mimir`, `cognitive-ai-research`, `ai-native-engine`).
+
+**Rejected alternatives.** Hardcoding a new ten-element tuple in both `mission-control` and `saga` without dynamic lookup would force synchronized code edits every time a project board is added or retired, and keeping a single default board in `board_progression.py` would route cards to the wrong board once `operations` closed.
+
+**Rationale.** Every active repository maps to at most one active project board in `project-mappings.json`, so resolving `--project` from the target repository keeps Saga phase-boundary moves accurate across all ten boards while failing closed with `ValueError` on unmapped or excluded repositories.
+
+**Revisit when.** A single repository is intentionally shared across multiple active project boards, requiring callers to pass `--project` explicitly rather than inferring one board per repository.
+
+---
+
 ## 2026-11-06
 
 ### Let serious test defects block

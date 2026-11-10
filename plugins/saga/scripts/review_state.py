@@ -74,7 +74,7 @@ RISK_BY_GROUP = {"harm": "high", "visible": "medium", "upkeep": "low"}
 #: Filing routing: the values this program's own cards carry. A later card makes
 #: them per-repo when saga reviews outside this program.
 FILE_TEAM = "asgard"
-FILE_PROJECT = "operations"
+FILE_PROJECT = "agent-platform"
 FILE_STAGE = "Shaping"
 FILE_STATUS = "Discovering"
 

@@ -1,7 +1,9 @@
 ---
 name: board
 description: |
-  Manage the Infiquetra GitHub Projects active boards: Operations, Asgard, and CAMPPS.
+  Manage the Infiquetra GitHub Projects active per-project boards: CAMPPS, Sovereign Circuit,
+  Infiquetra Company, Argus, Talaria, Agent Platform, Home Lab, EVE Mimir,
+  Cognitive AI Research, and AI-Native Engine.
   Handles board views, status moves, item adds, terminal-item archive, WIP analysis,
   field discovery, and standup preparation.
 metadata:
@@ -9,7 +11,7 @@ metadata:
     Use this skill when the user wants to:
 
     Board review and status:
-    - Review or view Operations, Asgard, or CAMPPS board state
+    - Review or view any active Infiquetra per-project board state
     - Check overall board health or get a snapshot of current work
     - See what's in a specific status, such as Implementing, Ready to merge, or Blocked
 
@@ -32,20 +34,28 @@ metadata:
 
 # SDLC Board
 
-Manage Infiquetra's active project boards. No board is a default: every board operation
-requires an explicit `--project`.
+Manage Infiquetra's active per-project boards. No board is a default: every board operation
+requires an explicit `--project` (or resolves from `project-mappings.json` via `flow discover-project`).
 
-| Project key | Board | Workflow |
-|-------------|-------|----------|
-| `operations` | Operations | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
-| `asgard` | Asgard | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
-| `campps` | CAMPPS | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| Project key | Board | Project # | Workflow |
+|-------------|-------|-----------|----------|
+| `campps` | CAMPPS | `#4` | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| `sovereign-circuit` | Sovereign Circuit | `#10` | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| `company` | Infiquetra Company | `#11` | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| `argus` | Argus | `#12` | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| `talaria` | Talaria | `#13` | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| `agent-platform` | Agent Platform | `#14` | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| `home-lab` | Home Lab | `#15` | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| `eve-mimir` | EVE Mimir | `#16` | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| `cognitive-ai-research` | Cognitive AI Research | `#17` | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
+| `ai-native-engine` | AI-Native Engine | `#18` | `Intake -> Shaping -> Planning -> Active -> Verify -> Retro` |
 
-The former project #1 (Mount Olympus) is closed and archived history; it is not an active
-board and is not a routing target. Deployment state is not a workflow status; use deployment
-fields and GitHub Deployments/Environments for environment movement.
+The former Mount Olympus (`#1`), Asgard (`#2`), and Operations (`#3`) projects are closed and
+retired historical context; they are not active boards and are not routing targets. Deployment
+state is not a workflow status; use deployment fields and GitHub Deployments/Environments for
+environment movement.
 
-All three boards follow the one shared `stage_flow` workflow recorded in
+All ten active boards follow the one shared `stage_flow` workflow recorded in
 `$INFIQUETRA_SDLC_PATH/config/sdlc-schema.json`: `Stage` is the board column and `Status`
 carries the in-stage condition (the cross-cutting `Blocked` status applies everywhere). No
 active board carries a pause column; a paused card is expressed through labels and issue
@@ -66,22 +76,22 @@ Always run the script with `python3`.
 
 ```bash
 # View a board by status (--project is required; no default)
-python3 sdlc_manager.py board view --project operations
-python3 sdlc_manager.py board view --project asgard
+python3 sdlc_manager.py board view --project agent-platform
+python3 sdlc_manager.py board view --project home-lab
 python3 sdlc_manager.py board view --project campps
 
 # Filter to a specific status
-python3 sdlc_manager.py board view --project asgard --status "Implementing"
+python3 sdlc_manager.py board view --project agent-platform --status "Implementing"
 python3 sdlc_manager.py board view --project campps --status "Implementing"
 ```
 
 ### Add Item
 
 ```bash
-# Add an item to a board (--project is required; no default routing)
-python3 sdlc_manager.py board add --project asgard --repo infiquetra-sdlc --number 42
-python3 sdlc_manager.py board add --project operations --repo infiquetra-sdlc --number 42
-python3 sdlc_manager.py board add --project campps --repo athena-service --number 42
+# Add an item to a board
+python3 sdlc_manager.py board add --project agent-platform --repo infiquetra-sdlc --number 42
+python3 sdlc_manager.py board add --project home-lab --repo home-lab --number 42
+python3 sdlc_manager.py board add --project campps --repo campps-platform --number 42
 ```
 
 ### Move Item
@@ -90,12 +100,12 @@ python3 sdlc_manager.py board add --project campps --repo athena-service --numbe
 # board move writes Status (the in-stage condition), never the Stage column.
 # Every board shares the one stage_flow vocabulary, so the same Status names
 # are valid everywhere.
-python3 sdlc_manager.py board move --project asgard --repo infiquetra-sdlc --number 42 --status "Implementing"
-python3 sdlc_manager.py board move --project operations --repo infiquetra-sdlc --number 42 --status "Discovering"
-python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "Implementing"
-python3 sdlc_manager.py board move --project campps --repo athena-service --number 42 --status "Ready to merge"
+python3 sdlc_manager.py board move --project agent-platform --repo infiquetra-sdlc --number 42 --status "Implementing"
+python3 sdlc_manager.py board move --project agent-platform --repo infiquetra-sdlc --number 42 --status "Discovering"
+python3 sdlc_manager.py board move --project campps --repo campps-platform --number 42 --status "Implementing"
+python3 sdlc_manager.py board move --project campps --repo campps-platform --number 42 --status "Ready to merge"
 # Write the Stage column through flow set-field, not board move
-python3 sdlc_manager.py flow set-field --project campps --repo athena-service --number 42 --field Stage --option Verify
+python3 sdlc_manager.py flow set-field --project campps --repo campps-platform --number 42 --field Stage --option Verify
 ```
 
 > **W6**: `board move` writes `Status` to EVERY board carrying the issue, all-or-none — a
