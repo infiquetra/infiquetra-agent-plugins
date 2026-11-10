@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Plan work across herdr agent sessions and run it — one worktree per unit, any configured agent, any saga capability
+description: Plan work across Herdr agent sessions and run it — one worktree per unit, any configured agent, any saga capability
 argument-hint: "<prompt> | #<issue> | #<parent> --children | <path/to/doc.md>"
 ---
 
@@ -114,8 +114,8 @@ order — not a checklist, and stop as soon as the answers determine the table:
    - **Interview-time model discovery:** Run `python3 "$S" roster` to verify installed wrapper tools
      and `python3 "$S" roster --models` to query live vendor models and favourites. This check inspects
      the live catalog without creating worktrees, git branches, Herdr sessions, or run state.
-   - **Herdr verification bounds:** Herdr proves only workspace, pane, working-directory (`cwd`), and
-     readiness facts (`herdr agent list`), never models.
+   - **Herdr verification bounds:** herdr core proves only the agent kind, terminal, working-directory
+     (`cwd`), workspace name and readiness facts it publishes (`hc ls`, `hc get`), never models.
    - **Internal tier decoupling:** Fleet Commons retains internal Team Execution tier ownership and must never
      gate external Herdr routes.
    - **Provider route preservation:** `opencode-go` is an OpenCode provider (e.g.,
@@ -244,9 +244,9 @@ Rules for the table:
   and a reader can no longer tell a real one from a scheduling one — the run looks blocked for a
   reason that is not real.
 - **Name a unit for what it does and who does it** — `plan-claude`, `plan-codex`,
-  `docreview-grok`, `build-guard`. Not `p1a`. That name becomes the herdr tab title, the branch
-  (`orch/plan-claude`) and the worktree directory, and it is what you read in `herdr agent list`
-  when you come back to a screen of tabs.
+  `docreview-grok`, `build-guard`. Not `p1a`. That name becomes the Herdr tab title, the branch
+  (`orch/plan-claude`) and the worktree directory, and it is what you read in `hc ls` ("Workspace /
+  tab") when you come back to a screen of tabs.
 - **Units run at `permission: auto` by default** — enough to do their own work without stopping to
   ask in a tab nobody is watching. Set `"permission": "bypass"` on a unit that needs a free hand.
 - **Every vendor in the table must be in the allow-list** from question 3.
@@ -273,7 +273,7 @@ what they approve is what runs.
 
 ### Workspaces: one per lifecycle, once a run outgrows a screen
 
-A herdr workspace is the unit of *attention*, not of isolation — isolation is the worktree. Below
+A Herdr workspace is the unit of *attention*, not of isolation — isolation is the worktree. Below
 about six concurrent units one workspace is fine and a second is overhead. Above that, a single
 workspace becomes a wall of tabs whose names are the only thing telling them apart, and the operator
 loses the ability to answer "what is waiting on me" at a glance.
@@ -283,9 +283,10 @@ children is nine lifecycles: give each its own workspace, named for the child, a
 orchestrator in the umbrella workspace beside them. Then a phase's sessions are the tabs of one
 workspace, and closing that workspace when the child lands is one action rather than nine.
 
-Create one with `herdr tab create --workspace <workspace_id>`, and note that the agent wrapper's
-`--workspace` flag takes a **name** rather than an ID: handed an existing workspace ID it creates a
-new workspace called that, instead of joining the one you meant.
+The first unit launched with a new workspace name creates that workspace in the Herdr app; there is
+nothing to create first. Note that the agent wrapper's `--workspace` flag takes a **name** rather
+than an ID: handed an existing workspace ID it creates a new workspace called that, instead of
+joining the one you meant. Orchestrate never closes a workspace; close an empty one from the window.
 
 The run JSON carries that name as `workspace`. A run-level value is the default every unit inherits;
 a unit may set its own `workspace` and that wins — no other precedence. Orchestrate emits it as
@@ -376,7 +377,7 @@ Then, from the operator's repo:
 python3 "$S" roster                                # what this machine can launch
 python3 "$S" start --plan .orchestrate/plan.json   # run branch, then a branch per unit
 python3 "$S" go                                    # launch everything eligible
-python3 "$S" wait                                  # block until one settles (herdr events)
+python3 "$S" wait                                  # block until one settles (hc wait)
 python3 "$S" settle                                # sessions with branch evidence become done
 python3 "$S" land                                  # finished units -> the run branch
 python3 "$S" go                                    # the next phase, now able to see their work
@@ -451,9 +452,10 @@ branches. Skip it and the next phase opens on nothing and writes something plaus
 `merge` also names any unit that finished without committing. That is the failure worth seeing: not a
 missing merge, but a session that produced nothing and reported itself done.
 
-Between `go` and `settle`, use `wait` — it blocks on herdr's event socket rather than polling, then
-confirms idle the same way `settle` does (`--interval`, `--confirmations`, `--once`). A single
-`idle` is the gap between turns, not a settlement. `blocked` returns promptly and is named.
+Between `go` and `settle`, use `wait` — it blocks on one `hc wait` per running unit rather than
+polling, then confirms idle the same way `settle` does (`--interval`, `--confirmations`, `--once`). A
+single `idle` is the gap between turns, not a settlement. `blocked` and `error` return promptly and
+are named.
 
 ## Phase 5 — expand at each phase boundary
 
@@ -490,7 +492,7 @@ before anything launches.
 in the initial plan or added at a later phase boundary — must be persisted through `start` or `expand`
 before any worktree or session is created, and must launch only through `go` via the shared
 `agent-launcher` `agent_argv` path. Bypassing `expand` or `go` by calling `agents` directly breaks run-record tracking,
-omits background launch flags (`--no-focus --current --herdr --herdr-control-only`), and steals
+omits the launch flags (`--app --no-focus`) and the ownership snapshot, and steals
 operator focus. Unsupported post-launch setup (such as interactive OpenCode variant selection) is a
 controlled post-launch step performed inside the launched session; it does not authorize bypassing
 `expand` or `go`. A branch in the run's `orch/<run-id>-<unit>` series with no row in the table is
