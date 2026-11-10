@@ -3,6 +3,45 @@
 All notable changes to the voice package are recorded here from 0.4.1. Earlier
 releases are recorded only in the git history.
 
+## [0.5.0] - 2026-11-10
+
+Voice moves from old Herdr (`herdr agent`, `herdr pane`, `~/.config/herdr`) to herdr
+core (`hc`) and the Herdr app. Old Herdr is retired, and sessions started in herdr core
+were unreachable from 0.4.1.
+
+### Changed
+
+- `voice bind <terminal>` binds a herdr core terminal, named or addressed (`t7`), with
+  `hc get --json`. It refuses a terminal on another machine, a finished one, and one
+  without the `voice.agent-session` label. `binding.json` stores the terminal address in
+  place of the pane id, so **a binding from 0.4.1 reads as unreadable: run `voice bind`
+  again**.
+
+- Delivery types the transcript into the bound terminal with `hc keys`, one key per
+  character and never Enter, after reading its status with `hc get`. It never uses
+  `hc send`, which presses Enter. A blocked agent still gets nothing, and the transcript
+  is still held.
+
+- The Auralis bridge identity comes from herdr core: `HC_TERMINAL_ID`, `hc get`, and the
+  terminal's `voice.agent-session` label. The terminal address is both `terminal_id` and
+  `pane_id`.
+
+- The settings `HERDR_PANE_ID` and `HERDR_BIN_PATH` are replaced by `HC_TERMINAL_ID` (set
+  by herdr core) and `VOICE_HC_BIN` (default `hc`).
+
+- Preflight checks the stop key in the Herdr app's `~/.config/herdr-app/keys.json`
+  instead of old Herdr's `config.toml`, following a key's mod command to the mod's
+  `exec("voice", ["stop"])` call. It reports under `herdr-app-keys`.
+
+### Added
+
+- A SessionStart hook in the Claude adapter labels its own terminal with the Claude
+  session id (`voice.agent-session`) on every start, resume, clear and compact. Restart
+  each Claude session once after updating so the label exists before binding.
+
+- `tests/conftest.py` hides `hc` and `HC_TERMINAL_ID` from the suite, so tests run inside
+  a Herdr terminal cannot reach the real herdr core.
+
 ## [0.4.1] - 2026-10-14
 
 ### Changed

@@ -2,6 +2,36 @@
 
 ## 2026-11-10
 
+### Voice types into herdr core with `hc keys` and labels its own session
+
+**Decision.** Voice 0.5.0 moves from old Herdr to herdr core. Delivery types the
+transcript with `hc keys <terminal> <char>...` (`space` for the space bar, never
+Enter) and never uses `hc send`. herdr core does not know which Claude session runs in
+a terminal, so the voice Claude adapter's SessionStart hook runs `hc label
+$HC_TERMINAL_ID voice.agent-session=<id>`, and `voice bind`, delivery and the Auralis
+bridge identity read that label back with `hc get --json`. The bridge identity uses the
+terminal address as both `terminal_id` and `pane_id`.
+
+**Rejected alternatives.** `hc send` always presses Enter, so a misheard transcript
+would be submitted to an agent that may run with bypassed permissions, and from inside
+a Herdr terminal it wraps the text in an `<hc from=...>` tag that marks it as another
+agent's report. A raw `terminal.attach` stream could write a bracketed paste, but it is
+a framed binary protocol and a non-observing attach can resize the person's terminal.
+Writing the console's `herdr.agentSession` label instead of a voice-owned one would
+switch on seat-board and usage-limits behaviour in herdr-console as a side effect.
+Finding the session through `~/.claude/sessions/<pid>.json` and the process tree (as
+herdr-console does) ties a portable package to Claude's private files and account homes.
+
+**Rationale.** The voice contract is that a transcript lands unsubmitted and editable
+(R16); `hc keys` is the only herdr core command that types without submitting. The
+label mirrors what old Herdr's own SessionStart hook did: it recorded the session id
+from the same hook payload.
+
+**Revisit when.** herdr core gains a command that pastes text without Enter, or herdr
+core or the `agents` launcher starts publishing a terminal's Claude session id; voice
+should then use those instead.
+
+
 ### Resolve active project boards dynamically from project-mappings.json
 
 **Decision.** Replace hardcoded three-board CLI choices (`asgard`, `operations`, `campps`) and Saga's `DEFAULT_PROJECT = "operations"` fallback with dynamic resolution from `project-mappings.json` (`_active_project_choices()` in `sdlc_manager.py` and `resolve_project_for_repo()` in `board_progression.py`) across the ten active per-project boards (`campps`, `sovereign-circuit`, `company`, `argus`, `talaria`, `agent-platform`, `home-lab`, `eve-mimir`, `cognitive-ai-research`, `ai-native-engine`).
