@@ -47,7 +47,7 @@ REGISTRY = Path("~/.claude/plugins/installed_plugins.json")
 PLUGIN_KEY = "voice@infiquetra-agent-plugins"
 
 #: Where the launcher goes. First on this operator's ``PATH`` and already the
-#: home of ``herdr``, ``claude``, and ``agent``, so it is the established
+#: home of ``hc``, ``claude``, and ``agents``, so it is the established
 #: convention rather than a new one invented here.
 DEFAULT_LAUNCHER = Path("~/.local/bin/voice")
 

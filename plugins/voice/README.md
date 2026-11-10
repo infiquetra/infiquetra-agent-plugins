@@ -10,6 +10,12 @@ session at a time, both directions, no arbitration anywhere. The package
 never installs, provisions, discovers, or substitutes a provider: providers
 are declared by the operator, preflighted, and reported.
 
+"Herdr" here is the current Herdr: herdr core (`hc`), which runs the bound
+session's terminal, and the Herdr app, the window that shows it. Old Herdr
+(`herdr agent`, `herdr pane`, `HERDR_PANE_ID`, `~/.config/herdr/config.toml`)
+is retired and voice no longer uses it; see
+[How voice uses herdr core](#how-voice-uses-herdr-core).
+
 The requirements behind this package are
 [docs/brainstorms/2026-08-25-voice-plugin-requirements.md](../../docs/brainstorms/2026-08-25-voice-plugin-requirements.md);
 the run-wide implementation plan is
@@ -28,20 +34,21 @@ the run-wide implementation plan is
 | [`scripts/speak.py`](scripts/speak.py) | Speak path: synthesize and play one completed response through the declared `voice-forge` provider |
 | [`scripts/record.py`](scripts/record.py) | Capture path: toggled recording tracked in state; nothing transcribed or kept without an explicit stop |
 | [`scripts/transcribe.py`](scripts/transcribe.py) | Transcription path through the declared Hermes relay: session token in process memory only, nothing kept |
-| [`scripts/binding.py`](scripts/binding.py) | Sticky single-agent binding store: one explicit bind, replaced only by an explicit rebind |
-| [`scripts/deliver.py`](scripts/deliver.py) | Delivery path: transcript into the bound agent's input box unsubmitted, or a named audible refusal that holds it |
+| [`scripts/binding.py`](scripts/binding.py) | Sticky single-agent binding store: one explicit bind to a herdr core terminal, replaced only by an explicit rebind |
+| [`scripts/deliver.py`](scripts/deliver.py) | Delivery path: transcript typed into the bound agent's input box with `hc keys`, unsubmitted, or a named audible refusal that holds it |
 | [`scripts/preflight.py`](scripts/preflight.py) | Preflight the declared providers, the stop keybinding, and the executables; report by name, never install or repair |
 | [`scripts/pane.py`](scripts/pane.py) | The Voice pane: the one long-running operator surface and listen-path sequencer |
 | [`scripts/voice_cli.py`](scripts/voice_cli.py) | The one command surface: `pane`, `bind`, `preflight`, `toggle`, `stop`, `policy` |
 | [`scripts/bridge_client.py`](scripts/bridge_client.py) | Bridge client for Auralis loopback HTTP bridge: discovery, presence, and rendering submission |
-| [`scripts/adapter_identity.py`](scripts/adapter_identity.py) | Three-part adapter identity resolver (`agent_session_id`, `pane_id`, `terminal_id`) |
+| [`scripts/herdr_core.py`](scripts/herdr_core.py) | The one place voice runs `hc`: read a terminal, label it with its Claude session, type into it |
+| [`scripts/adapter_identity.py`](scripts/adapter_identity.py) | Three-part adapter identity resolver (`agent_session_id`, `pane_id`, `terminal_id`), from herdr core |
 | [`scripts/rendering_gate.py`](scripts/rendering_gate.py) | Plain-spoken-text rendering gate: rejects Markdown/fences with named reasons (R121, R20) |
 | [`scripts/voice_policy.py`](scripts/voice_policy.py) | Voice policy and preferences store: renders instructions, consumes Brief Next Turn override (R25, R107) |
 | [`scripts/turn_record.py`](scripts/turn_record.py) | Current turn record store: locked read-apply-write transactions (`fcntl.flock`) for turn state (KTD11) |
 | [`scripts/mcp_server.py`](scripts/mcp_server.py) | Model Context Protocol (MCP) stdio server: `submit_spoken_rendering` tool and presence renewal loop (R21, KTD2, KTD8) |
 | [`skills/voice/`](skills/voice/SKILL.md) | Agent Skill: documents the CLI and the in-pane keys; adds no second command surface |
-| [`tests/`](tests/) | `unittest` suites for the scripts above, the Stop hook, and the skill entrypoint |
-| [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json) | Claude client extension directory: manifest, hook descriptor, MCP server declaration, and hooks |
+| [`tests/`](tests/) | `unittest` suites for the scripts above, the hooks, and the skill entrypoint; `conftest.py` keeps every test away from the developer's real herdr core |
+| [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json) | Claude client extension directory: manifest, hook descriptor, MCP server declaration, and hooks (SessionStart, UserPromptSubmit, PreToolUse, Stop) |
 
 Claude-specific files — hooks and the client extension — never live in this
 portable core; they belong under the `com.infiquetra.claude/` client
@@ -69,8 +76,10 @@ the operator, and `voice preflight` still has to pass before the loop runs —
 see [Settings](#settings) and
 [The Herdr-wide stop keybinding](#the-herdr-wide-stop-keybinding).
 
-Restart Claude Code after installing: the Stop hook is registered at session
-start.
+Restart Claude Code after installing: the hooks are registered at session
+start, and the SessionStart hook has to run once in a session before
+`voice bind` can find it (see
+[How voice uses herdr core](#how-voice-uses-herdr-core)).
 
 ## Providers are declared, never discovered
 
@@ -119,8 +128,8 @@ non-sensitive.
 | `VOICE_PLAYBACK_BIN` | `/usr/bin/afplay` | Playback executable, supplied by the operator, never discovered |
 | `VOICE_STATE_DIR` | `~/.local/state/voice` | Machine-local runtime state directory |
 | `VOICE_RETENTION` | none — must be stated | Retention posture; version one accepts exactly `ephemeral` |
-| `HERDR_PANE_ID` | none — refused by name when unset | Current Herdr pane identifier (`w1:p1` or integer) for Auralis bridge adapter identity |
-| `HERDR_BIN_PATH` | none — refused by name when unset | Path to Herdr executable for resolving session and terminal identity |
+| `HC_TERMINAL_ID` | none — refused by name when unset | This session's herdr core terminal address (`t21`). herdr core sets it in every terminal; voice reads it for the Auralis bridge identity and the SessionStart label |
+| `VOICE_HC_BIN` | `hc` | The herdr core command voice runs for `get`, `label` and `keys` |
 
 Retention behaviour is a stated setting rather than a silent default: the
 empty case — audio deleted after success and failure, no transcript log, no
@@ -128,10 +137,42 @@ telemetry — is something a person wrote down as
 `VOICE_RETENTION=ephemeral`. Any other value is refused by name rather than
 honoured.
 
+## How voice uses herdr core
+
+herdr core (`hc`) runs every terminal on its machine. Voice uses three of its
+commands, all through [`scripts/herdr_core.py`](scripts/herdr_core.py), each
+with standard input closed and a deadline:
+
+| Command | Who runs it | What for |
+|---|---|---|
+| `hc label $HC_TERMINAL_ID voice.agent-session=<id>` | The SessionStart hook, in the Claude session | herdr core does not know which Claude session runs in a terminal. The hook records it on every start, resume, clear and compact |
+| `hc get <terminal> --json` | `voice bind`, delivery, and the Auralis bridge identity | Read a terminal: its address, whether it is live, its status word (`idle`, `working`, `done`, `blocked`, `error`), and its labels |
+| `hc keys <terminal> <key>...` | Delivery | Type the transcript one key per character, `space` for the space bar, never Enter |
+
+`voice bind <terminal>` takes a terminal's name or address (`t7`). It refuses a
+terminal on another machine (`mini/t3`): voice records and plays audio on this
+machine, and the Stop hook reads this machine's binding. It refuses a finished
+terminal, and one without the `voice.agent-session` label, which means the
+voice plugin's SessionStart hook has not run there yet. The binding stores the
+terminal's address, which herdr core never reuses.
+
+Delivery never uses `hc send`. That command always presses Enter, so a misheard
+transcript would be submitted to the agent, and when it is run from inside a
+Herdr terminal (the Voice pane is one) it wraps the text in an `<hc from=...>`
+tag, so the operator's words would arrive labelled as another agent's report.
+`hc keys` does not refuse a blocked program on its own, so delivery reads the
+status first and refuses `blocked` itself; the race between that read and the
+keys is the stated residual.
+
+The Auralis bridge identity is the terminal's `voice.agent-session` label as
+`agent_session_id`, and the terminal's address as both `terminal_id` and
+`pane_id`. herdr core has no panes; panes belong to the Herdr app's window and
+can move while the terminal keeps running.
+
 ## The Herdr-wide stop keybinding
 
-Voice preflights — and never writes — one operator-owned keybinding: a
-Herdr-wide binding whose command invokes the package's stop path.
+Voice preflights — and never writes — one operator-owned stop key that works
+from anywhere in the Herdr app, not only while the Voice pane has focus.
 
 ### First, put `voice` on PATH
 
@@ -156,28 +197,35 @@ file without writing it. Confirm with `command -v voice`.
 The launcher follows version bumps on its own; you never edit the keybinding
 again.
 
-### Then add the binding
+### Then bind a key to a mod that runs it
 
-```toml
-[[keys.command]]
-key = "<your key here>"
-type = "shell"
-command = "voice stop"
-description = "stop voice playback"
-```
+The Herdr app's keys live in `~/.config/herdr-app/keys.json`. A key there can
+run an app command, send text to the focused terminal (`send:`), or deliver a
+command to a mod (`<mod>.<command>`); it cannot run a program directly. A
+Herdr-wide stop key is therefore:
 
-The key is yours to choose. `type = "shell"` runs the command detached in the
-background, which is what a stop key wants — `pane` and `popup` would open a
-terminal to stop audio.
+1. a mod in `~/.config/herdr-app/mods/<mod>/main.js` that waits on
+   `nextCommand()` and, on its stop command, runs `exec("voice", ["stop"])`;
+2. a key in `keys.json`, for example `"global": { "<your key>": "<mod>.stop" }`.
 
-Voice reports this binding's absence by name; it never creates or repairs any
+The Herdr app delivers a mod command only to copies of the mod that are shown
+in the current layout, so the mod has to be placed in it. Check the mod with
+`herdr-app check ~/.config/herdr-app/mods/<mod>` before relying on it; the
+app's own guide (`~/.config/herdr-app/AGENTS.md`) documents mods. Voice ships
+no such mod, and a `send:voice stop` key does not count: it types into
+whichever terminal has focus.
+
+Voice reports this key's absence by name; it never creates or repairs any
 Herdr configuration.
 
 ### What preflight actually checks
 
-Preflight resolves the configured command rather than pattern-matching it: it
+Preflight follows each `<mod>.<command>` key in `keys.json` to that mod's
+`main.js`, reads its literal `exec("program", ["arg", ...])` calls, and
+resolves the one that names the stop path rather than pattern-matching it: it
 confirms the program is on `PATH` (or is an existing executable file) and that
-any `.py` script named beside it exists. It never *runs* the command — firing a
+any `.py` script named beside it exists. An `exec` whose arguments are built at
+run time cannot be resolved without running the mod, so it is not counted. It never *runs* the command — firing a
 stop as a side effect of asking whether a stop is possible would be its own
 defect.
 
