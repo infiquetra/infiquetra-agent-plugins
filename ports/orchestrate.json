@@ -6,7 +6,6 @@
   "assessment": {
     "credential_prefixes": [],
     "package_scripts": [
-      "herdr_events.py",
       "orchestrate.py"
     ],
     "mutating_operations": [

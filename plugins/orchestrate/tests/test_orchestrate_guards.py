@@ -174,39 +174,72 @@ class TestTheCloseFailureRecordSurvives:
 
 
 class TestTheWaitRecordsEverySettlement:
-    class _Event:
-        def __init__(self, pane_id: str, agent_status: str) -> None:
-            self.pane_id = pane_id
-            self.agent_status = agent_status
+    class _Child:
+        """An ``hc wait`` child that has already returned with ``code``."""
 
-    def test_a_two_unit_run_records_both_settlements(self, orch) -> None:
-        a = orch.Unit(name="u1", vendor="claude", task="t", pane_id="ws:1")
-        b = orch.Unit(name="u2", vendor="claude", task="t", pane_id="ws:2")
-        observed: list[tuple] = []
-        result = orch.wait_on_events(
-            {"ws:1": a, "ws:2": b},
-            iter([self._Event("ws:1", "idle"), self._Event("ws:2", "idle")]),
-            interval=0,
-            needed=2,
-            poll_unit=lambda unit: "idle",
-            sleep=lambda seconds: None,
-            settled=observed,
-        )
-        assert result is not None
-        assert [unit.name for unit, _ in observed] == ["u1"]
+        _next_pid = 1000
 
-        # The generator is consumed lazily, so a caller that keeps reading sees the second one.
-        observed.clear()
-        orch.wait_on_events(
-            {"ws:2": b},
-            iter([self._Event("ws:2", "idle")]),
-            interval=0,
-            needed=2,
-            poll_unit=lambda unit: "idle",
-            sleep=lambda seconds: None,
-            settled=observed,
+        def __init__(self, code: int) -> None:
+            type(self)._next_pid += 1
+            self.pid = type(self)._next_pid
+            self.code = code
+
+        def poll(self) -> int:
+            return self.code
+
+        def kill(self) -> None:
+            pass
+
+        def wait(self) -> int:
+            return self.code
+
+    def test_a_two_unit_run_returns_the_first_to_settle_and_a_second_wait_finds_the_other(
+        self, orch, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        a = orch.Unit(name="u1", vendor="claude", task="t", pane_id="t1")
+        b = orch.Unit(name="u2", vendor="claude", task="t", pane_id="t2")
+        waited: list[str] = []
+
+        def child(unit, _budget):
+            waited.append(unit.pane_id)
+            return self._Child(0)
+
+        monkeypatch.setattr(orch, "_popen_hc_wait", child)
+        monkeypatch.setattr(orch, "poll", lambda unit, **_kw: "idle")
+        result = orch.wait_on_agent_waits([a, b], timeout=5, interval=0, needed=2)
+        assert result is not None and result[0] is a and result[1] == "idle"
+        assert waited == ["t1", "t2"]
+
+        # The next wait, over what is still running, finds the other one.
+        result = orch.wait_on_agent_waits([b], timeout=5, interval=0, needed=2)
+        assert result is not None and result[0] is b
+
+    def test_a_wait_that_times_out_records_no_settlement(
+        self, orch, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        unit = orch.Unit(name="u1", vendor="claude", task="t", pane_id="t1")
+        monkeypatch.setattr(
+            orch,
+            "_popen_hc_wait",
+            lambda _unit, _budget: pytest.fail("no child starts once the deadline has passed"),
         )
-        assert [unit.name for unit, _ in observed] == ["u2"]
+        assert orch.wait_on_agent_waits([unit], timeout=0, interval=0, needed=2) is None
+
+    def test_a_unit_that_has_exited_is_dropped_rather_than_waited_on_again(
+        self, orch, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """hc returns from a wait on a finished terminal at once; waiting again would spin."""
+        unit = orch.Unit(name="u1", vendor="claude", task="t", pane_id="t1")
+        started: list[str] = []
+
+        def child(unit, _budget):
+            started.append(unit.pane_id)
+            return self._Child(0)
+
+        monkeypatch.setattr(orch, "_popen_hc_wait", child)
+        monkeypatch.setattr(orch, "poll", lambda unit, **_kw: "gone")
+        assert orch.wait_on_agent_waits([unit], timeout=5, interval=0, needed=2) is None
+        assert started == ["t1"]
 
     def test_a_settlement_is_written_onto_the_unit_row(self, orch) -> None:
         unit = orch.Unit(name="u1", vendor="claude", task="t")
@@ -222,17 +255,3 @@ class TestTheWaitRecordsEverySettlement:
         out = capsys.readouterr().out
         assert "is blocked" in out
         assert "asking a question in its own tab" in out
-
-    def test_a_wait_that_times_out_records_no_settlement(self, orch) -> None:
-        unit = orch.Unit(name="u1", vendor="claude", task="t", pane_id="ws:1")
-        observed: list[tuple] = []
-        result = orch.wait_on_events(
-            {"ws:1": unit},
-            iter([]),
-            interval=0,
-            needed=2,
-            poll_unit=lambda u: "working",
-            sleep=lambda seconds: None,
-            settled=observed,
-        )
-        assert result is None and observed == []

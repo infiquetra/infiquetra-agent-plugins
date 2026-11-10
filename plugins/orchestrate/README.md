@@ -1,7 +1,10 @@
 # Orchestrate
 
 Orchestrate runs one piece of work across several Herdr agent sessions. Each unit
-gets its own git worktree and branch. The operator approves the table before
+gets its own git worktree and branch. Herdr is herdr core (`hc`, the terminals on
+each machine) plus the Herdr app (the window); sessions start through the `agents`
+launcher's Herdr app path, and every read, send, wait and close is an `hc` call.
+Old Herdr (`herdr agent|tab|pane|workspace`) is not called. The operator approves the table before
 anything launches. State for a run is saga's per-issue run record,
 `run_record.v1`, under the primary checkout's `.claude/saga/runs/issue-<N>.json`.
 Orchestrate keeps its own block on that document and one row per unit.
@@ -17,7 +20,6 @@ the skill. Claude-only procedure text lives under the client extension.
 | [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) | Claude packaging manifest. Paths only: the command directory, the portable skills directory, the adapter's hooks file and its types contract |
 | [`skills/orchestrate/SKILL.md`](skills/orchestrate/SKILL.md) | The skill: what the driver does, how to run it, and the ordering rules |
 | [`skills/orchestrate/scripts/orchestrate.py`](skills/orchestrate/scripts/orchestrate.py) | The driver. Standard library only |
-| [`skills/orchestrate/scripts/herdr_events.py`](skills/orchestrate/scripts/herdr_events.py) | Herdr event-socket client used by `wait` |
 | [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json) | Claude adapter: manifest, the `/orchestrate` command, and two Claude Code mods (`mods/`): the `/fleet-view <issue>` pane, drawn from `status --json`, and the launch-approval tool `mcp__orchestrate__review_launch_table`, which shows `launch-table`'s output and returns the operator's answer. Neither mod launches, lands or closes anything |
 | [`tests/`](tests/) | The driver's pytest suite |
 
@@ -64,8 +66,11 @@ refuse and name the install. Point `AGENT_LAUNCHER_ROOT` at a package root that
 meets the floor when the sibling does not.
 
 Orchestrate reads no credential variable. `gh` and `git` use their own
-configuration. Herdr is an external process; the event client uses Herdr's
-socket.
+configuration. herdr core is an external process: `wait` starts one `hc wait` per
+running unit, and every other Herdr call goes through the launcher's `hc` calls.
+Every `hc` call runs without `HC_TERMINAL_ID` and `HC_SCOPE`, so a send is never
+tagged as a message from the operator's own session and a wait is not ended by
+one.
 
 ## What the driver will not do
 

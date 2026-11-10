@@ -106,6 +106,19 @@ def repo(tmp_path: Path) -> Path:
     return r
 
 
+def _live_terminal(address: str) -> str:
+    """``hc get ADDRESS --json`` for a terminal whose program is still running."""
+    return json.dumps(
+        {
+            "address": address,
+            "state": "live",
+            "cwd": "/wt",
+            "labels": {"where": "WS / unit"},
+            "status": {"app": "claude-code", "state": "idle"},
+        }
+    )
+
+
 def _worktree(repo: Path, name: str) -> Path:
     """Cut a unit branch at the run branch's tip and give it a worktree, as `go` would."""
     path = repo.parent / f"orch-{name}"
@@ -218,8 +231,8 @@ def _write_legacy_run(repo: Path, units: list[dict[str, Any]], *, base: str | No
 def _fake_agents(
     orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch, states: dict[str, str]
 ) -> None:
-    """Stand in for herdr's session list, as the drift tests do: one agent per name, at the
-    given ``agent_status``. The machine running these tests may or may not have a herdr, and its
+    """Stand in for herdr core's session list, as the drift tests do: one agent per name, at the
+    given ``agent_status``. The machine running these tests may or may not have an hc, and its
     sessions are never these units', so ``check`` is answered from a list built here instead.
     """
     agents = [{"name": name, "agent_status": status} for name, status in states.items()]
@@ -603,19 +616,18 @@ class TestLandCleanReapsWhatTheRuleAllows:
                     "alpha",
                     wt_alpha,
                     "done",
-                    tab_id="w1:t1",
-                    launch_receipt={"tab_id": "w1:t1", "owned": True},
+                    tab_id="t1",
+                    launch_receipt={"tab_id": "t1", "owned": True},
                 )
             ],
         )
         real_run = orchestrate.run
 
         def selective_run(cmd: list[str], **kwargs: object) -> Any:
-            if cmd[:3] == ["herdr", "tab", "close"]:
-                return subprocess.CompletedProcess(cmd, 3, "", "herdr refused; pane is busy")
-            if cmd[:3] == ["herdr", "tab", "list"]:
-                tabs = {"result": {"tabs": [{"tab_id": "w1:t1", "label": "t"}]}}
-                return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+            if cmd[:3] == ["hc", "kill", "t1"]:
+                return subprocess.CompletedProcess(cmd, 4, "", "hc refused; terminal is busy")
+            if cmd[:3] == ["hc", "get", "t1"]:
+                return subprocess.CompletedProcess(cmd, 0, _live_terminal("t1"), "")
             return real_run(cmd, **kwargs)
 
         monkeypatch.setattr(orchestrate, "run", selective_run)
@@ -623,7 +635,7 @@ class TestLandCleanReapsWhatTheRuleAllows:
 
         assert orchestrate.cmd_merge(_merge_args(repo, clean=True)) == 0
         output = capsys.readouterr().out
-        failure = "tab close failed (3) for w1:t1: herdr refused; pane is busy"
+        failure = "tab close failed (4) for t1: hc refused; terminal is busy"
 
         assert wt_alpha.exists()
         assert orchestrate.Run.load(TEST_ISSUE, test_store(repo)).unit("alpha").note == failure
@@ -648,21 +660,21 @@ class TestLandCleanReapsWhatTheRuleAllows:
                     "borrowed",
                     wt,
                     "done",
-                    tab_id="w1:t-borrowed",
+                    tab_id="t7",
                     launch_receipt={
-                        "tab_id": "w1:t-borrowed",
+                        "tab_id": "t7",
                         "owned": False,
                         "input_box": "staged",
                     },
                 )
             ],
         )
-        herdr_calls: list[list[str]] = []
+        hc_calls: list[list[str]] = []
         real_run = orchestrate.run
 
         def selective_run(cmd: list[str], **kwargs: object) -> Any:
-            if cmd[0] == "herdr":
-                herdr_calls.append(cmd)
+            if cmd[0] == "hc":
+                hc_calls.append(cmd)
             return real_run(cmd, **kwargs)
 
         monkeypatch.setattr(orchestrate, "run", selective_run)
@@ -673,8 +685,8 @@ class TestLandCleanReapsWhatTheRuleAllows:
 
         assert "closed: nothing" in out
         assert "left open (not owned)" in out
-        assert "w1:t-borrowed" in out
-        assert not any(c[:3] == ["herdr", "tab", "close"] for c in herdr_calls), (
+        assert "t7" in out
+        assert not any(c[:2] in (["hc", "kill"], ["hc", "rm"]) for c in hc_calls), (
             "a tab Orchestrate does not own is never closed"
         )
         assert wt.exists(), "the borrowed session may still be standing in this worktree"
@@ -722,15 +734,15 @@ class TestLandCleanReapsWhatTheRuleAllows:
                     "closer",
                     wt_closer,
                     "done",
-                    tab_id="w1:t1",
-                    launch_receipt={"tab_id": "w1:t1", "owned": True},
+                    tab_id="t1",
+                    launch_receipt={"tab_id": "t1", "owned": True},
                 ),
                 _unit_row(
                     "borrowed",
                     wt_borrowed,
                     "done",
-                    tab_id="w1:t-borrowed",
-                    launch_receipt={"tab_id": "w1:t-borrowed", "owned": False},
+                    tab_id="t7",
+                    launch_receipt={"tab_id": "t7", "owned": False},
                 ),
                 # cmd_settle's shape for a review controller: done, no branch of its own
                 # (terminal review F26).
@@ -743,11 +755,10 @@ class TestLandCleanReapsWhatTheRuleAllows:
         real_run = orchestrate.run
 
         def selective_run(cmd: list[str], **kwargs: object) -> Any:
-            if cmd[:3] == ["herdr", "tab", "close"]:
-                return subprocess.CompletedProcess(cmd, 1, "", "herdr refused; pane is busy")
-            if cmd[:3] == ["herdr", "tab", "list"]:
-                tabs = {"result": {"tabs": [{"tab_id": "w1:t1", "label": "t"}]}}
-                return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+            if cmd[:3] == ["hc", "kill", "t1"]:
+                return subprocess.CompletedProcess(cmd, 1, "", "hc refused; terminal is busy")
+            if cmd[:3] == ["hc", "get", "t1"]:
+                return subprocess.CompletedProcess(cmd, 0, _live_terminal("t1"), "")
             return real_run(cmd, **kwargs)
 
         monkeypatch.setattr(orchestrate, "run", selective_run)
@@ -763,8 +774,8 @@ class TestLandCleanReapsWhatTheRuleAllows:
         assert "kept runner: not done" in out
         assert "kept silent: committed nothing to land" in out
         assert "kept unlanded: not on the run branch" in out
-        assert "kept closer: tab close failed (1) for w1:t1: herdr refused; pane is busy" in out
-        assert "kept borrowed: tab left open (not owned): tab w1:t-borrowed" in out
+        assert "kept closer: tab close failed (1) for t1: hc refused; terminal is busy" in out
+        assert "kept borrowed: tab left open (not owned): tab t7" in out
         assert "kept settled: done, with no branch of its own to measure" in out
         assert "kept settled: not done" not in out
         assert (
@@ -833,18 +844,16 @@ class TestLandCleanReapsWhatTheRuleAllows:
                     "alpha",
                     wt_alpha,
                     "done",
-                    tab_id="w1:t1",
-                    launch_receipt={"tab_id": "w1:t1", "owned": True},
+                    tab_id="t1",
+                    launch_receipt={"tab_id": "t1", "owned": True},
                 )
             ],
         )
         real_run = orchestrate.run
 
         def close_then_refuse_removal(cmd: list[str], **kwargs: object) -> Any:
-            if cmd[:3] == ["herdr", "tab", "close"]:
+            if cmd[:2] in (["hc", "kill"], ["hc", "rm"]):
                 return subprocess.CompletedProcess(cmd, 0, "", "")
-            if cmd[:3] == ["herdr", "tab", "list"]:
-                return subprocess.CompletedProcess(cmd, 0, json.dumps({"result": {"tabs": []}}), "")
             if cmd[:3] == ["git", "worktree", "remove"]:
                 return subprocess.CompletedProcess(cmd, 128, "", "fatal: simulated removal failure")
             return real_run(cmd, **kwargs)
@@ -856,9 +865,56 @@ class TestLandCleanReapsWhatTheRuleAllows:
         assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 3
         out = capsys.readouterr().out
         assert (
-            "kept alpha: tab w1:t1 closed; worktree removal failed (128): "
+            "kept alpha: tab t1 closed; worktree removal failed (128): "
             "fatal: simulated removal failure" in out
         )
+
+    def test_an_old_herdr_tab_id_is_never_handed_to_hc_and_the_unit_is_kept(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A run started under old Herdr records ``w1:t1``. hc cannot see that tab, so its
+        not-found would read as already closed while the session still runs. The close never
+        reaches hc: it fails with a note naming old Herdr, and the unit and worktree stay."""
+        wt_alpha = _worktree(repo, "alpha")
+        _commit(wt_alpha, "alpha.txt")
+        _git(repo, "checkout", "orch/r1")
+        _git(repo, "merge", "--no-ff", "--no-edit", "orch/r1-alpha")
+        _git(repo, "checkout", "main")
+        _write_run(
+            repo,
+            [
+                _unit_row(
+                    "alpha",
+                    wt_alpha,
+                    "done",
+                    tab_id="w1:t1",
+                    launch_receipt={"tab_id": "w1:t1", "owned": True},
+                )
+            ],
+        )
+        hc_calls: list[list[str]] = []
+        real_run = orchestrate.run
+
+        def recording_run(cmd: list[str], **kwargs: object) -> Any:
+            if cmd[0] == "hc":
+                hc_calls.append(cmd)
+            return real_run(cmd, **kwargs)
+
+        monkeypatch.setattr(orchestrate, "run", recording_run)
+        monkeypatch.chdir(repo)
+
+        assert orchestrate.cmd_clean(_clean_args(repo, merged=True)) == 3
+        out = capsys.readouterr().out
+
+        assert "kept alpha: tab close failed (2) for w1:t1: not a terminal on this machine's" in out
+        assert "old Herdr tab" in out
+        # The sweep lists live sessions; nothing is killed, removed or asked about the old id.
+        assert [c for c in hc_calls if c[:2] != ["hc", "ls"]] == []
+        assert wt_alpha.exists()
 
     def test_land_clean_says_every_merged_unit_was_kept_rather_than_merged_nothing(
         self,
@@ -879,8 +935,8 @@ class TestLandCleanReapsWhatTheRuleAllows:
                     "alpha",
                     wt_alpha,
                     "done",
-                    tab_id="w1:t-borrowed",
-                    launch_receipt={"tab_id": "w1:t-borrowed", "owned": False},
+                    tab_id="t7",
+                    launch_receipt={"tab_id": "t7", "owned": False},
                 )
             ],
         )
@@ -891,7 +947,7 @@ class TestLandCleanReapsWhatTheRuleAllows:
         assert "landed on orch/r1: alpha" in out or "alpha" in out
         assert "this land merged nothing" not in out
         assert "nothing reaped: every unit this invocation merged was kept" in out
-        assert "kept alpha: tab left open (not owned): tab w1:t-borrowed" in out
+        assert "kept alpha: tab left open (not owned): tab t7" in out
 
     def test_a_worktree_already_gone_when_removal_reports_failure_is_still_closed(
         self,
@@ -1210,7 +1266,7 @@ class TestLandCleanReapsOnlyWhatThisLandMerged:
         # what an earlier one kept?
         wt_alpha = _worktree(repo, "alpha")
         _commit(wt_alpha, "alpha.txt")
-        _write_run(repo, [_unit_row("alpha", wt_alpha, "done", tab_id="w1:t-alpha")])
+        _write_run(repo, [_unit_row("alpha", wt_alpha, "done", tab_id="t8")])
         monkeypatch.chdir(repo)
 
         # The first land merges alpha and deliberately keeps its worktree.
@@ -1244,7 +1300,7 @@ class TestLandCleanReapsOnlyWhatThisLandMerged:
         _write_run(
             repo,
             [
-                _unit_row("alpha", wt_alpha, "done", tab_id="w1:t-alpha"),
+                _unit_row("alpha", wt_alpha, "done", tab_id="t8"),
                 _unit_row("beta", wt_beta, "running"),
             ],
         )
@@ -1259,7 +1315,7 @@ class TestLandCleanReapsOnlyWhatThisLandMerged:
         _write_run(
             repo,
             [
-                _unit_row("alpha", wt_alpha, "done", tab_id="w1:t-alpha"),
+                _unit_row("alpha", wt_alpha, "done", tab_id="t8"),
                 _unit_row("beta", wt_beta, "done"),
             ],
         )

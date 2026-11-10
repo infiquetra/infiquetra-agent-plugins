@@ -27,10 +27,8 @@ def test_readme_references_only_python_modules_the_plugin_ships() -> None:
             README.read_text(),
         )
     )
-    assert references == {
-        "skills/orchestrate/scripts/herdr_events.py",
-        "skills/orchestrate/scripts/orchestrate.py",
-    }
+    # herdr_events.py, old Herdr's event-socket client, went with the move to herdr core.
+    assert references == {"skills/orchestrate/scripts/orchestrate.py"}
     assert all((PLUGIN_ROOT / reference).is_file() for reference in references)
 
 

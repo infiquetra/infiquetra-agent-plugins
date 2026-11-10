@@ -1,6 +1,6 @@
 """Delivery confirmation and bounded retry on task dispatch.
 
-When Orchestrate launches a unit, Herdr may report the session interactive_ready while a startup
+When Orchestrate launches a unit, herdr core may report the session idle while a startup
 dialog (folder trust, account verification) is still displayed. A prompt sent in that window is
 silently swallowed. Orchestrate must observe an acceptance signal (took_the_task) before marking
 the unit RUNNING. If unaccepted and the session remains continuously idle, it retries delivery up to
@@ -93,14 +93,30 @@ def launcher_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _completed_launch_process(
-    tab_id: str = "tab-1", agent_name: str = "worker", pane_id: str = "pane-1"
+    terminal: str = "t5", agent_name: str = "worker"
 ) -> subprocess.CompletedProcess[str]:
+    """What ``agents --app`` prints: the new session's herdr core terminal."""
     return subprocess.CompletedProcess(
         ["agents"],
         returncode=0,
-        stdout=f'{{"tab_id":"{tab_id}","agent_name":"{agent_name}","pane_id":"{pane_id}"}}\n',
+        stdout=(
+            f'{{"created_space": false, "space": "sp1", "tab": "tb1", "terminal": "{terminal}", '
+            f'"agent_name": "{agent_name}"}}\n'
+        ),
         stderr="",
     )
+
+
+def _fake_run(*cmd_and_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+    """Answer the one hc call a launch makes before the launcher (the ownership snapshot, an empty
+    core) and the launcher itself; an unexpected hc call fails the test."""
+    cmd = list(cmd_and_args[0])
+    if cmd[:2] == ["hc", "ls"]:
+        return subprocess.CompletedProcess(
+            cmd, 0, '{"terminals": [], "machines": [], "hidden_finished": 0}', ""
+        )
+    assert cmd[0].endswith("agents"), f"unexpected call: {cmd}"
+    return _completed_launch_process()
 
 
 def _idle_agent(name: str) -> dict[str, str]:
@@ -121,9 +137,7 @@ class TestDispatchDeliveryConfirmation:
         unit = orchestrate.Unit(name="worker", vendor="claude", task="/plan #123")
         send_calls: list[tuple[Any, ...]] = []
 
-        monkeypatch.setattr(
-            orchestrate, "run", lambda *_args, **_kwargs: _completed_launch_process()
-        )
+        monkeypatch.setattr(orchestrate, "run", _fake_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
         monkeypatch.setattr(
             orchestrate,
@@ -134,7 +148,7 @@ class TestDispatchDeliveryConfirmation:
             orchestrate,
             "agent_row",
             lambda _unit=None, _agents=None, **_kw: {
-                "pane_id": "pane-1",
+                "pane_id": "t5",
                 "agent_status": "idle",
                 "agent": "claude",
                 "interactive_ready": True,
@@ -158,9 +172,7 @@ class TestDispatchDeliveryConfirmation:
         unit = orchestrate.Unit(name="worker", vendor="claude", task="/plan #123")
         send_calls: list[tuple[Any, ...]] = []
 
-        monkeypatch.setattr(
-            orchestrate, "run", lambda *_args, **_kwargs: _completed_launch_process()
-        )
+        monkeypatch.setattr(orchestrate, "run", _fake_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
         monkeypatch.setattr(
             orchestrate,
@@ -172,7 +184,7 @@ class TestDispatchDeliveryConfirmation:
             orchestrate,
             "agent_row",
             lambda _unit=None, _agents=None, **_kw: {
-                "pane_id": "pane-1",
+                "pane_id": "t5",
                 "agent_status": "done",
                 "agent": "claude",
                 "interactive_ready": True,
@@ -198,9 +210,7 @@ class TestDispatchDeliveryConfirmation:
         unit = orchestrate.Unit(name="worker", vendor="claude", task="/plan #123")
         send_calls: list[tuple[Any, ...]] = []
 
-        monkeypatch.setattr(
-            orchestrate, "run", lambda *_args, **_kwargs: _completed_launch_process()
-        )
+        monkeypatch.setattr(orchestrate, "run", _fake_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
         monkeypatch.setattr(
             orchestrate,
@@ -211,7 +221,7 @@ class TestDispatchDeliveryConfirmation:
             orchestrate,
             "agent_row",
             lambda _unit=None, _agents=None, **_kw: {
-                "pane_id": "pane-1",
+                "pane_id": "t5",
                 "agent_status": "working",
                 "agent": "claude",
                 "interactive_ready": True,
@@ -231,9 +241,7 @@ class TestDispatchDeliveryConfirmation:
         unit = orchestrate.Unit(name="worker", vendor="claude", task="/plan #123")
         send_calls: list[tuple[Any, ...]] = []
 
-        monkeypatch.setattr(
-            orchestrate, "run", lambda *_args, **_kwargs: _completed_launch_process()
-        )
+        monkeypatch.setattr(orchestrate, "run", _fake_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
         monkeypatch.setattr(
             orchestrate,
@@ -241,7 +249,7 @@ class TestDispatchDeliveryConfirmation:
             lambda u, p, b="inline", **kw: send_calls.append((u, p, b, kw)),
         )
         rows: list[dict[str, Any] | None] = [
-            {"pane_id": "pane-1", "agent": "claude", "interactive_ready": True},
+            {"pane_id": "t5", "agent": "claude", "interactive_ready": True},
             None,
         ]
         monkeypatch.setattr(
@@ -263,9 +271,7 @@ class TestDispatchDeliveryConfirmation:
         unit = orchestrate.Unit(name="worker", vendor="claude", task="/plan #123")
         send_calls: list[tuple[Any, ...]] = []
 
-        monkeypatch.setattr(
-            orchestrate, "run", lambda *_args, **_kwargs: _completed_launch_process()
-        )
+        monkeypatch.setattr(orchestrate, "run", _fake_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
         monkeypatch.setattr(
             orchestrate,
@@ -277,7 +283,7 @@ class TestDispatchDeliveryConfirmation:
             orchestrate,
             "agent_row",
             lambda _unit=None, _agents=None, **_kw: {
-                "pane_id": "pane-1",
+                "pane_id": "t5",
                 "agent": "claude",
                 "interactive_ready": True,
             },
@@ -298,9 +304,7 @@ class TestDispatchDeliveryConfirmation:
         send_calls: list[tuple[Any, ...]] = []
         acceptance_results = iter([False, True])
 
-        monkeypatch.setattr(
-            orchestrate, "run", lambda *_args, **_kwargs: _completed_launch_process()
-        )
+        monkeypatch.setattr(orchestrate, "run", _fake_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
         monkeypatch.setattr(
             orchestrate,
@@ -311,7 +315,7 @@ class TestDispatchDeliveryConfirmation:
             orchestrate,
             "agent_row",
             lambda _unit=None, _agents=None, **_kw: {
-                "pane_id": "pane-1",
+                "pane_id": "t5",
                 "agent_status": "idle",
                 "agent": "claude",
                 "interactive_ready": True,
