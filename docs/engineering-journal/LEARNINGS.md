@@ -2,6 +2,48 @@
 
 ## 2026-11-10
 
+### A plain-text screen read cannot tell an agent's placeholder from a person's draft
+
+**Evidence.** `hc read` (herdr core 0.1.20) prints plain text only. The launcher's composer parser
+classifies the checked-in Codex capture `codex_closed_placeholder`
+(`plugins/agent-launcher/tests/fixtures/composer-panes.json`) as `unclassifiable` with its colour
+codes and as `staged` without them; the three Claude captures read `empty` either way
+(`test_the_closed_codex_placeholder_without_colour_codes_stops_a_guarded_write_as_staged`).
+
+**Mechanism.** The guard proved typed text by its being unstyled; a client-drawn placeholder is
+styled. Old Herdr's `pane read --format ansi` kept the styling, and herdr core's command line has
+no styled read, so every non-empty box looks typed.
+
+**Generalizable rule.** When a terminal backend changes, check whether any parser relied on styling
+the new read drops, and decide explicitly which way an unprovable reading falls.
+
+### A send from inside an agent's terminal is tagged, so commands must go out untagged
+
+**Evidence.** `hc send` from a process with `HC_TERMINAL_ID` set wraps the text in
+`<hc from="tN ...">...</hc>` (the `herdr` skill, "Typing a shell command into a plain shell").
+Orchestrate's tasks begin with a saga command (`/saga:work ...`), which an agent reads as a command
+only at the start of its input. `launcher.run` now strips `HC_TERMINAL_ID` and `HC_SCOPE` for every
+`hc` argv (`test_run_strips_the_caller_variables_for_hc_argv_only`).
+
+**Mechanism.** hc treats a send from inside a terminal as a message between agents and adds the
+sender's address; the same variable also makes `hc wait` end when someone messages the caller.
+
+**Generalizable rule.** A program that drives agents through hc on someone's behalf sends without
+the caller variables; only an agent speaking for itself keeps them.
+
+### A test suite that stubs a terminal backend must also shadow it
+
+**Evidence.** The agent-launcher tests had no conftest, and Orchestrate's shadowed only `herdr`.
+After the move to hc a missed stub would have run the host's `hc send` or `hc kill`; one roster
+test did reach the host's `hc wait`. Both conftests now put a refusing `hc` and `herdr` first on
+`PATH` (`plugins/agent-launcher/tests/conftest.py`, `plugins/orchestrate/tests/conftest.py`).
+
+**Mechanism.** Fakes match on argv; when production argv changes, a fake that forwards unmatched
+calls to the real runner sends them to the live program.
+
+**Generalizable rule.** Shadow every live control program a suite stubs, at the session level,
+before changing the argv the fakes match on.
+
 ### Ambient ~/workspace/infiquetra/infiquetra-sdlc checkouts mask vendored project-mapping changes in local tests
 
 **Evidence.** Running `pytest` in `plugins/mission-control/tests/` and `plugins/saga/tests/test_review_state.py` without setting `INFIQUETRA_SDLC_PATH` read the workstation's unmerged `~/workspace/infiquetra/infiquetra-sdlc/config/project-mappings.json`, hiding eleven test fixtures that still passed retired `--project operations` or `--project asgard` (`plugins/mission-control/scripts/sdlc_manager.py:142-148`, `plugins/saga/scripts/board_progression.py:794-815`).
