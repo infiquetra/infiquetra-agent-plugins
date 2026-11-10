@@ -1,5 +1,33 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-10
+
+### A launcher skill that names old Herdr keeps agents there after the move
+
+**Evidence.** Herdr is now herdr core (`hc`) on every machine plus the Herdr app
+window, and old Herdr (`herdr` 0.9.5) is being removed. A session on the work
+laptop could not start workspaces the window showed. This skill's common-case
+recipe was `agents --dry-run --no-focus --current --herdr --herdr-control-only`,
+and its hand-off was `herdr agent prompt|wait|read`: `--herdr` forces old Herdr,
+whose server was still running there, so every launch succeeded where no window
+looks. The wrapper itself sends only a plain single launch (`agents --workspace X
+--task Y <tool>`) to the app, through `agent-app prepare`; `--crew`,
+`--orchestrator/--workers`, `--recipe`, `--herdr-layout`, `--profile`, `--new` and
+this plugin's `launcher.py` and `roster.py` (which call `herdr` directly) still go
+to old Herdr. SKILL.md now opens with which launches reach the app and which do
+not, and marks the old-Herdr sections, which stay while Orchestrate runs the
+scripts. The portable-docs mutation proof was re-run
+(`docs/evidence/2026-11-10-agent-launcher-mutation-proof-portable-docs.txt`). Later the same day the
+launcher (now in source in infiquetra-herdr-console, `launcher/bin`) placed crews in
+the app and retired recipes, layouts, Hermes profiles and a bare `agents`; the skill
+says so, and the proof was re-run for those bytes.
+
+**Mechanism.** A launch into a lingering old server does not fail; the session is
+simply invisible, so the agent concludes the new mechanism does not work.
+
+**Generalizable rule.** When the tool under a skill is replaced, change the skill's
+recipe in the same change as the tool, and say which paths still use the old one.
+
 ## 2026-11-06
 
 ### Serious test defects need a narrower blocking path
