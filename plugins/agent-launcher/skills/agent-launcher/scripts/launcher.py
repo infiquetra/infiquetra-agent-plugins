@@ -2,12 +2,14 @@
 """Shared single-session launch contract.
 
 Create a coding-agent session through the installed ``agents`` wrapper, verify it
-through Herdr, deliver a prompt, and close only a session this process opened.
-Orchestrate consumes this module; an ordinary session uses the same file as a
+through herdr core (``hc``), deliver a prompt, and close only a session this process
+opened. Orchestrate consumes this module; an ordinary session uses the same file as a
 CLI. This is an extraction of the launch seam, not a second implementation.
 
-After creation, every interaction goes through Herdr. This module does not
-duplicate the canonical ``herdr`` skill.
+Herdr is two programs: herdr core (``hc``) runs every terminal on a machine, and the
+Herdr app is the window. ``agents`` places a session in the app; after creation, every
+interaction goes through ``hc``. Old Herdr (``herdr agent|tab|pane``) is not called.
+This module does not duplicate the canonical ``herdr`` skill.
 """
 
 from __future__ import annotations
@@ -106,26 +108,97 @@ def wrapper_reused(value: Any) -> bool:
     return isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"}
 
 
-def list_tab_ids(workspace_id: str | None = None) -> frozenset[str] | None:
-    """Tab ids in a Herdr workspace, or None if the list cannot be read."""
-    ws = workspace_id or current_herdr_workspace_id()
-    if not ws:
-        return None
-    proc = run(["herdr", "tab", "list", "--workspace", ws], check=False, timeout=20)
+# --------------------------------------------------------------------------- herdr core
+#
+# Every Herdr call in this file is an ``hc`` call. ``run`` strips the caller variables below
+# from each one: from inside an agent's terminal ``hc send`` otherwise wraps the text in an
+# ``<hc from=...>`` tag, which stops a leading ``/saga:...`` command being read as a command,
+# and ``hc wait`` otherwise ends when someone messages the operator's own session.
+
+HC = "hc"
+HC_CALLER_VARIABLES = ("HC_TERMINAL_ID", "HC_SCOPE")
+
+# A terminal on THIS machine's core: ``t7`` or ``t1b``. Another machine's terminal carries a
+# ``machine/`` prefix and is never matched; an old Herdr id (``w1:t3``, ``wEV-pG``) is not one.
+HC_ADDRESS = re.compile(r"t[0-9]+[a-z]*")
+
+# The statuses under which a session will take a prompt.
+READY_STATUSES = frozenset({"idle", "done"})
+
+# hc's exit codes for a refusal this file names (``hc --help``: 3 not_found, 9 blocked,
+# 11 finished).
+HC_EXIT_NOT_FOUND = 3
+HC_EXIT_BLOCKED = 9
+HC_EXIT_FINISHED = 11
+
+
+def is_hc_address(value: Any) -> bool:
+    """Whether ``value`` is a terminal address on this machine's herdr core."""
+    return isinstance(value, str) and HC_ADDRESS.fullmatch(value) is not None
+
+
+def hc_environment() -> dict[str, str]:
+    """This process's environment without the caller variables an ``hc`` call must not carry."""
+    return {key: value for key, value in os.environ.items() if key not in HC_CALLER_VARIABLES}
+
+
+def hc_json(proc: subprocess.CompletedProcess[str]) -> Any:
+    """The JSON an ``hc`` call printed, or None when it failed or printed something else."""
     if proc.returncode != 0:
         return None
     try:
-        tabs = json.loads(proc.stdout)["result"]["tabs"]
-    except (ValueError, KeyError, TypeError):
+        return json.loads(proc.stdout or "null")
+    except ValueError:
         return None
-    if not isinstance(tabs, list):
+
+
+def hc_terminal(address: str | None, *, timeout: float = 20) -> dict[str, Any] | None:
+    """One terminal's full record from ``hc get``, or None when hc does not have it."""
+    if not is_hc_address(address):
         return None
-    ids = {str(tab["tab_id"]) for tab in tabs if isinstance(tab, dict) and tab.get("tab_id")}
-    return frozenset(ids)
+    payload = hc_json(run([HC, "get", str(address), "--json"], check=False, timeout=timeout))
+    if isinstance(payload, dict) and isinstance(payload.get("terminal"), dict):
+        return payload["terminal"]
+    return payload if isinstance(payload, dict) and payload.get("address") else None
+
+
+def hc_status_word(status: Any) -> str | None:
+    """The status word from either shape hc prints: ``"idle"`` in a list row, ``{state}`` in get."""
+    word = status.get("state") if isinstance(status, Mapping) else status
+    return str(word) if word else None
+
+
+def hc_rows(*, finished: bool = False, timeout: float = 20) -> list[dict[str, Any]] | None:
+    """This machine's terminal rows from ``hc ls``, or None when hc could not be asked.
+
+    Rows from other machines carry a ``machine/`` address and are dropped here, before anything
+    reads them: every session this launcher creates is on this machine.
+    """
+    argv = [HC, "ls", "--json"] + (["--all"] if finished else [])
+    payload = hc_json(run(argv, check=False, timeout=timeout))
+    rows = payload.get("terminals") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return None
+    return [row for row in rows if isinstance(row, dict) and is_hc_address(row.get("address"))]
+
+
+def list_tab_ids(workspace_id: str | None = None) -> frozenset[str] | None:
+    """This machine's terminal addresses, finished ones included, or None if hc cannot answer.
+
+    The ownership snapshot. A session ``agents`` starts is one new terminal in one new tab, and
+    hc never reuses an address on a core, so an address absent from this set before the launch
+    was created by it. ``workspace_id`` is accepted for callers of the old Herdr signature and
+    ignored: an address is unique on the whole core, not only within a workspace.
+    """
+    del workspace_id
+    rows = hc_rows(finished=True)
+    if rows is None:
+        return None
+    return frozenset(str(row["address"]) for row in rows)
 
 
 def tab_was_created(tab_id: str | None, preexisting: frozenset[str] | None) -> bool:
-    """True only when the receipt tab was absent from the pre-launch snapshot."""
+    """True only when the receipt's terminal was absent from the pre-launch snapshot."""
     if not tab_id or preexisting is None:
         return False
     return tab_id not in preexisting
@@ -139,22 +212,51 @@ def session_owned(unit: Any, receipt: dict[str, Any] | None = None) -> bool:
     return getattr(unit, "owned", False) is True
 
 
+def wrapper_terminal(info: Mapping[str, Any]) -> str | None:
+    """The hc address in the wrapper's launch result: ``terminal``, as a string or ``{address}``.
+
+    ``agents`` hands an app launch to agent-app, whose one JSON line names the new terminal in
+    both of its placements -- the window's (``tab.new``) and the core's (``hc run``). A result
+    without it came from somewhere else (an old Herdr launch printed ``pane_id``), and is read as
+    no terminal at all rather than as a Herdr id hc cannot act on.
+    """
+    terminal = info.get("terminal")
+    if isinstance(terminal, Mapping):
+        terminal = terminal.get("address")
+    return str(terminal) if terminal else None
+
+
 def record_wrapper_identity(
     unit: Any,
     info: dict[str, Any],
     *,
     preexisting: frozenset[str] | None = None,
 ) -> dict[str, Any]:
-    """Persist the wrapper receipt before any later step can fail."""
-    unit.tab_id = info.get("tab_id")
-    unit.agent_name = info.get("agent_name", unit.name)
-    unit.pane_id = info.get("pane_id")
-    reused = wrapper_reused(info.get("reused"))
-    unit.reused = reused
-    owned = tab_was_created(unit.tab_id, preexisting)
-    unit.owned = owned
+    """Persist the wrapper receipt before any later step can fail.
+
+    The terminal address is both ``tab_id`` and ``pane_id``: ``agents`` gives every session one
+    terminal in its own tab, and the terminal is what hc closes, reads and sends to. The window's
+    own tab id, when the window placed it, is kept in the receipt as ``app_tab``.
+    """
+    terminal = wrapper_terminal(info)
+    unit.tab_id = terminal
+    unit.pane_id = terminal
+    unit.agent_name = str(info.get("agent_name") or unit.name)
+    # ``created_space`` false means the launch joined a workspace that already existed: the
+    # old wrapper's ``reused`` bit, which is about the workspace and never about the tab.
+    if "created_space" in info:
+        unit.reused = info.get("created_space") is False
+    else:
+        unit.reused = wrapper_reused(info.get("reused"))
+    unit.owned = tab_was_created(unit.tab_id, preexisting)
     # launch_receipt_shape is the single owner of this dict; it reads the attributes just set.
     receipt = launch_receipt_shape(unit)
+    for key, field_name in (("tab", "app_tab"), ("space", "space"), ("placement", "placement")):
+        value = info.get(key)
+        if isinstance(value, Mapping):
+            value = value.get("id")
+        if value:
+            receipt[field_name] = str(value)
     unit.launch_receipt = receipt
     return receipt
 
@@ -219,13 +321,41 @@ if set(COMPOSER_GLYPH_BY_VENDOR) != SUPPORTED_VENDORS:
 # it lived nowhere. `roster` prints them, so the interview reads how a vendor behaves rather than
 # recalling it -- which is the failure this is for: an orchestrator that guesses, plausibly, and is
 # only found out a phase later.
-# Herdr's name for a vendor's agent, where it differs from the vendor key. Muse Code is the agent
-# Herdr detects as `maki`: the two names are one agent, so a `muse` launch accepts either.
-HERDR_KIND_ALIASES: dict[str, frozenset[str]] = {"muse": frozenset({"muse", "maki"})}
+# The name each agent reports to herdr core for itself (``status.app``, and ``agent`` in an
+# ``hc ls`` row), mapped to the vendor key. Claude Code, Codex, Antigravity and Muse were read off
+# live rows on 2026-11-10; the Grok, OpenCode and Cursor names come from the console's own table
+# (infiquetra-herdr-console ``herdr_ops/session_telemetry.py``), not from a live row. ``maki`` is
+# old Herdr's name for Muse Code, kept so a session reporting it still reads as Muse.
+HC_AGENT_KINDS: dict[str, str] = {
+    "claude-code": "claude",
+    "claude": "claude",
+    "codex": "codex",
+    "antigravity": "agy",
+    "agy": "agy",
+    "grok-build": "grok",
+    "grok": "grok",
+    "muse": "muse",
+    "maki": "muse",
+    "opencode": "opencode",
+}
+
+
+def vendor_for_kind(kind: Any) -> str | None:
+    """The vendor key for an agent name hc reported, or None for anything else (a shell)."""
+    return HC_AGENT_KINDS.get(str(kind).lower()) if kind else None
+
+
+# Every name a vendor's session may report, keyed by vendor. Derived from the table above.
+HERDR_KIND_ALIASES: dict[str, frozenset[str]] = {
+    vendor: frozenset(
+        {vendor, *(kind for kind, owner in HC_AGENT_KINDS.items() if owner == vendor)}
+    )
+    for vendor in sorted(set(HC_AGENT_KINDS.values()))
+}
 
 
 def accepted_herdr_kinds(vendor: str) -> frozenset[str]:
-    """The agent kinds Herdr may report for a session launched as ``vendor``."""
+    """The agent names herdr core may report for a session launched as ``vendor``."""
     key = str(vendor).lower()
     return HERDR_KIND_ALIASES.get(key, frozenset({key}))
 
@@ -369,8 +499,10 @@ def run(
     when the program does not exist, so a machine without herdr got a traceback out of a read-only
     command that had already decided herdr was optional.
     """
+    # An hc call never carries the caller variables (see ``HC_CALLER_VARIABLES``).
+    env = hc_environment() if cmd and cmd[0] == HC else None
     try:
-        proc = subprocess.run(cmd, capture_output=capture, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, capture_output=capture, text=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired as exc:
         if check:
             raise SystemExit(f"timed out after {timeout}s while running {cmd[0]!r}") from None
@@ -538,12 +670,13 @@ def agent_argv(
     default_workspace: str | None = None,
     default_account: str | None = None,
 ) -> list[str]:
+    # ``--app`` places the session in the Herdr app (herdr core plus the window) and fails rather
+    # than falling back to old Herdr, whose sessions the window does not show. The wrapper prints
+    # one JSON line naming the new terminal.
     argv = [
         launcher(),
+        "--app",
         "--no-focus",
-        "--current",
-        "--herdr",
-        "--herdr-control-only",
         "--task",
         unit.name,
         "--cwd",
@@ -582,11 +715,12 @@ LAUNCH_CREATE_SECONDS = 120.0
 # being sent to show that it took one.
 #
 # The wrapper returns when the tab exists, which is earlier than the agent being able to read
-# anything, and sending into that gap does not fail: `herdr agent prompt` reports success, the agent
-# finishes booting, and the prompt is gone. Observed three times across two vendors on one live run,
-# always the same tell -- a unit idle immediately after launch, having consumed nothing. That idle
-# used to be recorded as RUNNING, which `settle` then read as done and only `land` noticed, a phase
-# later, that it had committed nothing. A send whose acceptance is never observed is now recorded
+# anything, and sending into that gap does not fail: the send reports success, the agent
+# finishes booting, and the prompt is gone (first seen under old Herdr's `herdr agent prompt`).
+# Observed three times across two vendors on one live run, always the same tell -- a unit idle
+# immediately after launch, having consumed nothing. That idle used to be recorded as RUNNING,
+# which `settle` then read as done and only `land` noticed, a phase later, that it had committed
+# nothing. A send whose acceptance is never observed is now recorded
 # as PROMPT_UNDELIVERED instead, which no phase reads as work.
 LAUNCH_SETTLE_SECONDS = 30.0
 DELIVERY_CHECK_SECONDS = 15.0
@@ -604,9 +738,10 @@ DELIVERY_WARNING = (
     "launcher.py redeliver --receipt-json)."
 )
 
-# How long to give one pane read before the input-box inspection gives up. A pane read is a
-# local socket round trip, so this is a bound on a wedged herdr rather than a wait for work.
+# How long to give one screen read before the input-box inspection gives up. An `hc read` is a
+# local socket round trip, so this is a bound on a wedged core rather than a wait for work.
 PANE_INPUT_READ_SECONDS = 5.0
+# One `hc kill` or `hc rm`. A kill hangs up, then escalates, and returns what it observed.
 TAB_CLOSE_SECONDS = 10.0
 # The most rows of a pane read handed to the composer parser, taken from the tail: the live box
 # is the last block positionally, so the head of an oversized viewport is scrollback the parse
@@ -620,11 +755,12 @@ PANE_INSPECT_MAX_LINES = 4000
 # cap a 100-row viewport of huge lines is still unbounded. 131072 admits the measured ~68 KB
 # bordered draft (F45) while still bounding pathological width.
 PANE_INSPECT_MAX_CHARS = 131072
-# How long to give one pane write. The two calls that put a line into a session were the only
+# How long to give one write. The calls that put a line into a session were once the only
 # Herdr calls with no bound, so a wedged daemon hung go and land mid-delivery, after the guard
-# had inspected the composer and before any status was written. A write is a local socket round
-# trip carrying at most a pane-typed line or a prompt handle, so this bounds a wedge, not work.
-PANE_WRITE_SECONDS = 30.0
+# had inspected the composer and before any status was written. `hc send` holds a send for up
+# to 60 seconds while a person's draft is open in that terminal (`hc --skill`, draft_wait), so
+# the bound is that hold plus a margin: a timeout here must mean a wedge, never a person typing.
+PANE_WRITE_SECONDS = 90.0
 
 # A transcript written during the create is legitimate evidence; one left by an earlier run is
 # minutes or hours old. One second absorbs filesystem mtime granularity without admitting a
@@ -649,31 +785,44 @@ def clear_delivery_warning(unit: Any) -> None:
 
 
 def agent_row(unit: Any, agents: list[dict] | None = None) -> dict | None:
-    """This unit's row in herdr's agent list, matched on the pane it was given."""
+    """This unit's row in the live session list, matched on the terminal it was given."""
     for a in live_agents() if agents is None else agents:
         if unit.pane_id and a.get("pane_id") == unit.pane_id:
             return a
     return None
 
 
+def hc_wait_argv(address: str, seconds: float) -> list[str]:
+    """``hc wait`` on one terminal for at most ``seconds``, as JSON.
+
+    hc returns at once when the terminal is not working, and otherwise when it reports any other
+    word, exits, or the bound runs out (``ended`` false, exit 0). hc's own bound is whole seconds.
+    """
+    return [HC, "wait", str(address), "--timeout", str(max(1, int(seconds))), "--json"]
+
+
+def hc_wait(address: str | None, seconds: float) -> dict[str, Any] | None:
+    """One bounded ``hc wait``: its WaitResult, or None when hc could not be asked."""
+    if not is_hc_address(address):
+        return None
+    payload = hc_json(run(hc_wait_argv(str(address), seconds), check=False, timeout=seconds + 10))
+    return payload if isinstance(payload, dict) else None
+
+
 def await_ready(unit: Any, seconds: float = LAUNCH_SETTLE_SECONDS) -> bool:
     """Wait until this session will actually take a prompt. True if it said so.
 
-    Some agents never report readiness at all, and that is why the writer has a pane
-    fallback. There is nothing to wait for there, so the window is spent and the send goes ahead,
-    which is still later than sending the instant the tab appears.
+    hc reports readiness as a status word, so this is one bounded ``hc wait`` -- no polling --
+    and ready means the agent last said ``idle`` or ``done``. A program that never reports a
+    status reads as working until it exits, so the wait spends its window and the send goes
+    ahead, which is still later than sending the instant the tab appears.
     """
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        row = agent_row(unit)
-        if row is not None and row.get("interactive_ready"):
-            return True
-        time.sleep(1.0)
-    return False
+    result = hc_wait(unit.pane_id, seconds)
+    return result is not None and result.get("status") in READY_STATUSES
 
 
-# The Herdr statuses under which a session has not started anything. ``took_the_task`` and the
-# retry door's liveness gate read the same set. ``done`` is started: Herdr reports it after a
+# The statuses under which a session has not started anything. ``took_the_task`` and the
+# retry door's liveness gate read the same set. ``done`` is started: an agent reports it after a
 # session took its task and finished (issue 1002 F103/F118). ``unknown`` and a missing row are
 # still not evidence of work.
 NEVER_STARTED_STATUSES = (None, "idle", "unknown")
@@ -782,16 +931,13 @@ def resolve_opencode_variant(requested: str | None, available_options: Sequence[
 
 
 def read_pane(pane_id: str, lines: int = 120) -> str:
-    """This pane's recent output, falling back to what is on screen when there is no scrollback."""
+    """This terminal's screen plus ``lines`` of history above it, as plain text.
+
+    ``hc read`` always includes the screen, so there is no separate fallback for a terminal with
+    no scrollback. While the program is working, blocked or in error, hc returns only the screen.
+    """
     proc = run(
-        ["herdr", "pane", "read", pane_id, "--source", "recent-unwrapped", "--lines", str(lines)],
-        check=False,
-        timeout=PANE_INPUT_READ_SECONDS,
-    )
-    if proc.returncode == 0 and proc.stdout.strip():
-        return proc.stdout
-    proc = run(
-        ["herdr", "pane", "read", pane_id, "--source", "visible"],
+        [HC, "read", str(pane_id), "--lines", str(lines)],
         check=False,
         timeout=PANE_INPUT_READ_SECONDS,
     )
@@ -799,9 +945,15 @@ def read_pane(pane_id: str, lines: int = 120) -> str:
 
 
 def pane_input_inspection(pane_id: str, *, vendor: str) -> Any:
-    """Classify the visible input box while preserving distinct read and parse failures."""
+    """Classify the visible input box while preserving distinct read and parse failures.
+
+    ``hc read`` prints plain text; there is no styled form. The parser told a client-drawn
+    placeholder from typed text by its colour codes, so on plain text any non-empty box reads as
+    typed, and the guard stops rather than send behind it -- a placeholder (Codex shows one) is
+    a stop the operator clears by hand, never text a prompt is concatenated onto.
+    """
     proc = run(
-        ["herdr", "pane", "read", pane_id, "--source", "visible", "--format", "ansi"],
+        [HC, "read", str(pane_id), "--lines", "0"],
         check=False,
         timeout=PANE_INPUT_READ_SECONDS,
     )
@@ -843,8 +995,8 @@ def should_guard_pane_write(unit: Any, *, wrote_before: bool) -> bool:
 
     Two halves, both needed (KTD4). Ownership says who created the tab: a pane this launcher
     did not create may hold text somebody staged earlier. ``wrote_before`` says whether this
-    launcher has already put anything into the session, through either door -- ``herdr agent
-    prompt`` or pane typing -- because once it has, a person may have typed since, and the
+    launcher has already put anything into the session, through either door -- a prompt or a
+    verbatim line -- because once it has, a person may have typed since, and the
     door the first write used says nothing about that. The only write that skips inspection
     is the first write into a pane this launcher created seconds earlier: an empty fresh pane
     is its own starting state. Orchestrate's later senders call this too, always with
@@ -1015,24 +1167,43 @@ def close_run_session(unit: Any) -> subprocess.CompletedProcess[str] | None:
         return None
     if not unit.tab_id:
         return None
-    proc = run(
-        ["herdr", "tab", "close", unit.tab_id],
-        check=False,
-        timeout=TAB_CLOSE_SECONDS,
-    )
-    if proc.returncode != 0:
-        workspace_id = str(unit.tab_id).partition(":")[0] or None
-        remaining = list_tab_ids(workspace_id)
-        if remaining is not None and unit.tab_id not in remaining:
-            return subprocess.CompletedProcess(proc.args, 0, proc.stdout, proc.stderr)
+    target = str(unit.tab_id)
+
+    def failed(proc: subprocess.CompletedProcess[str]) -> subprocess.CompletedProcess[str]:
         err = (proc.stderr or proc.stdout or "").strip()
-        failure = tab_close_failure(unit.tab_id, proc.returncode, err)
+        failure = tab_close_failure(target, proc.returncode, err)
         # Membership is a substring, never a split on the separator: the failure message
-        # itself carries the separator whenever Herdr's stderr does, so a split can never
+        # itself carries the separator whenever hc's stderr does, so a split can never
         # match it and a repeated failure would stack copies on the note.
         if failure not in unit.note:
             append_unit_note(unit, failure)
-    return proc
+        return proc
+
+    if not is_hc_address(target):
+        # An old Herdr tab id (``w1:t3``) or another machine's terminal (``mini/t3``). hc on this
+        # machine cannot see either, so its not-found would read as "already closed" while the
+        # session is still open where it runs.
+        return failed(
+            subprocess.CompletedProcess(
+                [HC, "kill", target],
+                2,
+                "",
+                "not a terminal on this machine's herdr core (an old Herdr tab, or another "
+                "machine's terminal); close it where it runs",
+            )
+        )
+    killed = run([HC, "kill", target, "--json"], check=False, timeout=TAB_CLOSE_SECONDS)
+    if killed.returncode not in (0, HC_EXIT_NOT_FOUND, HC_EXIT_FINISHED):
+        # A failed kill is a failure only while hc still shows the program running.
+        terminal = hc_terminal(target)
+        if terminal is not None and terminal.get("state") != "finished":
+            return failed(killed)
+    # The program has ended (or hc no longer has the terminal); remove it so the window drops
+    # the tab. A terminal hc no longer has is already removed.
+    removed = run([HC, "rm", target, "--json"], check=False, timeout=TAB_CLOSE_SECONDS)
+    if removed.returncode not in (0, HC_EXIT_NOT_FOUND) and hc_terminal(target) is not None:
+        return failed(removed)
+    return subprocess.CompletedProcess(removed.args, 0, removed.stdout, removed.stderr)
 
 
 def tab_close_failure(tab_id: str, returncode: int, detail: str) -> str:
@@ -1053,25 +1224,33 @@ def same_directory(reported: str, expected: str) -> bool:
         return reported == expected
 
 
-def workspace_id_for_name(name: str | None) -> str | None:
-    """The id herdr gave the workspace with this label, or None when no workspace carries it.
+# The label agent-app sets on a session it starts straight in herdr core (no window answered):
+# the workspace name it asked for, which a window applies when it first shows the session.
+SPACE_NAME_LABEL = "herdr-console.space-name"
 
-    The wrapper's ``--workspace`` takes a name and ``herdr agent list`` reports only a
-    ``workspace_id``, so the two are joined through the workspace list rather than compared
-    directly -- a name held against an id never matches, which reads as a mismatch that is not one.
+
+def workspace_name_of(terminal: Mapping[str, Any] | None) -> str | None:
+    """The workspace name a terminal is shown in, or None while nothing names it.
+
+    The window writes a ``where`` label, "Workspace / tab", on every terminal it shows. A session
+    agent-app placed in the core with no window open carries the name it asked for instead. A
+    terminal with neither has not been named yet; that is not a mismatch.
     """
-    if not name:
+    if not terminal:
         return None
-    proc = run(["herdr", "workspace", "list"], check=False, timeout=20)
-    try:
-        workspaces = json.loads(proc.stdout)["result"]["workspaces"]
-    except (ValueError, KeyError, TypeError):
-        return None
-    for workspace in workspaces:
-        if isinstance(workspace, dict) and workspace.get("label") == name:
-            found = workspace.get("workspace_id")
-            return str(found) if found else None
-    return None
+    labels = terminal.get("labels")
+    labels = labels if isinstance(labels, Mapping) else {}
+    where = str(labels.get("where") or "")
+    space, separator, _tab = where.partition(" / ")
+    if separator and space:
+        return space
+    asked = labels.get(SPACE_NAME_LABEL)
+    return str(asked) if asked else None
+
+
+def session_workspace_name(pane_id: str | None) -> str | None:
+    """The workspace name hc's record of this terminal carries, or None while none does."""
+    return workspace_name_of(hc_terminal(pane_id))
 
 
 def claude_transcript_roots() -> tuple[Path, Path]:
@@ -1157,7 +1336,7 @@ def pane_account_label(pane_id: str | None) -> str | None:
     if not user:
         return None
     proc = run(
-        ["herdr", "pane", "read", pane_id, "--source", "visible"],
+        [HC, "read", str(pane_id), "--lines", "0"],
         check=False,
         timeout=PANE_INPUT_READ_SECONDS,
     )
@@ -1270,7 +1449,15 @@ def verify_unit_account(
 def verify_unit_identity(
     unit: Any, pane_id: str | None, *, ready: bool | None = None
 ) -> tuple[list[str], list[str], str, bool]:
-    """Verify the Herdr identity before any guard or picker diagnostic can mask a mismatch."""
+    """Verify the session against herdr core before any guard or picker diagnostic can mask a
+    mismatch.
+
+    The kind is the name the agent reports to hc for itself. Until it reports, hc shows the
+    foreground program instead -- a shell, or Claude's version string -- which says nothing
+    about which agent is booting. So an unknown name stops an unowned session (somebody else's
+    terminal is never prompted on a guess) and leaves the kind unconfirmed on a session this
+    launch created; a known agent name that belongs to another vendor stops either one.
+    """
     if not pane_id:
         raise SystemExit(f"{unit.name}: session was not assigned a valid pane_id")
 
@@ -1278,17 +1465,25 @@ def verify_unit_identity(
     unconfirmed = ["model", "permission"]
     row = agent_row(unit)
     if row is None:
-        raise SystemExit(f"{unit.name}: herdr did not list the session; cannot verify agent kind")
+        raise SystemExit(
+            f"{unit.name}: herdr core does not list terminal {pane_id}; cannot verify agent kind"
+        )
 
     reported_kind = row.get("agent") or row.get("kind")
-    if not reported_kind:
-        raise SystemExit(f"{unit.name}: herdr did not report agent kind; refusing to prompt")
-    if str(reported_kind).lower() not in accepted_herdr_kinds(unit.vendor):
+    known_vendor = vendor_for_kind(row.get("app") or reported_kind)
+    if known_vendor is None:
+        if not session_owned(unit):
+            raise SystemExit(
+                f"{unit.name}: herdr core reports no agent kind for {pane_id}; refusing to prompt"
+            )
+        unconfirmed.append("kind")
+    elif str(reported_kind).lower() not in accepted_herdr_kinds(unit.vendor):
         close_run_session(unit)
         raise SystemExit(
-            f"{unit.name}: herdr reports agent {reported_kind!r}, requested {unit.vendor!r}"
+            f"{unit.name}: herdr core reports agent {reported_kind!r}, requested {unit.vendor!r}"
         )
-    confirmed.append("kind")
+    else:
+        confirmed.append("kind")
 
     reported_cwd = row.get("cwd") or row.get("foreground_cwd")
     if reported_cwd and unit.worktree:
@@ -1302,14 +1497,13 @@ def verify_unit_identity(
     else:
         unconfirmed.append("working_directory")
 
-    expected_workspace = workspace_id_for_name(unit.workspace)
-    reported_workspace = row.get("workspace_id")
-    if expected_workspace and reported_workspace:
-        if reported_workspace != expected_workspace:
+    reported_workspace = session_workspace_name(pane_id) if unit.workspace else None
+    if unit.workspace and reported_workspace:
+        if reported_workspace != unit.workspace:
             close_run_session(unit)
             raise SystemExit(
                 f"{unit.name}: session workspace {reported_workspace!r} does not match "
-                f"requested workspace {unit.workspace!r} ({expected_workspace})"
+                f"requested workspace {unit.workspace!r}"
             )
         confirmed.append("workspace")
     elif unit.workspace:
@@ -1331,9 +1525,9 @@ def verify_unit_preflight(
 ) -> dict[str, Any]:
     """Verify the session against herdr before the task is submitted, and record what was checked.
 
-    Only what herdr publishes can be checked. A row in ``herdr agent list`` carries ``cwd``,
-    ``workspace_id`` and ``interactive_ready``; it carries no model at all, and its workspace is an
-    id where the plan holds a name. So the receipt separates what was confirmed against herdr from
+    Only what herdr core publishes can be checked. A terminal carries the agent's own name for
+    itself, its launch folder, its status word and the window's ``where`` label; it carries no
+    model at all. So the receipt separates what was confirmed against herdr from
     what is only the request the unit was launched with. A single ``verified: true`` covering both
     would be a claim this script is not in a position to make, and a run record that says a model
     was verified when nothing could read it is worse than one that says it was not.
@@ -1450,24 +1644,36 @@ def _record_create_timeout(
     unit: Any,
     *,
     preexisting: frozenset[str] | None,
-    workspace_id: str | None,
+    workspace_id: str | None = None,
 ) -> str:
-    """Reconcile tabs after an expired wrapper call and retain any recoverable identity."""
-    current = list_tab_ids(workspace_id)
-    if preexisting is None or current is None:
-        return "the target workspace tab set could not be reconciled"
-    created = sorted(current - preexisting)
+    """Reconcile terminals after an expired wrapper call and retain any recoverable identity.
+
+    The snapshot covers the whole core, where anyone may start a terminal, so a new terminal
+    counts only when it started in this unit's folder. One such terminal is retained as owned
+    for explicit cleanup; several are named and none is claimed.
+    """
+    rows = hc_rows(finished=True)
+    if preexisting is None or rows is None:
+        return "the terminal list could not be reconciled"
+    created = sorted(
+        str(row["address"])
+        for row in rows
+        if str(row["address"]) not in preexisting
+        and (not unit.worktree or same_directory(str(row.get("cwd") or ""), unit.worktree))
+    )
     if not created:
-        return "no new target-workspace tab was found"
+        return "no new terminal in the unit's folder was found"
     unit.tab_id = created[0] if len(created) == 1 else None
+    unit.pane_id = unit.tab_id
     unit.owned = len(created) == 1
     unit.launch_receipt = launch_receipt_shape(unit)
     unit.launch_receipt["create_timeout_new_tabs"] = created
-    unit.launch_receipt["workspace_id"] = workspace_id
+    if workspace_id:
+        unit.launch_receipt["workspace_id"] = workspace_id
     if len(created) == 1:
         unit.launch_receipt["tab_id"] = created[0]
-        return f"new tab {created[0]} was retained in the receipt for explicit cleanup"
-    return f"new tabs after the create attempt: {created}"
+        return f"new terminal {created[0]} was retained in the receipt for explicit cleanup"
+    return f"new terminals after the create attempt: {created}"
 
 
 def _deliver(
@@ -1544,19 +1750,16 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
     while the picker is on screen classifies the picker, not a draft, and is recorded as an
     inconclusive inspection under the documented trade -- it is taken, not skipped.
     """
-    target_workspace_id = workspace_id_for_name(unit.workspace) if unit.workspace else None
-    preexisting = (
-        list_tab_ids(target_workspace_id) if target_workspace_id or not unit.workspace else None
-    )
+    # The ownership snapshot: every terminal on this machine's core, taken just before the
+    # wrapper runs. hc never reuses an address, so the new terminal is absent from it.
+    preexisting = list_tab_ids()
     # Wall clock, not time.monotonic: it is compared against transcript filesystem mtimes as the
     # recency floor that keeps a stale transcript from certifying this launch.
     created_at = time.time()
     argv = agent_argv(unit)
     proc = run(argv, check=False, timeout=LAUNCH_CREATE_SECONDS)
     if isinstance(proc, TimedOutProcess):
-        reconciliation = _record_create_timeout(
-            unit, preexisting=preexisting, workspace_id=target_workspace_id
-        )
+        reconciliation = _record_create_timeout(unit, preexisting=preexisting)
         raise SystemExit(
             f"{unit.name}: session create timed out after {LAUNCH_CREATE_SECONDS}s; "
             f"{reconciliation}"
@@ -1578,10 +1781,25 @@ def launch(unit: Any, backend: str = "inline", *, review_elsewhere: bool = False
         raise SystemExit(
             f"{unit.name}: launched, but the wrapper's JSON could not be read"
         ) from None
+    if not isinstance(info, dict):
+        unit.note = "launched, but the wrapper's JSON was not an object"
+        raise SystemExit(f"{unit.name}: launched, but the wrapper's JSON was not an object")
+    if info.get("error"):
+        raise SystemExit(f"{unit.name}: the launcher refused: {info['error']}")
     record_wrapper_identity(unit, info, preexisting=preexisting)
     pane_id = unit.pane_id
     if not pane_id:
-        raise SystemExit(f"{unit.name}: launcher did not return a pane_id")
+        raise SystemExit(
+            f"{unit.name}: launcher did not return a herdr core terminal; it may have started "
+            "old Herdr, whose sessions the Herdr app does not show"
+        )
+    if not is_hc_address(pane_id):
+        # A ``machine/tN`` address: the session is on another machine's core, and every check
+        # and write here reads this machine's. Kept in the receipt; never prompted on a guess.
+        raise SystemExit(
+            f"{unit.name}: the launcher started {pane_id}, which is not on this machine's herdr "
+            "core; this launcher drives sessions on this machine only"
+        )
     _deliver(
         unit,
         pane_id,
@@ -1655,8 +1873,10 @@ def redeliver(unit: Any, backend: str = "inline", *, review_elsewhere: bool = Fa
 # That is the whole failure: the unit launches, the keystrokes are delivered, orchestrate records
 # success, and the session sits waiting for an instruction it thinks it has not been given. It goes
 # idle, `settle` marks it done, and only `land` -- a phase later -- reports that it committed
-# nothing. A real task is routinely well past this, so the door this plugin uses for any vendor that
-# will not take `herdr agent prompt` was quietly unusable for real work.
+# nothing. A real task is routinely well past this, so the door this plugin used for any vendor that
+# would not take old Herdr's `herdr agent prompt` was quietly unusable for real work. Under herdr
+# core the same handoff applies to a session that reports no status (``reports_no_status``), hc's
+# form of an agent that does not report readiness.
 PANE_TYPING_LIMIT = 800
 
 
@@ -1683,30 +1903,40 @@ def pane_text(unit: Any, text: str) -> str:
     ).strip()
 
 
+def reports_no_status(pane_id: str) -> bool:
+    """Whether this terminal's program has never reported a status word to herdr core.
+
+    hc's form of "this agent does not report readiness". A terminal hc cannot describe counts
+    as reporting none, which only routes a long task through the file handoff.
+    """
+    terminal = hc_terminal(pane_id)
+    return terminal is None or hc_status_word(terminal.get("status")) is None
+
+
 class PaneWriter:
     """The only door through which a line enters a session, and the owner of the inspection.
 
-    Both raw doors -- ``herdr agent prompt`` and ``herdr pane run`` -- exist only as nested
-    functions inside ``write``. They are not methods, so a caller cannot open either without
-    going through the inspection ``write`` owns (issue 1002 F104). The structural test is a
-    net for the enumerated AST shapes, not a proof that every dynamic Python call is
-    impossible (issue 1002 F121). Before each write, ``write`` asks ``should_guard_pane_write``
-    whether the composer must be inspected first, using its own record of whether it has
-    already written into this session (``wrote``).
+    The raw door -- ``hc send`` -- exists only as a nested function inside ``write``. It is not
+    a method, so a caller cannot open it without going through the inspection ``write`` owns
+    (issue 1002 F104). The structural test is a net for the enumerated AST shapes, not a proof
+    that every dynamic Python call is impossible (issue 1002 F121). Before each write, ``write``
+    asks ``should_guard_pane_write`` whether the composer must be inspected first, using its own
+    record of whether it has already written into this session (``wrote``).
 
     ``wrote_before`` seeds the record: false for a fresh launch, whose first write into a tab
     this launcher created seconds earlier is the one write the rule exempts; true for a
     redelivery and for Orchestrate's later senders, where a person may have typed since.
 
-    Doors. ``door="prompt"`` is ``herdr agent prompt``, the right door for an agent that reports
-    interactive readiness; one that never does refuses it, and the line is typed
-    into the pane instead, as the operator would by hand, up to the length a pane still carries
-    as an instruction (``pane_text``). ``door="pane"`` types verbatim: the OpenCode picker is
-    driven with keystrokes, not prompts. Both are bounded by ``PANE_WRITE_SECONDS``; a write
-    that times out on either door is a named stop saying the line may or may not have reached
-    the session, and the prompt door never falls through to the pane behind a timeout -- that
-    would be the second delivery every guard in this file exists to prevent. A writer with no
-    pane can only prompt through the agent handle and has nothing to inspect.
+    Doors. herdr core has one way in: ``hc send`` pastes the line and presses Enter. The two
+    door names keep what each write is for. ``door="prompt"`` sends the line whole to an agent
+    that reports a status; to one that has never reported one it sends what a pasted line still
+    carries as an instruction (``pane_text``), as old Herdr's pane fallback did.
+    ``door="pane"`` sends verbatim: the OpenCode picker is driven line by line. Every send is
+    bounded by ``PANE_WRITE_SECONDS``; a send that times out is a named stop saying the line may
+    or may not have reached the session -- never a retry, which would be the second delivery
+    every guard in this file exists to prevent. A blocked session (a permission or a question)
+    refuses the send, and the refusal stands: nothing here passes ``--force``, which could answer
+    the dialog. A writer with no terminal has nothing to send to and stops.
     """
 
     def __init__(self, unit: Any, pane_id: str | None, *, wrote_before: bool) -> None:
@@ -1719,53 +1949,48 @@ class PaneWriter:
         unit = self.unit
         pane_id = self.pane_id
 
-        def type_into_pane(line: str) -> None:
+        def send_line(line: str) -> None:
             if not pane_id:
-                raise SystemExit(f"{unit.name}: no pane to type into")
-            typed = run(
-                ["herdr", "pane", "run", str(pane_id), line],
+                raise SystemExit(f"{unit.name}: no herdr core terminal to send to")
+            sent = run(
+                [HC, "send", str(pane_id), line, "--json"],
                 check=False,
                 timeout=PANE_WRITE_SECONDS,
             )
-            if isinstance(typed, TimedOutProcess):
+            if isinstance(sent, TimedOutProcess):
                 raise SystemExit(
-                    f"{unit.name}: herdr pane run into {pane_id} did not return within "
+                    f"{unit.name}: hc send into {pane_id} did not return within "
                     f"{PANE_WRITE_SECONDS}s; the line may or may not have reached the session -- "
                     "check the tab before prompting it again"
                 )
-            if typed.returncode != 0:
-                err = (typed.stderr or typed.stdout or "").strip()
+            if sent.returncode == HC_EXIT_BLOCKED:
                 raise SystemExit(
-                    f"{unit.name}: command failed ({typed.returncode}) while typing into pane "
+                    f"{unit.name}: {pane_id} is blocked -- it is asking a person something "
+                    f"(read it with `hc read {pane_id}`); nothing was sent, and nothing here "
+                    "answers it"
+                )
+            if sent.returncode != 0:
+                err = (sent.stderr or sent.stdout or "").strip()
+                raise SystemExit(
+                    f"{unit.name}: command failed ({sent.returncode}) while sending to "
                     f"{pane_id}\n{err}"
                 )
 
         def open_door(line: str, *, via: str) -> None:
             if via == "pane":
-                type_into_pane(line)
+                send_line(line)
                 return
             if via != "prompt":
                 raise SystemExit(f"{unit.name}: unknown pane-write door {via!r}")
-            handle = unit.agent_name or unit.name
-            attempt = run(
-                ["herdr", "agent", "prompt", handle, line],
-                check=False,
-                timeout=PANE_WRITE_SECONDS,
-            )
-            if isinstance(attempt, TimedOutProcess):
-                raise SystemExit(
-                    f"{unit.name}: herdr agent prompt did not return within {PANE_WRITE_SECONDS}s; "
-                    "the line may or may not have reached the session -- check the tab before "
-                    "prompting it again"
-                )
-            if attempt.returncode == 0:
-                return
             if not pane_id:
-                raise SystemExit(f"{unit.name}: agent prompt refused and no pane to fall back to")
-            type_into_pane(pane_text(unit, line))
-            fallback_note = (
-                "prompted through its pane; this agent does not report interactive readiness"
-            )
+                raise SystemExit(f"{unit.name}: no herdr core terminal to send to")
+            if not reports_no_status(str(pane_id)):
+                send_line(line)
+                return
+            send_line(pane_text(unit, line))
+            # No "; " inside the note: it is the note separator, and a note carrying it never
+            # matches one piece of a split, so every send stacked another copy (the old text did).
+            fallback_note = "prompted without a status: this agent does not report readiness"
             if fallback_note not in unit.note.split("; "):
                 append_unit_note(unit, fallback_note)
 
@@ -1791,19 +2016,45 @@ def send(
     writer.write(normalize_task(unit.vendor, unit.task, backend, review_elsewhere=review_elsewhere))
 
 
-def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:
-    """The sessions herdr is tracking right now.
+def session_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``hc ls`` row in the shape every reader here was written against.
 
-    herdr is the truth a run file only mirrors, so it is asked, never remembered. A missing or
-    failing herdr is not an error here: it means there is nothing to match a worktree or a session
-    against, and the caller degrades -- to "no live agent" when adopting, to "gone" when polling.
+    ``pane_id`` and ``tab_id`` are the terminal address. ``name`` and ``workspace`` are the two
+    halves of the window's "Workspace / tab" ``where``; a terminal no window has named yet shows
+    its folder there instead, and has neither. ``agent`` is the vendor key when the agent has
+    reported its own name, else whatever hc shows (a shell); ``app`` keeps hc's word.
     """
-    proc = run(["herdr", "agent", "list"], check=False, timeout=timeout)
-    try:
-        agents = json.loads(proc.stdout)["result"]["agents"]
-    except (ValueError, KeyError):
+    where = str(row.get("where") or "")
+    space, separator, tab = where.partition(" / ")
+    word = hc_status_word(row.get("status"))
+    app = row.get("agent")
+    return {
+        "pane_id": str(row.get("address")),
+        "tab_id": str(row.get("address")),
+        "name": tab if separator and tab else None,
+        "workspace": space if separator and space else None,
+        "where": where or None,
+        "agent": vendor_for_kind(app) or app,
+        "app": app,
+        "agent_status": word or "unknown",
+        "cwd": row.get("cwd"),
+        "interactive_ready": word in READY_STATUSES,
+        "turn": row.get("turn"),
+    }
+
+
+def live_agents(*, timeout: float = 20) -> list[dict[str, Any]]:
+    """The sessions herdr core on this machine is running right now.
+
+    herdr core is the truth a run file only mirrors, so it is asked, never remembered. A missing
+    or failing ``hc`` is not an error here: it means there is nothing to match a worktree or a
+    session against, and the caller degrades -- to "no live agent" when adopting, to "gone" when
+    polling. Only this machine's live terminals are returned (``hc_rows``).
+    """
+    rows = hc_rows(timeout=timeout)
+    if rows is None:
         return []
-    return [a for a in agents if isinstance(a, dict)]
+    return [session_row(row) for row in rows if row.get("state", "live") == "live"]
 
 
 @dataclass
@@ -1854,40 +2105,63 @@ def parse_dry_run(stdout: str) -> dict[str, str]:
 
 
 def current_herdr_workspace_id() -> str | None:
-    """The calling pane's workspace id from ``herdr pane current --current``."""
-    proc = run(["herdr", "pane", "current", "--current"], check=False, timeout=20)
-    if proc.returncode != 0:
-        return None
-    try:
-        payload = json.loads(proc.stdout)
-        workspace_id = payload["result"]["pane"]["workspace_id"]
-    except (ValueError, KeyError, TypeError):
-        return None
-    return str(workspace_id) if workspace_id else None
+    """The caller's own workspace (the window's ``herdr.space`` label), or None outside Herdr.
+
+    Read from ``hc get $HC_TERMINAL_ID``: the variable is this process's own address inside any
+    Herdr terminal. It is read here and passed as the target, which is why stripping it from the
+    ``hc`` call's environment loses nothing.
+    """
+    terminal = hc_terminal(os.environ.get("HC_TERMINAL_ID"))
+    labels = terminal.get("labels") if terminal else None
+    space = labels.get("herdr.space") if isinstance(labels, Mapping) else None
+    return str(space) if space else None
 
 
-def confirm_preview(preview: dict[str, str], cwd: str, workspace_id: str | None) -> None:
-    """Stop before launch when the dry-run does not resolve cwd and workspace."""
+# What ``agents --dry-run`` prints for a launch that goes to the Herdr app.
+APP_BACKEND = "herdr-app"
+
+
+def confirm_preview(preview: dict[str, str], cwd: str, workspace: str | None) -> None:
+    """Stop before launch when the dry run would not start the session where it was asked for.
+
+    Three checks. The backend must be the Herdr app: any other answer is old Herdr, tmux or a
+    bare terminal, none of which herdr core can drive or the window shows. The folder must be
+    the requested one. A requested workspace name must be the one the preview names; with no
+    name requested the app joins the caller's own workspace, and there is nothing to compare.
+    """
+    backend = preview.get("backend", "")
+    if backend != APP_BACKEND:
+        raise SystemExit(
+            f"dry-run backend {backend!r} is not the Herdr app ({APP_BACKEND!r}); the session "
+            "would not appear in the window or be reachable through herdr core; not launching"
+        )
     reported_cwd = preview.get("cwd", "")
     if not reported_cwd or not same_directory(reported_cwd, cwd):
         raise SystemExit(
             f"dry-run cwd {reported_cwd!r} does not resolve to requested {cwd!r}; not launching"
         )
-    herdr_workspace = preview.get("herdr_workspace", "")
-    if not herdr_workspace:
-        raise SystemExit("dry-run did not resolve herdr_workspace; not launching")
-    if workspace_id and workspace_id not in herdr_workspace:
-        raise SystemExit(
-            f"dry-run herdr_workspace {herdr_workspace!r} does not contain current "
-            f"workspace {workspace_id!r}; not launching"
-        )
+    if workspace:
+        named = preview.get("herdr_workspace") or preview.get("workspace") or ""
+        if not named:
+            # The preview's ``command=`` line is the agent-app call itself.
+            try:
+                words = shlex.split(preview.get("command", ""))
+            except ValueError:
+                words = []
+            if "--workspace" in words[:-1]:
+                named = words[words.index("--workspace") + 1]
+        if named != workspace:
+            raise SystemExit(
+                f"dry-run workspace {named!r} is not the requested workspace {workspace!r}; "
+                "not launching"
+            )
 
 
 def close_owned_session(unit: Any, *, receipt: dict[str, Any] | None = None) -> None:
-    """Close only a tab this launch created.
+    """Close only a session this launch created.
 
-    Ownership is launcher-side: the receipt tab_id was not in the Herdr workspace
-    tab set snapshotted immediately before the wrapper ran.
+    Ownership is launcher-side: the receipt's ``tab_id``, a herdr core terminal address, was not
+    in this machine's terminal list snapshotted immediately before the wrapper ran.
     """
     proof = receipt if receipt is not None else getattr(unit, "launch_receipt", {}) or {}
     if not isinstance(proof, dict):
@@ -5162,7 +5436,7 @@ def cli_main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "preview":
         preview = parse_dry_run(run(preview_argv(unit), timeout=20).stdout)
-        confirm_preview(preview, unit.worktree or ".", current_herdr_workspace_id())
+        confirm_preview(preview, unit.worktree or ".", unit.workspace)
         json.dump(preview, sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
         return 0
@@ -5170,7 +5444,7 @@ def cli_main(argv: list[str] | None = None) -> int:
         if args.skip_preview:
             raise SystemExit("refusing to launch without a dry-run preview")
         preview = parse_dry_run(run(preview_argv(unit), timeout=20).stdout)
-        confirm_preview(preview, unit.worktree or ".", current_herdr_workspace_id())
+        confirm_preview(preview, unit.worktree or ".", unit.workspace)
         try:
             launch(unit)
         except SystemExit:
