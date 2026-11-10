@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a plan of units across herdr agent sessions, one git worktree each.
+"""Run a plan of units across Herdr agent sessions, one git worktree each.
 
 The plan is authored by the operator and Claude together; this script is the mechanical half.
 It creates a FRESH worktree and a branch per unit, launches the requested agent there, sends the
@@ -26,7 +26,6 @@ import argparse
 import ast
 import contextlib
 import fcntl
-import functools
 import glob
 import hashlib
 import importlib.util
@@ -44,13 +43,6 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
-# Ships beside this file. Kept optional so a partial install degrades to per-unit waits rather
-# than refusing to run at all.
-try:
-    import herdr_events
-except ImportError:  # pragma: no cover - only when the sibling module is missing
-    herdr_events = None  # type: ignore[assignment]
 
 # The top-level key orchestrate keeps its own run-level state under, inside saga's per-issue run
 # record. The record's twelve documented keys have no place for a run branch, a base commit or a
@@ -322,7 +314,7 @@ class Unit:
     would go stale silently -- which is the same closed vocabulary one level up. It already rejects
     what it does not accept, by name. Carry it, do not police it."""
     workspace: str | None = None
-    """Herdr workspace NAME this unit launches into.
+    """Herdr app workspace NAME this unit launches into.
 
     Emitted as ``--workspace <name>`` in the launcher position, before the vendor token, alongside
     ``--task`` and ``--cwd``. Absent, the run's default is used if it has one; absent both, the
@@ -391,12 +383,16 @@ class Unit:
     run branch. Landing therefore still requires the second-parent merge shape described by
     ``landed_by_merge``."""
     tab_id: str | None = None
+    """The session's closable identity: its herdr core terminal address (``t7``). ``agents`` gives
+    every session one terminal in its own tab, so closing the terminal closes the tab's work. A
+    run recorded under old Herdr holds an old Herdr tab id here, which hc never acts on."""
     pane_id: str | None = None
-    """The pane this session occupies. Recorded because herdr's event subscriptions are keyed by
-    pane, not by agent name -- ``events.subscribe`` rejects a request without one."""
+    """The herdr core terminal this session runs in (``t7``) -- the same address as ``tab_id``.
+    Every read, send and wait names it: hc never reuses an address, so it is exact where a name
+    is not."""
     agent_name: str | None = None
-    """What herdr calls this session. The wrapper uniquifies names, so it can differ from
-    ``name`` -- which is the plan's identity and the dependency key, and never changes."""
+    """The name this session was launched under (the tab's name). It can differ from ``name`` --
+    which is the plan's identity and the dependency key, and never changes."""
     status: str = PENDING
     note: str = ""
     variant: str | None = None
@@ -1652,12 +1648,15 @@ def _unit_is_terminal(unit: Unit) -> bool:
 
 
 def _unit_is_live(unit: Unit, agents: Sequence[Mapping[str, Any]]) -> bool:
-    """Whether Herdr still reports the worker's recorded pane or agent identity."""
-    return any(
-        (unit.pane_id and row.get("pane_id") == unit.pane_id)
-        or ((unit.agent_name or unit.name) == row.get("name"))
-        for row in agents
-    )
+    """Whether herdr core still lists the worker's recorded terminal.
+
+    A recorded terminal address is matched exactly: hc never reuses one, while the name a row
+    carries is only its tab's name, which another workspace may share. The name is read only for
+    a unit that recorded no terminal at all.
+    """
+    if unit.pane_id:
+        return any(row.get("pane_id") == unit.pane_id for row in agents)
+    return any((unit.agent_name or unit.name) == row.get("name") for row in agents)
 
 
 def _fix_request_id(request: Mapping[str, Any]) -> str:
@@ -2758,16 +2757,38 @@ def poll(
     *,
     timeout: float = 20,
 ) -> str:
-    """Ask herdr what this session is doing. Absence means the session is gone.
+    """Ask herdr core what this session is doing. Absence means the session is gone.
 
     A caller looking at several units at once passes one already-fetched list rather than paying a
-    herdr round trip per unit: an unresponsive herdr costs the timeout once instead of once a row.
+    round trip per unit: an unresponsive core costs the timeout once instead of once a row.
+
+    The recorded terminal address is matched exactly. A unit that recorded an id hc does not use
+    -- one started by old Herdr -- reads ``unknown``, never ``gone``: hc cannot see old Herdr's
+    sessions, and absence of information is not evidence the session ended. Only a unit that
+    recorded no terminal at all is matched by name.
     """
-    handle = unit.agent_name or unit.name
-    for a in live_agents(timeout=timeout) if agents is None else agents:
-        if a.get("name") == handle:
-            return str(a.get("agent_status", "unknown"))
+    if unit.pane_id and not _is_hc_address(unit.pane_id):
+        return "unknown"
+    rows = live_agents(timeout=timeout) if agents is None else agents
+    for a in rows:
+        if unit.pane_id and a.get("pane_id") == unit.pane_id:
+            return str(a.get("agent_status") or "unknown")
+    if not unit.pane_id:
+        handle = unit.agent_name or unit.name
+        for a in rows:
+            if a.get("name") == handle:
+                return str(a.get("agent_status") or "unknown")
     return "gone"
+
+
+#: A terminal on this machine's herdr core (``t7``, ``t1b``). The launcher defines the same rule
+#: as ``is_hc_address``; Orchestrate keeps its own copy so a companion below the floor -- one that
+#: predates hc -- cannot change how a recorded id is read.
+_HC_ADDRESS = re.compile(r"t[0-9]+[a-z]*")
+
+
+def _is_hc_address(value: Any) -> bool:
+    return isinstance(value, str) and _HC_ADDRESS.fullmatch(value) is not None
 
 
 def run_branches(run_id: str) -> list[str]:
@@ -4664,6 +4685,10 @@ def cmd_settle(args: argparse.Namespace) -> int:
 
 SETTLED_STATES = frozenset({"idle", "done"})
 
+#: Statuses that stop a wait on first sight: the session needs a person. hc reports ``error`` as
+#: well as ``blocked``, and returns from ``hc wait`` on either.
+PERSON_NEEDED_STATES = frozenset({"blocked", "error"})
+
 
 def confirmation_count(value: str) -> int:
     """Parse a wait confirmation count, rejecting the single-observation defect."""
@@ -4688,14 +4713,15 @@ def confirmed_stop(
 ) -> str | None:
     """Return the status if consecutive observations agree the unit has stopped, else None.
 
-    ``blocked`` is a real stop and returns on the first sighting. ``idle`` and ``done`` need
-    ``needed`` agreeing samples ``interval`` seconds apart -- an agent is also idle between
-    turns, and one sample once returned ``wait`` in that gap. Any other status is not a stop.
+    ``blocked`` and ``error`` are real stops -- a person is needed -- and return on the first
+    sighting. ``idle`` and ``done`` need ``needed`` agreeing samples ``interval`` seconds apart --
+    an agent is also idle between turns, and one sample once returned ``wait`` in that gap. Any
+    other status is not a stop.
     """
     if needed < 2:
         raise ValueError("wait requires at least two confirming observations")
-    if first == "blocked":
-        return "blocked"
+    if first in PERSON_NEEDED_STATES:
+        return first
     if first not in SETTLED_STATES:
         return None
     last = first
@@ -4708,8 +4734,8 @@ def confirmed_stop(
                 return None
         sleep(interval)
         last = further()
-        if last == "blocked":
-            return "blocked"
+        if last in PERSON_NEEDED_STATES:
+            return last
         if last not in SETTLED_STATES:
             return None
     return last
@@ -4718,6 +4744,9 @@ def confirmed_stop(
 def report_wait(unit: Unit, status: str) -> None:
     if status == "blocked":
         print(f"{unit.name} is blocked -- it is asking a question in its own tab")
+        return
+    if status == "error":
+        print(f"{unit.name} reports an error -- read its tab before sending it anything")
         return
     print(f"{unit.name} is {status} -- `settle`, `merge`, then `go`")
 
@@ -4732,41 +4761,9 @@ def record_settlement(unit: Unit, status: str) -> None:
     append_unit_note(unit, f"settled {status}")
 
 
-def wait_on_events(
-    by_pane: dict[str, Unit],
-    events: Iterator[Any],
-    *,
-    interval: int,
-    needed: int,
-    poll_unit: Callable[[Unit], str],
-    sleep: Callable[[float], None] = time.sleep,
-    settled: list[tuple[Unit, str]] | None = None,
-) -> tuple[Unit, str] | None:
-    """Drive the event-socket path: a wake is one observation, not a settlement.
-
-    The stream is edge-triggered, so a single ``idle`` is the think-pause this function exists
-    to ignore. Confirmation is level-triggered, through ``poll_unit``, matching ``settle``.
-
-    Every confirmed settlement is appended to *settled* before the first one returns, so a
-    multi-unit wait has a record of all of them rather than only of the one it returned.
-    """
-    for event in events:
-        unit = by_pane.get(event.pane_id)
-        if unit is None:
-            continue
-
-        status = confirmed_stop(
-            event.agent_status,
-            functools.partial(poll_unit, unit),
-            interval=interval,
-            needed=needed,
-            sleep=sleep,
-        )
-        if status is not None and settled is not None:
-            settled.append((unit, status))
-        if status is not None:
-            return unit, status
-    return None
+#: How ``poll`` reads a unit whose session hc no longer lists, or that never recorded one hc can
+#: wait on. A wait on such a unit returns at once every time, so it is dropped, not restarted.
+UNWAITABLE_STATES = frozenset({"gone", "unknown"})
 
 
 def wait_on_agent_waits(
@@ -4776,12 +4773,15 @@ def wait_on_agent_waits(
     interval: int,
     needed: int,
 ) -> tuple[Unit, str] | None:
-    """Drive the ``herdr agent wait`` fallback with the same confirmation rule as the socket.
+    """Wait on every running unit at once, one ``hc wait`` child each, under one deadline.
 
-    A successful wait-process exit is a wake, not a settlement: the first observation is a poll,
-    then further polls ``interval`` apart until they agree -- or the unit is still moving and its
-    wait is restarted. A failed child is not a wake and is not restarted. Every child and poll gets
-    only the time left before one shared monotonic deadline.
+    hc returns from a wait when the session stops working -- any status but working, or its
+    exit -- so a child's exit is a wake, not a settlement: the first observation is a poll, then
+    further polls ``interval`` apart until they agree, or the unit is still moving and its wait is
+    restarted. A failed child (hc could not find the terminal) is not a wake and is not
+    restarted. A unit the poll reads as gone or unknown is dropped rather than waited on again:
+    hc would return at once every time. Every child and poll gets only the time left before one
+    shared monotonic deadline.
     """
     deadline = time.monotonic() + max(timeout, 0)
     procs: dict[int, tuple[Unit, subprocess.Popen[bytes]]] = {}
@@ -4793,7 +4793,7 @@ def wait_on_agent_waits(
         budget = remaining()
         if budget <= 0:
             return False
-        proc = _popen_herdr_wait(unit, budget)
+        proc = _popen_hc_wait(unit, budget)
         procs[proc.pid] = (unit, proc)
         return True
 
@@ -4840,8 +4840,11 @@ def wait_on_agent_waits(
                     return "timeout"
                 return poll(current_unit, timeout=budget)
 
+            first = poll_before_deadline()
+            if first in UNWAITABLE_STATES:
+                continue
             status = confirmed_stop(
-                poll_before_deadline(),
+                first,
                 poll_before_deadline,
                 interval=interval,
                 needed=needed,
@@ -4855,45 +4858,42 @@ def wait_on_agent_waits(
     return None
 
 
-def _popen_herdr_wait(unit: Unit, timeout: float) -> subprocess.Popen[bytes]:
-    handle = unit.agent_name or unit.name
+def _popen_hc_wait(unit: Unit, timeout: float) -> subprocess.Popen[bytes]:
+    """One ``hc wait`` on the unit's terminal, bounded by what is left of the shared deadline.
+
+    The bound is in seconds to the millisecond (hc takes a fractional ``--timeout``), so restarts
+    late in the window still end with the shared deadline instead of a whole second past it. It
+    runs without the operator's caller variables, as every launcher hc call does: otherwise a
+    message to the operator's own session would end every child at once.
+    """
     return subprocess.Popen(
         [
-            "herdr",
-            "agent",
+            "hc",
             "wait",
-            handle,
-            "--until",
-            "idle",
-            "--until",
-            "done",
-            "--until",
-            "blocked",
+            str(unit.pane_id),
             "--timeout",
-            str(max(1, int(timeout * 1000))),
+            f"{max(timeout, 0.001):.3f}",
+            "--json",
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env={k: v for k, v in os.environ.items() if k not in ("HC_TERMINAL_ID", "HC_SCOPE")},
     )
 
 
 def cmd_wait(args: argparse.Namespace) -> int:
-    """Block until a running unit settles, told by herdr rather than asking it.
+    """Block until a running unit settles, told by herdr core rather than polling it.
 
-    Subscribes to ``pane.agent_status_changed`` on each running unit's pane over herdr's event
-    socket and blocks in the kernel until a line arrives. Subscriptions are keyed by pane, which is
-    why a unit records its ``pane_id`` at launch -- a request without one is rejected outright.
+    Starts one ``hc wait`` per running unit's terminal and blocks until one returns. hc returns
+    when a session stops working, so a wake is read, not trusted: an agent goes idle between
+    turns -- it finishes a tool call, returns to the prompt, thinks, and continues -- so a single
+    ``idle`` is not a settlement. Idle is read ``confirmations`` times, ``interval`` seconds
+    apart, and only counts when consecutive readings agree, the same shape as ``settle``. At least
+    two observations are mandatory. ``blocked`` and ``error`` are real stops and return on the
+    first sighting, naming that state.
 
-    An agent goes idle between turns -- it finishes a tool call, returns to the prompt, thinks,
-    and continues -- so a single ``idle`` is not a settlement. Idle is read ``confirmations``
-    times, ``interval`` seconds apart, and only counts when consecutive readings agree, the same
-    shape as ``settle``. At least two observations are mandatory. ``blocked`` is a real stop and
-    returns on the first sighting, naming that state.
-
-    Falls back to ``herdr agent wait`` when the socket is unreachable: an older herdr, a stopped
-    server, or a unit launched before pane ids were recorded. That path obeys the same
-    confirmation rule; a degraded path that still fired on one sample would leave the defect in
-    place on exactly the machines that hit the fallback.
+    A unit with no terminal hc can wait on -- none recorded, or one started by old Herdr -- is
+    named and left out of the wait rather than read as settled.
     """
     r = Run.load(args.issue, args.store_root)
     running = [u for u in r.units if u.status == RUNNING]
@@ -4902,33 +4902,20 @@ def cmd_wait(args: argparse.Namespace) -> int:
         return 0
 
     needed = args.confirmations
-    by_pane = {u.pane_id: u for u in running if u.pane_id}
-    print(f"waiting on {', '.join(u.name for u in running)} (up to {args.timeout}s)")
-    observed: list[tuple[Unit, str]] = []
-
-    if by_pane and herdr_events is not None:
-        try:
-            settled = wait_on_events(
-                by_pane,
-                herdr_events.agent_status_events(list(by_pane), timeout=float(args.timeout)),
-                interval=args.interval,
-                needed=needed,
-                poll_unit=poll,
-                settled=observed,
+    waitable = [u for u in running if _is_hc_address(u.pane_id)]
+    for unit in running:
+        if unit not in waitable:
+            print(
+                f"{unit.name} records no herdr core terminal ({unit.pane_id or 'none'}); "
+                "check its tab by hand"
             )
-            for unit, status in observed:
-                record_settlement(unit, status)
-            r.save()
-            if settled is None:
-                print("no unit changed state before the timeout")
-                return 0
-            report_wait(*settled)
-            return 0
-        except herdr_events.HerdrEventError as exc:
-            print(f"event socket unavailable ({exc}); falling back to per-unit waits")
+    if not waitable:
+        print("no running unit has a herdr core terminal to wait on")
+        return 0
+    print(f"waiting on {', '.join(u.name for u in waitable)} (up to {args.timeout}s)")
 
     settled = wait_on_agent_waits(
-        running,
+        waitable,
         timeout=args.timeout,
         interval=args.interval,
         needed=needed,
@@ -5891,53 +5878,23 @@ def reap(
 
 
 def retire_run_workspaces(r: Run) -> list[tuple[str, str | None]]:
-    """Retire the herdr workspaces THIS RUN created; return ``(label, reason kept)`` rows.
+    """Report the Herdr workspaces this run recorded as created; close none of them.
 
-    Ownership comes from the record's ``workspaces_created`` list, never from a name pattern: a
-    prefix match would eventually retire someone else's workspace. A workspace still holding a
-    live agent, or a tab this run does not own, is refused with the agent named -- the cleanup's
-    own docstring has always warned about a workspace list that accumulates dead lanes, and this
-    is that warning one level up (issue 876).
+    A workspace belongs to the Herdr app's window, not to herdr core: hc has no way to close one,
+    and closing one from the window ends every terminal in it, including any the run does not
+    own. So each recorded workspace is reported as kept for the window, and the record keeps it.
+    The run's own sessions are closed one terminal at a time by ``close_run_session``, and an
+    empty workspace is the window's to close. Ownership is still read from the record's
+    ``workspaces_created`` list, never from a name pattern (issue 876); no code path records one
+    today, so this reports only what a hand-edited record carries.
     """
-    rows: list[tuple[str, str | None]] = []
-    if not r.workspaces_created:
-        return rows
-    try:
-        agents = live_agents()
-    except SystemExit as exc:
-        return [
-            (f"workspace {name}", f"herdr could not be asked which agents are live: {exc}")
-            for name in r.workspaces_created
-        ]
-    owned_panes = {unit.pane_id for unit in r.units if unit.pane_id}
-    for name in list(r.workspaces_created):
-        label = f"workspace {name}"
-        occupant = next(
-            (
-                row
-                for row in agents
-                if str(row.get("pane_id", "")).partition(":")[0] == name
-                and row.get("pane_id") not in owned_panes
-            ),
-            None,
+    return [
+        (
+            f"workspace {name}",
+            "workspaces are the Herdr app's; close it from the window once its tabs are gone",
         )
-        if occupant is not None:
-            rows.append((label, f"it still holds {occupant.get('name', 'an agent')}"))
-            continue
-        still_live = [
-            row for row in agents if str(row.get("pane_id", "")).partition(":")[0] == name
-        ]
-        if still_live:
-            rows.append((label, f"{len(still_live)} of this run's tabs are still open in it"))
-            continue
-        closed_proc = run(["herdr", "workspace", "close", name], check=False, timeout=60)
-        if closed_proc.returncode != 0:
-            detail = (closed_proc.stderr or closed_proc.stdout or "unknown error").strip()
-            rows.append((label, f"closing it failed ({closed_proc.returncode}): {detail}"))
-            continue
-        r.workspaces_created.remove(name)
-        rows.append((label, None))
-    return rows
+        for name in r.workspaces_created
+    ]
 
 
 def report_unattended_worktrees(r: Run, root: Path) -> list[tuple[str, str]]:
@@ -5962,8 +5919,8 @@ def report_unattended_worktrees(r: Run, root: Path) -> list[tuple[str, str]]:
             continue
         if str(Path(unit.worktree)) in live_cwds:
             continue
-        # Match on the agent NAME as well as the working directory. herdr does not always report
-        # a cwd, and "this session did not say where it is" must not read as "no session is
+        # Match on the tab NAME as well as the working directory. A session may not report a
+        # folder, and "this session did not say where it is" must not read as "no session is
         # there" -- absence of information is not evidence of absence, which is the rule this
         # file already applies to a companion it cannot ask.
         if (unit.agent_name or unit.name) in live_names:
@@ -5993,9 +5950,10 @@ def cmd_clean(args: argparse.Namespace) -> int:
     Branches are deleted only with ``--branches``: a branch is cheap, and it is the last copy of
     a failed unit's work.
 
-    It also retires the herdr workspaces this run created -- ownership read from the record, never
-    from a name pattern -- and reports a managed worktree with no live session in it, which is the
-    one check worth keeping from the retired fleet-doctor command.
+    It also reports the Herdr workspaces this run recorded as created -- ownership read from the
+    record, never from a name pattern; the window closes workspaces, not this command -- and
+    reports a managed worktree with no live session in it, which is the one check worth keeping
+    from the retired fleet-doctor command.
 
     **The sweep is total.** Every unit in scope is visited even when an earlier one could not be
     cleaned, and every leftover is named with git's own message. The exit status says so: 0 when
@@ -6711,7 +6669,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     s.set_defaults(func=cmd_settle)
 
-    s = stateful("wait", "block until a running unit settles (herdr events, not polling)")
+    s = stateful("wait", "block until a running unit settles (hc wait, not polling)")
     s.add_argument("--timeout", type=int, default=1800, help="seconds to wait at most")
     s.add_argument(
         "--interval",

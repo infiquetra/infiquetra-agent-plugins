@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import importlib.util
+import json
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -141,15 +143,6 @@ class TestTheVendorMappingSaysWhatTheVendorDoes:
         assert muse["auto"] != muse["bypass"]
         assert "--yolo" not in muse["auto"]
         assert "--yolo" in muse["bypass"]
-
-    def test_qwen_can_actually_escalate(self, orchestrate: ModuleType) -> None:
-        """`--yolo` is absent from `qwen --help` and works; qwen rejects unknown flags loudly."""
-        assert orchestrate.VENDOR_PERMISSION["qwen"]["bypass"] == ["--yolo"]
-
-    def test_qwen_is_never_given_safe_mode(self, orchestrate: ModuleType) -> None:
-        """It reads like a permission flag and disables the customizations saga needs loaded."""
-        for mode in orchestrate.VENDOR_PERMISSION["qwen"].values():
-            assert "--safe-mode" not in mode
 
     def test_every_vendor_with_a_permission_entry_has_both_modes(
         self, orchestrate: ModuleType
@@ -315,43 +308,68 @@ class TestRunSeesItsOwnReviewPhase:
 class TestASessionIsReadyBeforeItIsSent:
     """The wrapper returns when the tab exists, which is earlier than the agent can read anything.
 
-    Sending into that gap does not fail — `herdr agent prompt` reports success, the agent finishes
+    Sending into that gap does not fail — `hc send` reports success, the agent finishes
     booting, and the prompt is gone. Three times across two vendors on one live run.
     """
 
+    @staticmethod
+    def _hc_wait(
+        orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch, *answers: dict[str, object]
+    ) -> list[list[str]]:
+        """Answer each ``hc wait`` with the next WaitResult and record the argv it was given."""
+        calls: list[list[str]] = []
+        queue = list(answers)
+
+        def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+            calls.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(queue.pop(0)), "")
+
+        monkeypatch.setattr(orchestrate, "run", fake_run)
+        return calls
+
+    @pytest.mark.parametrize("status", ["idle", "done"])
     def test_it_waits_for_the_agent_to_say_it_is_ready(
-        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch, status: str
     ) -> None:
-        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="w1:p1")
-        answers = [
-            [{"pane_id": "w1:p1", "interactive_ready": None}],
-            [{"pane_id": "w1:p1", "interactive_ready": None}],
-            [{"pane_id": "w1:p1", "interactive_ready": True}],
-        ]
-        monkeypatch.setattr(orchestrate, "live_agents", lambda: answers.pop(0) if answers else [])
-        monkeypatch.setattr(orchestrate.time, "sleep", lambda _s: None)
+        """One bounded `hc wait` on the unit's own terminal, no polling: ready is the agent's
+        own `idle` or `done`."""
+        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="t5")
+        calls = self._hc_wait(
+            orchestrate, monkeypatch, {"ended": False, "reason": "status", "status": status}
+        )
 
         assert orchestrate.await_ready(unit, seconds=30) is True
-        assert answers == [], "should have polled until the agent said it was ready"
+        assert calls == [["hc", "wait", "t5", "--timeout", "30", "--json"]]
 
     def test_it_gives_up_for_an_agent_that_never_reports_readiness(
         self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """qwen never reports it, which is why `say` has a pane fallback — do not hang on it."""
-        unit = orchestrate.Unit(name="u", vendor="qwen", task="x", pane_id="w1:p1")
-        monkeypatch.setattr(
-            orchestrate, "live_agents", lambda: [{"pane_id": "w1:p1", "interactive_ready": None}]
+        """An agent that never reports a status reads as working until the bound runs out, and
+        the wait returns not-ready instead of hanging: `say` goes ahead and sends anyway."""
+        unit = orchestrate.Unit(name="u", vendor="muse", task="x", pane_id="t5")
+        calls = self._hc_wait(
+            orchestrate, monkeypatch, {"ended": False, "reason": "timeout", "status": "working"}
         )
-        monkeypatch.setattr(orchestrate.time, "sleep", lambda _s: None)
 
         assert orchestrate.await_ready(unit, seconds=2) is False
+        assert len(calls) == 1
+
+    def test_a_unit_with_no_terminal_is_never_ready(
+        self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """hc waits on an address; a unit with none (or an old Herdr id) has nothing to wait on."""
+        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="w1:p1")
+        calls = self._hc_wait(orchestrate, monkeypatch)
+
+        assert orchestrate.await_ready(unit, seconds=2) is False
+        assert calls == []
 
     def test_a_session_that_started_working_counts_as_delivered(
         self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="w1:p1")
+        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="t5")
         monkeypatch.setattr(
-            orchestrate, "live_agents", lambda: [{"pane_id": "w1:p1", "agent_status": "working"}]
+            orchestrate, "live_agents", lambda: [{"pane_id": "t5", "agent_status": "working"}]
         )
         monkeypatch.setattr(orchestrate.time, "sleep", lambda _s: None)
 
@@ -361,9 +379,9 @@ class TestASessionIsReadyBeforeItIsSent:
         self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The observed failure: idle right after launch, having consumed nothing."""
-        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="w1:p1")
+        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="t5")
         monkeypatch.setattr(
-            orchestrate, "live_agents", lambda: [{"pane_id": "w1:p1", "agent_status": "idle"}]
+            orchestrate, "live_agents", lambda: [{"pane_id": "t5", "agent_status": "idle"}]
         )
         monkeypatch.setattr(orchestrate.time, "sleep", lambda _s: None)
 
@@ -372,7 +390,7 @@ class TestASessionIsReadyBeforeItIsSent:
     def test_an_unknown_pane_is_not_delivered(
         self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="w1:p1")
+        unit = orchestrate.Unit(name="u", vendor="agy", task="x", pane_id="t5")
         monkeypatch.setattr(orchestrate, "live_agents", lambda: [])
         monkeypatch.setattr(orchestrate.time, "sleep", lambda _s: None)
 
@@ -443,13 +461,14 @@ class TestTheRosterBriefsEveryVendor:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """qwen's `--safe-mode` is the flag most likely to be added by reasoning from its name."""
-        monkeypatch.setattr(orchestrate, "roster", lambda: [("qwen", "model")])
-        monkeypatch.setattr(orchestrate, "launchable", lambda: ["qwen"])
+        """muse's `--yolo` is the flag most likely to be taken for the constrained mode. The
+        launcher no longer carries qwen's `--safe-mode` note, so muse's note is the one read."""
+        monkeypatch.setattr(orchestrate, "roster", lambda: [("muse", "model,effort")])
+        monkeypatch.setattr(orchestrate, "launchable", lambda: ["muse"])
         monkeypatch.setattr(orchestrate, "saga_capabilities", lambda _v: ["plan"])
         orchestrate.cmd_roster(NS(models=False, probe=False, limit=12))
 
-        assert "--safe-mode" in capsys.readouterr().out
+        assert "disables BOTH and is bypass, not auto" in " ".join(capsys.readouterr().out.split())
 
 
 class TestOpenCodeVariantResolution:

@@ -227,8 +227,56 @@ def _unit(name: str, **over: Any) -> dict[str, Any]:
 
 
 def _claude_composer_pane(composer_line: str) -> str:
-    rule = "\x1b[2m──────────────────────────────\x1b[0m"
+    """A Claude input box as ``hc read`` prints it: plain text, no colour codes."""
+    rule = "─" * 30
     return f"{rule}\n{composer_line}\n{rule}\n"
+
+
+# What the fakes below stand in for: herdr core (``hc``) and the JSON the Herdr app's launcher
+# prints. Shapes were read from the installed programs (hc 0.1.20, herdr-app 0.1.15).
+def _wrapper_json(terminal: str = "t5", **over: Any) -> dict[str, Any]:
+    """The last stdout line of ``agents --app`` for a launch the window placed."""
+    return {"created_space": False, "space": "sp1", "tab": "tb1", "terminal": terminal, **over}
+
+
+def _ls_json(*addresses: str, cwd: str = "/wt", where: str = "WS / unit") -> str:
+    """``hc ls --json`` with one live row per address."""
+    rows = [
+        {
+            "address": address,
+            "agent": "claude-code",
+            "cwd": cwd,
+            "state": "live",
+            "status": "idle",
+            "turn": 3,
+            "where": where,
+        }
+        for address in addresses
+    ]
+    return json.dumps({"terminals": rows, "machines": [], "hidden_finished": 0})
+
+
+def _get_json(address: str, *, where: str = "WS / unit", cwd: str = "/wt") -> str:
+    """``hc get ADDRESS --json`` for a terminal whose program is still running."""
+    return json.dumps(
+        {
+            "address": address,
+            "state": "live",
+            "cwd": cwd,
+            "labels": {"where": where},
+            "status": {"app": "claude-code", "state": "idle"},
+        }
+    )
+
+
+def _done(
+    cmd: list[str], rc: int = 0, out: str = "", err: str = ""
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(cmd, rc, out, err)
+
+
+def _is(cmd: list[str], *head: str) -> bool:
+    return cmd[: len(head)] == list(head)
 
 
 def _staged_go_harness(
@@ -237,41 +285,37 @@ def _staged_go_harness(
     repo: Path,
     *,
     existing_tabs: tuple[str, ...],
-    agent_prompt_ok: bool,
     pane_dumps: list[str],
     accepted: list[bool] | None = None,
 ) -> list[list[str]]:
-    """Stub only the Herdr boundary under cmd_go and record every command.
+    """Stub only the herdr core boundary under cmd_go and record every command.
 
-    The wrapper create returns tab w1:t1 / pane w1:p1; `herdr tab list` reports
-    `existing_tabs`, which decides tab ownership; the ANSI pane read serves `pane_dumps`
-    in order, one per inspection; `herdr agent prompt` succeeds or is refused per
-    `agent_prompt_ok`, which decides whether a send types into the pane. `accepted` feeds
-    took_the_task in order (default: always True). Returns every recorded command.
+    The wrapper create returns terminal t5. ``hc ls --json --all`` reports ``existing_tabs``,
+    which decides ownership: a terminal already in it was not created by this launch, so its
+    input box is inspected before the first write. The plain screen read (``hc read t5
+    --lines 0``) serves ``pane_dumps`` in order, one per inspection. ``hc send`` succeeds.
+    ``accepted`` feeds took_the_task in order (default: always True). Returns every recorded
+    command.
     """
-    receipt = {"tab_id": "w1:t1", "agent_name": "alpha-2", "pane_id": "w1:p1", "reused": False}
     dumps = iter(pane_dumps)
     take = iter(accepted) if accepted is not None else None
     recorded: list[list[str]] = []
 
     def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
         recorded.append(cmd)
-        if cmd[:3] == ["herdr", "tab", "list"]:
-            tabs = {"result": {"tabs": [{"tab_id": t, "label": t} for t in existing_tabs]}}
-            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
-        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, next(dumps), "")
-        if cmd[:3] == ["herdr", "pane", "current"]:
-            pane = {"result": {"pane": {"workspace_id": "w1"}}}
-            return subprocess.CompletedProcess(cmd, 0, json.dumps(pane), "")
-        if cmd[:3] == ["herdr", "agent", "prompt"]:
-            detail = "" if agent_prompt_ok else "not interactive ready"
-            return subprocess.CompletedProcess(cmd, 0 if agent_prompt_ok else 1, "", detail)
+        if _is(cmd, "hc", "ls") and "--all" in cmd:
+            return _done(cmd, 0, _ls_json(*existing_tabs))
+        if _is(cmd, "hc", "read") and cmd[3:] == ["--lines", "0"]:
+            return _done(cmd, 0, next(dumps))
+        if _is(cmd, "hc", "get"):
+            return _done(cmd, 0, _get_json(cmd[2]))
+        if _is(cmd, "hc", "send"):
+            return _done(cmd, 0, "{}")
         if cmd[0] == "agents":
-            return subprocess.CompletedProcess(cmd, 0, json.dumps(receipt), "")
+            return _done(cmd, 0, json.dumps(_wrapper_json("t5")))
         if cmd[0] == "git":
-            return subprocess.CompletedProcess(cmd, 0, f"{repo}\n", "")
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+            return _done(cmd, 0, f"{repo}\n")
+        return _done(cmd, 0, "", "")
 
     def took(*_a: object, **_k: object) -> bool:
         return next(take) if take is not None else True
@@ -285,8 +329,8 @@ def _staged_go_harness(
         "agent_row",
         lambda *_a, **_k: {
             "agent_status": "idle",
-            "pane_id": "w1:p1",
-            "workspace_id": "w1",
+            "pane_id": "t5",
+            "tab_id": "t5",
             "interactive_ready": True,
             "agent": "claude",
         },
@@ -530,8 +574,7 @@ class TestRunWorkspaceIsInheritedAtLaunch:
             orchestrate,
             monkeypatch,
             repo,
-            existing_tabs=("w1:t1",),
-            agent_prompt_ok=True,
+            existing_tabs=("t5",),
             pane_dumps=[
                 _claude_composer_pane("❯ operator draft that was never sent"),
                 _claude_composer_pane("❯ "),
@@ -541,12 +584,12 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
         saved = orchestrate.Run.load(TEST_ISSUE, test_store(repo)).unit("alpha")
         assert saved.status == orchestrate.PENDING
-        assert saved.tab_id == "w1:t1"
-        assert saved.pane_id == "w1:p1"
-        assert saved.agent_name == "alpha-2"
+        assert saved.tab_id == "t5"
+        assert saved.pane_id == "t5"
+        assert saved.agent_name == "alpha"
         assert sum(1 for c in recorded if c[0] == "agents") == 1
         assert "already holds staged input" in saved.note
-        assert "w1:p1" in saved.note
+        assert "t5" in saved.note
         assert "staged input withheld" in saved.note
 
         # The redelivery cycle that used to follow went with `_staged_input_stop` and `redrive`
@@ -557,9 +600,9 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
         saved = orchestrate.Run.load(TEST_ISSUE, test_store(repo)).unit("alpha")
         assert saved.status == orchestrate.PENDING
-        assert saved.tab_id == "w1:t1"
+        assert saved.tab_id == "t5"
         assert sum(1 for c in recorded if c[0] == "agents") == 1, "never a second launch"
-        assert "already has tab w1:t1" in capsys.readouterr().out
+        assert "already has tab t5" in capsys.readouterr().out
 
     def test_repeated_staged_stop_keeps_identifiers_and_dedupes_the_note(
         self,
@@ -575,8 +618,7 @@ class TestRunWorkspaceIsInheritedAtLaunch:
             orchestrate,
             monkeypatch,
             repo,
-            existing_tabs=("w1:t1",),
-            agent_prompt_ok=True,
+            existing_tabs=("t5",),
             pane_dumps=[
                 _claude_composer_pane("❯ operator draft that was never sent"),
                 _claude_composer_pane("❯ operator draft that was never sent"),
@@ -588,8 +630,8 @@ class TestRunWorkspaceIsInheritedAtLaunch:
             assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
         saved = orchestrate.Run.load(TEST_ISSUE, test_store(repo)).unit("alpha")
         assert saved.status == orchestrate.PENDING
-        assert saved.tab_id == "w1:t1"
-        assert saved.pane_id == "w1:p1"
+        assert saved.tab_id == "t5"
+        assert saved.pane_id == "t5"
         assert saved.note.count("already holds staged input") == 1
         assert saved.note.count("staged input withheld") == 1
 
@@ -599,7 +641,7 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
         saved = orchestrate.Run.load(TEST_ISSUE, test_store(repo)).unit("alpha")
         assert saved.status == orchestrate.PENDING
-        assert saved.tab_id == "w1:t1"
+        assert saved.tab_id == "t5"
         assert saved.note.count("already holds staged input") == 1
         assert saved.note.count("staged input withheld") == 1
 
@@ -622,8 +664,8 @@ class TestRunWorkspaceIsInheritedAtLaunch:
                     "alpha",
                     status="pending",
                     branch=None,
-                    tab_id="w1:t-old",
-                    pane_id="w1:p-old",
+                    tab_id="t4",
+                    pane_id="t4",
                     launch_receipt={"input_box": "empty", "owned": False},
                 )
             ],
@@ -641,7 +683,7 @@ class TestRunWorkspaceIsInheritedAtLaunch:
         saved = orchestrate.Run.load(TEST_ISSUE, test_store(repo)).unit("alpha")
         assert saved.status == "pending"
         assert launched == []
-        assert "already has tab w1:t-old" in capsys.readouterr().out
+        assert "already has tab t4" in capsys.readouterr().out
 
     def test_a_pending_unit_with_a_pane_and_an_empty_receipt_is_skipped_not_redelivered(
         self,
@@ -660,8 +702,8 @@ class TestRunWorkspaceIsInheritedAtLaunch:
                     "alpha",
                     status="pending",
                     branch=None,
-                    tab_id="w1:t-old",
-                    pane_id="w1:p-old",
+                    tab_id="t4",
+                    pane_id="t4",
                     launch_receipt={},
                 )
             ],
@@ -675,7 +717,7 @@ class TestRunWorkspaceIsInheritedAtLaunch:
 
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
         assert orchestrate.Run.load(TEST_ISSUE, test_store(repo)).unit("alpha").status == "pending"
-        assert "already has tab w1:t-old" in capsys.readouterr().out
+        assert "already has tab t4" in capsys.readouterr().out
 
     def test_a_fresh_pending_unit_goes_through_launch_never_redeliver(
         self,
@@ -716,7 +758,8 @@ def _git_branch_exists(repo: Path, branch: str) -> bool:
 class TestBackgroundNoFocusLaunchFlags:
     """The central agent_argv path must always lock the background no-focus invariant."""
 
-    EXPECTED_FLAGS = ("--no-focus", "--current", "--herdr", "--herdr-control-only")
+    EXPECTED_FLAGS = ("--app", "--no-focus")
+    OLD_HERDR_FLAGS = ("--current", "--herdr", "--herdr-control-only")
 
     @pytest.mark.parametrize(
         "vendor",
@@ -733,6 +776,8 @@ class TestBackgroundNoFocusLaunchFlags:
             assert argv.index(flag) < vendor_idx, (
                 f"flag {flag!r} emitted after vendor token {vendor!r}"
             )
+        for flag in self.OLD_HERDR_FLAGS:
+            assert flag not in argv, f"old Herdr flag {flag!r} still in agent_argv for {vendor!r}"
 
     def test_background_flag_ordering_and_completeness(self, orchestrate: ModuleType) -> None:
         unit = orchestrate.Unit(
@@ -749,10 +794,8 @@ class TestBackgroundNoFocusLaunchFlags:
         launcher_bin = orchestrate.launcher()
         expected_prefix = [
             launcher_bin,
+            "--app",
             "--no-focus",
-            "--current",
-            "--herdr",
-            "--herdr-control-only",
             "--task",
             "worker",
             "--cwd",
@@ -851,24 +894,19 @@ class TestExpansionAndCentralLauncher:
         # Track launches via cmd_go
         launched_argvs: list[list[str]] = []
         original_run = orchestrate.run
+        terminals = {"builder-1": "t11", "builder-2": "t12"}
 
         def intercept_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
             if cmd and cmd[0] == orchestrate.launcher():
                 launched_argvs.append(cmd)
                 unit_name = cmd[cmd.index("--task") + 1]
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "tab_id": f"tab-{unit_name}",
-                            "pane_id": f"pane-{unit_name}",
-                            "agent_name": unit_name,
-                        }
-                    )
-                    + "\n",
-                    stderr="",
-                )
+                return _done(cmd, 0, json.dumps(_wrapper_json(terminals[unit_name])) + "\n")
+            if _is(cmd, "hc", "ls"):
+                # Nothing on the core yet, so each new terminal is proved to be this run's own.
+                return _done(cmd, 0, _ls_json())
+            if _is(cmd, "hc", "get"):
+                name = next(n for n, t in terminals.items() if t == cmd[2])
+                return _done(cmd, 0, _get_json(cmd[2], where=f"issue-773 / {name}"))
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", intercept_run)
@@ -879,27 +917,28 @@ class TestExpansionAndCentralLauncher:
             orchestrate,
             "live_agents",
             lambda: [
-                {"pane_id": "pane-builder-1", "agent": "claude", "interactive_ready": True},
-                {"pane_id": "pane-builder-2", "agent": "grok", "interactive_ready": True},
+                {"pane_id": "t11", "agent": "claude", "interactive_ready": True},
+                {"pane_id": "t12", "agent": "grok", "interactive_ready": True},
             ],
         )
 
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
 
-        # Verify that both expanded units launched through central launcher with no-focus flags
+        # Verify that both expanded units launched through central launcher in the Herdr app,
+        # in the background, and with none of the old Herdr flags
         assert len(launched_argvs) == 2
         for argv in launched_argvs:
+            assert "--app" in argv
             assert "--no-focus" in argv
-            assert "--current" in argv
-            assert "--herdr" in argv
-            assert "--herdr-control-only" in argv
+            for old_flag in ("--current", "--herdr", "--herdr-control-only"):
+                assert old_flag not in argv
 
         # Verify run record completeness
         updated_run = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
         for u in updated_run.units[1:]:
             assert u.status == "running"
-            assert u.tab_id == f"tab-{u.name}"
-            assert u.pane_id == f"pane-{u.name}"
+            assert u.tab_id == terminals[u.name]
+            assert u.pane_id == terminals[u.name]
             assert u.agent_name == u.name
             assert u.branch == f"orch/r1-{u.name}"
             assert u.worktree is not None and Path(u.worktree).exists()
@@ -927,32 +966,25 @@ class TestNoFocusInvariantIntegration:
             ],
         )
 
-        focused_pane = "pane-operator-main"
+        focused_pane = "t1"
         original_run = orchestrate.run
+        terminals = {"unit1": "t21", "unit2": "t22", "unit3": "t23"}
 
-        # Mock herdr / launcher interaction:
-        # A launcher with --no-focus preserves the operator's active focused pane.
-        # Without --no-focus it would switch focus to the new pane.
+        # Mock herdr core / launcher interaction:
+        # A launcher with --no-focus preserves the operator's active focused terminal.
+        # Without --no-focus it would switch focus to the new terminal.
         def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
             nonlocal focused_pane
             if cmd and cmd[0] == orchestrate.launcher():
                 unit_name = cmd[cmd.index("--task") + 1]
-                new_pane = f"pane-{unit_name}"
+                new_terminal = terminals[unit_name]
                 if "--no-focus" not in cmd:
-                    focused_pane = new_pane
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "tab_id": f"tab-{unit_name}",
-                            "pane_id": new_pane,
-                            "agent_name": unit_name,
-                        }
-                    )
-                    + "\n",
-                    stderr="",
-                )
+                    focused_pane = new_terminal
+                return _done(cmd, 0, json.dumps(_wrapper_json(new_terminal)) + "\n")
+            if _is(cmd, "hc", "ls"):
+                return _done(cmd, 0, _ls_json("t1"))
+            if _is(cmd, "hc", "get"):
+                return _done(cmd, 0, _get_json(cmd[2]))
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
@@ -963,8 +995,8 @@ class TestNoFocusInvariantIntegration:
             orchestrate,
             "live_agents",
             lambda: [
-                {"pane_id": f"pane-{name}", "agent": "claude", "interactive_ready": True}
-                for name in ("unit1", "unit2", "unit3")
+                {"pane_id": address, "agent": "claude", "interactive_ready": True}
+                for address in terminals.values()
             ],
         )
 
@@ -972,8 +1004,8 @@ class TestNoFocusInvariantIntegration:
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
         pane_after = focused_pane
 
-        assert pane_before == "pane-operator-main"
-        assert pane_after == "pane-operator-main"
+        assert pane_before == "t1"
+        assert pane_after == "t1"
 
         # Verify run record contains every created worktree, branch, workspace, tab, pane, agent
         r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
@@ -981,8 +1013,8 @@ class TestNoFocusInvariantIntegration:
             assert u.status == "running"
             assert u.worktree is not None and Path(u.worktree).exists()
             assert u.branch == f"orch/r1-{u.name}"
-            assert u.tab_id == f"tab-{u.name}"
-            assert u.pane_id == f"pane-{u.name}"
+            assert u.tab_id == terminals[u.name]
+            assert u.pane_id == terminals[u.name]
             assert u.agent_name == u.name
 
 
@@ -1005,7 +1037,7 @@ class TestScopedCleanup:
         wt_alpha.mkdir(parents=True, exist_ok=True)
         _git(repo, "worktree", "add", "--detach", str(wt_alpha), "orch/r1-alpha")
 
-        # Create foreign/unrelated worktree, branch, and tab
+        # Create foreign/unrelated worktree and branch (the foreign terminal t9 is never named)
         foreign_wt = repo / "foreign-worktree"
         foreign_wt.mkdir(parents=True, exist_ok=True)
         _git(repo, "branch", "foreign-feature", "main")
@@ -1019,27 +1051,34 @@ class TestScopedCleanup:
                     status="done",
                     branch="orch/r1-alpha",
                     worktree=str(wt_alpha),
-                    tab_id="tab-run-alpha",
-                    launch_receipt={"tab_id": "tab-run-alpha", "owned": True},
+                    tab_id="t5",
+                    pane_id="t5",
+                    launch_receipt={"tab_id": "t5", "owned": True},
                 ),
             ],
         )
 
         closed_tabs: list[str] = []
+        removed_terminals: list[str] = []
         original_run = orchestrate.run
 
         def track_tab_close(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            if cmd[:3] == ["herdr", "tab", "close"]:
-                closed_tabs.append(cmd[3])
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            # A close is `hc kill` then `hc rm`, and nothing else reaches the operator's core.
+            if _is(cmd, "hc", "kill"):
+                closed_tabs.append(cmd[2])
+                return _done(cmd, 0, "{}")
+            if _is(cmd, "hc", "rm"):
+                removed_terminals.append(cmd[2])
+                return _done(cmd, 0, "{}")
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", track_tab_close)
 
         assert orchestrate.cmd_clean(_ns(repo, merged=True, branches=True, all=False)) == 0
 
-        # Verify run-owned alpha tab and worktree were closed
-        assert "tab-run-alpha" in closed_tabs
+        # Verify run-owned alpha terminal and worktree were closed, and only that terminal
+        assert closed_tabs == ["t5"]
+        assert removed_terminals == ["t5"]
         assert not wt_alpha.exists()
         assert not _git_branch_exists(repo, "orch/r1-alpha")
 
@@ -1053,7 +1092,7 @@ class TestScopedCleanup:
         repo: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """cmd_clean must not issue herdr tab close when the receipt does not own the tab."""
+        """cmd_clean must not kill or remove a terminal when the receipt does not own it."""
         monkeypatch.chdir(repo)
         _write_run(
             repo,
@@ -1062,8 +1101,9 @@ class TestScopedCleanup:
                     "operator",
                     status="running",
                     branch=None,
-                    tab_id="tab-operator",
-                    launch_receipt={"tab_id": "tab-operator", "owned": False},
+                    tab_id="t6",
+                    pane_id="t6",
+                    launch_receipt={"tab_id": "t6", "owned": False},
                 )
             ],
         )
@@ -1071,14 +1111,54 @@ class TestScopedCleanup:
         original_run = orchestrate.run
 
         def track_tab_close(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            if cmd[:3] == ["herdr", "tab", "close"]:
-                closed_tabs.append(cmd[3])
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+            if _is(cmd, "hc", "kill") or _is(cmd, "hc", "rm"):
+                closed_tabs.append(cmd[2])
+                return _done(cmd, 0, "{}")
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", track_tab_close)
         assert orchestrate.cmd_clean(_ns(repo, merged=False, branches=False, all=False)) == 0
         assert closed_tabs == []
+
+    def test_cleanup_never_hands_an_old_herdr_tab_id_to_hc(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A run started under old Herdr records a tab id hc cannot act on. Closing it would
+        read hc's not-found as 'already closed' while the session is still open, so it is
+        never sent to hc: the unit is kept and the failure is named."""
+        monkeypatch.chdir(repo)
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "alpha",
+                    status="done",
+                    branch="orch/r1-alpha",
+                    tab_id="w1:t3",
+                    pane_id="w1:p3",
+                    launch_receipt={"tab_id": "w1:t3", "owned": True},
+                ),
+            ],
+        )
+        hc_calls: list[list[str]] = []
+        original_run = orchestrate.run
+
+        def track_hc(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if cmd[0] == "hc":
+                hc_calls.append(cmd)
+                return _done(cmd, 0, "{}")
+            return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+        monkeypatch.setattr(orchestrate, "run", track_hc)
+
+        assert orchestrate.cmd_clean(_ns(repo, merged=False, branches=False, all=False)) == 3
+
+        assert [c for c in hc_calls if c[1] in ("kill", "rm")] == []
+        assert "tab close failed (2) for w1:t3" in capsys.readouterr().out
 
 
 class TestStatusSurfacesUnrecordedDrift:
@@ -1102,9 +1182,18 @@ class TestStatusSurfacesUnrecordedDrift:
         )
 
 
+def _sends(cmds: list[list[str]], address: str) -> list[str]:
+    """The lines ``hc send`` was asked to put into one terminal, in order."""
+    return [c[3] for c in cmds if _is(c, "hc", "send", address)]
+
+
 @pytest.mark.usefixtures("launcher_on_path")
 class TestOpenCodeLaunchAndVariantRecipe:
-    """OpenCode launch recipe, interactive /variants picker driving, and preflight verification."""
+    """OpenCode launch recipe, interactive /variants picker driving, and preflight verification.
+
+    herdr core has one way into a session, ``hc send``, so the picker's two lines and the task
+    all arrive through it; the tests tell them apart by what was sent.
+    """
 
     def test_opencode_launches_through_agents_and_drives_variants_recipe(
         self,
@@ -1130,42 +1219,27 @@ class TestOpenCodeLaunchAndVariantRecipe:
         )
 
         executed_cmds: list[list[str]] = []
-        sent_prompts: list[str] = []
         original_run = orchestrate.run
 
         def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
             executed_cmds.append(cmd)
             if cmd and cmd[0] == orchestrate.launcher():
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "tab_id": "tab-mimir",
-                            "pane_id": "pane-mimir",
-                            "agent_name": "mimir-builder",
-                        }
-                    )
-                    + "\n",
-                    stderr="",
-                )
-            if cmd[:4] == ["herdr", "pane", "read", "pane-mimir"]:
+                return _done(cmd, 0, json.dumps(_wrapper_json("t5")) + "\n")
+            if _is(cmd, "hc", "ls"):
+                return _done(cmd, 0, _ls_json())
+            if _is(cmd, "hc", "get"):
+                return _done(cmd, 0, _get_json("t5"))
+            if _is(cmd, "hc", "read", "t5"):
                 # Live picker output offering up to xhigh (Team Mimir scenario).
-                # After the select keystroke, the session row (not the typed echo) confirms.
+                # After the select line, the session row (not the typed echo) confirms.
                 picker_output = (
                     "Select a variant:\n> Default\n  minimal\n  low\n  medium\n  high\n  xhigh\n"
                 )
-                selected = any(
-                    c[:4] == ["herdr", "pane", "run", "pane-mimir"] and c[-1] == "xhigh"
-                    for c in executed_cmds
-                )
+                selected = "xhigh" in _sends(executed_cmds, "t5")
                 stdout = "variant: xhigh\n" if selected else picker_output
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout=stdout, stderr="")
-            if cmd[:3] == ["herdr", "pane", "run"]:
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
-            if cmd[:3] == ["herdr", "agent", "prompt"]:
-                sent_prompts.append(cmd[4] if len(cmd) > 4 else "")
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+                return _done(cmd, 0, stdout)
+            if _is(cmd, "hc", "send"):
+                return _done(cmd, 0, "{}")
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
@@ -1174,13 +1248,7 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [
-                {
-                    "pane_id": "pane-mimir",
-                    "agent": "opencode",
-                    "interactive_ready": True,
-                }
-            ],
+            lambda: [{"pane_id": "t5", "agent": "opencode", "interactive_ready": True}],
         )
 
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
@@ -1189,29 +1257,21 @@ class TestOpenCodeLaunchAndVariantRecipe:
         launcher_calls = [c for c in executed_cmds if c and c[0] == orchestrate.launcher()]
         assert len(launcher_calls) == 1
         launcher_argv = launcher_calls[0]
+        assert "--app" in launcher_argv
         assert "--no-focus" in launcher_argv
         assert "opencode" in launcher_argv
         assert "-m" in launcher_argv
         assert "opencode/muse-spark-1.2-contributor-free" in launcher_argv
 
-        # Verify /variants was opened
-        variant_open_calls = [
-            c
-            for c in executed_cmds
-            if c[:4] == ["herdr", "pane", "run", "pane-mimir"] and c[4] == "/variants"
-        ]
-        assert len(variant_open_calls) == 1
-
-        # Verify xhigh was selected (Team Mimir resolution for 'max' request)
-        variant_select_calls = [
-            c
-            for c in executed_cmds
-            if c[:4] == ["herdr", "pane", "run", "pane-mimir"] and c[4] == "xhigh"
-        ]
-        assert len(variant_select_calls) == 1
-
-        # Verify task was submitted
-        assert any("build feature" in p for p in sent_prompts)
+        # Every line went into the one terminal through `hc send ... --json`: /variants opened
+        # the picker, xhigh was selected (Team Mimir resolution for a 'max' request), and the
+        # task followed.
+        sent = _sends(executed_cmds, "t5")
+        assert sent[:2] == ["/variants", "xhigh"]
+        assert sent.count("/variants") == 1
+        assert sent.count("xhigh") == 1
+        assert any("build feature" in line for line in sent[2:])
+        assert all(c[-1] == "--json" for c in executed_cmds if _is(c, "hc", "send"))
 
         # Verify unit state and receipt
         r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
@@ -1253,28 +1313,15 @@ class TestOpenCodeLaunchAndVariantRecipe:
         def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
             executed_cmds.append(cmd)
             if cmd and cmd[0] == orchestrate.launcher():
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "tab_id": "tab-claude",
-                            "pane_id": "pane-claude",
-                            "agent_name": "claude-worker",
-                        }
-                    )
-                    + "\n",
-                    stderr="",
-                )
-            if cmd[:3] == ["herdr", "agent", "prompt"]:
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
-            if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
-                empty = (
-                    "\x1b[2m──────────────────────────────\x1b[0m\n"
-                    "❯ \n"
-                    "\x1b[2m──────────────────────────────\x1b[0m\n"
-                )
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout=empty, stderr="")
+                return _done(cmd, 0, json.dumps(_wrapper_json("t6")) + "\n")
+            if _is(cmd, "hc", "ls"):
+                return _done(cmd, 0, _ls_json())
+            if _is(cmd, "hc", "get"):
+                return _done(cmd, 0, _get_json("t6"))
+            if _is(cmd, "hc", "send"):
+                return _done(cmd, 0, "{}")
+            if _is(cmd, "hc", "read"):
+                return _done(cmd, 0, _claude_composer_pane("❯ "))
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
@@ -1283,20 +1330,16 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [
-                {
-                    "pane_id": "pane-claude",
-                    "agent": "claude",
-                    "interactive_ready": True,
-                }
-            ],
+            lambda: [{"pane_id": "t6", "agent": "claude", "interactive_ready": True}],
         )
 
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
 
-        # Verify no /variants commands were sent
-        for cmd in executed_cmds:
-            assert "/variants" not in cmd
+        # Verify no /variants commands were sent: the task is the only line that went in
+        sent = _sends(executed_cmds, "t6")
+        assert "/variants" not in sent
+        assert len(sent) == 1
+        assert "do work" in sent[0]
 
         # Verify launch receipt recorded
         r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
@@ -1329,32 +1372,22 @@ class TestOpenCodeLaunchAndVariantRecipe:
             ],
         )
 
-        sent_prompts: list[str] = []
+        executed_cmds: list[list[str]] = []
         original_run = orchestrate.run
 
         def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            executed_cmds.append(cmd)
             if cmd and cmd[0] == orchestrate.launcher():
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "tab_id": "tab-mimir",
-                            "pane_id": "pane-mimir",
-                            "agent_name": "mimir-builder",
-                        }
-                    )
-                    + "\n",
-                    stderr="",
-                )
-            if cmd[:4] == ["herdr", "pane", "read", "pane-mimir"]:
+                return _done(cmd, 0, json.dumps(_wrapper_json("t5")) + "\n")
+            if _is(cmd, "hc", "ls"):
+                return _done(cmd, 0, _ls_json())
+            if _is(cmd, "hc", "get"):
+                return _done(cmd, 0, _get_json("t5"))
+            if _is(cmd, "hc", "read", "t5"):
                 # Empty output simulates picker failure
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
-            if cmd[:3] == ["herdr", "pane", "run"]:
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
-            if cmd[:3] == ["herdr", "agent", "prompt"]:
-                sent_prompts.append(cmd[4] if len(cmd) > 4 else "")
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+                return _done(cmd, 0, "")
+            if _is(cmd, "hc", "send"):
+                return _done(cmd, 0, "{}")
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
@@ -1362,19 +1395,13 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [
-                {
-                    "pane_id": "pane-mimir",
-                    "agent": "opencode",
-                    "interactive_ready": True,
-                }
-            ],
+            lambda: [{"pane_id": "t5", "agent": "opencode", "interactive_ready": True}],
         )
 
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
 
-        # Verify task was NOT sent
-        assert sent_prompts == []
+        # Verify the task was NOT sent: the picker opening is the only line that went in
+        assert _sends(executed_cmds, "t5") == ["/variants"]
 
         # Verify unit marked failed with clear note
         r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
@@ -1405,34 +1432,22 @@ class TestOpenCodeLaunchAndVariantRecipe:
             ],
         )
 
-        sent_prompts: list[str] = []
+        executed_cmds: list[list[str]] = []
         original_run = orchestrate.run
 
         def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            executed_cmds.append(cmd)
             if cmd and cmd[0] == orchestrate.launcher():
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "tab_id": "tab-mimir",
-                            "pane_id": "pane-mimir",
-                            "agent_name": "mimir-builder",
-                        }
-                    )
-                    + "\n",
-                    stderr="",
-                )
-            if cmd[:4] == ["herdr", "pane", "read", "pane-mimir"]:
+                return _done(cmd, 0, json.dumps(_wrapper_json("t5")) + "\n")
+            if _is(cmd, "hc", "ls"):
+                return _done(cmd, 0, _ls_json())
+            if _is(cmd, "hc", "get"):
+                return _done(cmd, 0, _get_json("t5"))
+            if _is(cmd, "hc", "read", "t5"):
                 picker_output = "> Default\n  minimal\n  low\n  medium\n  high\n  xhigh\n"
-                return subprocess.CompletedProcess(
-                    cmd, returncode=0, stdout=picker_output, stderr=""
-                )
-            if cmd[:3] == ["herdr", "pane", "run"]:
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
-            if cmd[:3] == ["herdr", "agent", "prompt"]:
-                sent_prompts.append(cmd[4] if len(cmd) > 4 else "")
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+                return _done(cmd, 0, picker_output)
+            if _is(cmd, "hc", "send"):
+                return _done(cmd, 0, "{}")
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
@@ -1440,19 +1455,13 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [
-                {
-                    "pane_id": "pane-mimir",
-                    "agent": "opencode",
-                    "interactive_ready": True,
-                }
-            ],
+            lambda: [{"pane_id": "t5", "agent": "opencode", "interactive_ready": True}],
         )
 
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
 
-        # Verify task was NOT sent
-        assert sent_prompts == []
+        # Verify the task was NOT sent, and no variant was typed into the picker
+        assert _sends(executed_cmds, "t5") == ["/variants"]
 
         # Verify unit marked failed
         r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
@@ -1483,44 +1492,24 @@ class TestOpenCodeLaunchAndVariantRecipe:
         )
 
         closed_tabs: list[str] = []
-        sent_prompts: list[str] = []
+        removed: list[str] = []
+        executed_cmds: list[list[str]] = []
         original_run = orchestrate.run
 
         def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            executed_cmds.append(cmd)
             if cmd and cmd[0] == orchestrate.launcher():
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "tab_id": "tab-bad-cwd",
-                            "pane_id": "pane-bad-cwd",
-                            "agent_name": "worker",
-                        }
-                    )
-                    + "\n",
-                    stderr="",
-                )
-            if cmd[:3] == ["herdr", "pane", "current"]:
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps({"result": {"pane": {"workspace_id": "w80"}}}),
-                    stderr="",
-                )
-            if cmd[:3] == ["herdr", "tab", "list"]:
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps({"result": {"tabs": []}}),
-                    stderr="",
-                )
-            if cmd[:3] == ["herdr", "tab", "close"]:
-                closed_tabs.append(cmd[3])
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
-            if cmd[:3] == ["herdr", "agent", "prompt"]:
-                sent_prompts.append(cmd[4] if len(cmd) > 4 else "")
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+                return _done(cmd, 0, json.dumps(_wrapper_json("t8")) + "\n")
+            if _is(cmd, "hc", "ls"):
+                return _done(cmd, 0, _ls_json())
+            if _is(cmd, "hc", "kill"):
+                closed_tabs.append(cmd[2])
+                return _done(cmd, 0, "{}")
+            if _is(cmd, "hc", "rm"):
+                removed.append(cmd[2])
+                return _done(cmd, 0, "{}")
+            if _is(cmd, "hc", "send"):
+                return _done(cmd, 0, "{}")
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
@@ -1528,14 +1517,15 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [{"pane_id": "pane-bad-cwd", "cwd": "/wrong/worktree/dir", "agent": "claude"}],
+            lambda: [{"pane_id": "t8", "cwd": "/wrong/worktree/dir", "agent": "claude"}],
         )
 
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
 
-        # Session closed and task never sent
-        assert "tab-bad-cwd" in closed_tabs
-        assert sent_prompts == []
+        # Session closed (killed, then removed) and task never sent
+        assert closed_tabs == ["t8"]
+        assert removed == ["t8"]
+        assert _sends(executed_cmds, "t8") == []
 
         r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
         unit = r.units[0]
@@ -1565,41 +1555,27 @@ class TestOpenCodeLaunchAndVariantRecipe:
             ],
         )
 
-        sent_prompts: list[str] = []
-        selection_sent = False
+        executed_cmds: list[list[str]] = []
         original_run = orchestrate.run
 
         def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            nonlocal selection_sent
+            executed_cmds.append(cmd)
             if cmd and cmd[0] == orchestrate.launcher():
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "tab_id": "tab-mimir",
-                            "pane_id": "pane-mimir",
-                            "agent_name": "mimir-builder",
-                        }
-                    )
-                    + "\n",
-                    stderr="",
-                )
-            if cmd[:4] == ["herdr", "pane", "read", "pane-mimir"]:
+                return _done(cmd, 0, json.dumps(_wrapper_json("t5")) + "\n")
+            if _is(cmd, "hc", "ls"):
+                return _done(cmd, 0, _ls_json())
+            if _is(cmd, "hc", "get"):
+                return _done(cmd, 0, _get_json("t5"))
+            if _is(cmd, "hc", "read", "t5"):
                 # After the selection is typed the session shows no sign of having taken it.
                 body = (
                     "waiting for input\n"
-                    if selection_sent
+                    if "xhigh" in _sends(executed_cmds, "t5")
                     else "> Default\n  minimal\n  low\n  medium\n  high\n  xhigh\n"
                 )
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout=body, stderr="")
-            if cmd[:3] == ["herdr", "pane", "run"]:
-                if len(cmd) > 4 and cmd[4] == "xhigh":
-                    selection_sent = True
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
-            if cmd[:3] == ["herdr", "agent", "prompt"]:
-                sent_prompts.append(cmd[4] if len(cmd) > 4 else "")
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+                return _done(cmd, 0, body)
+            if _is(cmd, "hc", "send"):
+                return _done(cmd, 0, "{}")
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
@@ -1607,18 +1583,13 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [
-                {
-                    "pane_id": "pane-mimir",
-                    "agent": "opencode",
-                    "interactive_ready": True,
-                }
-            ],
+            lambda: [{"pane_id": "t5", "agent": "opencode", "interactive_ready": True}],
         )
 
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
 
-        assert sent_prompts == []
+        # The picker lines went in; the task did not.
+        assert _sends(executed_cmds, "t5") == ["/variants", "xhigh"]
         r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
         unit = r.units[0]
         assert unit.status == "failed"
@@ -1649,39 +1620,27 @@ class TestOpenCodeLaunchAndVariantRecipe:
 
         reads = 0
         executed_cmds: list[list[str]] = []
-        sent_prompts: list[str] = []
         original_run = orchestrate.run
 
         def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
             nonlocal reads
             executed_cmds.append(cmd)
             if cmd and cmd[0] == orchestrate.launcher():
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "tab_id": "tab-mimir",
-                            "pane_id": "pane-mimir",
-                            "agent_name": "mimir-builder",
-                        }
-                    )
-                    + "\n",
-                    stderr="",
-                )
-            if cmd[:4] == ["herdr", "pane", "read", "pane-mimir"]:
+                return _done(cmd, 0, json.dumps(_wrapper_json("t5")) + "\n")
+            if _is(cmd, "hc", "ls"):
+                return _done(cmd, 0, _ls_json())
+            if _is(cmd, "hc", "get"):
+                return _done(cmd, 0, _get_json("t5"))
+            if _is(cmd, "hc", "read", "t5"):
                 reads += 1
                 if reads == 1:
                     # The banner still on screen: bulleted, but nothing the variant ladder knows.
                     body = "- Loading plugins\n- Connecting session\n"
                 else:
                     body = "> Default\n  minimal\n  low\n  medium\n  high\n  xhigh\n"
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout=body, stderr="")
-            if cmd[:3] == ["herdr", "pane", "run"]:
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
-            if cmd[:3] == ["herdr", "agent", "prompt"]:
-                sent_prompts.append(cmd[4] if len(cmd) > 4 else "")
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+                return _done(cmd, 0, body)
+            if _is(cmd, "hc", "send"):
+                return _done(cmd, 0, "{}")
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
@@ -1690,27 +1649,21 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [
-                {
-                    "pane_id": "pane-mimir",
-                    "agent": "opencode",
-                    "interactive_ready": True,
-                }
-            ],
+            lambda: [{"pane_id": "t5", "agent": "opencode", "interactive_ready": True}],
         )
 
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
 
         # The banner's own word was never typed into the session as a variant.
-        typed = [c[4] for c in executed_cmds if c[:4] == ["herdr", "pane", "run", "pane-mimir"]]
+        typed = _sends(executed_cmds, "t5")
         assert "Loading" not in typed
-        assert typed == ["/variants", "xhigh"]
+        assert typed[:2] == ["/variants", "xhigh"]
 
         r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
         unit = r.units[0]
         assert unit.status == "running"
         assert unit.variant == "xhigh"
-        assert any("do work" in p for p in sent_prompts)
+        assert any("do work" in line for line in typed[2:])
 
     def test_workspace_mismatch_closes_the_run_session_and_withholds_the_task(
         self,
@@ -1718,7 +1671,8 @@ class TestOpenCodeLaunchAndVariantRecipe:
         repo: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The plan names a workspace; herdr reports an id, so the two are joined before comparing."""
+        """The plan names a workspace; hc's ``where`` label names the one the window shows the
+        session in, and the two are compared by name."""
         monkeypatch.chdir(repo)
         _write_run(
             repo,
@@ -1735,60 +1689,22 @@ class TestOpenCodeLaunchAndVariantRecipe:
         )
 
         closed_tabs: list[str] = []
-        sent_prompts: list[str] = []
+        executed_cmds: list[list[str]] = []
         original_run = orchestrate.run
 
         def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            executed_cmds.append(cmd)
             if cmd and cmd[0] == orchestrate.launcher():
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "tab_id": "tab-elsewhere",
-                            "pane_id": "pane-elsewhere",
-                            "agent_name": "worker",
-                        }
-                    )
-                    + "\n",
-                    stderr="",
-                )
-            if cmd[:3] == ["herdr", "pane", "current"]:
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps({"result": {"pane": {"workspace_id": "w80"}}}),
-                    stderr="",
-                )
-            if cmd[:3] == ["herdr", "tab", "list"]:
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps({"result": {"tabs": []}}),
-                    stderr="",
-                )
-            if cmd[:3] == ["herdr", "workspace", "list"]:
-                return subprocess.CompletedProcess(
-                    cmd,
-                    returncode=0,
-                    stdout=json.dumps(
-                        {
-                            "result": {
-                                "workspaces": [
-                                    {"label": "defects-a", "workspace_id": "w99"},
-                                    {"label": "somewhere else", "workspace_id": "w01"},
-                                ]
-                            }
-                        }
-                    ),
-                    stderr="",
-                )
-            if cmd[:3] == ["herdr", "tab", "close"]:
-                closed_tabs.append(cmd[3])
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
-            if cmd[:3] == ["herdr", "agent", "prompt"]:
-                sent_prompts.append(cmd[4] if len(cmd) > 4 else "")
-                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+                return _done(cmd, 0, json.dumps(_wrapper_json("t7")) + "\n")
+            if _is(cmd, "hc", "ls"):
+                return _done(cmd, 0, _ls_json())
+            if _is(cmd, "hc", "get"):
+                return _done(cmd, 0, _get_json("t7", where="somewhere else / worker"))
+            if _is(cmd, "hc", "kill"):
+                closed_tabs.append(cmd[2])
+                return _done(cmd, 0, "{}")
+            if _is(cmd, "hc", "rm") or _is(cmd, "hc", "send"):
+                return _done(cmd, 0, "{}")
             return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", mocked_run)
@@ -1796,13 +1712,13 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
-            lambda: [{"pane_id": "pane-elsewhere", "workspace_id": "w01", "agent": "claude"}],
+            lambda: [{"pane_id": "t7", "agent": "claude"}],
         )
 
         assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
 
-        assert "tab-elsewhere" in closed_tabs
-        assert sent_prompts == []
+        assert closed_tabs == ["t7"]
+        assert _sends(executed_cmds, "t7") == []
         r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
         unit = r.units[0]
         assert unit.status == "failed"
@@ -1814,7 +1730,7 @@ class TestOpenCodeLaunchAndVariantRecipe:
         repo: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """herdr reports no model, so a receipt must not record one as verified."""
+        """herdr core reports no model, so a receipt must not record one as verified."""
         monkeypatch.chdir(repo)
         _write_run(
             repo,
@@ -1826,14 +1742,14 @@ class TestOpenCodeLaunchAndVariantRecipe:
         )
         unit = orchestrate.Run.load(TEST_ISSUE, test_store(repo)).units[0]
         unit.worktree = str(repo)
-        unit.pane_id = "pane-1"
-        unit.tab_id = "tab-1"
+        unit.pane_id = "t5"
+        unit.tab_id = "t5"
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
             lambda: [
                 {
-                    "pane_id": "pane-1",
+                    "pane_id": "t5",
                     "cwd": str(repo),
                     "interactive_ready": True,
                     "agent": "claude",
@@ -1841,7 +1757,7 @@ class TestOpenCodeLaunchAndVariantRecipe:
             ],
         )
 
-        receipt = orchestrate.verify_unit_preflight(unit, "pane-1", ready=True)
+        receipt = orchestrate.verify_unit_preflight(unit, "t5", ready=True)
 
         assert "model" in receipt["requested_only"]
         assert "variant" in receipt["requested_only"]
@@ -1859,25 +1775,26 @@ class TestOpenCodeLaunchAndVariantRecipe:
         monkeypatch.chdir(repo)
         _write_run(
             repo,
-            [_unit("worker", vendor="qwen", task="x", status="pending", branch=None)],
+            [_unit("worker", vendor="codex", task="x", status="pending", branch=None)],
         )
         unit = orchestrate.Run.load(TEST_ISSUE, test_store(repo)).units[0]
         unit.worktree = str(repo)
-        unit.pane_id = "pane-1"
+        unit.pane_id = "t5"
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
             lambda: [
                 {
-                    "pane_id": "pane-1",
+                    "pane_id": "t5",
                     "cwd": str(repo),
                     "interactive_ready": False,
-                    "agent": "qwen",
+                    "agent": "codex",
+                    "agent_status": "working",
                 }
             ],
         )
 
-        receipt = orchestrate.verify_unit_preflight(unit, "pane-1", ready=False)
+        receipt = orchestrate.verify_unit_preflight(unit, "t5", ready=False)
 
         assert receipt["readiness"] is False
 

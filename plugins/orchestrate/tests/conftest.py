@@ -1,14 +1,15 @@
 """Package-local pytest fixtures for Orchestrate.
 
 The upstream repository shadowed ``herdr`` from a root ``conftest.py``. This
-package repeats that shadow so a test that reaches the operator's live Herdr
-fails here instead. It also pins the two companions the suite was written
-against, because neither is the tree this catalog currently ships:
+package repeats that shadow, and adds herdr core's ``hc`` to it, so a test that
+reaches the operator's live Herdr -- where ``hc send`` types into a terminal and
+``hc kill`` ends one -- fails here instead. It also pins the two companions:
 
-* ``AGENT_LAUNCHER_ROOT`` is a frozen agent-launcher 1.7.0. The sibling
-  ``plugins/agent-launcher`` in this catalog is 1.0.0 and does not define the
-  names Orchestrate execs. Production, with the variable unset, still resolves
-  that sibling.
+* ``AGENT_LAUNCHER_ROOT`` is the sibling ``plugins/agent-launcher``, the
+  launcher this catalog ships and production resolves with the variable unset.
+  It drives sessions through herdr core. (The suite was first written against a
+  frozen agent-launcher 1.7.0, still under ``fixtures/``, which drives old
+  Herdr; Orchestrate no longer runs against it.)
 * ``ORCHESTRATE_RUN_RECORD`` is saga's ``run_record.py`` from the same upstream
   pin when ``plugins/saga`` is not beside this package.
 """
@@ -30,14 +31,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from orchestrate_support import RUN_RECORD_SCRIPT  # noqa: E402
 
-FIXTURE_LAUNCHER_ROOT = (
-    Path(__file__).resolve().parent / "fixtures" / "agent-launcher-1.7.0"
-)
+FIXTURE_LAUNCHER_ROOT = Path(__file__).resolve().parents[2] / "agent-launcher"
 
 _COMPANION_ENV = ("AGENT_LAUNCHER_ROOT", "ORCHESTRATE_RUN_RECORD", "CLAUDE_PLUGIN_ROOT")
 
 _SHADOW_HERDR = """#!/bin/sh
-echo "herdr is shadowed under pytest: a test reached the host's herdr instead of stubbing it" >&2
+echo "$(basename "$0") is shadowed under pytest: a test reached the host's Herdr instead of stubbing it" >&2
 exit 127
 """
 
@@ -65,9 +64,10 @@ def _pin_companions_and_shadow_herdr(tmp_path_factory: pytest.TempPathFactory) -
     os.environ["ORCHESTRATE_RUN_RECORD"] = str(RUN_RECORD_SCRIPT)
     os.environ.pop("CLAUDE_PLUGIN_ROOT", None)
     shim_dir = tmp_path_factory.mktemp("no-host-herdr")
-    shim = shim_dir / "herdr"
-    shim.write_text(_SHADOW_HERDR)
-    shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    for name in ("herdr", "hc"):
+        shim = shim_dir / name
+        shim.write_text(_SHADOW_HERDR)
+        shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     os.environ["PATH"] = f"{shim_dir}{os.pathsep}{saved_path}"
     try:
         yield

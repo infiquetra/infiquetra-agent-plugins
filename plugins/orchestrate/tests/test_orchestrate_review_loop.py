@@ -84,6 +84,17 @@ def orchestrate() -> ModuleType:
     return module
 
 
+# Sessions are herdr core terminals, so a unit's recorded terminal is an hc address (``tN``).
+# hc never reuses an address, which is why Orchestrate matches a unit's terminal exactly.
+CONTROLLER_ADDRESS = "t9"
+_WORKER_ADDRESSES: dict[str, str] = {}
+
+
+def _address(name: str) -> str:
+    """A stable hc address for the named worker's terminal, one per name."""
+    return _WORKER_ADDRESSES.setdefault(name, f"t{10 + len(_WORKER_ADDRESSES)}")
+
+
 def _controller(orchestrate: ModuleType) -> Any:
     return orchestrate.Unit(
         name="code-review-controller",
@@ -91,7 +102,7 @@ def _controller(orchestrate: ModuleType) -> Any:
         task="/saga:code-review review the run branch",
         role="review-controller",
         merge=False,
-        pane_id="pane-review",
+        pane_id=CONTROLLER_ADDRESS,
         agent_name="review-agent",
         status="done",
     )
@@ -112,7 +123,7 @@ def _worker(
         task="/saga:work docs/plans/build.md",
         role=role,
         paths=list(paths),
-        pane_id=f"pane-{name}" if live else None,
+        pane_id=_address(name) if live else None,
         agent_name=f"agent-{name}" if live else None,
         status="done",
     )
@@ -503,11 +514,11 @@ def test_failed_live_dispatch_keeps_the_result_retryable_and_the_worker_protecte
     monkeypatch.setattr(orchestrate, "live_agents", lambda: _live(worker))
     attempts: list[str] = []
 
-    def flaky_prompt(handle: str, text: str) -> None:
+    def flaky_prompt(address: str, text: str) -> None:
         protected = next(
             u
             for u in orchestrate.Run.load(_support.TEST_ISSUE, test_store()).units
-            if (u.agent_name or u.name) == handle
+            if u.pane_id == address
         )
         assert [request["fix_id"] for request in protected.fix_requests] == ["retry-dispatch"]
         attempts.append(text)
@@ -832,11 +843,11 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
         vendor="claude",
         task="work",
         worktree=str(worktree),
-        tab_id="w1:t1",
+        tab_id="t5",
         # The receipt is no longer persisted, so the ownership fact the close needs lives on the
         # unit itself (issue #1025). Both are set here: the receipt for the in-memory path, the
         # field for everything after a reload.
-        launch_receipt={"tab_id": "w1:t1", "owned": True},
+        launch_receipt={"tab_id": "t5", "owned": True},
         owned=True,
         status="done",
     )
@@ -844,11 +855,12 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
     real_run = orchestrate.run
 
     def selective_run(cmd: list[str], **kwargs: object) -> Any:
-        if cmd[:3] == ["herdr", "tab", "close"]:
-            return subprocess.CompletedProcess(cmd, 1, "", "herdr refused; pane is busy")
-        if cmd[:3] == ["herdr", "tab", "list"]:
-            tabs = {"result": {"tabs": [{"tab_id": "w1:t1", "label": "t"}]}}
-            return subprocess.CompletedProcess(cmd, 0, json.dumps(tabs), "")
+        if cmd[:3] == ["hc", "kill", "t5"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "hc refused; terminal is busy")
+        if cmd[:3] == ["hc", "get", "t5"]:
+            # hc still shows the program running, so the refused kill is a real failure.
+            live = {"address": "t5", "state": "live", "status": {"app": "claude-code"}}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(live), "")
         return real_run(cmd, **kwargs)
 
     monkeypatch.setattr(orchestrate, "run", selective_run)
@@ -866,7 +878,7 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
     saved = orchestrate.Run.load(_support.TEST_ISSUE, test_store()).unit("worker")
 
     assert worktree.exists()
-    failure = "tab close failed (1) for w1:t1: herdr refused; pane is busy"
+    failure = "tab close failed (1) for t5: hc refused; terminal is busy"
     assert saved.note == failure
     assert f"kept worker: {failure}" in first_output
     assert "kept (not done, or its work not on the run branch): worker" not in first_output
@@ -1087,12 +1099,28 @@ def test_landed_work_repairs_resubmit_the_exact_revision_to_the_same_controller(
 
 
 def _claude_composer_pane(composer_line: str) -> str:
-    """The same unbordered Claude/Grok composer geometry the launch tests use."""
-    rule = "\x1b[2m──────────────────────────────\x1b[0m"
+    """The unbordered Claude/Grok composer geometry, as ``hc read`` prints it: plain text."""
+    rule = "──────────────────────────────"
     return f"{rule}\n{composer_line}\n{rule}\n"
 
 
-def _record_herdr_boundary(
+def _is_send(cmd: list[str]) -> bool:
+    return cmd[:2] == ["hc", "send"]
+
+
+def _is_composer_read(cmd: list[str]) -> bool:
+    """The input-box inspection: the screen only, no history."""
+    return cmd[:2] == ["hc", "read"] and cmd[3:] == ["--lines", "0"]
+
+
+def _reporting_terminal(address: str) -> str:
+    """``hc get ADDRESS --json`` for a terminal whose agent reports a status word."""
+    return json.dumps(
+        {"address": address, "state": "live", "status": {"app": "claude-code", "state": "idle"}}
+    )
+
+
+def _record_hc_boundary(
     orchestrate: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     pane_dumps: list[str],
@@ -1103,10 +1131,10 @@ def _record_herdr_boundary(
 
     def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
         recorded.append(list(cmd))
-        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
+        if _is_composer_read(cmd):
             return subprocess.CompletedProcess(cmd, 0, next(dumps), "")
-        if cmd[:3] == ["herdr", "agent", "prompt"]:
-            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["hc", "get"]:
+            return subprocess.CompletedProcess(cmd, 0, _reporting_terminal(cmd[2]), "")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(orchestrate, "run", fake_run)
@@ -1118,17 +1146,20 @@ def _stub_prompt_door(
     monkeypatch: pytest.MonkeyPatch,
     on_prompt: Callable[[str, str], None],
 ) -> None:
-    """Stub the prompt door at the Herdr boundary, never the writer: ``on_prompt(handle,
-    text)`` may raise to model a transport failure; pane reads answer an empty composer;
-    every other command reaches the real ``run``."""
+    """Stub the prompt door at the herdr core boundary, never the writer: ``on_prompt(address,
+    text)`` may raise to model a transport failure; composer reads answer an empty composer;
+    ``hc get`` answers a terminal that reports a status; every other command reaches the
+    real ``run``."""
     real_run = orchestrate.run
 
     def fake_run(cmd: list[str], *a: Any, **k: Any) -> subprocess.CompletedProcess[str]:
-        if cmd[:3] == ["herdr", "agent", "prompt"]:
-            on_prompt(cmd[3], cmd[4])
+        if _is_send(cmd):
+            on_prompt(cmd[2], cmd[3])
             return subprocess.CompletedProcess(cmd, 0, "", "")
-        if cmd[:3] == ["herdr", "pane", "read"]:
+        if _is_composer_read(cmd):
             return subprocess.CompletedProcess(cmd, 0, _claude_composer_pane("❯ "), "")
+        if cmd[:2] == ["hc", "get"]:
+            return subprocess.CompletedProcess(cmd, 0, _reporting_terminal(cmd[2]), "")
         result: subprocess.CompletedProcess[str] = real_run(cmd, *a, **k)
         return result
 
@@ -1136,11 +1167,11 @@ def _stub_prompt_door(
 
 
 def _prompt_calls(recorded: list[list[str]]) -> list[list[str]]:
-    return [cmd for cmd in recorded if cmd[:3] == ["herdr", "agent", "prompt"]]
+    return [cmd for cmd in recorded if _is_send(cmd)]
 
 
 def _pane_reads(recorded: list[list[str]]) -> list[list[str]]:
-    return [cmd for cmd in recorded if cmd[:3] == ["herdr", "pane", "read"]]
+    return [cmd for cmd in recorded if cmd[:2] == ["hc", "read"]]
 
 
 def test_unowned_review_dispatch_with_draft_refuses(
@@ -1150,8 +1181,8 @@ def test_unowned_review_dispatch_with_draft_refuses(
     """SEC-02: an unowned live worker holding a draft is not prompted.
 
     Evidence before the edit: at the frozen revision the default sender calls
-    ``say`` with no inspection, so this test fails by observing an ``agent
-    prompt`` and no StagedInputError-class stop on the unit.
+    ``say`` with no inspection, so this test fails by observing an ``hc
+    send`` and no StagedInputError-class stop on the unit.
     """
     controller = _controller(orchestrate)
     fixer = _worker(orchestrate, "api-builder", "review-fixer", "src/api")
@@ -1162,7 +1193,7 @@ def test_unowned_review_dispatch_with_draft_refuses(
         _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
         agents=_live(fixer),
     )
-    recorded = _record_herdr_boundary(
+    recorded = _record_hc_boundary(
         orchestrate,
         monkeypatch,
         [_claude_composer_pane("❯ operator draft that was never sent")],
@@ -1194,7 +1225,7 @@ def test_unowned_review_dispatch_with_empty_sends(
         _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
         agents=_live(fixer),
     )
-    recorded = _record_herdr_boundary(
+    recorded = _record_hc_boundary(
         orchestrate,
         monkeypatch,
         [_claude_composer_pane("❯ ")],
@@ -1225,7 +1256,7 @@ def test_owned_review_dispatch_inspects_once_before_its_send(
         _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
         agents=_live(fixer),
     )
-    recorded = _record_herdr_boundary(orchestrate, monkeypatch, [_claude_composer_pane("❯ ")])
+    recorded = _record_hc_boundary(orchestrate, monkeypatch, [_claude_composer_pane("❯ ")])
 
     dispatched = orchestrate.dispatch_review_routing(routing)
 
@@ -1236,13 +1267,14 @@ def test_owned_review_dispatch_inspects_once_before_its_send(
     assert fixer.launch_receipt["input_box"] == "empty"
 
 
-def test_a_live_worker_with_no_pane_is_prompted_without_a_read(
+def test_a_live_worker_with_no_terminal_stops_without_a_read_or_a_send(
     orchestrate: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Terminal review cycle 2, F53: a live worker with an agent handle but no recorded pane
-    cannot be inspected; the writer prompts it through the handle -- one prompt, zero pane
-    reads, no stop."""
+    """Terminal review cycle 2, F53, in herdr core's form: a live worker with no recorded
+    terminal has no address to send to. Old Herdr prompted it through its agent handle; hc has
+    no such door, so the writer stops with a named reason -- zero reads, zero sends -- and the
+    dispatch leaves the worker as it was."""
     controller = _controller(orchestrate)
     fixer = _worker(orchestrate, "api-builder", "review-fixer", "src/api")
     fixer.pane_id = None
@@ -1252,14 +1284,16 @@ def test_a_live_worker_with_no_pane_is_prompted_without_a_read(
         _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
         agents=_live(fixer),
     )
-    recorded = _record_herdr_boundary(orchestrate, monkeypatch, [])
+    recorded = _record_hc_boundary(orchestrate, monkeypatch, [])
 
-    dispatched = orchestrate.dispatch_review_routing(routing)
+    prior_status = fixer.status
 
-    assert dispatched == ["api-builder"]
+    with pytest.raises(SystemExit, match="no herdr core terminal to send to"):
+        orchestrate.dispatch_review_routing(routing)
+
     assert _pane_reads(recorded) == []
-    assert len(_prompt_calls(recorded)) == 1
-    assert fixer.status == "running"
+    assert _prompt_calls(recorded) == []
+    assert fixer.status == prior_status
 
 
 def test_owned_review_dispatch_with_draft_refuses(
@@ -1277,7 +1311,7 @@ def test_owned_review_dispatch_with_draft_refuses(
         _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
         agents=_live(fixer),
     )
-    recorded = _record_herdr_boundary(
+    recorded = _record_hc_boundary(
         orchestrate, monkeypatch, [_claude_composer_pane("❯ operator draft that was never sent")]
     )
 
@@ -1303,7 +1337,7 @@ def test_adopted_review_dispatch_without_a_receipt_is_unowned(
         _result("repairs_requested", _request("fix-api", "review-fixer", "src/api/routes.py")),
         agents=_live(fixer),
     )
-    recorded = _record_herdr_boundary(
+    recorded = _record_hc_boundary(
         orchestrate,
         monkeypatch,
         [_claude_composer_pane("❯ operator draft that was never sent")],
@@ -1330,7 +1364,7 @@ def test_unowned_land_resubmit_with_draft_refuses(
     worker = _worker(orchestrate, "builder", "review-fixer", "src")
     run = _run(orchestrate, worker, controller)
     run.review_resubmit_pending = True
-    recorded = _record_herdr_boundary(
+    recorded = _record_hc_boundary(
         orchestrate,
         monkeypatch,
         [_claude_composer_pane("❯ operator draft that was never sent")],
@@ -1357,7 +1391,7 @@ def test_owned_land_resubmit_inspects_once_before_its_send(
     worker = _worker(orchestrate, "builder", "review-fixer", "src")
     run = _run(orchestrate, worker, controller)
     run.review_resubmit_pending = True
-    recorded = _record_herdr_boundary(orchestrate, monkeypatch, [_claude_composer_pane("❯ ")])
+    recorded = _record_hc_boundary(orchestrate, monkeypatch, [_claude_composer_pane("❯ ")])
 
     resubmitted = orchestrate.resubmit_review_if_ready(run, "0123456789abcdef")
 
@@ -1379,15 +1413,15 @@ def test_a_staged_stop_on_one_controller_does_not_block_the_other_controllers_re
     frozen revision the first controller's StagedInputError escaped the loop and the second
     was skipped silently, on every subsequent land, in the same order."""
     first = _controller(orchestrate)
-    first.name, first.lifecycle, first.pane_id = "review-a", "a", "pane-a"
+    first.name, first.lifecycle, first.pane_id = "review-a", "a", "t21"
     first.launch_receipt = {"owned": True}
     second = _controller(orchestrate)
-    second.name, second.lifecycle, second.pane_id = "review-b", "b", "pane-b"
+    second.name, second.lifecycle, second.pane_id = "review-b", "b", "t22"
     second.launch_receipt = {"owned": True}
     run = _run(orchestrate, first, second)
     run.write_review_slot(first, review_resubmit_pending=True)
     run.write_review_slot(second, review_resubmit_pending=True)
-    recorded = _record_herdr_boundary(
+    recorded = _record_hc_boundary(
         orchestrate,
         monkeypatch,
         [
@@ -1401,7 +1435,7 @@ def test_a_staged_stop_on_one_controller_does_not_block_the_other_controllers_re
 
     prompts = _prompt_calls(recorded)
     assert len(prompts) == 1
-    assert prompts[0][3] == second.agent_name
+    assert prompts[0][2] == second.pane_id
     assert second.status == "running"
     assert run.review_slot(second)["review_resubmit_pending"] is False
     assert first.status == "done"
@@ -1454,15 +1488,17 @@ def test_land_exits_4_when_the_resubmission_is_withheld_on_staged_input(
     prompts: list[str] = []
     real_run = orchestrate.run
 
-    def herdr_boundary(cmd: list[str], *a: Any, **k: Any) -> Any:
-        if cmd[:3] == ["herdr", "agent", "prompt"]:
-            prompts.append(cmd[4])
+    def hc_boundary(cmd: list[str], *a: Any, **k: Any) -> Any:
+        if _is_send(cmd):
+            prompts.append(cmd[3])
             return subprocess.CompletedProcess(cmd, 0, "", "")
-        if cmd[:3] == ["herdr", "pane", "read"] and "--format" in cmd:
+        if _is_composer_read(cmd):
             return subprocess.CompletedProcess(cmd, 0, next(dumps), "")
+        if cmd[:2] == ["hc", "get"]:
+            return subprocess.CompletedProcess(cmd, 0, _reporting_terminal(cmd[2]), "")
         return real_run(cmd, *a, **k)
 
-    monkeypatch.setattr(orchestrate, "run", herdr_boundary)
+    monkeypatch.setattr(orchestrate, "run", hc_boundary)
 
     assert orchestrate.cmd_merge(NS(clean=False)) == 4
     first_output = capsys.readouterr().out
@@ -1659,7 +1695,7 @@ def test_land_in_lifecycle_a_does_not_resubmit_a_running_controller_in_lifecycle
         lifecycle="cA",
         merge=False,
         status="done",
-        pane_id="pane-a",
+        pane_id="t21",
         agent_name="agent-a",
     )
     controller_b = orchestrate.Unit(
@@ -1670,7 +1706,7 @@ def test_land_in_lifecycle_a_does_not_resubmit_a_running_controller_in_lifecycle
         lifecycle="cB",
         merge=False,
         status=orchestrate.RUNNING,
-        pane_id="pane-b",
+        pane_id="t22",
         agent_name="agent-b",
     )
     worker_a = orchestrate.Unit(
@@ -1714,7 +1750,7 @@ def test_a_non_staged_resubmit_write_failure_does_not_abort_later_controllers(
         lifecycle="cA",
         merge=False,
         status="done",
-        pane_id="pane-a",
+        pane_id="t21",
         agent_name="agent-a",
     )
     second = orchestrate.Unit(
@@ -1725,7 +1761,7 @@ def test_a_non_staged_resubmit_write_failure_does_not_abort_later_controllers(
         lifecycle="cB",
         merge=False,
         status="done",
-        pane_id="pane-b",
+        pane_id="t22",
         agent_name="agent-b",
     )
     run = _run(orchestrate, first, second)
