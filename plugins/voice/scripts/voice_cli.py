@@ -5,16 +5,17 @@ Commands:
 
 - ``pane`` — run the Voice pane loop in this pane (R13). The pane is the
   operator surface for the conversational loop.
-- ``bind <agent>`` — bind voice to one Herdr agent explicitly (KTD7).
-  The agent is resolved once through ``herdr agent get``; the binding is
-  sticky until an explicit rebind (R2).
+- ``bind <terminal>`` — bind voice to one Claude session explicitly (KTD7),
+  named by its herdr core terminal: a name (``review``) or an address
+  (``t7``). The terminal is resolved once through ``hc get``; the binding
+  is sticky until an explicit rebind (R2).
 - ``preflight`` — probe the declared providers, the stop keybinding, and
   the operator-supplied executables, naming every missing prerequisite
   (R22).
 - ``toggle`` — one recording toggle press, sharing the pane's listen-path
   sequencer (KTD16).
 - ``stop`` — stop playback immediately; the command the operator's
-  Herdr-wide stop keybinding invokes (R8 support).
+  Herdr-wide stop key invokes (R8 support).
 - ``policy`` — inspect or configure voice policy (``show``, ``brief-next-turn``).
 
 This CLI is the only command surface the package ships; the Agent Skill
@@ -27,96 +28,59 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 
 __all__ = ["main"]
 
-#: Bounded helper deadline (KTD3a): ``herdr agent get`` is a helper call.
+#: Bounded helper deadline (KTD3a): ``hc get`` is a helper call.
 HELPER_TIMEOUT_SECONDS = 10.0
 
 
-def _parse_json_object(text: str) -> dict | None:
-    try:
-        payload = json.loads(text)
-    except ValueError:
-        return None
-    return payload if isinstance(payload, dict) else None
+def _bind(target: str) -> int:
+    """Resolve one herdr core terminal and write the sticky binding (KTD7).
 
-
-def _error_message(payload: dict | None) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-    error = payload.get("error")
-    if isinstance(error, dict):
-        message = error.get("message")
-        if isinstance(message, str) and message.strip():
-            return message.strip()
-    return None
-
-
-def _session_value(record: dict) -> object:
-    session = record.get("agent_session")
-    if not isinstance(session, dict):
-        return None
-    return session.get("value")
-
-
-def _bind(agent: str) -> int:
-    """Resolve one Herdr agent and write the sticky binding (KTD7)."""
+    The terminal must be live, on this machine, and labelled with the
+    Claude session running in it (``voice.agent-session``, written by the
+    Claude adapter's SessionStart hook). The binding stores the terminal's
+    address, which herdr core never reuses, so delivery can never reach a
+    different terminal that later takes the same name.
+    """
     import binding
+    import herdr_core
     import process
 
+    def refuse(reason: str) -> int:
+        print(f"voice: cannot bind {target!r}: {reason}", file=sys.stderr)
+        return 1
+
     try:
-        completed = process.run(
-            ["herdr", "agent", "get", agent],
-            timeout=HELPER_TIMEOUT_SECONDS,
-            check=False,
+        record = herdr_core.get_terminal(
+            target, timeout=HELPER_TIMEOUT_SECONDS, run_process=process.run
         )
-    except subprocess.TimeoutExpired:
-        print(
-            "voice: herdr did not answer within "
-            f"{HELPER_TIMEOUT_SECONDS:.0f} seconds",
-            file=sys.stderr,
+    except herdr_core.CoreRefusal as refusal:
+        return refuse(refusal.reason)
+    address = record["address"]
+    if herdr_core.is_other_machine(address):
+        return refuse(
+            f"it is terminal {address} on another machine; voice records and "
+            "plays audio on this machine, so it binds only a terminal here"
         )
-        return 1
-    except OSError as error:
-        print(f"voice: cannot run herdr: {error}", file=sys.stderr)
-        return 1
-    payload = _parse_json_object(completed.stdout)
-    if completed.returncode != 0 or payload is None:
-        # herdr answers successes on stdout and error envelopes on stderr.
-        message = _error_message(payload) or _error_message(
-            _parse_json_object(completed.stderr)
-        ) or (f"herdr exited with status {completed.returncode}")
-        print(f"voice: cannot bind {agent!r}: {message}", file=sys.stderr)
-        return 1
-    result = payload.get("result")
-    record = result.get("agent") if isinstance(result, dict) else None
-    if not isinstance(record, dict):
-        print(
-            f"voice: cannot bind {agent!r}: herdr returned no agent record",
-            file=sys.stderr,
+    if not herdr_core.is_live(record):
+        return refuse(f"terminal {address} has finished")
+    session_id = herdr_core.session_of(record)
+    if session_id is None:
+        return refuse(
+            f"terminal {address} carries no {herdr_core.SESSION_LABEL} label, so "
+            "herdr core cannot say which Claude session runs there. Is the voice "
+            "plugin enabled in that Claude session? Its SessionStart hook writes "
+            "the label: restart or resume that session, then bind again"
         )
-        return 1
-    resolved = {
-        "agent name": record.get("name"),
-        "session id": _session_value(record),
-        "pane id": record.get("pane_id"),
-    }
-    for label, value in resolved.items():
-        if not isinstance(value, str) or not value.strip():
-            print(
-                f"voice: cannot bind {agent!r}: herdr returned no {label}",
-                file=sys.stderr,
-            )
-            return 1
-    written = binding.write_binding(
-        resolved["agent name"], resolved["session id"], resolved["pane id"]
-    )
+    name = record.get("name")
+    agent = name.strip() if isinstance(name, str) and name.strip() else address
+    written = binding.write_binding(agent, session_id, address)
     print(
         f"bound agent {written.agent} · session {written.session_id} · "
-        f"pane {written.pane_id}"
+        f"terminal {written.terminal}"
     )
     return 0
 
@@ -176,9 +140,13 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("pane", help="run the Voice pane loop in this pane")
     bind_parser = subparsers.add_parser(
-        "bind", help="bind voice to one Herdr agent explicitly"
+        "bind", help="bind voice to one Claude session's herdr core terminal"
     )
-    bind_parser.add_argument("agent", help="the Herdr agent name to bind")
+    bind_parser.add_argument(
+        "agent",
+        metavar="terminal",
+        help="the herdr core terminal to bind: its name or its address (t7)",
+    )
     subparsers.add_parser(
         "preflight",
         help="probe the declared providers, keybinding, and executables",

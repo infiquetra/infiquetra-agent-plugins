@@ -1,11 +1,16 @@
 """The sticky single-speaker binding store (portable core).
 
-Voice binds to exactly one Herdr agent, chosen explicitly by the operator,
-and stays bound until the operator explicitly changes it (R2). This module
-is the store for that binding: ``binding.json`` under the machine-local
-state directory carries the Herdr agent name, the Claude session id that
-joins the hook to the agent (the ``agent_session.value`` of ``herdr agent
-list``), the pane id, and a bound-at timestamp.
+Voice binds to exactly one Claude session, chosen explicitly by the
+operator, and stays bound until the operator explicitly changes it (R2).
+This module is the store for that binding: ``binding.json`` under the
+machine-local state directory carries the agent's name (the herdr core
+terminal's name, or its address when it has none), the Claude session id
+that joins the hook to the agent (the terminal's ``voice.agent-session``
+label), the herdr core terminal address (``t7``), and a bound-at timestamp.
+
+A binding written before herdr core (with a ``pane_id`` and no
+``terminal``) reads as unreadable, so the pane asks for a rebind instead of
+aiming at an old Herdr pane that no longer exists.
 
 The binding is single-valued and sticky. Writing replaces the whole record
 — that is the only mutation path — and nothing here ever infers a target
@@ -55,23 +60,23 @@ STATUS_ABSENT = "absent"
 #: A binding file exists but does not read as one usable record.
 STATUS_CORRUPT = "corrupt"
 
-_FIELDS = ("agent", "session_id", "pane_id", "bound_at")
+_FIELDS = ("agent", "session_id", "terminal", "bound_at")
 
 
 @dataclass(frozen=True)
 class Binding:
-    """The one bound identity: Herdr agent, Claude session, pane, bound-at."""
+    """The one bound identity: agent name, Claude session, terminal, bound-at."""
 
     agent: str
     session_id: str
-    pane_id: str
+    terminal: str
     bound_at: str
 
     def to_payload(self) -> dict[str, str]:
         return {
             "agent": self.agent,
             "session_id": self.session_id,
-            "pane_id": self.pane_id,
+            "terminal": self.terminal,
             "bound_at": self.bound_at,
         }
 
@@ -110,21 +115,21 @@ def _binding_path() -> Path:
 def write_binding(
     agent: str,
     session_id: str,
-    pane_id: str,
+    terminal: str,
     *,
     bound_at: str | None = None,
 ) -> Binding:
     """Write the one binding record, replacing whatever was bound before.
 
-    The values are the resolved Herdr identity (the caller resolves them
-    through ``herdr agent get``; this store never calls out). ``bound_at``
+    The values are the resolved herdr core identity (the caller resolves
+    them through ``hc get``; this store never calls out). ``bound_at``
     defaults to the current UTC timestamp. The write is atomic and creates
     the state directory when it does not exist yet.
     """
     record = Binding(
         agent=_stated_field("agent", agent),
         session_id=_stated_field("session_id", session_id),
-        pane_id=_stated_field("pane_id", pane_id),
+        terminal=_stated_field("terminal", terminal),
         bound_at=_stated_field("bound_at", bound_at)
         if bound_at is not None
         else datetime.now(UTC).isoformat(),

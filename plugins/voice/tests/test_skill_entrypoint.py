@@ -221,35 +221,34 @@ class CliSurfaceTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_bind_failure_surfaces_the_error_envelope_without_writing(self) -> None:
-        # The herdr error envelope rides stderr; its message must surface,
-        # and a failed bind must write no binding.
+        # herdr core reports a failure as {"error": {...}} on stderr and a
+        # non-zero exit; its message must surface, and a failed bind must
+        # write no binding.
         import contextlib
         import io
 
         envelope = {
-            "id": "cli:agent:get",
             "error": {
-                "code": "agent_not_found",
-                "message": "agent target no-such-agent not found",
-            },
+                "kind": "not_found",
+                "message": "no terminal named no-such-agent",
+                "hint": "hc ls lists live terminals",
+            }
         }
-        failed = subprocess.CompletedProcess(
-            args=["herdr", "agent", "get", "no-such-agent"],
-            returncode=1,
-            stdout="",
+        failed = subprocess.CalledProcessError(
+            3,
+            ["hc", "get", "no-such-agent", "--json"],
+            output="",
             stderr=json.dumps(envelope),
         )
         stderr_buffer = io.StringIO()
         with tempfile.TemporaryDirectory() as state_dir, mock.patch.dict(
-            os.environ, {"VOICE_STATE_DIR": state_dir}
-        ), mock.patch.object(process, "run", return_value=failed):
+            os.environ, {"VOICE_STATE_DIR": state_dir, "VOICE_HC_BIN": "hc"}
+        ), mock.patch.object(process, "run", side_effect=failed):
             with contextlib.redirect_stderr(stderr_buffer):
                 exit_code = voice_cli.main(["bind", "no-such-agent"])
             binding_written = (Path(state_dir) / "binding.json").exists()
         self.assertEqual(exit_code, 1)
-        self.assertIn(
-            "agent target no-such-agent not found", stderr_buffer.getvalue()
-        )
+        self.assertIn("no terminal named no-such-agent", stderr_buffer.getvalue())
         self.assertFalse(binding_written)
 
 
@@ -258,70 +257,93 @@ class CliBindTests(unittest.TestCase):
 
     SESSION_ID = "11111111-2222-4333-8444-555555555555"
 
-    def _envelope(self, **overrides) -> dict:
-        agent = {
-            "agent": "claude",
+    def _record(self, **overrides) -> dict:
+        record = {
+            "address": "t7",
             "name": "example-agent",
-            "agent_session": {
-                "agent": "claude",
-                "kind": "id",
-                "source": "herdr:claude",
-                "value": self.SESSION_ID,
-            },
-            "agent_status": "idle",
-            "pane_id": "w1:p1",
+            "state": "live",
+            "status": {"state": "idle"},
+            "labels": {"voice.agent-session": self.SESSION_ID},
+            "argv": ["claude"],
         }
-        agent.update(overrides)
-        return {
-            "id": "cli:agent:get",
-            "result": {"type": "agent_info", "agent": agent},
-        }
+        record.update(overrides)
+        return record
 
-    def _completed(self, envelope: dict) -> subprocess.CompletedProcess:
+    def _completed(self, record: dict) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(
-            args=["herdr", "agent", "get", "example-agent"],
+            args=["hc", "get", "example-agent", "--json"],
             returncode=0,
-            stdout=json.dumps(envelope),
+            stdout=json.dumps(record),
             stderr="",
         )
 
-    def test_bind_success_writes_the_sticky_binding(self) -> None:
-        with tempfile.TemporaryDirectory() as state_dir, mock.patch.dict(
-            os.environ, {"VOICE_STATE_DIR": state_dir}
-        ), mock.patch.object(
-            process, "run", return_value=self._completed(self._envelope())
-        ) as run_seam:
-            exit_code = voice_cli.main(["bind", "example-agent"])
-            binding_payload = json.loads(
-                (Path(state_dir) / "binding.json").read_text(encoding="utf-8")
-            )
-        self.assertEqual(exit_code, 0)
-        argv = run_seam.call_args[0][0]
-        self.assertEqual(argv, ["herdr", "agent", "get", "example-agent"])
-        self.assertEqual(run_seam.call_args.kwargs["timeout"], 10.0)
-        self.assertEqual(binding_payload["agent"], "example-agent")
-        self.assertEqual(binding_payload["session_id"], self.SESSION_ID)
-        self.assertEqual(binding_payload["pane_id"], "w1:p1")
-        self.assertTrue(binding_payload["bound_at"])
-
-    def test_bind_refuses_an_incomplete_agent_record_by_name(self) -> None:
+    def _bind(self, record: dict, target: str = "example-agent"):
         import contextlib
         import io
 
-        incomplete = self._envelope()
-        del incomplete["result"]["agent"]["pane_id"]
+        stdout_buffer = io.StringIO()
         stderr_buffer = io.StringIO()
         with tempfile.TemporaryDirectory() as state_dir, mock.patch.dict(
-            os.environ, {"VOICE_STATE_DIR": state_dir}
+            os.environ, {"VOICE_STATE_DIR": state_dir, "VOICE_HC_BIN": "hc"}
         ), mock.patch.object(
-            process, "run", return_value=self._completed(incomplete)
-        ):
-            with contextlib.redirect_stderr(stderr_buffer):
-                exit_code = voice_cli.main(["bind", "example-agent"])
-            binding_written = (Path(state_dir) / "binding.json").exists()
+            process, "run", return_value=self._completed(record)
+        ) as run_seam:
+            with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(
+                stderr_buffer
+            ):
+                exit_code = voice_cli.main(["bind", target])
+            path = Path(state_dir) / "binding.json"
+            payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+        return exit_code, payload, run_seam, stdout_buffer.getvalue(), stderr_buffer.getvalue()
+
+    def test_bind_success_writes_the_sticky_binding(self) -> None:
+        exit_code, payload, run_seam, stdout, _ = self._bind(self._record())
+        self.assertEqual(exit_code, 0)
+        argv = run_seam.call_args[0][0]
+        self.assertEqual(argv, ["hc", "get", "example-agent", "--json"])
+        self.assertEqual(run_seam.call_args.kwargs["timeout"], 10.0)
+        self.assertEqual(payload["agent"], "example-agent")
+        self.assertEqual(payload["session_id"], self.SESSION_ID)
+        self.assertEqual(payload["terminal"], "t7")
+        self.assertNotIn("pane_id", payload)
+        self.assertTrue(payload["bound_at"])
+        self.assertIn("terminal t7", stdout)
+
+    def test_bind_by_address_names_an_unnamed_terminal_by_its_address(self) -> None:
+        exit_code, payload, *_ = self._bind(self._record(name=None), target="t7")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["agent"], "t7")
+        self.assertEqual(payload["terminal"], "t7")
+
+    def test_bind_refuses_a_terminal_on_another_machine(self) -> None:
+        exit_code, payload, _, _, stderr = self._bind(
+            self._record(address="mini/t3"), target="mini/t3"
+        )
         self.assertEqual(exit_code, 1)
-        self.assertIn("pane id", stderr_buffer.getvalue())
-        self.assertFalse(binding_written)
+        self.assertIn("another machine", stderr)
+        self.assertIsNone(payload)
+
+    def test_bind_refuses_a_finished_terminal(self) -> None:
+        exit_code, payload, _, _, stderr = self._bind(self._record(state="finished"))
+        self.assertEqual(exit_code, 1)
+        self.assertIn("finished", stderr)
+        self.assertIsNone(payload)
+
+    def test_bind_refuses_a_terminal_without_the_session_label(self) -> None:
+        for labels in ({}, {"voice.agent-session": ""}, {"herdr.agentSession": "x"}):
+            with self.subTest(labels=labels):
+                exit_code, payload, _, _, stderr = self._bind(self._record(labels=labels))
+                self.assertEqual(exit_code, 1)
+                self.assertIn("voice.agent-session", stderr)
+                self.assertIsNone(payload)
+
+    def test_bind_refuses_an_incomplete_record_by_name(self) -> None:
+        incomplete = self._record()
+        del incomplete["address"]
+        exit_code, payload, _, _, stderr = self._bind(incomplete)
+        self.assertEqual(exit_code, 1)
+        self.assertIn("no address", stderr)
+        self.assertIsNone(payload)
 
 
 #: A wrong floor, split across literals so the floor scan does not read it as a declaration.

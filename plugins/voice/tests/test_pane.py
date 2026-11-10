@@ -30,7 +30,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 
 AGENT_NAME = "work-agent"
 SESSION_ID = "34ed4762-0000-4000-8000-000000000000"
-PANE_ID = "w1:p1"
+TERMINAL = "t7"
 
 
 def _bound_report() -> binding.BindingReport:
@@ -38,7 +38,7 @@ def _bound_report() -> binding.BindingReport:
         binding=binding.Binding(
             agent=AGENT_NAME,
             session_id=SESSION_ID,
-            pane_id=PANE_ID,
+            terminal=TERMINAL,
             bound_at="2026-08-25T00:00:00+00:00",
         ),
         status=binding.STATUS_BOUND,
