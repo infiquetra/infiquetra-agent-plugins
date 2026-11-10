@@ -7,6 +7,11 @@ contract treats the three as opaque; this module decides where they come
 from. They come from herdr core, which runs the terminal this Claude
 session lives in:
 
+0. Asks nothing of herdr core unless Auralis Core has published its bridge
+   discovery file (§2). Every caller uses the identity only to talk to the
+   bridge, and the PreToolUse hook resolves it on every tool call, so
+   without a bridge the answer would go unused while adding an ``hc`` call
+   to every tool use and a once-a-second presence retry in every session.
 1. Reads ``HC_TERMINAL_ID`` from its process environment via ``settings.py``.
    herdr core sets it in every terminal as that terminal's address (``t21``).
 2. Runs ``hc get <HC_TERMINAL_ID> --json`` (the ``VOICE_HC_BIN`` command)
@@ -25,8 +30,8 @@ session lives in:
    match ``agent_session_id``.
 7. The adapter must never copy identity from ``GET /v1/current``.
 
-A missing environment value, a missing executable, a command or record
-failure, a finished terminal, an address mismatch, a missing session label,
+No published bridge, a missing environment value, a missing executable, a
+command or record failure, a finished terminal, an address mismatch, a missing session label,
 or a session mismatch means the adapter registers and submits nothing.
 
 Old Herdr (``HERDR_PANE_ID``, ``HERDR_BIN_PATH`` and ``herdr agent list``)
@@ -46,6 +51,7 @@ __all__ = [
     "AdapterIdentity",
     "IdentityRefusal",
     "HC_TIMEOUT_SECONDS",
+    "auralis_bridge_published",
     "resolve_adapter_identity",
     "matches_session",
 ]
@@ -88,21 +94,43 @@ def matches_session(identity: AdapterIdentity, session_id: str) -> bool:
     return identity.agent_session_id == session_id
 
 
+def auralis_bridge_published() -> bool:
+    """Whether Auralis Core has published its bridge discovery file (§2).
+
+    Only the file's presence is checked here; ``bridge_client`` still
+    validates it strictly before any request.
+    """
+    import bridge_client  # Imported here: bridge_client imports this module.
+
+    try:
+        return bridge_client.DEFAULT_BRIDGE_FILE.expanduser().exists()
+    except (OSError, RuntimeError):
+        return False
+
+
 def resolve_adapter_identity(
     *,
     run_process: Callable = process.run,
     terminal_id_resolver: Callable[[], str] = settings.hc_terminal_id,
     bin_path_resolver: Callable[[], str] = settings.hc_bin,
+    bridge_published: Callable[[], bool] = auralis_bridge_published,
 ) -> AdapterIdentity:
     """Resolve the three-part adapter identity from herdr core (§5).
 
-    Reads ``HC_TERMINAL_ID`` and ``VOICE_HC_BIN`` through ``settings.py``,
-    runs ``hc get <terminal> --json``, and builds the validated
-    ``AdapterIdentity`` from the terminal's address and its
+    Refuses at once, without running ``hc``, when no Auralis bridge is
+    published. Otherwise reads ``HC_TERMINAL_ID`` and ``VOICE_HC_BIN``
+    through ``settings.py``, runs ``hc get <terminal> --json``, and builds
+    the validated ``AdapterIdentity`` from the terminal's address and its
     ``voice.agent-session`` label.
 
     Any failure produces an ``IdentityRefusal`` named refusal.
     """
+    if not bridge_published():
+        raise IdentityRefusal(
+            "no Auralis bridge is published, so no identity is needed and "
+            "herdr core is not asked"
+        )
+
     try:
         terminal_id = terminal_id_resolver()
     except settings.SettingsRefusal as refusal:

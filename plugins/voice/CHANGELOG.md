@@ -24,7 +24,8 @@ were unreachable from 0.4.1.
 
 - The Auralis bridge identity comes from herdr core: `HC_TERMINAL_ID`, `hc get`, and the
   terminal's `voice.agent-session` label. The terminal address is both `terminal_id` and
-  `pane_id`.
+  `pane_id`. It is resolved only while Auralis has published its bridge discovery file,
+  so without Auralis no hook or presence loop runs `hc`.
 
 - The settings `HERDR_PANE_ID` and `HERDR_BIN_PATH` are replaced by `HC_TERMINAL_ID` (set
   by herdr core) and `VOICE_HC_BIN` (default `hc`).

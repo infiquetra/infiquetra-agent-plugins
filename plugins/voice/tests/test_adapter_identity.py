@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -48,6 +49,16 @@ def _record_json(
     )
 
 
+def _resolve(**kwargs):
+    """Resolve with the Auralis bridge treated as published.
+
+    The default check looks for the operator's real discovery file, which
+    exists on some machines and not others; only the gate tests below use it.
+    """
+    kwargs.setdefault("bridge_published", lambda: True)
+    return adapter_identity.resolve_adapter_identity(**kwargs)
+
+
 def _env(**overrides: str) -> dict[str, str]:
     env = {settings.HC_TERMINAL_ID: TERMINAL, settings.HC_BIN: "/opt/example/hc"}
     env.update(overrides)
@@ -60,7 +71,7 @@ class AdapterIdentityTests(unittest.TestCase):
     def test_happy_path_resolves_three_components_exactly(self) -> None:
         fake_run = mock.Mock(return_value=_FakeCompletedProcess(_record_json()))
         with mock.patch.dict(os.environ, _env(), clear=True):
-            identity = adapter_identity.resolve_adapter_identity(run_process=fake_run)
+            identity = _resolve(run_process=fake_run)
 
         self.assertEqual(identity.agent_session_id, SESSION)
         self.assertEqual(identity.pane_id, TERMINAL)
@@ -83,7 +94,7 @@ class AdapterIdentityTests(unittest.TestCase):
     def test_the_herdr_core_command_defaults_to_hc(self) -> None:
         fake_run = mock.Mock(return_value=_FakeCompletedProcess(_record_json()))
         with mock.patch.dict(os.environ, {settings.HC_TERMINAL_ID: TERMINAL}, clear=True):
-            adapter_identity.resolve_adapter_identity(run_process=fake_run)
+            _resolve(run_process=fake_run)
         self.assertEqual(fake_run.call_args.args[0][0], "hc")
 
     def test_the_session_id_is_copied_byte_exact(self) -> None:
@@ -93,7 +104,7 @@ class AdapterIdentityTests(unittest.TestCase):
             return_value=_FakeCompletedProcess(_record_json(session_id=odd))
         )
         with mock.patch.dict(os.environ, _env(), clear=True):
-            identity = adapter_identity.resolve_adapter_identity(run_process=fake_run)
+            identity = _resolve(run_process=fake_run)
         self.assertEqual(identity.agent_session_id, odd)
 
     def test_old_herdr_variables_are_never_read(self) -> None:
@@ -101,7 +112,7 @@ class AdapterIdentityTests(unittest.TestCase):
         env = {"HERDR_PANE_ID": "w1:p1", "HERDR_BIN_PATH": "/bin/herdr"}
         with mock.patch.dict(os.environ, env, clear=True):
             with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=fake_run)
+                _resolve(run_process=fake_run)
         self.assertIn("HC_TERMINAL_ID", caught.exception.reason)
         fake_run.assert_not_called()
 
@@ -116,6 +127,29 @@ class AdapterIdentityTests(unittest.TestCase):
         self.assertFalse(adapter_identity.matches_session(identity, 123))  # type: ignore[arg-type]
 
 
+class BridgeGateTests(unittest.TestCase):
+    """No published Auralis bridge means no hc call at all."""
+
+    def test_no_published_bridge_refuses_without_running_hc(self) -> None:
+        fake_run = mock.Mock(return_value=_FakeCompletedProcess(_record_json()))
+        with mock.patch.dict(os.environ, _env(), clear=True):
+            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
+                adapter_identity.resolve_adapter_identity(
+                    run_process=fake_run, bridge_published=lambda: False
+                )
+        self.assertIn("no Auralis bridge", caught.exception.reason)
+        fake_run.assert_not_called()
+
+    def test_the_default_gate_looks_for_the_discovery_file_under_home(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            with mock.patch.dict(os.environ, {"HOME": home}):
+                self.assertFalse(adapter_identity.auralis_bridge_published())
+                bridge = Path(home) / "Library" / "Application Support" / "Auralis"
+                bridge.mkdir(parents=True)
+                (bridge / "bridge.json").write_text("{}", encoding="utf-8")
+                self.assertTrue(adapter_identity.auralis_bridge_published())
+
+
 class IdentityRefusalTests(unittest.TestCase):
     """Named refusals on missing or corrupt environment, command, or record."""
 
@@ -123,13 +157,13 @@ class IdentityRefusalTests(unittest.TestCase):
         fake_run = mock.Mock(return_value=_FakeCompletedProcess(stdout or _record_json()))
         with mock.patch.dict(os.environ, _env(**env_overrides), clear=True):
             with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=fake_run)
+                _resolve(run_process=fake_run)
         return caught.exception.reason
 
     def test_refusal_when_terminal_id_unset(self) -> None:
         with mock.patch.dict(os.environ, {settings.HC_BIN: "hc"}, clear=True):
             with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=mock.Mock())
+                _resolve(run_process=mock.Mock())
         self.assertIn("HC_TERMINAL_ID", caught.exception.reason)
 
     def test_refusal_when_terminal_id_or_command_empty(self) -> None:
@@ -152,13 +186,13 @@ class IdentityRefusalTests(unittest.TestCase):
                 fake_run = mock.Mock(side_effect=failure)
                 with mock.patch.dict(os.environ, _env(), clear=True):
                     with self.assertRaises(adapter_identity.IdentityRefusal):
-                        adapter_identity.resolve_adapter_identity(run_process=fake_run)
+                        _resolve(run_process=fake_run)
 
     def test_refusal_when_command_times_out(self) -> None:
         fake_run = mock.Mock(side_effect=subprocess.TimeoutExpired(["hc"], 2.0))
         with mock.patch.dict(os.environ, _env(), clear=True):
             with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=fake_run)
+                _resolve(run_process=fake_run)
         self.assertIn("deadline", caught.exception.reason)
 
     def test_refusal_when_output_is_not_a_terminal_record(self) -> None:

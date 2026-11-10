@@ -167,7 +167,10 @@ keys is the stated residual.
 The Auralis bridge identity is the terminal's `voice.agent-session` label as
 `agent_session_id`, and the terminal's address as both `terminal_id` and
 `pane_id`. herdr core has no panes; panes belong to the Herdr app's window and
-can move while the terminal keeps running.
+can move while the terminal keeps running. The identity is resolved only while
+Auralis has published its bridge discovery file: the PreToolUse hook resolves
+it on every tool call and the presence loop retries every second, so without
+that check every Claude session would run `hc get` that often for nothing.
 
 ## The Herdr-wide stop keybinding
 
