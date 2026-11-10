@@ -18,6 +18,10 @@ refused by name, never silently defaulted or coerced.
 - ``VOICE_RETENTION`` is a stated setting rather than a silent default:
   version one accepts exactly ``ephemeral``, and an operator must write it
   down for the package to run at all. Any other posture is refused by name.
+- ``HC_TERMINAL_ID`` is not voice's own setting: herdr core sets it in every
+  terminal it runs, as that terminal's address (``t21``). It carries no
+  default, because outside herdr core there is no terminal to name.
+- ``VOICE_HC_BIN`` is the herdr core command, ``hc`` on ``PATH`` by default.
 
 Every value here is non-secret. No setting may carry a credential: provider
 credentials are declared by name (never by value) in ``providers.py``, and
@@ -42,8 +46,8 @@ __all__ = [
     "PLAYBACK_BIN",
     "STATE_DIR",
     "RETENTION",
-    "HERDR_PANE_ID",
-    "HERDR_BIN_PATH",
+    "HC_TERMINAL_ID",
+    "HC_BIN",
     "forge_base_url",
     "forge_voice_id",
     "hermes_base_url",
@@ -52,8 +56,8 @@ __all__ = [
     "playback_bin",
     "state_dir",
     "retention",
-    "herdr_pane_id",
-    "herdr_bin_path",
+    "hc_terminal_id",
+    "hc_bin",
 ]
 
 
@@ -79,8 +83,8 @@ CAPTURE_BIN = "VOICE_CAPTURE_BIN"
 PLAYBACK_BIN = "VOICE_PLAYBACK_BIN"
 STATE_DIR = "VOICE_STATE_DIR"
 RETENTION = "VOICE_RETENTION"
-HERDR_PANE_ID = "HERDR_PANE_ID"
-HERDR_BIN_PATH = "HERDR_BIN_PATH"
+HC_TERMINAL_ID = "HC_TERMINAL_ID"
+HC_BIN = "VOICE_HC_BIN"
 
 #: The closed set of settings this package reads. Nothing outside this tuple
 #: is ever read from the environment, and no member may carry a secret.
@@ -93,8 +97,8 @@ SETTING_NAMES = (
     PLAYBACK_BIN,
     STATE_DIR,
     RETENTION,
-    HERDR_PANE_ID,
-    HERDR_BIN_PATH,
+    HC_TERMINAL_ID,
+    HC_BIN,
 )
 
 DEFAULT_HERMES_BASE_URL = "http://127.0.0.1:8765"
@@ -102,6 +106,7 @@ DEFAULT_HERMES_PROFILE = "mimir-engineer"
 DEFAULT_CAPTURE_BIN = "/opt/homebrew/bin/ffmpeg"
 DEFAULT_PLAYBACK_BIN = "/usr/bin/afplay"
 DEFAULT_STATE_DIR = "~/.local/state/voice"
+DEFAULT_HC_BIN = "hc"
 
 RETENTION_EPHEMERAL = "ephemeral"
 
@@ -184,11 +189,11 @@ def retention() -> str:
     return value
 
 
-def herdr_pane_id() -> str:
-    """Herdr pane identifier for the current process session. No default."""
-    return _stated(HERDR_PANE_ID, None)
+def hc_terminal_id() -> str:
+    """This process's herdr core terminal address, set by herdr core. No default."""
+    return _stated(HC_TERMINAL_ID, None)
 
 
-def herdr_bin_path() -> str:
-    """Path to the Herdr CLI executable. No default."""
-    return _stated(HERDR_BIN_PATH, None)
+def hc_bin() -> str:
+    """The herdr core command voice runs (``hc``)."""
+    return _stated(HC_BIN, DEFAULT_HC_BIN)

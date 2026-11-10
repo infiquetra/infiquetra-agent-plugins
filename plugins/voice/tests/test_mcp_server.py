@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from adapter_identity import AdapterIdentity, IdentityRefusal  # noqa: E402
 from bridge_client import BridgeClient  # noqa: E402
 from bridge_stub import DEFAULT_STUB_TOKEN, BridgeStub  # noqa: E402
+from hc_stub import terminal_record, write_fake_hc  # noqa: E402
 from mcp_server import MCPServer, PresenceWorker, run_server  # noqa: E402
 import turn_record  # noqa: E402
 
@@ -357,7 +358,7 @@ class AE26AndSurfaceRenderingTests(unittest.TestCase):
         )
 
         def _refuse_identity() -> AdapterIdentity:
-            raise IdentityRefusal("HERDR_PANE_ID missing")
+            raise IdentityRefusal("HC_TERMINAL_ID missing")
 
         unbound_server = MCPServer(
             bridge_client_instance=self.client,
@@ -611,20 +612,17 @@ class ExecutableEntrypointTests(unittest.TestCase):
         bridge_dir = self.home_dir / "Library" / "Application Support" / "Auralis"
         self.stub.write_discovery_file(bridge_dir)
 
-        # Set up mock herdr executable
-        self.herdr_path = Path(self.temp_dir.name) / "mock_herdr"
-        mock_herdr_code = (
-            "#!/bin/sh\n"
-            'echo \'{"result": {"type": "agent_list", "agents": [{"pane_id": "pane-subproc-1", "terminal_id": "term-subproc-1", "agent_session": {"value": "session-subproc-1"}}]}}\'\n'
+        # Fake herdr core command answering `hc get` for this terminal
+        self.hc_path = write_fake_hc(
+            Path(self.temp_dir.name) / "fake_hc",
+            terminal_record(address="t51", session_id="session-subproc-1"),
         )
-        self.herdr_path.write_text(mock_herdr_code, encoding="utf-8")
-        os.chmod(self.herdr_path, 0o755)
 
         # Set stub binding and turn
         self.identity_dict = {
             "agent_session_id": "session-subproc-1",
-            "pane_id": "pane-subproc-1",
-            "terminal_id": "term-subproc-1",
+            "pane_id": "t51",
+            "terminal_id": "t51",
         }
         self.stub.set_binding(VALID_UUID_1, self.identity_dict)
         self.stub.set_turn(VALID_UUID_2, VALID_UUID_1, state="open")
@@ -644,8 +642,8 @@ class ExecutableEntrypointTests(unittest.TestCase):
         env = dict(os.environ)
         env["HOME"] = str(self.home_dir)
         env["VOICE_STATE_DIR"] = str(self.state_dir)
-        env["HERDR_PANE_ID"] = "pane-subproc-1"
-        env["HERDR_BIN_PATH"] = str(self.herdr_path)
+        env["HC_TERMINAL_ID"] = "t51"
+        env["VOICE_HC_BIN"] = str(self.hc_path)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
 
         proc = subprocess.Popen(

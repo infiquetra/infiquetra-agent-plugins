@@ -1,8 +1,10 @@
 """Tests for the adapter identity resolver (KTD9; §5).
 
-Exercises the Section 5 identity discovery rule across happy paths, env var
-failures, executable failures, timeouts, envelope malformations, zero/multiple
-pane matches, and component-level corruptions.
+Exercises the Section 5 identity rule as voice now meets it through herdr
+core: the happy path, environment failures, command failures and timeouts,
+malformed records, a finished terminal, an address mismatch, and a missing
+or empty session label. ``hc`` is never run: every call goes through the
+injected ``run_process`` seam.
 """
 
 from __future__ import annotations
@@ -20,72 +22,93 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import adapter_identity  # noqa: E402
 import settings  # noqa: E402
 
+TERMINAL = "t42"
+SESSION = "session-abc-123"
+
 
 class _FakeCompletedProcess:
     def __init__(self, stdout: str) -> None:
         self.stdout = stdout
 
 
-def _valid_herdr_envelope(
+def _record_json(
     *,
-    pane_id: str = "w1:p1",
-    terminal_id: str = "term-1",
-    session_id: str = "session-abc-123",
+    address: str = TERMINAL,
+    session_id: str | None = SESSION,
+    state: str = "live",
 ) -> str:
+    labels = {} if session_id is None else {"voice.agent-session": session_id}
     return json.dumps(
         {
-            "result": {
-                "type": "agent_list",
-                "agents": [
-                    {
-                        "pane_id": pane_id,
-                        "terminal_id": terminal_id,
-                        "agent_session": {"value": session_id},
-                    }
-                ],
-            }
+            "address": address,
+            "state": state,
+            "labels": labels,
+            "status": {"state": "idle"},
         }
     )
+
+
+def _env(**overrides: str) -> dict[str, str]:
+    env = {settings.HC_TERMINAL_ID: TERMINAL, settings.HC_BIN: "/opt/example/hc"}
+    env.update(overrides)
+    return env
 
 
 class AdapterIdentityTests(unittest.TestCase):
     """Happy path and structure tests for AdapterIdentity."""
 
     def test_happy_path_resolves_three_components_exactly(self) -> None:
-        raw_json = _valid_herdr_envelope(
-            pane_id="w1:p2",
-            terminal_id="t-99",
-            session_id="session-xyz-789",
-        )
-        fake_run = mock.Mock(return_value=_FakeCompletedProcess(raw_json))
-        env = {
-            settings.HERDR_PANE_ID: "w1:p2",
-            settings.HERDR_BIN_PATH: "/bin/herdr",
-        }
-        with mock.patch.dict(os.environ, env, clear=True):
+        fake_run = mock.Mock(return_value=_FakeCompletedProcess(_record_json()))
+        with mock.patch.dict(os.environ, _env(), clear=True):
             identity = adapter_identity.resolve_adapter_identity(run_process=fake_run)
 
-        self.assertEqual(identity.agent_session_id, "session-xyz-789")
-        self.assertEqual(identity.pane_id, "w1:p2")
-        self.assertEqual(identity.terminal_id, "t-99")
+        self.assertEqual(identity.agent_session_id, SESSION)
+        self.assertEqual(identity.pane_id, TERMINAL)
+        self.assertEqual(identity.terminal_id, TERMINAL)
         self.assertEqual(
             identity.to_dict(),
             {
-                "agent_session_id": "session-xyz-789",
-                "pane_id": "w1:p2",
-                "terminal_id": "t-99",
+                "agent_session_id": SESSION,
+                "pane_id": TERMINAL,
+                "terminal_id": TERMINAL,
             },
         )
         fake_run.assert_called_once_with(
-            ["/bin/herdr", "agent", "list"],
-            timeout=adapter_identity.HERDR_TIMEOUT_SECONDS,
+            ["/opt/example/hc", "get", TERMINAL, "--json"],
+            timeout=adapter_identity.HC_TIMEOUT_SECONDS,
             check=True,
         )
+        self.assertEqual(adapter_identity.HC_TIMEOUT_SECONDS, 2.0)
+
+    def test_the_herdr_core_command_defaults_to_hc(self) -> None:
+        fake_run = mock.Mock(return_value=_FakeCompletedProcess(_record_json()))
+        with mock.patch.dict(os.environ, {settings.HC_TERMINAL_ID: TERMINAL}, clear=True):
+            adapter_identity.resolve_adapter_identity(run_process=fake_run)
+        self.assertEqual(fake_run.call_args.args[0][0], "hc")
+
+    def test_the_session_id_is_copied_byte_exact(self) -> None:
+        # Bridge identifiers are never trimmed or normalized (§4.9).
+        odd = " session-with-edges "
+        fake_run = mock.Mock(
+            return_value=_FakeCompletedProcess(_record_json(session_id=odd))
+        )
+        with mock.patch.dict(os.environ, _env(), clear=True):
+            identity = adapter_identity.resolve_adapter_identity(run_process=fake_run)
+        self.assertEqual(identity.agent_session_id, odd)
+
+    def test_old_herdr_variables_are_never_read(self) -> None:
+        fake_run = mock.Mock()
+        env = {"HERDR_PANE_ID": "w1:p1", "HERDR_BIN_PATH": "/bin/herdr"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
+                adapter_identity.resolve_adapter_identity(run_process=fake_run)
+        self.assertIn("HC_TERMINAL_ID", caught.exception.reason)
+        fake_run.assert_not_called()
 
     def test_matches_session_verification(self) -> None:
         identity = adapter_identity.AdapterIdentity(
             agent_session_id="session-1",
-            pane_id="p1",
+            pane_id="t1",
             terminal_id="t1",
         )
         self.assertTrue(adapter_identity.matches_session(identity, "session-1"))
@@ -94,202 +117,84 @@ class AdapterIdentityTests(unittest.TestCase):
 
 
 class IdentityRefusalTests(unittest.TestCase):
-    """Named refusals on missing/corrupt environment or command failure."""
+    """Named refusals on missing or corrupt environment, command, or record."""
 
-    def test_refusal_when_pane_id_unset(self) -> None:
-        env = {settings.HERDR_BIN_PATH: "/bin/herdr"}
-        with mock.patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity()
-            self.assertIn("HERDR_PANE_ID", caught.exception.reason)
-
-    def test_refusal_when_bin_path_unset(self) -> None:
-        env = {settings.HERDR_PANE_ID: "w1:p1"}
-        with mock.patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity()
-            self.assertIn("HERDR_BIN_PATH", caught.exception.reason)
-
-    def test_refusal_when_bin_path_empty(self) -> None:
-        env = {
-            settings.HERDR_PANE_ID: "w1:p1",
-            settings.HERDR_BIN_PATH: "",
-        }
-        with mock.patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity()
-            self.assertIn("HERDR_BIN_PATH", caught.exception.reason)
-
-    def test_refusal_when_executable_not_found_or_fails(self) -> None:
-        fake_run = mock.Mock(side_effect=FileNotFoundError("no such file"))
-        env = {
-            settings.HERDR_PANE_ID: "w1:p1",
-            settings.HERDR_BIN_PATH: "/bin/nonexistent",
-        }
-        with mock.patch.dict(os.environ, env, clear=True):
+    def _refuse(self, stdout: str | None = None, **env_overrides: str) -> str:
+        fake_run = mock.Mock(return_value=_FakeCompletedProcess(stdout or _record_json()))
+        with mock.patch.dict(os.environ, _env(**env_overrides), clear=True):
             with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
                 adapter_identity.resolve_adapter_identity(run_process=fake_run)
-            self.assertIn("Herdr command failed", caught.exception.reason)
+        return caught.exception.reason
 
-    def test_refusal_when_command_times_out(self) -> None:
-        fake_run = mock.Mock(
-            side_effect=subprocess.TimeoutExpired(
-                cmd=["/bin/herdr", "agent", "list"], timeout=2.0
-            )
-        )
-        env = {
-            settings.HERDR_PANE_ID: "w1:p1",
-            settings.HERDR_BIN_PATH: "/bin/herdr",
-        }
-        with mock.patch.dict(os.environ, env, clear=True):
+    def test_refusal_when_terminal_id_unset(self) -> None:
+        with mock.patch.dict(os.environ, {settings.HC_BIN: "hc"}, clear=True):
             with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=fake_run)
-            self.assertIn("timed out", caught.exception.reason)
+                adapter_identity.resolve_adapter_identity(run_process=mock.Mock())
+        self.assertIn("HC_TERMINAL_ID", caught.exception.reason)
 
-    def test_refusal_when_output_is_not_json(self) -> None:
-        fake_run = mock.Mock(return_value=_FakeCompletedProcess("not json at all"))
-        env = {
-            settings.HERDR_PANE_ID: "w1:p1",
-            settings.HERDR_BIN_PATH: "/bin/herdr",
-        }
-        with mock.patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=fake_run)
-            self.assertIn("not valid JSON", caught.exception.reason)
+    def test_refusal_when_terminal_id_or_command_empty(self) -> None:
+        self.assertIn("HC_TERMINAL_ID", self._refuse(**{settings.HC_TERMINAL_ID: ""}))
+        self.assertIn("VOICE_HC_BIN", self._refuse(**{settings.HC_BIN: "  "}))
 
-    def test_refusal_when_output_is_not_dict(self) -> None:
-        fake_run = mock.Mock(return_value=_FakeCompletedProcess('["agent_list"]'))
-        env = {
-            settings.HERDR_PANE_ID: "w1:p1",
-            settings.HERDR_BIN_PATH: "/bin/herdr",
-        }
-        with mock.patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=fake_run)
-            self.assertIn("not a JSON object", caught.exception.reason)
-
-    def test_refusal_when_envelope_result_is_missing_or_not_dict(self) -> None:
-        payload = json.dumps({"type": "agent_list"})
-        fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
-        env = {
-            settings.HERDR_PANE_ID: "w1:p1",
-            settings.HERDR_BIN_PATH: "/bin/herdr",
-        }
-        with mock.patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=fake_run)
-            self.assertIn("not a JSON object", caught.exception.reason)
-
-    def test_refusal_when_envelope_type_is_wrong(self) -> None:
-        payload = json.dumps({"result": {"type": "other_list", "agents": []}})
-        fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
-        env = {
-            settings.HERDR_PANE_ID: "w1:p1",
-            settings.HERDR_BIN_PATH: "/bin/herdr",
-        }
-        with mock.patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=fake_run)
-            self.assertIn("expected 'agent_list'", caught.exception.reason)
-
-    def test_refusal_when_agents_is_not_list(self) -> None:
-        payload = json.dumps({"result": {"type": "agent_list", "agents": {}}})
-        fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
-        env = {
-            settings.HERDR_PANE_ID: "w1:p1",
-            settings.HERDR_BIN_PATH: "/bin/herdr",
-        }
-        with mock.patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=fake_run)
-            self.assertIn("not a list", caught.exception.reason)
-
-    def test_refusal_when_zero_pane_matches(self) -> None:
-        payload = json.dumps(
-            {
-                "result": {
-                    "type": "agent_list",
-                    "agents": [
-                        {
-                            "pane_id": "other_pane",
-                            "terminal_id": "t1",
-                            "agent_session": {"value": "s1"},
-                        }
-                    ],
-                }
-            }
-        )
-        fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
-        env = {
-            settings.HERDR_PANE_ID: "w1:p1",
-            settings.HERDR_BIN_PATH: "/bin/herdr",
-        }
-        with mock.patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=fake_run)
-            self.assertIn("no agent matching pane_id 'w1:p1'", caught.exception.reason)
-
-    def test_refusal_when_multiple_pane_matches(self) -> None:
-        payload = json.dumps(
-            {
-                "result": {
-                    "type": "agent_list",
-                    "agents": [
-                        {
-                            "pane_id": "w1:p1",
-                            "terminal_id": "t1",
-                            "agent_session": {"value": "s1"},
-                        },
-                        {
-                            "pane_id": "w1:p1",
-                            "terminal_id": "t2",
-                            "agent_session": {"value": "s2"},
-                        },
-                    ],
-                }
-            }
-        )
-        fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
-        env = {
-            settings.HERDR_PANE_ID: "w1:p1",
-            settings.HERDR_BIN_PATH: "/bin/herdr",
-        }
-        with mock.patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
-                adapter_identity.resolve_adapter_identity(run_process=fake_run)
-            self.assertIn("multiple (2) agents matching pane_id", caught.exception.reason)
-
-    def test_refusal_when_component_is_missing_or_empty(self) -> None:
-        corrupted_cases = [
-            ("agent_session is missing", {"pane_id": "w1:p1", "terminal_id": "t1"}),
-            ("agent_session is not dict", {"pane_id": "w1:p1", "terminal_id": "t1", "agent_session": "s1"}),
-            ("agent_session value is missing", {"pane_id": "w1:p1", "terminal_id": "t1", "agent_session": {}}),
-            ("agent_session value is empty", {"pane_id": "w1:p1", "terminal_id": "t1", "agent_session": {"value": ""}}),
-            ("terminal_id is missing", {"pane_id": "w1:p1", "agent_session": {"value": "s1"}}),
-            ("terminal_id is empty", {"pane_id": "w1:p1", "terminal_id": "   ", "agent_session": {"value": "s1"}}),
-            ("pane_id is empty in record", {"pane_id": "", "terminal_id": "t1", "agent_session": {"value": "s1"}}),
+    def test_refusal_when_command_fails_or_cannot_start(self) -> None:
+        failures = [
+            FileNotFoundError("no such file"),
+            PermissionError("permission denied"),
+            subprocess.CalledProcessError(
+                3,
+                ["hc"],
+                output="",
+                stderr=json.dumps({"error": {"kind": "not_found", "message": "no t42"}}),
+            ),
         ]
-        env = {
-            settings.HERDR_PANE_ID: "w1:p1",
-            settings.HERDR_BIN_PATH: "/bin/herdr",
-        }
-        for desc, record in corrupted_cases:
-            with self.subTest(case=desc):
-                # When pane_id is empty in record, test target_pane_id="" matching
-                test_env = dict(env)
-                if record.get("pane_id") == "":
-                    test_env[settings.HERDR_PANE_ID] = ""
-                    # Handled by settings refusal or empty component
-                    with mock.patch.dict(os.environ, test_env, clear=True):
-                        with self.assertRaises(adapter_identity.IdentityRefusal):
-                            adapter_identity.resolve_adapter_identity()
-                    continue
-
-                payload = json.dumps({"result": {"type": "agent_list", "agents": [record]}})
-                fake_run = mock.Mock(return_value=_FakeCompletedProcess(payload))
-                with mock.patch.dict(os.environ, test_env, clear=True):
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                fake_run = mock.Mock(side_effect=failure)
+                with mock.patch.dict(os.environ, _env(), clear=True):
                     with self.assertRaises(adapter_identity.IdentityRefusal):
                         adapter_identity.resolve_adapter_identity(run_process=fake_run)
+
+    def test_refusal_when_command_times_out(self) -> None:
+        fake_run = mock.Mock(side_effect=subprocess.TimeoutExpired(["hc"], 2.0))
+        with mock.patch.dict(os.environ, _env(), clear=True):
+            with self.assertRaises(adapter_identity.IdentityRefusal) as caught:
+                adapter_identity.resolve_adapter_identity(run_process=fake_run)
+        self.assertIn("deadline", caught.exception.reason)
+
+    def test_refusal_when_output_is_not_a_terminal_record(self) -> None:
+        for stdout in (
+            "not json",
+            "[]",
+            json.dumps({"state": "live"}),
+            json.dumps({"address": ""}),
+        ):
+            with self.subTest(stdout=stdout):
+                self._refuse(stdout)
+
+    def test_refusal_when_the_record_is_for_another_terminal(self) -> None:
+        reason = self._refuse(_record_json(address="t43"))
+        self.assertIn("t43", reason)
+
+    def test_refusal_when_the_terminal_is_finished(self) -> None:
+        reason = self._refuse(_record_json(state="finished"))
+        self.assertIn("not live", reason)
+
+    def test_refusal_when_the_session_label_is_missing_or_empty(self) -> None:
+        for session_id in (None, "", "   "):
+            with self.subTest(session_id=session_id):
+                reason = self._refuse(_record_json(session_id=session_id))
+                self.assertIn("voice.agent-session", reason)
+
+    def test_refusal_never_falls_back_to_another_label(self) -> None:
+        stdout = json.dumps(
+            {
+                "address": TERMINAL,
+                "state": "live",
+                "labels": {"herdr.agentSession": SESSION},
+            }
+        )
+        self._refuse(stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,8 +28,8 @@ _RESOLVERS = {
     settings.PLAYBACK_BIN: settings.playback_bin,
     settings.STATE_DIR: settings.state_dir,
     settings.RETENTION: settings.retention,
-    settings.HERDR_PANE_ID: settings.herdr_pane_id,
-    settings.HERDR_BIN_PATH: settings.herdr_bin_path,
+    settings.HC_TERMINAL_ID: settings.hc_terminal_id,
+    settings.HC_BIN: settings.hc_bin,
 }
 
 
@@ -199,8 +199,8 @@ class NoSecretsTests(unittest.TestCase):
                 "VOICE_PLAYBACK_BIN",
                 "VOICE_STATE_DIR",
                 "VOICE_RETENTION",
-                "HERDR_PANE_ID",
-                "HERDR_BIN_PATH",
+                "HC_TERMINAL_ID",
+                "VOICE_HC_BIN",
             ),
         )
 
@@ -224,50 +224,44 @@ class NoSecretsTests(unittest.TestCase):
             self.assertEqual(settings.hermes_profile(), "second")
 
 
-class HerdrSettingTests(unittest.TestCase):
-    """The Herdr environment settings resolve stated values and carry no default (KTD9; §5)."""
+class HerdrCoreSettingTests(unittest.TestCase):
+    """The herdr core settings: the terminal address has no default, the command does."""
 
-    def test_herdr_settings_are_refused_by_name_when_unset(self) -> None:
+    def test_the_terminal_address_is_refused_by_name_when_unset(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(settings.SettingsRefusal) as caught:
-                settings.herdr_pane_id()
-            self.assertEqual(caught.exception.name, "HERDR_PANE_ID")
-            self.assertIn("not set", caught.exception.reason)
+                settings.hc_terminal_id()
+        self.assertEqual(caught.exception.name, "HC_TERMINAL_ID")
+        self.assertIn("not set", caught.exception.reason)
 
-            with self.assertRaises(settings.SettingsRefusal) as caught:
-                settings.herdr_bin_path()
-            self.assertEqual(caught.exception.name, "HERDR_BIN_PATH")
-            self.assertIn("not set", caught.exception.reason)
-
-    def test_herdr_settings_are_refused_by_name_when_empty(self) -> None:
+    def test_the_herdr_core_settings_are_refused_by_name_when_empty(self) -> None:
         with mock.patch.dict(
             os.environ,
-            {
-                settings.HERDR_PANE_ID: "",
-                settings.HERDR_BIN_PATH: "   ",
-            },
+            {settings.HC_TERMINAL_ID: "", settings.HC_BIN: "   "},
             clear=True,
         ):
             with self.assertRaises(settings.SettingsRefusal) as caught:
-                settings.herdr_pane_id()
-            self.assertEqual(caught.exception.name, "HERDR_PANE_ID")
+                settings.hc_terminal_id()
+            self.assertEqual(caught.exception.name, "HC_TERMINAL_ID")
             self.assertIn("empty", caught.exception.reason)
 
             with self.assertRaises(settings.SettingsRefusal) as caught:
-                settings.herdr_bin_path()
-            self.assertEqual(caught.exception.name, "HERDR_BIN_PATH")
+                settings.hc_bin()
+            self.assertEqual(caught.exception.name, "VOICE_HC_BIN")
             self.assertIn("empty", caught.exception.reason)
 
-    def test_herdr_settings_resolve_when_stated(self) -> None:
+    def test_the_herdr_core_command_defaults_to_hc_on_path(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(settings.hc_bin(), "hc")
+
+    def test_the_herdr_core_settings_resolve_when_stated(self) -> None:
         env = {
-            settings.HERDR_PANE_ID: "w1:p2",
-            settings.HERDR_BIN_PATH: "/usr/local/bin/herdr",
+            settings.HC_TERMINAL_ID: "t21",
+            settings.HC_BIN: "/opt/example/bin/hc",
         }
         with mock.patch.dict(os.environ, env, clear=True):
-            self.assertEqual(settings.herdr_pane_id(), "w1:p2")
-            self.assertEqual(
-                settings.herdr_bin_path(), "/usr/local/bin/herdr"
-            )
+            self.assertEqual(settings.hc_terminal_id(), "t21")
+            self.assertEqual(settings.hc_bin(), "/opt/example/bin/hc")
 
 
 if __name__ == "__main__":

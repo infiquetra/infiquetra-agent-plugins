@@ -1,46 +1,57 @@
 """Complete adapter identity resolver (portable core; §5).
 
-This module implements the C3 adapter identity discovery rule defined in
-Section 5 of the Auralis Bridge Contract v1:
+The Auralis Bridge Contract v1 (Section 5) needs a three-part identity on
+every presence and rendering request, compared byte-exact and never
+normalized: ``agent_session_id``, ``pane_id`` and ``terminal_id``. The
+contract treats the three as opaque; this module decides where they come
+from. They come from herdr core, which runs the terminal this Claude
+session lives in:
 
-1. Reads ``HERDR_PANE_ID`` from its process environment via ``settings.py``.
-2. Executes the ``HERDR_BIN_PATH`` executable with arguments ``agent``, ``list``
-   under the package subprocess discipline (``process.run``) with a 2,000 ms
-   deadline.
-3. Verifies that the JSON envelope contains ``result.type == "agent_list"``.
-4. Finds exactly one record in ``result.agents`` where ``pane_id == HERDR_PANE_ID``.
-5. Copies that record's non-empty ``agent_session.value`` as ``agent_session_id``,
-   that record's ``pane_id`` as ``pane_id``, and that record's ``terminal_id`` as
-   ``terminal_id``.
+1. Reads ``HC_TERMINAL_ID`` from its process environment via ``settings.py``.
+   herdr core sets it in every terminal as that terminal's address (``t21``).
+2. Runs ``hc get <HC_TERMINAL_ID> --json`` (the ``VOICE_HC_BIN`` command)
+   under the package subprocess discipline (``process.run``) with a
+   2,000 ms deadline.
+3. Requires a live terminal whose ``address`` is exactly ``HC_TERMINAL_ID``.
+4. Copies that terminal's ``voice.agent-session`` label as
+   ``agent_session_id``. herdr core does not know which Claude session runs
+   in a terminal; the Claude adapter's ``SessionStart`` hook writes this
+   label on its own terminal at every start, resume, clear and compact.
+5. Copies the terminal's address as both ``terminal_id`` and ``pane_id``.
+   herdr core has no panes: panes belong to the Herdr app's window, which
+   can rearrange them while the terminal keeps running. The terminal
+   address is the stable "where" for this session.
 6. Any Claude hook or agent request carrying Claude's session identifier must
    match ``agent_session_id``.
 7. The adapter must never copy identity from ``GET /v1/current``.
 
-A missing environment value, missing executable, command or envelope failure,
-zero or multiple matches, a missing component, or a session mismatch means the
-adapter registers and submits nothing.
+A missing environment value, a missing executable, a command or record
+failure, a finished terminal, an address mismatch, a missing session label,
+or a session mismatch means the adapter registers and submits nothing.
+
+Old Herdr (``HERDR_PANE_ID``, ``HERDR_BIN_PATH`` and ``herdr agent list``)
+is retired and no longer read.
 """
 
 from __future__ import annotations
 
-import json
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import herdr_core
 import process
 import settings
 
 __all__ = [
     "AdapterIdentity",
     "IdentityRefusal",
-    "HERDR_TIMEOUT_SECONDS",
+    "HC_TIMEOUT_SECONDS",
     "resolve_adapter_identity",
     "matches_session",
 ]
 
-#: The normative Herdr subprocess deadline from the timeout budget table (2,000 ms).
-HERDR_TIMEOUT_SECONDS = 2.0
+#: The normative identity subprocess deadline from the timeout budget table (2,000 ms).
+HC_TIMEOUT_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -77,120 +88,62 @@ def matches_session(identity: AdapterIdentity, session_id: str) -> bool:
     return identity.agent_session_id == session_id
 
 
-def _extract_component(record: dict, key: str) -> str:
-    """Extract a non-empty string component from a record dict."""
-    val = record.get(key)
-    if not isinstance(val, str):
-        raise IdentityRefusal(
-            f"record field {key!r} must be a string, got {type(val).__name__}"
-        )
-    val = val.strip()
-    if not val:
-        raise IdentityRefusal(f"record field {key!r} is empty")
-    return val
-
-
 def resolve_adapter_identity(
     *,
     run_process: Callable = process.run,
-    pane_id_resolver: Callable[[], str] = settings.herdr_pane_id,
-    bin_path_resolver: Callable[[], str] = settings.herdr_bin_path,
+    terminal_id_resolver: Callable[[], str] = settings.hc_terminal_id,
+    bin_path_resolver: Callable[[], str] = settings.hc_bin,
 ) -> AdapterIdentity:
-    """Resolve the three-part adapter identity from Herdr (§5).
+    """Resolve the three-part adapter identity from herdr core (§5).
 
-    Reads ``HERDR_PANE_ID`` and ``HERDR_BIN_PATH`` through ``settings.py``,
-    runs ``herdr agent list``, parses the envelope, matches the pane, and
-    constructs the validated ``AdapterIdentity``.
+    Reads ``HC_TERMINAL_ID`` and ``VOICE_HC_BIN`` through ``settings.py``,
+    runs ``hc get <terminal> --json``, and builds the validated
+    ``AdapterIdentity`` from the terminal's address and its
+    ``voice.agent-session`` label.
 
     Any failure produces an ``IdentityRefusal`` named refusal.
     """
     try:
-        target_pane_id = pane_id_resolver()
+        terminal_id = terminal_id_resolver()
     except settings.SettingsRefusal as refusal:
         raise IdentityRefusal(
-            f"cannot resolve pane id: {refusal.name} {refusal.reason}"
+            f"cannot resolve the herdr core terminal: {refusal.name} {refusal.reason}"
         ) from refusal
 
     try:
-        bin_path = bin_path_resolver()
+        hc = bin_path_resolver()
     except settings.SettingsRefusal as refusal:
         raise IdentityRefusal(
-            f"cannot resolve Herdr executable: {refusal.name} {refusal.reason}"
+            f"cannot resolve the herdr core command: {refusal.name} {refusal.reason}"
         ) from refusal
 
-    command = [bin_path, "agent", "list"]
     try:
-        completed = run_process(
-            command,
-            timeout=HERDR_TIMEOUT_SECONDS,
-            check=True,
+        record = herdr_core.get_terminal(
+            terminal_id,
+            timeout=HC_TIMEOUT_SECONDS,
+            run_process=run_process,
+            hc=hc,
         )
-    except subprocess.TimeoutExpired as expired:
+    except herdr_core.CoreRefusal as refusal:
+        raise IdentityRefusal(refusal.reason) from refusal
+
+    address = record["address"]
+    if address != terminal_id:
         raise IdentityRefusal(
-            f"Herdr command timed out after {HERDR_TIMEOUT_SECONDS}s: {expired}"
-        ) from expired
-    except (subprocess.CalledProcessError, FileNotFoundError, PermissionError, OSError) as err:
-        raise IdentityRefusal(f"Herdr command failed: {err}") from err
-
-    stdout_text = completed.stdout if hasattr(completed, "stdout") else str(completed)
-    try:
-        envelope = json.loads(stdout_text)
-    except (json.JSONDecodeError, TypeError) as err:
-        raise IdentityRefusal(f"Herdr output is not valid JSON: {err}") from err
-
-    if not isinstance(envelope, dict):
-        raise IdentityRefusal("Herdr output envelope is not a JSON object")
-
-    result = envelope.get("result")
-    if not isinstance(result, dict):
-        raise IdentityRefusal(
-            f"Herdr envelope 'result' is not a JSON object, got {type(result).__name__}"
+            f"hc get {terminal_id} answered for terminal {address!r}, not this one"
         )
+    if not herdr_core.is_live(record):
+        raise IdentityRefusal(f"terminal {terminal_id!r} is not live")
 
-    if result.get("type") != "agent_list":
+    agent_session_id = herdr_core.session_of(record)
+    if agent_session_id is None:
         raise IdentityRefusal(
-            f"Herdr envelope result.type is {result.get('type')!r}, expected 'agent_list'"
+            f"terminal {terminal_id!r} carries no {herdr_core.SESSION_LABEL} label; "
+            "the session-start hook has not recorded this Claude session"
         )
-
-    agents = result.get("agents")
-    if not isinstance(agents, list):
-        raise IdentityRefusal("Herdr envelope result.agents is not a list")
-
-    matching = [
-        agent
-        for agent in agents
-        if isinstance(agent, dict) and agent.get("pane_id") == target_pane_id
-    ]
-
-    if not matching:
-        raise IdentityRefusal(f"no agent matching pane_id {target_pane_id!r}")
-    if len(matching) > 1:
-        raise IdentityRefusal(
-            f"multiple ({len(matching)}) agents matching pane_id {target_pane_id!r}"
-        )
-
-    record = matching[0]
-
-    agent_session = record.get("agent_session")
-    if not isinstance(agent_session, dict):
-        raise IdentityRefusal(
-            f"record 'agent_session' must be an object, got {type(agent_session).__name__}"
-        )
-
-    agent_session_id = agent_session.get("value")
-    if not isinstance(agent_session_id, str):
-        raise IdentityRefusal(
-            f"record agent_session.value must be a string, got {type(agent_session_id).__name__}"
-        )
-    agent_session_id = agent_session_id.strip()
-    if not agent_session_id:
-        raise IdentityRefusal("record agent_session.value is empty")
-
-    pane_id = _extract_component(record, "pane_id")
-    terminal_id = _extract_component(record, "terminal_id")
 
     return AdapterIdentity(
         agent_session_id=agent_session_id,
-        pane_id=pane_id,
-        terminal_id=terminal_id,
+        pane_id=address,
+        terminal_id=address,
     )

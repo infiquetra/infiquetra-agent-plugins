@@ -50,8 +50,9 @@ class PreToolUseHookTests(unittest.TestCase):
             os.environ,
             {
                 "VOICE_STATE_DIR": str(self.state_dir),
-                "HERDR_PANE_ID": "",
-                "HERDR_BIN_PATH": "",
+                # Empty, so identity resolution refuses before any hc call.
+                "HC_TERMINAL_ID": "",
+                "VOICE_HC_BIN": "/nonexistent/hc",
             },
         )
         self.env_patcher.start()
@@ -439,8 +440,9 @@ class PreToolUseApprovalHookTests(unittest.TestCase):
             os.environ,
             {
                 "VOICE_STATE_DIR": str(self.state_dir),
-                "HERDR_PANE_ID": "",
-                "HERDR_BIN_PATH": "",
+                # Empty, so identity resolution refuses before any hc call.
+                "HC_TERMINAL_ID": "",
+                "VOICE_HC_BIN": "/nonexistent/hc",
             },
         )
         self.env_patcher.start()
