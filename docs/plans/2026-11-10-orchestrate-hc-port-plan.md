@@ -57,6 +57,14 @@ herdr-app 0.1.15), not recalled.
   `created_space` says whether the workspace was new. A failure prints `{"error": …}`.
   `agents --dry-run` prints `backend=herdr-app` for an app launch.
 - hc never reuses a terminal address on a core ("`t7`: this terminal forever on this core").
+- The launcher change that retires old Herdr (infiquetra-herdr-console branch
+  `feat/launcher-no-old-herdr`, commit 59ff518, not yet installed) keeps the three things this plan
+  relies on: `--app` is accepted, `--no-focus` is accepted for a single launch, and a real launch
+  prints only agent-app's one JSON line. On that branch `--no-focus` reaches agent-app, which then
+  uses the core placement (`placement: "core"`, the workspace name carried as the
+  `herdr-console.space-name` label) so the window does not switch; the installed launcher still
+  uses the window placement. The port reads either. `--current` stays a no-op; `--herdr`,
+  `--herdr-control-only`, `--herdr-session` and `--new` are refused with exit 2.
 
 ---
 
