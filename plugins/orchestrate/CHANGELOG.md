@@ -1,5 +1,43 @@
 # Changelog
 
+## [Unreleased]
+
+Breaking: the release that ships this is a major version. Orchestrate drives sessions through herdr core (`hc`) and the Herdr app instead of old Herdr,
+whose sessions the window does not show. Launches, sends, reads and closes come from
+agent-launcher's matching unreleased change; this one moves Orchestrate's own waits and readings. The plan is
+`docs/plans/2026-11-10-orchestrate-hc-port-plan.md`.
+
+### Changed
+
+- **Breaking: `wait` starts one `hc wait` per running unit's terminal** instead of subscribing to
+  old Herdr's event socket. The two-reading rule is unchanged. `blocked` and `error` stop it on
+  first sight (hc returns from a wait on both), a unit hc no longer lists is dropped instead of
+  waited on again, and a unit that recorded no terminal, or an old Herdr id, is named and left out.
+  Each child runs without `HC_TERMINAL_ID` and `HC_SCOPE`, so a message to the operator's own
+  session does not end it.
+- `poll` and the review router's liveness check match a unit's recorded terminal address exactly
+  (hc never reuses one; a row's name is only its tab's name). A unit that recorded an old Herdr id
+  reads `unknown`, never `gone`, so a run started before the move is not settled or reaped on
+  missing data. Only a unit that recorded no terminal is matched by name.
+- `clean` no longer closes Herdr workspaces. Workspaces belong to the window, closing one ends every
+  terminal in it, and hc cannot close one; a workspace the record lists is reported as kept for the
+  window. No code path records one today.
+- The release that ships this must raise the Claude adapter's agent-launcher floor
+  (`>=1.7.2` today) to the agent-launcher version released with it: a launcher below that drives
+  old Herdr.
+- `tab_id` and `pane_id` on a unit now hold the session's hc terminal address.
+
+### Removed
+
+- `skills/orchestrate/scripts/herdr_events.py`, old Herdr's event-socket client, and its entry in
+  `ports/orchestrate.json`.
+
+### Tests
+
+- The suite runs against the shipped `plugins/agent-launcher` instead of the frozen 1.7.0 copy
+  under `tests/fixtures/`, which drove old Herdr, and its conftest shadows the host's `hc` as well
+  as `herdr`.
+
 ## [6.1.1] - 2026-10-14
 
 ### Added

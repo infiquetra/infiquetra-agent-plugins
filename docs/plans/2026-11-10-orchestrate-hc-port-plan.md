@@ -213,9 +213,11 @@ Each one changes how Orchestrate behaves, so each takes the conservative side.
   open PR #310 (`fix/agent-launcher-herdr-app`) rewrites `SKILL.md` with its own proof. Editing
   them here would force a second proof that conflicts with #310's. A follow-up after #310 merges
   updates both documents and re-runs the proof once.
-- **D16. Major versions.** agent-launcher 2.0.0 and orchestrate 7.0.0: both now require herdr
-  core and the Herdr app path of `agents`. Orchestrate's Claude adapter floor for agent-launcher
-  becomes `>=2.0.0`.
+- **D16. No version bump here.** The repository bumps versions only in a release pull request
+  (`chore(release)`), so both changelogs carry the change under `[Unreleased]`, marked breaking.
+  The release must make both major versions and raise Orchestrate's Claude adapter floor for
+  agent-launcher (`>=1.7.2` today) to the agent-launcher version it ships, because a launcher
+  below it drives old Herdr.
 
 ---
 
@@ -227,8 +229,8 @@ Each one changes how Orchestrate behaves, so each takes the conservative side.
 2. **roster.py** — rows 21 to 25. Tests: `plugins/agent-launcher/tests/test_roster.py`.
 3. **orchestrate.py** — rows 26 to 39; `herdr_events.py` removed and dropped from
    `ports/orchestrate.json`. Tests across `plugins/orchestrate/tests/`.
-4. **Release notes** — versions, CHANGELOG entries, the Claude adapter floor, Orchestrate's
-   README, SKILL.md and command text, and an engineering-journal entry.
+4. **Release notes** — `[Unreleased]` CHANGELOG entries (D16), Orchestrate's README, SKILL.md
+   and command text, and engineering-journal entries.
 
 ---
 
