@@ -1,10 +1,10 @@
 """Tests for the roster helper (issue #1024, plan U1 through U4).
 
 Every test here drives ``roster.py`` through an **injected fake command runner** and a throwaway
-run-record store under ``tmp_path``. Nothing in this file reaches a live herdr server, creates a
-pane, closes a pane, or writes into the primary checkout's ``.claude/saga/`` store — several card
-drivers share this machine, the operator's herdr server is running beside this suite with live
-agent panes that belong to other work, and a test that closed one of those would be the exact
+run-record store under ``tmp_path``. Nothing in this file reaches a live herdr core, creates a
+session, closes a session, or writes into the primary checkout's ``.claude/saga/`` store — several
+card drivers share this machine, the operator's herdr core is running beside this suite with live
+sessions that belong to other work, and a test that closed one of those would be the exact
 failure the helper exists to prevent (plan R10).
 
 The fake runner records every argument vector it is handed, so the assertions are about the
@@ -33,7 +33,16 @@ STAFFING_REGISTRY = (
     CATALOG / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "staffing.json"
 )
 
-IN_PANE = {"HERDR_ENV": "1", "HERDR_PANE_ID": "w99:pTEST"}
+#: The caller's own terminal address, as herdr core sets it inside every Herdr terminal.
+IN_PANE = {"HC_TERMINAL_ID": "t99"}
+
+#: The terminal address the fake launcher gives each seat. Addresses are unique on the whole core.
+ADDRESSES = {
+    "issue-4242-planner": "t11",
+    "issue-4242-worker": "t12",
+    "issue-4343-planner": "t13",
+    "issue-4343-worker": "t14",
+}
 
 
 def _load(name: str, path: Path) -> ModuleType:
@@ -97,6 +106,8 @@ class FakeRunner:
                 return reply
         if "launcher.py" in joined and "launch" in cmd:
             return _ok(json.dumps(_receipt(cmd[cmd.index("--task") + 1])))
+        if cmd[:2] == ["hc", "wait"]:
+            return _ok(json.dumps(_wait_result(cmd[2])))
         return _ok("")
 
     def commands(self, *needles: str) -> list[list[str]]:
@@ -125,18 +136,22 @@ def _ok(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess[st
     return subprocess.CompletedProcess(["fake"], returncode, stdout, "")
 
 
-def _receipt(task: str, *, delivered: bool = True, owned: bool = True) -> dict[str, Any]:
+def _receipt(
+    task: str, *, delivered: bool = True, owned: bool = True, space: str | None = None
+) -> dict[str, Any]:
     """A launch receipt with exactly the keys ``launcher.launch_receipt_shape`` produces.
 
-    In particular there is **no** ``workspace_id``: the launcher does not record one, and a fake
-    that invented the key would have hidden the bug where every roster row stored a null workspace.
-    That is what the live run found and this fixture now prevents.
+    ``tab_id`` and ``pane`` are both the hc terminal address (``t11``). There is no ``workspace_id``
+    key: a fake that invented one would have hidden the bug where every roster row stored a null
+    workspace. The launcher adds ``space`` to a receipt only after the launch result names one, so
+    it appears here only when a test asks for it.
     """
-    return {
+    address = ADDRESSES.get(task, "t90")
+    receipt: dict[str, Any] = {
         "unit_name": task,
         "vendor": "claude",
-        "tab_id": f"w99:t-{task}",
-        "pane": f"w99:p-{task}",
+        "tab_id": address,
+        "pane": address,
         "agent_name": task,
         "reused": True,
         "owned": owned,
@@ -144,6 +159,9 @@ def _receipt(task: str, *, delivered: bool = True, owned: bool = True) -> dict[s
         "verified": True,
         "prompt_delivered": delivered,
     }
+    if space is not None:
+        receipt["space"] = space
+    return receipt
 
 
 def test_the_fake_receipt_carries_exactly_the_launchers_own_keys() -> None:
@@ -158,34 +176,64 @@ def test_the_fake_receipt_carries_exactly_the_launchers_own_keys() -> None:
     )
 
 
-def test_the_roster_row_names_the_workspace_even_though_the_receipt_does_not(
+def test_the_roster_row_names_the_workspace_the_receipt_names_in_space(
     roster: ModuleType,
 ) -> None:
-    """herdr identifiers are ``<workspace>:<object>``; the receipt carries no workspace of its own."""
-    assert roster.workspace_of(_receipt("planner")) == "w99"
-    assert roster.workspace_of({"pane": "w7C:p2Z"}) == "w7C"
+    """The launcher's receipt names the Herdr app workspace id as ``space``; that is read first."""
+    assert roster.workspace_of(_receipt("planner", space="w4")) == "w4"
+    assert roster.workspace_of({"space": "w4", "workspace_id": "w9", "tab_id": "w7:t1"}) == "w4"
+    assert roster.workspace_of({"workspace_id": "w9", "tab_id": "w7:t1"}) == "w9"
     assert roster.workspace_of({}) is None
 
 
-def _agent_get(status: str) -> subprocess.CompletedProcess[str]:
-    """The shape `herdr agent get` really returns, read from herdr 0.9.0 on 2026-09-19."""
+def test_a_bare_hc_address_names_no_workspace(roster: ModuleType) -> None:
+    """``t11`` is unique on the whole core and says nothing about where a window shows it."""
+    assert roster.workspace_of(_receipt("issue-4242-planner")) is None
+    assert roster.workspace_of({"tab_id": "t5", "pane": "t5"}) is None
+
+
+def test_an_old_herdr_receipt_still_names_its_workspace_in_its_ids(roster: ModuleType) -> None:
+    """Receipts written before the move carry ``<workspace>:<object>`` ids; they are still read."""
+    assert roster.workspace_of({"tab_id": "w99:t-planner", "pane": "w99:p-planner"}) == "w99"
+    assert roster.workspace_of({"pane": "w7C:p2Z"}) == "w7C"
+
+
+def _wait_result(
+    target: str, *, reason: str = "status", ended: bool = True, status: str = "idle"
+) -> dict[str, Any]:
+    """The WaitResult JSON ``hc wait --json`` prints."""
+    return {
+        "children": [],
+        "ended": ended,
+        "exit_code": None,
+        "reason": reason,
+        "signal": None,
+        "status": status,
+        "terminal": target,
+        "turn": 4,
+    }
+
+
+def _hc_wait(target: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    return _ok(json.dumps(_wait_result(target, **kwargs)))
+
+
+def _agent_get(status: str, address: str = "t5") -> subprocess.CompletedProcess[str]:
+    """The shape ``hc get --json`` returns for a live terminal whose program reported *status*."""
     return _ok(
         json.dumps(
             {
-                "id": "cli:agent:get",
-                "result": {
-                    "agent": {
-                        "agent": "claude",
-                        "agent_status": status,
-                        "pane_id": "w99:pX",
-                        "tab_id": "w99:tX",
-                        "workspace_id": "w99",
-                    },
-                    "type": "agent_info",
-                },
+                "address": address,
+                "state": "live",
+                "status": {"app": "claude-code", "state": status},
             }
         )
     )
+
+
+def _finished_get(address: str = "t5") -> subprocess.CompletedProcess[str]:
+    """``hc get --json`` for a terminal whose program has finished."""
+    return _ok(json.dumps({"address": address, "state": "finished", "status": None}))
 
 
 # --------------------------------------------------------------------------- records
@@ -252,7 +300,7 @@ def test_dry_run_prints_every_pane_kind_model_and_prompt_and_creates_nothing(
     assert runner.calls == [], "a dry run must create nothing"
 
 
-def test_every_subcommand_refuses_outside_a_herdr_pane(
+def test_every_subcommand_refuses_outside_a_herdr_terminal(
     roster: ModuleType, rr: ModuleType, store: Path
 ) -> None:
     """Plan R8 and KTD6: one line, exit 4, and no command is built."""
@@ -264,11 +312,26 @@ def test_every_subcommand_refuses_outside_a_herdr_pane(
     assert runner.calls == []
 
 
-def test_outside_a_pane_the_command_line_exits_four(
+def test_require_herdr_pane_returns_the_callers_own_terminal_address(roster: ModuleType) -> None:
+    assert roster.require_herdr_pane({"HC_TERMINAL_ID": "t21"}) == "t21"
+
+
+def test_require_herdr_pane_refuses_without_a_terminal_address_even_in_old_herdr(
+    roster: ModuleType,
+) -> None:
+    """``HERDR_ENV`` and ``HERDR_PANE_ID`` mean nothing now; only ``HC_TERMINAL_ID`` does."""
+    old = {"HERDR_ENV": "1", "HERDR_PANE_ID": "w99:pTEST"}
+    for env in ({}, old, {**old, "HC_TERMINAL_ID": ""}):
+        with pytest.raises(roster.NotInHerdrPaneError, match="Herdr terminal"):
+            roster.require_herdr_pane(env)
+
+
+def test_outside_a_terminal_the_command_line_exits_four(
     roster: ModuleType, rr: ModuleType, store: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     record_path = _record(rr, store)
-    monkeypatch.delenv("HERDR_ENV", raising=False)
+    monkeypatch.delenv("HC_TERMINAL_ID", raising=False)
+    monkeypatch.setenv("HERDR_ENV", "1")
     assert roster.main(["down", "--record", str(record_path)]) == 4
 
 
@@ -292,11 +355,10 @@ def test_an_unknown_record_version_exits_three_with_one_line(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # ``main`` reads the ambient environment for the herdr-pane precondition, which it checks
-    # before the record version — so without these two lines the test exits 4 on a machine
-    # outside a pane (CI) and 3 inside one. Pin the pane so the version check is what is tested.
-    monkeypatch.setenv("HERDR_ENV", "1")
-    monkeypatch.setenv("HERDR_PANE_ID", "w99:pTEST")
+    # ``main`` reads the ambient environment for the Herdr terminal precondition, which it checks
+    # before the record version — so without this line the test exits 4 on a machine outside a
+    # terminal (CI) and 3 inside one. Pin the terminal so the version check is what is tested.
+    monkeypatch.setenv("HC_TERMINAL_ID", "t99")
     record_path = _record(rr, store)
     payload = json.loads(record_path.read_text(encoding="utf-8"))
     payload["schema"] = "run_record.v2"
@@ -457,15 +519,28 @@ def test_up_records_each_pane_before_it_launches_the_next_one(
     assert seen == [0, 1], "the first pane must be on the record before the second launch"
     rows = _rows(rr, store)
     assert [row["schema"] for row in rows] == ["roster_entry.v1"] * 2
-    assert {row["pane_id"] for row in rows} == {
-        "w99:p-issue-4242-planner",
-        "w99:p-issue-4242-worker",
-    }
+    assert {row["pane_id"] for row in rows} == {"t11", "t12"}
     assert all(row["created_by"] == "roster.py" for row in rows)
     assert all(row["state"] == "prompted" for row in rows)
-    # The row has to name the workspace an operator would look in, even though the launcher's
-    # receipt carries no workspace field of its own.
-    assert {row["workspace_id"] for row in rows} == {"w99"}
+    # A bare hc address names no workspace, and the fake receipt carries no ``space``: the row
+    # records none rather than a guess.
+    assert {row["workspace_id"] for row in rows} == {None}
+
+
+def test_up_records_the_space_the_receipt_names_as_the_rows_workspace(
+    roster: ModuleType, rr: ModuleType, store: Path
+) -> None:
+    _record(
+        rr, store, staffing={"planner": {"vendor": "claude", "model": "opus", "effort": "high"}}
+    )
+    runner = FakeRunner(
+        {"--task issue-4242-planner": _ok(json.dumps(_receipt("issue-4242-planner", space="w4")))}
+    )
+
+    roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
+
+    row = _rows(rr, store)[0]
+    assert (row["pane_id"], row["workspace_id"]) == ("t11", "w4")
 
 
 def test_up_writes_only_the_roster_block(roster: ModuleType, rr: ModuleType, store: Path) -> None:
@@ -590,23 +665,65 @@ def test_the_receipt_is_written_outside_every_worktree_beside_the_record(
 # --------------------------------------------------------------------------- U3: wait
 
 
-def test_every_wait_carries_a_timeout_and_takes_herdrs_settled_state_default(
+def test_every_wait_is_an_hc_wait_on_the_recorded_address_with_a_timeout_in_seconds(
     roster: ModuleType, rr: ModuleType, store: Path
 ) -> None:
-    """Plan R6: no ``--until`` (herdr matches idle, done, blocked); never an unbounded wait."""
+    """Plan R6: never an unbounded wait; hc takes whole seconds and is asked for JSON."""
     _record(rr, store)
-    runner = FakeRunner({"agent get": _agent_get("idle")})
+    runner = FakeRunner({"hc get": _agent_get("idle")})
     roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
 
-    code = roster.wait(store, 4242, runner=runner, timeout_ms=1234, env=IN_PANE, out=lambda _: None)
+    code = roster.wait(
+        store, 4242, runner=runner, timeout_ms=12_345, env=IN_PANE, out=lambda _: None
+    )
 
     assert code == roster.EXIT_OK
-    waits = runner.commands("agent", "wait")
-    assert len(waits) == 2
-    for call in waits:
-        assert "--timeout" in call and call[call.index("--timeout") + 1] == "1234"
-        assert "--until" not in call
+    waits = runner.commands("hc", "wait")
+    assert sorted(waits) == [
+        ["hc", "wait", "t11", "--timeout", "12", "--json"],
+        ["hc", "wait", "t12", "--timeout", "12", "--json"],
+    ]
     assert all(row["state"] == "settled" for row in _rows(rr, store))
+
+
+def test_a_sub_second_wait_is_sent_as_one_second(
+    roster: ModuleType, rr: ModuleType, store: Path
+) -> None:
+    """hc takes whole seconds and zero would not be a timeout at all."""
+    _record(rr, store)
+    runner = FakeRunner({"hc get": _agent_get("idle")})
+    roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
+
+    roster.wait(store, 4242, runner=runner, timeout_ms=50, env=IN_PANE, out=lambda _: None)
+
+    for call in runner.commands("hc", "wait"):
+        assert call[call.index("--timeout") + 1] == "1"
+
+
+def test_a_row_with_no_terminal_address_is_not_waited_on(
+    roster: ModuleType, rr: ModuleType, store: Path
+) -> None:
+    """Rows from the old Herdr roster named the session; with no address there is no target."""
+    _record(
+        rr,
+        store,
+        roster_rows=[
+            {
+                "schema": "roster_entry.v1",
+                "pane_name": "issue-4242-planner",
+                "agent_name": "issue-4242-planner",
+                "pane_id": None,
+                "created_by": "roster.py",
+                "state": "prompted",
+            }
+        ],
+    )
+    runner = FakeRunner()
+
+    code = roster.wait(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
+
+    assert code == roster.EXIT_OK
+    assert runner.calls == []
 
 
 def test_a_blocked_role_is_reported_with_its_output_and_never_answered(
@@ -617,7 +734,7 @@ def test_a_blocked_role_is_reported_with_its_output_and_never_answered(
         rr, store, staffing={"planner": {"vendor": "claude", "model": "opus", "effort": "high"}}
     )
     runner = FakeRunner(
-        {"agent get": _agent_get("blocked"), "agent read": _ok("Do you want to proceed? (y/n)")}
+        {"hc get": _agent_get("blocked"), "hc read": _ok("Do you want to proceed? (y/n)")}
     )
     roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
     printed: list[str] = []
@@ -626,11 +743,13 @@ def test_a_blocked_role_is_reported_with_its_output_and_never_answered(
         roster.wait(store, 4242, runner=runner, env=IN_PANE, out=printed.append)
 
     text = "\n".join(printed)
-    assert "BLOCKED" in text
+    assert "BLOCKED on terminal t11" in text
     assert "Do you want to proceed?" in text
     assert _rows(rr, store)[0]["state"] == "blocked"
-    assert runner.commands("agent", "prompt") == []
-    assert runner.commands("agent", "send-keys") == []
+    assert runner.commands("hc", "read") == [["hc", "read", "t11", "--lines", "40"]]
+    assert runner.commands("hc", "send") == []
+    assert runner.commands("hc", "type") == []
+    assert runner.commands("hc", "key") == []
 
 
 def test_a_blocked_role_exits_five_from_the_command_line(
@@ -639,7 +758,7 @@ def test_a_blocked_role_exits_five_from_the_command_line(
     record_path = _record(
         rr, store, staffing={"planner": {"vendor": "claude", "model": "opus", "effort": "high"}}
     )
-    runner = FakeRunner({"agent get": _agent_get("blocked")})
+    runner = FakeRunner({"hc get": _agent_get("blocked")})
     roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
     for key, value in IN_PANE.items():
         monkeypatch.setenv(key, value)
@@ -648,14 +767,14 @@ def test_a_blocked_role_exits_five_from_the_command_line(
     assert roster.main(["wait", "--record", str(record_path)]) == 5
 
 
-def test_a_wait_that_times_out_names_the_role_and_leaves_the_others_alone(
+def test_a_wait_that_fails_names_the_role_and_leaves_the_others_alone(
     roster: ModuleType, rr: ModuleType, store: Path
 ) -> None:
     _record(rr, store)
     runner = FakeRunner(
         {
-            "agent wait issue-4242-planner": _ok("timed out", 124),
-            "agent get": _agent_get("idle"),
+            "hc wait t11": _ok("timed out", 124),
+            "hc get": _agent_get("idle"),
         }
     )
     roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
@@ -666,6 +785,77 @@ def test_a_wait_that_times_out_names_the_role_and_leaves_the_others_alone(
     states = {row["pane_name"]: row["state"] for row in _rows(rr, store)}
     assert states["issue-4242-planner"] == "prompted"
     assert states["issue-4242-worker"] == "settled"
+
+
+def test_a_wait_that_hc_itself_times_out_is_unsettled_even_though_hc_exits_zero(
+    roster: ModuleType, rr: ModuleType, store: Path
+) -> None:
+    """``reason: timeout`` with ``ended: false`` is a clean exit that settled nothing."""
+    _record(rr, store)
+    runner = FakeRunner(
+        {
+            "hc wait t11": _hc_wait("t11", reason="timeout", ended=False, status="working"),
+            "hc get": _agent_get("idle"),
+        }
+    )
+    roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
+    printed: list[str] = []
+
+    with pytest.raises(roster.RoleBlockedError, match="issue-4242-planner"):
+        roster.wait(store, 4242, runner=runner, timeout_ms=5000, env=IN_PANE, out=printed.append)
+
+    assert "did not settle" in "\n".join(printed)
+    assert ["hc", "get", "t11", "--json"] not in runner.calls, "a timed out wait is not read"
+    states = {row["pane_name"]: row["state"] for row in _rows(rr, store)}
+    assert states["issue-4242-planner"] == "prompted"
+    assert states["issue-4242-worker"] == "settled"
+
+
+def test_a_wait_that_prints_no_json_is_unsettled(
+    roster: ModuleType, rr: ModuleType, store: Path
+) -> None:
+    _record(
+        rr, store, staffing={"planner": {"vendor": "claude", "model": "opus", "effort": "high"}}
+    )
+    runner = FakeRunner({"hc wait t11": _ok("terminal t11 is idle"), "hc get": _agent_get("idle")})
+    roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
+
+    with pytest.raises(roster.RoleBlockedError, match="did not settle"):
+        roster.wait(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
+
+
+def test_a_finished_terminal_reads_as_exited_and_is_not_settled(
+    roster: ModuleType, rr: ModuleType, store: Path
+) -> None:
+    """A program that has finished is not an agent that reported idle."""
+    _record(
+        rr, store, staffing={"planner": {"vendor": "claude", "model": "opus", "effort": "high"}}
+    )
+    runner = FakeRunner({"hc get": _finished_get("t11")})
+    roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
+    printed: list[str] = []
+
+    with pytest.raises(roster.RoleBlockedError, match="status exited"):
+        roster.wait(store, 4242, runner=runner, env=IN_PANE, out=printed.append)
+
+    assert "reports status exited" in "\n".join(printed)
+    assert _rows(rr, store)[0]["state"] == "prompted"
+
+
+def test_agent_status_reads_hc_get(roster: ModuleType) -> None:
+    def status_of(reply: subprocess.CompletedProcess[str]) -> str:
+        runner = FakeRunner({"hc get": reply})
+        result = roster._agent_status(runner, "t5")
+        assert runner.calls == [["hc", "get", "t5", "--json"]]
+        return result
+
+    assert status_of(_agent_get("blocked")) == "blocked"
+    assert status_of(_agent_get("working")) == "working"
+    assert status_of(_finished_get()) == "exited"
+    no_status = _ok(json.dumps({"address": "t5", "state": "live", "status": None}))
+    assert status_of(no_status) == "unknown"
+    assert status_of(_ok("", 1)) == "unknown"
+    assert status_of(_ok("not json")) == "unknown"
 
 
 # --------------------------------------------------------------------------- U4: down
@@ -696,22 +886,19 @@ def test_down_ignores_live_panes_it_did_not_record(
     _record(rr, store)
     live_listing = _ok(
         json.dumps(
-            {
-                "result": {
-                    "agents": [
-                        {"pane_id": f"w7C:p{n}", "name": f"someone-elses-{n}"} for n in range(8)
-                    ]
-                }
-            }
+            [
+                {"address": f"t{40 + n}", "state": "live", "name": f"someone-elses-{n}"}
+                for n in range(8)
+            ]
         )
     )
-    runner = FakeRunner({"agent list": live_listing})
+    runner = FakeRunner({"hc ls": live_listing})
     roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
 
     roster.down(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
 
     assert len(runner.commands("launcher.py", "close")) == 2
-    assert runner.commands("agent", "list") == [], "down decides from the record, not the listing"
+    assert runner.commands("hc", "ls") == [], "down decides from the record, not the listing"
 
 
 def test_down_skips_a_row_whose_ownership_receipt_is_gone(
@@ -745,7 +932,7 @@ def test_down_skips_a_row_this_helper_did_not_create(
             {
                 "schema": "roster_entry.v1",
                 "pane_name": "someone-elses-session",
-                "pane_id": "w7C:pZZ",
+                "pane_id": "t77",
                 "receipt_path": str(receipt),
                 "created_by": "a-different-tool",
                 "state": "prompted",
@@ -781,10 +968,10 @@ def test_down_on_an_empty_roster_closes_nothing_and_succeeds(
     assert runner.calls == []
 
 
-def test_down_refuses_to_close_the_pane_it_is_running_in(
+def test_down_refuses_to_close_the_terminal_it_is_running_in(
     roster: ModuleType, rr: ModuleType, store: Path
 ) -> None:
-    """Plan R14: whatever the record says, the coordinator's own pane is never closed."""
+    """Plan R14: whatever the record says, the coordinator's own terminal is never closed."""
     _record(
         rr,
         store,
@@ -792,7 +979,7 @@ def test_down_refuses_to_close_the_pane_it_is_running_in(
             {
                 "schema": "roster_entry.v1",
                 "pane_name": "the-coordinator",
-                "pane_id": IN_PANE["HERDR_PANE_ID"],
+                "pane_id": IN_PANE["HC_TERMINAL_ID"],
                 "receipt_path": "/nonexistent",
                 "created_by": "roster.py",
                 "state": "prompted",
@@ -805,28 +992,28 @@ def test_down_refuses_to_close_the_pane_it_is_running_in(
     roster.down(store, 4242, runner=runner, env=IN_PANE, out=printed.append)
 
     assert runner.calls == []
-    assert "running in" in "\n".join(printed)
+    assert "terminal this command is running in" in "\n".join(printed)
 
 
-def test_no_test_in_this_module_ever_closes_a_pane_or_tab_directly(
+def test_no_test_in_this_module_ever_closes_a_terminal_directly(
     roster: ModuleType, rr: ModuleType, store: Path
 ) -> None:
     """The negative control: teardown goes through the launcher's ownership proof, never around it.
 
     Every command this module's helper can build, across a full up/wait/down cycle, is inspected —
-    a bare ``herdr pane close`` or ``herdr tab close`` anywhere would mean the ownership receipt had
-    been bypassed.
+    a bare ``hc close`` anywhere would mean the ownership receipt had been bypassed, and an old
+    Herdr call would mean the move was not finished.
     """
     _record(rr, store)
-    runner = FakeRunner({"agent get": _agent_get("idle")})
+    runner = FakeRunner({"hc get": _agent_get("idle")})
 
     roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
     roster.wait(store, 4242, runner=runner, timeout_ms=10, env=IN_PANE, out=lambda _: None)
     roster.down(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
 
-    assert runner.commands("pane", "close") == [], "a bare pane close was issued"
-    assert runner.commands("tab", "close") == [], "a bare tab close was issued"
-    assert runner.commands("herdr", "pane") == [], "a raw herdr pane command was issued"
+    assert runner.commands("hc", "close") == [], "a bare hc close was issued"
+    assert runner.commands("hc", "kill") == [], "a bare hc kill was issued"
+    assert all(call[0] != "herdr" for call in runner.calls), "an old Herdr call was issued"
     assert runner.commands("launcher.py", "close"), "teardown must still go through the launcher"
 
 
@@ -835,7 +1022,7 @@ def test_the_helper_never_creates_a_worktree(
 ) -> None:
     """Plan scope boundary: worktree creation belongs to the orchestrate driver, not here."""
     _record(rr, store)
-    runner = FakeRunner({"agent get": _agent_get("idle")})
+    runner = FakeRunner({"hc get": _agent_get("idle")})
 
     roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
     roster.wait(store, 4242, runner=runner, timeout_ms=10, env=IN_PANE, out=lambda _: None)
@@ -844,7 +1031,7 @@ def test_the_helper_never_creates_a_worktree(
     for call in runner.calls:
         assert "worktree" not in call, f"a worktree command was issued: {' '.join(call)}"
     assert runner.commands("git", "worktree") == []
-    assert runner.commands("herdr", "worktree") == []
+    assert runner.commands("hc", "worktree") == []
 
 
 def test_saving_the_roster_lands_on_a_fresh_read_under_the_record_lock(
@@ -927,3 +1114,43 @@ def test_the_dry_run_says_how_the_headless_seat_starts(
     roster.up(store, 4242, dry_run=True, env=IN_PANE, out=said.append)
     assert "start  started by `launcher.py review`" in "\n".join(said)
     assert "would create 1 pane(s)" in said[0]
+
+
+# --------------------------------------------------------------------------- run(): hc env
+
+
+def _capture_subprocess_env(
+    roster: ModuleType, monkeypatch: pytest.MonkeyPatch, cmd: list[str]
+) -> dict[str, str] | None:
+    """Run ``roster.run(cmd)`` against a patched ``subprocess.run`` and return the env it got."""
+    seen: dict[str, Any] = {}
+
+    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setenv("HC_TERMINAL_ID", "t99")
+    monkeypatch.setenv("HC_SCOPE", "somewhere")
+    monkeypatch.setenv("ROSTER_TEST_KEEP", "yes")
+    monkeypatch.setattr(roster.subprocess, "run", fake_run)
+    roster.run(cmd, check=False)
+    return seen["env"]
+
+
+def test_run_strips_the_callers_terminal_variables_for_hc_and_keeps_the_rest(
+    roster: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sends then arrive untagged, and a wait is not ended by a message to this session (D5)."""
+    env = _capture_subprocess_env(roster, monkeypatch, ["hc", "wait", "t5", "--json"])
+
+    assert env is not None
+    assert "HC_TERMINAL_ID" not in env and "HC_SCOPE" not in env
+    assert env["ROSTER_TEST_KEEP"] == "yes"
+
+
+def test_run_leaves_the_environment_alone_for_any_other_program(
+    roster: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The launcher needs the caller's variables to know which workspace it is being run from."""
+    env = _capture_subprocess_env(roster, monkeypatch, ["python3", "launcher.py", "launch"])
+    assert env is None

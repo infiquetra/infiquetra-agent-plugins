@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
-"""The roster helper — stand up and tear down one herdr session per staffed role (#1024).
+"""The roster helper — stand up and tear down one Herdr session per staffed role (#1024).
 
 ``roster.py up`` reads an issue's run record, resolves every role its staffing plan names to a
-vendor, a model, an effort and a prompt from the roles library, and creates one named herdr pane
-per role. ``roster.py wait`` waits for those panes to settle. ``roster.py down`` closes exactly the
-panes the record says this helper created, and nothing else.
+vendor, a model, an effort and a prompt from the roles library, and creates one named Herdr tab
+per role through the launcher, in the Herdr app. ``roster.py wait`` waits for those sessions to
+settle. ``roster.py down`` closes exactly the sessions the record says this helper created, and
+nothing else. After creation every call is herdr core's ``hc``; old Herdr is not called. A
+recorded "pane" is a herdr core terminal (its address, ``t7``).
 
 Four rules shape the whole file, and each one is a plan decision with a test behind it:
 
-**Panes are created through the launcher, never through raw herdr calls** (plan KTD1). The launcher
-beside this file already owns the single door into a pane, the staged-input stop, and a launch
-receipt whose ``owned`` field is computed from a pre-launch tab snapshot. Teardown proves ownership
-from that receipt. There is no ``herdr agent close`` subcommand at all — closing is a tab operation
-that the launcher performs — so re-implementing creation here would mean re-implementing the
-ownership proof too, weakly.
+**Sessions are created through the launcher, never through raw Herdr calls** (plan KTD1). The
+launcher beside this file already owns the single door into a session, the staged-input stop, and
+a launch receipt whose ``owned`` field is computed from a pre-launch terminal snapshot. Teardown
+proves ownership from that receipt and closes through the launcher, so re-implementing creation
+here would mean re-implementing the ownership proof too, weakly.
 
 **The record is the only authority on what may be closed** (plan R4). ``down`` never reads
-``herdr agent list`` to decide. A live pane that this helper did not record is invisible to it.
+``hc ls`` to decide. A live session that this helper did not record is invisible to it.
 
 **The wait always carries a timeout, and a blocked agent is reported rather than answered**
-(plan R6, R7). ``herdr agent wait`` without ``--timeout`` waits forever, and without ``--until``
-matches herdr's own settled set of idle, done and blocked — which is exactly the settled-state
-default this helper wants.
+(plan R6, R7). ``hc wait`` returns when a session stops working -- idle, done, blocked, error or
+exit -- and this helper always passes ``--timeout``.
 
-**Every command refuses outside a herdr pane** (plan R8), with one line and exit 4.
+**Every command refuses outside a Herdr terminal** (plan R8), with one line and exit 4.
 
 Exit codes extend the run record's table (plan KTD6) rather than inventing a parallel one:
 
@@ -35,7 +35,7 @@ Exit codes extend the run record's table (plan KTD6) rather than inventing a par
   2    a refusal: usage, an unreadable record, an unstaffable role, a failed
        launch or close
   3    the record carries a version this saga does not know
-  4    this process is not running inside a herdr pane
+  4    this process is not running inside a Herdr terminal
   5    a role is blocked, or its wait timed out
 ===== ======================================================================
 """
@@ -109,13 +109,17 @@ STATE_CLOSED = "closed"
 #: herdr reports these when an agent has finished its turn.
 SETTLED_STATUSES = frozenset({"idle", "done"})
 
-#: Default caller timeout for one wait, in milliseconds. Always sent; herdr waits forever without
-#: one.
+#: Default caller timeout for one wait, in milliseconds. Always sent, as whole seconds to ``hc``.
 DEFAULT_WAIT_TIMEOUT_MS = 600_000
 
-#: Seconds allowed for one launcher or herdr invocation before it is treated as no answer.
+#: Seconds allowed for one launcher or ``hc`` invocation before it is treated as no answer.
 LAUNCH_TIMEOUT_SECONDS = 420.0
 HERDR_TIMEOUT_SECONDS = 30.0
+
+#: herdr core's command line. Every call runs without the caller variables (``HC_CALLER_VARIABLES``),
+#: as the launcher's do: a wait is then not ended by a message to the session running this helper.
+HC = "hc"
+HC_CALLER_VARIABLES = ("HC_TERMINAL_ID", "HC_SCOPE")
 
 #: How many lines of a blocked pane's output are quoted in the report.
 BLOCKED_TAIL_LINES = 40
@@ -136,7 +140,7 @@ class RosterError(RuntimeError):
 
 
 class NotInHerdrPaneError(RosterError):
-    """This process is not running inside a herdr pane. Exit 4, one line."""
+    """This process is not running inside a Herdr terminal. Exit 4, one line."""
 
 
 class UnknownRecordVersionError(RosterError):
@@ -164,9 +168,12 @@ def run(
     ``check=False`` means every failure — including a program that is not installed — comes back as
     a result rather than an exception, so a machine without herdr gets a refusal, not a traceback.
     """
+    env = None
+    if cmd and cmd[0] == HC:
+        env = {k: v for k, v in os.environ.items() if k not in HC_CALLER_VARIABLES}
     try:
         proc = subprocess.run(  # noqa: S603 - argv is built here, never shell-interpolated
-            list(cmd), capture_output=True, text=True, timeout=timeout
+            list(cmd), capture_output=True, text=True, timeout=timeout, env=env
         )
     except FileNotFoundError as exc:
         return subprocess.CompletedProcess(list(cmd), 127, "", str(exc))
@@ -181,18 +188,20 @@ def run(
 
 
 def require_herdr_pane(env: Mapping[str, str] | None = None) -> str:
-    """Return this session's pane id, or refuse (plan R8).
+    """Return this session's own terminal address, or refuse (plan R8).
 
-    The card's own verification line tests ``HERDR_ENV``; the pane id is what makes the session
-    identifiable, and R14 needs it to refuse closing the pane the helper runs in.
+    ``HC_TERMINAL_ID`` is set inside every Herdr terminal and is that terminal's address; it is
+    what makes the session identifiable, and R14 needs it to refuse closing the terminal the
+    helper runs in. Old Herdr's ``HERDR_ENV`` is never set now, so it proves nothing.
     """
     environ = os.environ if env is None else env
-    if environ.get("HERDR_ENV") != "1" or not environ.get("HERDR_PANE_ID"):
+    own = environ.get("HC_TERMINAL_ID")
+    if not own:
         raise NotInHerdrPaneError(
-            "roster: this command controls herdr sessions and must run inside a herdr pane; "
-            "HERDR_ENV=1 and HERDR_PANE_ID are not both set"
+            "roster: this command controls Herdr sessions and must run inside a Herdr terminal; "
+            "HC_TERMINAL_ID is not set"
         )
-    return str(environ["HERDR_PANE_ID"])
+    return str(own)
 
 
 # --------------------------------------------------------------------------- the run record
@@ -504,20 +513,24 @@ def _now() -> str:
 
 
 def workspace_of(receipt: Mapping[str, Any]) -> str | None:
-    """The workspace a launch landed in, taken from its identifiers.
+    """The workspace a launch landed in, as the launcher's receipt records it.
 
-    The launcher's receipt (``launch_receipt_shape``) carries ``tab_id`` and ``pane`` but **no**
-    ``workspace_id`` field, so reading one off the receipt records ``null`` forever. herdr's
-    identifiers are ``<workspace>:<object>``, which is how the launcher itself recovers a workspace
-    when a close fails (``launcher.py``: ``str(unit.tab_id).partition(":")[0]``). Same rule here,
-    so the roster row names the workspace an operator would have to look in.
+    The receipt's ``space`` is the Herdr app workspace id the launcher's result named (the window's
+    ``space`` or the core placement's ``herdr.space``). A herdr core terminal address (``t7``)
+    carries no workspace, so with no ``space`` the row records none rather than a guess. A
+    receipt written by an old Herdr launch still names its workspace in the ``<workspace>:``
+    prefix of its ids, and that is still read.
     """
-    for key in ("workspace_id", "tab_id", "pane"):
+    for key in ("space", "workspace_id"):
+        value = receipt.get(key)
+        if value:
+            return str(value)
+    for key in ("tab_id", "pane"):
         value = receipt.get(key)
         if not value:
             continue
-        head = str(value).partition(":")[0]
-        if head:
+        head, separator, _rest = str(value).partition(":")
+        if separator and head:
             return head
     return None
 
@@ -719,11 +732,12 @@ def wait(
     env: Mapping[str, str] | None = None,
     out: Callable[[str], None] = print,
 ) -> int:
-    """Wait for every recorded pane to settle, under a caller timeout (plan R6, R7)."""
+    """Wait for every recorded session to settle, under a caller timeout (plan R6, R7)."""
     require_herdr_pane(env)
     record = load_record(store_root, issue)
     rows: list[dict[str, Any]] = [dict(row) for row in record.roster]
     unsettled: list[str] = []
+    seconds = max(1, timeout_ms // 1000)
 
     for row in rows:
         if row.get("created_by") != CREATED_BY or row.get("state") in (
@@ -731,17 +745,18 @@ def wait(
             STATE_SETTLED,
         ):
             continue
-        target = str(row.get("agent_name") or row.get("pane_name") or "")
+        target = str(row.get("pane_id") or "")
         if not target:
             continue
-        # No --until: herdr's own default matches idle, done or blocked, which is the settled-state
-        # set this helper wants. --timeout is never omitted; herdr waits forever without one.
+        # hc returns when the session stops working -- idle, done, blocked, error, or exit --
+        # or when ``--timeout`` runs out (``ended`` false, exit 0). The status is read after.
         proc = runner(
-            ["herdr", "agent", "wait", target, "--timeout", str(timeout_ms)],
+            [HC, "wait", target, "--timeout", str(seconds), "--json"],
             check=False,
-            timeout=(timeout_ms / 1000.0) + HERDR_TIMEOUT_SECONDS,
+            timeout=seconds + HERDR_TIMEOUT_SECONDS,
         )
-        if proc.returncode != 0:
+        result = _json_object(proc)
+        if proc.returncode != 0 or result is None or result.get("reason") == "timeout":
             unsettled.append(f"{row.get('pane_name')} (wait did not settle within {timeout_ms}ms)")
             out(
                 f"roster: {row.get('pane_name')} did not settle within {timeout_ms}ms: "
@@ -753,7 +768,7 @@ def wait(
             row["state"] = STATE_BLOCKED
             unsettled.append(f"{row.get('pane_name')} (blocked)")
             out(
-                f"roster: {row.get('pane_name')} is BLOCKED on pane {row.get('pane_id')}; "
+                f"roster: {row.get('pane_name')} is BLOCKED on terminal {row.get('pane_id')}; "
                 "reporting it, not answering it:"
             )
             out(_agent_tail(runner, target))
@@ -771,33 +786,36 @@ def wait(
     return EXIT_OK
 
 
+def _json_object(proc: subprocess.CompletedProcess[str]) -> dict[str, Any] | None:
+    """The JSON object an ``hc`` call printed, or None."""
+    try:
+        payload = json.loads(proc.stdout or "null")
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _agent_status(runner: Runner, target: str) -> str:
-    proc = runner(["herdr", "agent", "get", target], check=False, timeout=HERDR_TIMEOUT_SECONDS)
+    """The session's status word from ``hc get``: idle, working, done, blocked or error.
+
+    ``exited`` when its program has finished, ``unknown`` when hc cannot describe it or the
+    program never reported a status.
+    """
+    proc = runner([HC, "get", target, "--json"], check=False, timeout=HERDR_TIMEOUT_SECONDS)
     if proc.returncode != 0:
         return "unknown"
-    try:
-        payload = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        return "unknown"
-    result = payload.get("result") if isinstance(payload, dict) else None
-    row = result.get("agent") if isinstance(result, dict) else None
-    if not isinstance(row, dict):
-        row = result if isinstance(result, dict) else {}
-    return str(row.get("agent_status") or "unknown")
+    payload = _json_object(proc) or {}
+    terminal = payload.get("terminal") if isinstance(payload.get("terminal"), dict) else payload
+    if terminal.get("state") == "finished":
+        return "exited"
+    status = terminal.get("status")
+    word = status.get("state") if isinstance(status, dict) else status
+    return str(word or "unknown")
 
 
 def _agent_tail(runner: Runner, target: str) -> str:
     proc = runner(
-        [
-            "herdr",
-            "agent",
-            "read",
-            target,
-            "--source",
-            "recent",
-            "--lines",
-            str(BLOCKED_TAIL_LINES),
-        ],
+        [HC, "read", target, "--lines", str(BLOCKED_TAIL_LINES)],
         check=False,
         timeout=HERDR_TIMEOUT_SECONDS,
     )
@@ -815,7 +833,7 @@ def down(
     env: Mapping[str, str] | None = None,
     out: Callable[[str], None] = print,
 ) -> int:
-    """Close exactly the panes the record says this helper created (plan R4, R14)."""
+    """Close exactly the sessions the record says this helper created (plan R4, R14)."""
     own_pane = require_herdr_pane(env)
     record = load_record(store_root, issue)
     rows: list[dict[str, Any]] = [dict(row) for row in record.roster]
@@ -858,7 +876,7 @@ def _skip_reason(row: Mapping[str, Any], own_pane: str) -> str | None:
     if row.get("state") == STATE_CLOSED:
         return "it is already closed"
     if row.get("pane_id") and str(row.get("pane_id")) == own_pane:
-        return "it is the pane this command is running in"
+        return "it is the terminal this command is running in"
     receipt_path = row.get("receipt_path")
     if not receipt_path:
         return "it records no ownership receipt"
@@ -873,7 +891,7 @@ def _skip_reason(row: Mapping[str, Any], own_pane: str) -> str | None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="roster.py",
-        description="Stand up and tear down one herdr session per staffed role.",
+        description="Stand up and tear down one Herdr session per staffed role.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     for name, help_text in (
