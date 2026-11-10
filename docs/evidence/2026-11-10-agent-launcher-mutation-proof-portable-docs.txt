@@ -78,5 +78,5 @@
 #
 # Committed-blob control, measured on the restored bytes after the campaign:
 # predicate problems: 0; committed-blob test exit 0; test_portable_docs.py: 14 passed (exit 0).
-plugins/agent-launcher/skills/agent-launcher/SKILL.md sha256:0f8c807dbbd5b3abe744a32835c59edf03c2070f140b52003d1d2077de86d9cd
+plugins/agent-launcher/skills/agent-launcher/SKILL.md sha256:a53c26051d118d8146f15a9f6ed3b63541a225c38c1baa9dbcd8d3a7b33d8903
 plugins/agent-launcher/README.md sha256:2946e0318cb25fa46f024fc9788c5b38b73788ace24ea2ffde454dc0e460b21e

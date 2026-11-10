@@ -17,7 +17,10 @@ this plugin's `launcher.py` and `roster.py` (which call `herdr` directly) still 
 to old Herdr. SKILL.md now opens with which launches reach the app and which do
 not, and marks the old-Herdr sections, which stay while Orchestrate runs the
 scripts. The portable-docs mutation proof was re-run
-(`docs/evidence/2026-11-10-agent-launcher-mutation-proof-portable-docs.txt`).
+(`docs/evidence/2026-11-10-agent-launcher-mutation-proof-portable-docs.txt`). Later the same day the
+launcher (now in source in infiquetra-herdr-console, `launcher/bin`) placed crews in
+the app and retired recipes, layouts, Hermes profiles and a bare `agents`; the skill
+says so, and the proof was re-run for those bytes.
 
 **Mechanism.** A launch into a lingering old server does not fail; the session is
 simply invisible, so the agent concludes the new mechanism does not work.
