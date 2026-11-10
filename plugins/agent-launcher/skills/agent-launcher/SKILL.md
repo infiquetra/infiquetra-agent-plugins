@@ -1,11 +1,22 @@
 ---
 name: agent-launcher
-description: "Create coding-agent sessions with the local `agents` wrapper — one named tab in the current Herdr workspace, a crew, a machine or team view, a fleet layout, or a Hermes profile — including model, provider, permissions, working directory, and machine routing. Use when the user asks to launch, start, add, or open a Claude, Codex, Grok, Muse, OpenCode, Agy, or Hermes session, or to open a machine/team/fleet view. Creation only: use the `herdr` skill for every interaction after the session exists. Do not use merely because a task could benefit from delegation or parallel work."
+description: "Create coding-agent sessions with the local `agents` wrapper — one named tab in a Herdr workspace, in the Herdr app (herdr core plus the window) — including model, provider, permissions, working directory, and machine routing. Use when the user asks to launch, start, add, or open a Claude, Codex, Grok, Muse, OpenCode, Agy, or Hermes session, or to open a machine/team/fleet view. Creation only: use the `herdr` skill for every interaction after the session exists. Do not use merely because a task could benefit from delegation or parallel work."
 ---
 
 # Agent launcher
 
 `agents` is a local wrapper at `~/.local/bin/agents` that creates agent sessions and Herdr views. It is a creation tool, not an interaction tool.
+
+## Herdr is now herdr core and the Herdr app (read this first)
+
+Since November 2026 every machine runs herdr core (`hc`), and the Herdr app is the window. Old Herdr (`herdr` 0.9.5, `HERDR_ENV`, `herdr workspace|tab|pane|agent`) is being removed, and nothing it holds shows in the window.
+
+- **Start a session or a workspace with a plain launch**, which goes to the app: `agents --workspace "<Workspace name>" --task <tab-name> --cwd <dir> <tool> [tool args]`. One call per seat; calls with the same `--workspace` land in the same workspace, and the first creates it. Without `--workspace`, a launch from inside a Herdr terminal joins that terminal's workspace. Preview with `agents --dry-run …`: the `command=` line runs `agent-app prepare … --workspace <name>`.
+- **Another machine:** `--app-machine <machine>` (`mac-mini`, `laptop`, `dev-1` … `dev-4`); that machine's own launcher starts the session in its own core.
+- **After creation, operate the session with the `herdr` skill**, which is about `hc`: `hc ls`, `hc send`, `hc wait`, `hc read`. Not `herdr agent …`.
+- **These still start old Herdr; do not use them unless the user asks for old Herdr by name:** `--herdr`, `--herdr-control-only`, `--current --herdr`, `--crew`, `--orchestrator/--workers`, `--recipe`, `--herdr-layout`, `--profile`, `--new`, the `--mac-mini`/`--laptop`/`--remote` SSH routing, and this plugin's `launcher.py` and `roster.py` scripts (which call `herdr` directly). Start a crew as one plain launch per seat.
+
+The sections below that name those paths describe old Herdr. They stay because Orchestrate still runs the plugin scripts until they move to `hc`.
 
 **Depends on:** the canonical `herdr` skill for every interaction after the session exists. This plugin does not ship a copy of that skill. After the creation command returns, switch to `herdr` and stay there.
 
@@ -220,11 +231,12 @@ OpenCode 1.18.18 does not expose `--variant` on its top-level terminal user inte
 
 ## Pick the topology deliberately
 
-Do not substitute one shape for another. If the user asked for a tab, do not build a crew.
+Do not substitute one shape for another. If the user asked for a tab, do not build a crew. Only the first two rows below reach the Herdr app; every other row is old Herdr (see the top of this file).
 
 | Shape | Command | What it creates |
 | --- | --- | --- |
-| One named tab | `agents --herdr-control-only --task <name> <tool>` | A single tab in the **current** workspace; keeps focus |
+| One named tab | `agents --task <name> <tool>` | A single tab in the **current** workspace, in the Herdr app |
+| One tab in a named workspace | `agents --workspace "<name>" --task <name> <tool>` | Creates the workspace on first use, in the Herdr app |
 | Crew | `agents --crew` | One workspace here: Terminal tab, orchestrator tab, one tab per worker |
 | Ad-hoc crew | `agents --orchestrator claude --workers codex,agy` | Exactly those agents, no named crew |
 | Machine view | `agents --recipe studio\|mac-mini\|laptop` | That one machine's canonical Herdr view |
@@ -237,7 +249,9 @@ Recipes take no tool, no `--task`, and no `--workspace`. Crews do take `--worksp
 
 Re-running a crew adds only the tabs its workspace is missing — that is how you grow a crew you are already in.
 
-## The common case: one named tab, no focus change
+## Old Herdr: one named tab, no focus change
+
+In the Herdr app the common case is the plain launch at the top of this file. The steps below are the old-Herdr procedure (`--herdr --herdr-control-only`, `herdr pane current`), kept for Orchestrate's scripts.
 
 This is the workflow to reach for when the user says "add an agent" or "start a reviewer". Prefer the verified-launch script above, and complete its bounded live preflight before using the equivalent wrapper command below:
 
@@ -304,7 +318,7 @@ This plugin does not keep a private vendor or model roster. `python3 launcher.py
 
 ## Machine routing
 
-`--mac-studio` (`--studio`), `--mac-mini` (`--mini`), `--laptop`, `--norns`, or `--remote <host>` run the launch over SSH on that box, using that host's own `~/.local/bin/herdr`. Transport is `--plain-ssh` by default; `--cmux-ssh` uses cmux's managed transport.
+In the Herdr app, `--app-machine <machine>` hands the launch to that machine's own launcher and core. The older flags `--mac-studio` (`--studio`), `--mac-mini` (`--mini`), `--laptop`, `--norns`, or `--remote <host>` run the launch over SSH on that box, using that host's own `~/.local/bin/herdr` (old Herdr). Transport is `--plain-ssh` by default; `--cmux-ssh` uses cmux's managed transport.
 
 Not every host runs every tool — the default crew resolves per machine so it only offers agents that host can actually run. Check with `agents --crews` on the target rather than assuming parity.
 
@@ -315,5 +329,5 @@ Not every host runs every tool — the default crew resolves per machine so it o
 - Honor the requested agent kind and topology exactly. Do not silently upgrade a tab into a crew or a machine view into a fleet.
 - Do not add `--new`, `--recipe`, `--crew`, or a pane split unless asked for that shape.
 - Escalate permissions only when the assigned scope requires it, and say so when you do.
-- One creation command, then hand off to `herdr`. If you find yourself typing `agents` a second time for the same session, you are in the wrong tool.
+- One creation command per session, then hand off to the `herdr` skill (`hc`). If you find yourself typing `agents` a second time for the same session, you are in the wrong tool.
 - Do not close a session whose ownership you cannot prove from the launch receipt.
