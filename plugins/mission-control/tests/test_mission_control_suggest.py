@@ -132,7 +132,7 @@ def _ask(result: Any = None):
 def _prepare(tmp_path: Path, source_file: Path, **overrides: Any) -> Path:
     """The card's first criterion, in its runnable form.
 
-    `--team asgard --project operations` are added: both are required by the
+    `--team asgard --project agent-platform` are added: both are required by the
     parser and relaxing them would change team and board routing for every
     prepared draft, which the card does not ask for.
     """
@@ -140,7 +140,7 @@ def _prepare(tmp_path: Path, source_file: Path, **overrides: Any) -> Path:
         "repo": "infiquetra-claude-plugins",
         "issue_type": "defect",
         "team": "asgard",
-        "project": "operations",
+        "project": "agent-platform",
         "source": source_file.read_text(encoding="utf-8"),
         "title": "t",
         "status": None,

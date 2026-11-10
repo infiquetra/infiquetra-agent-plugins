@@ -1414,7 +1414,7 @@ def test_filing_matches_c13_issue_shape(tmp_path: Path, checkout: Path) -> None:
     assert mc.filings == [{"title": title, "body": body, "risk": risk}]
     prepare = next(call for call, _ in mc.calls if "prepare" in call)
     for flag, value in (("--type", "defect"), ("--team", "asgard"),
-                        ("--project", "operations"), ("--status", "Discovering")):
+                        ("--project", "agent-platform"), ("--status", "Discovering")):
         assert prepare[prepare.index(flag) + 1] == value
     assert any("create-prepared" in call for call, _ in mc.calls)
 

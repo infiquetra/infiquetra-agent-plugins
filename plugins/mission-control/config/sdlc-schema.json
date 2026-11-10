@@ -1,5 +1,5 @@
 {
-  "schema_version": "2026-09-07.5",
+  "schema_version": "2026-11-10",
   "migration_notes": [
     "2026-06-13: Added additive saga_lifecycle block derived from the vendored saga-docs-model.yaml snapshot (plugin 0.21.0). At that migration, this was strictly additive and existing consumers (for example, wip_limits.olympus) were unchanged; superseded for Olympus routing by the 2026-06-17 retirement.",
     "2026-06-13.2: Merged hand-authored config/saga-lifecycle-extras.yaml (combinations, reset_edges, gate_classification, phase_board_map, phase_command_map) into the saga_lifecycle block. Strictly additive; snapshot-derived keys and existing consumers unchanged.",
@@ -26,7 +26,9 @@
     "2026-09-07.2: unit U5 of the SDLC documentation update plan (docs/plans/2026-09-07-sdlc-documentation-update-plan.md), landing operator decisions A6 and A7 recorded in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md. gate_catalogue.gates.deploy-owner-check.owner moves off the placeholder value not stated and names the Release worker: the new run role that holds the deployment_owner delivery responsibility, executes the authorized non-production deployment, and is therefore the role accountable when this gate stops a deploy before any mutation. Nothing else in the row changes. Its classification stays unclassified, because the W4 KTD4 census note still applies and no P14 classification assessment was performed here; evidence, applicability, override_policy, failure_route and source are byte-identical. The role itself is defined in config/run-model.json, not in this schema, and no top-level key is added or removed.",
     "2026-09-07.3: unit U6 of the SDLC documentation update plan (docs/plans/2026-09-07-sdlc-documentation-update-plan.md), landing operator decisions E1, E3, E5 and E9 and the gate rows of decision A3, all recorded in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md. Five changes, one bump. (1) E1: issue_fields grows from thirteen fields to fourteen with risk, header '### Risk', required, placed after verification and before the lifecycle_origin backpointer; risk joins the always-required rule of required_matrix because it SUPPLIES the tier the risk-conditional rules key on, and the risk-conditional rules themselves are unchanged - failure_modes, inputs and stop_conditions still flip required at high and very-high only. dispatch_gates.planning_to_active_readiness.risk_scaling.enabled becomes true, missing_input and recommended_source retire, and source names issue_fields.fields.risk; the block writes no tier name of its own, so issue_fields.required_matrix stays the single source of which tiers deepen which fields. baseline_threshold.asserts_no_risk_tier becomes false because the rule now does assert a tier, the one the card carries. (2) E3: dispatch_gates gains a generic rule binding Planning-to-Active readiness to every board that uses workflows.stage_flow and dispatches Active work, inherited by contract, with operations, asgard and campps bound; dispatch_gates.operations gains an Active entry referencing the same rule object, and its creation-time Ready gate is untouched. (3) A3's gate rows and E3's: gate_catalogue gains operations-active-gate and re-classifies asgard-active-gate, campps-active-gate, prepared-issue-readiness-checks and authorized-author-allowlist from unclassified to blocking with their six attributes read from real evidence, taking the catalogue from 47 rows to 48 and the classification counts from 6 advisory / 30 blocking / 11 unclassified to 6 / 35 / 7; the two Active rows' stale source paths, which named saga_lifecycle.dispatch_gates when dispatch_gates is a sibling top-level key, are corrected in the same touch; floor_gates.planning_to_active lists all three rows and the W4 plan's UNKNOWN-1, the Operations board's absent Active gate, retires. (4) E5: a NEW top-level block, status_definitions, placed before saga_lifecycle, carrying all 26 Stage-and-Status pairs with the event that enters each, the role whose reported outcome that event is, and the authorized writer, plus the cross-cutting Blocked row; Ready to close is deliberately carried under both Verify and Retro with different definitions, which is why the block nests under stages rather than keying on the flat status list. workflows.stage_flow is unchanged: it stays the single authority for which Statuses exist, and status_definitions is keyed by the same pairs. tools/docs/gen_lifecycle_docs.py renders it as the new generated region status-definitions in docs/process/kanban-workflow.md. (5) E9: work_hierarchy.parent_stage_derivation.parent_outcome_state.own_verification_failed.repair_window_encoding stops being an UNKNOWN string and becomes a mapping naming the marker (the repair-window label, added to config/labels.json), its writer (the Delivery Manager through the lifecycle integration), and its two events (set when recording Verification failed citing the failing result, cleared only after a later deployed version passes every prescribed scenario citing that result). The top-level key set gains exactly one key, status_definitions, and loses none.",
     "2026-09-07.4: unit U7 of the SDLC documentation update plan (docs/plans/2026-09-07-sdlc-documentation-update-plan.md), landing operator decision E2 and the schema half of decisions C1a to C1g, all recorded in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md. One change, one bump. E2: dispatch_gates.planning_to_active_readiness.planning_evidence.applicability_scan stops shipping as a declared refusal. enabled becomes true; missing_input retires, because what it recorded as missing - the membership of the scan - now exists; and the block gains domain_source naming config/lens-catalogue.json, declared_by (the Planner), declared_when (during planning, once per work unit), the declaration itself, the rule that an always-on lens is never declared away, boundary (planning for review readiness, never staffing and never scoring), and consumed_by (the readiness evidence and tools/docs/gen_review_roster.py). The undefined fixed count of EIGHT domains is retired outright: the scan's domains ARE the catalogue's lens identifiers, because a second concern list beside the catalogue would be the rival vocabulary decision E2 forbids. The fixture domain list the refusing form was tested over retires with it - tools/docs/planning_readiness.py's applicability_scan_status now reports the enabled block and scan_domain is exercised over the catalogue's real lens identifiers. recorded_reason_rule is unchanged in substance: a non-applicable domain costs a brief recorded reason, never an empty section (R19). NOTHING about the lens catalogue itself is a schema block: the catalogue (config/lens-catalogue.json), the default quality profile (config/quality-profiles/default.json), and the executor verification ledger (config/executor-verifications.json) are separately versioned files with their own generators, per the plan's key technical decision KTD6. The top-level key set is unchanged: no key is added and none is removed.",
-    "2026-09-07.5: repair unit R1 of the SDLC documentation update plan (docs/plans/2026-09-07-sdlc-documentation-update-plan.md), landing plan decisions Q79 and Q84 against fresh-eyes round 7, findings 2 and 10 to 13. One change, one bump. Q79: lifecycle_field_mutation gains allowed_submissions, the SINGLE list of phase-boundary moves a caller may submit through the constrained Mission Control mutation, with allowed_submissions_note and allowed_submissions_ready_to_close_note beside it. Six rows, not five: Ready to close appears under BOTH Verify and Retro, because Stage plus Status is the key and retro_trigger.no_trigger_closure says a run with no fired trigger closes straight from Verify. Before this bump, docs/process/lifecycle-field-mutation.md carried a hand-authored five-row table and docs/process/saga-board-write-authority.md a hand-authored six-row one, and both claimed to be the single authority on board writes; both now render this list as a generated region, so the two chapters cannot state different rules. Q84: the classification_basis strings of asgard-active-gate, operations-active-gate, authorized-author-allowlist and the issue-readiness review stop citing a bare 'operator decision E3 / A3' and gloss each decision item in words with a link to its heading in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md. No enum, no gate verdict, and no top-level key changes: the top-level key set is unchanged, and no consumer that read this schema before the bump loses a field."
+    "2026-09-07.5: repair unit R1 of the SDLC documentation update plan (docs/plans/2026-09-07-sdlc-documentation-update-plan.md), landing plan decisions Q79 and Q84 against fresh-eyes round 7, findings 2 and 10 to 13. One change, one bump. Q79: lifecycle_field_mutation gains allowed_submissions, the SINGLE list of phase-boundary moves a caller may submit through the constrained Mission Control mutation, with allowed_submissions_note and allowed_submissions_ready_to_close_note beside it. Six rows, not five: Ready to close appears under BOTH Verify and Retro, because Stage plus Status is the key and retro_trigger.no_trigger_closure says a run with no fired trigger closes straight from Verify. Before this bump, docs/process/lifecycle-field-mutation.md carried a hand-authored five-row table and docs/process/saga-board-write-authority.md a hand-authored six-row one, and both claimed to be the single authority on board writes; both now render this list as a generated region, so the two chapters cannot state different rules. Q84: the classification_basis strings of asgard-active-gate, operations-active-gate, authorized-author-allowlist and the issue-readiness review stop citing a bare 'operator decision E3 / A3' and gloss each decision item in words with a link to its heading in docs/engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md. No enum, no gate verdict, and no top-level key changes: the top-level key set is unchanged, and no consumer that read this schema before the bump loses a field.",
+    "2026-10-06: issue #177 (card X1a of program infiquetra/infiquetra-agent-plugins#147) classifies saga's setup command. saga_lifecycle.command_classification.excluded gains /setup, under decision E10's rule that a command touching no issue and no Stage is excluded, as /engines is: saga's setup step checks the machine and the repository for the tools saga needs and records what it finds, outside every run. It is classified before saga ships it: the adapter's completeness check walks only the vendored snapshot's commands, so it stays green, and the atlas lists /setup as excluded with no command file. The excluded set is now exactly /engines and /setup, the cross-cutting set is unchanged, and no top-level key is added or removed.",
+    "2026-11-10: Replaced the team-generic Operations (Project #3) and Asgard (Project #2) active board projections with nine per-project boards alongside CAMPPS (Project #4): sovereign-circuit (#10), company (#11), argus (#12), talaria (#13), agent-platform (#14), home-lab (#15), eve-mimir (#16), cognitive-ai-research (#17), and ai-native-engine (#18). Projects #2 and #3 are closed externally with their closed historical items preserved and recorded as retired_historical in boards (active_routing false, terminal_disposition retired_preserved); teams.operations and teams.asgard remain active with board null. All ten active boards share workflows.stage_flow, the four-field contract (Stage, Status, Objective, Priority), dispatch_gates.rule.bound -> planning_to_active_readiness (inherited by contract), and saga_lifecycle.phase_board_map; historical dispatch_gates.operations, dispatch_gates.asgard, and gate_catalogue rows stay preserved so historical references resolve. No top-level key is added or removed."
   ],
   "status": "active",
   "description": "Canonical Infiquetra SDLC board, team, routing, review, approval, and deployment-state schema. This file intentionally contains no live GitHub Projects field option IDs; tooling must resolve those from GitHub at runtime.",
@@ -35,14 +37,14 @@
       "kind": "human_operator",
       "status": "active",
       "role": "Sole human operator, intent source, approval gate, escalation arbitrator, and occasional direct implementer with local AI tools",
-      "board": "operations",
+      "board": null,
       "review_model": "operator_judgment"
     },
     "asgard": {
       "kind": "agent_team",
       "status": "active",
       "role": "Jeff-proximal rapid-action, incubation, and mission-mode team with an issue-backed feed and lightweight proof model",
-      "board": "asgard",
+      "board": null,
       "modes": ["Rapid Action", "Incubator", "Mission"],
       "modes_surface": "team_operating_concept_only",
       "modes_note": "These three modes are an Asgard operating concept (docs/process/asgard-operating-model.md), not a project field. The Mode single-select was deleted from the Asgard board on 2026-08-16; nothing records a card's mode on the board any more.",
@@ -104,19 +106,27 @@
   "boards": {
     "operations": {
       "name": "Operations",
-      "status": "active",
-      "purpose": "Raw operator intent, approvals, questions, personal/operator work, and shaping before team execution",
+      "status": "retired_historical",
+      "purpose": "Former team-generic operator intent board; retired and closed 2026-11-10 in favor of per-project boards with closed historical items preserved",
       "owner": "operations",
       "workflow": "stage_flow",
       "routing_required_at": "Ready for Active",
+      "terminal_disposition": "retired_preserved",
+      "active_routing": false,
+      "retired_on": "2026-11-10",
+      "closed_on": "2026-11-10",
       "live_creation": "created_2026-05-29_project_3"
     },
     "asgard": {
       "name": "Asgard",
-      "status": "active",
-      "purpose": "Rapid action, incubation, and mission-mode work close to Jeff",
+      "status": "retired_historical",
+      "purpose": "Former rapid-action and incubation team board; retired and closed 2026-11-10 in favor of per-project boards with closed historical items preserved",
       "owner": "asgard",
       "workflow": "stage_flow",
+      "terminal_disposition": "retired_preserved",
+      "active_routing": false,
+      "retired_on": "2026-11-10",
+      "closed_on": "2026-11-10",
       "live_creation": "created_2026-05-29_project_2"
     },
     "campps": {
@@ -128,6 +138,78 @@
       "workflow": "stage_flow",
       "archive_trigger": "Operator declares the initiative complete after Objectives are Done and Outcome Scorecards are reviewed.",
       "live_creation": "created_2026-06-16_project_4"
+    },
+    "sovereign-circuit": {
+      "name": "Sovereign Circuit",
+      "status": "active",
+      "purpose": "Per-project execution board for Sovereign Circuit (Unity strategy and simulation game)",
+      "owner": "operations",
+      "workflow": "stage_flow",
+      "live_creation": "created_2026-11-10_project_10"
+    },
+    "company": {
+      "name": "Infiquetra Company",
+      "status": "active",
+      "purpose": "Per-project execution board for the Infiquetra Company workspace and the Hermes-backed agent teams",
+      "owner": "operations",
+      "workflow": "stage_flow",
+      "live_creation": "created_2026-11-10_project_11"
+    },
+    "argus": {
+      "name": "Argus",
+      "status": "active",
+      "purpose": "Per-project execution board for the physical sensing suite (Argus, Argus Ears, and Eidolon)",
+      "owner": "operations",
+      "workflow": "stage_flow",
+      "live_creation": "created_2026-11-10_project_12"
+    },
+    "talaria": {
+      "name": "Talaria",
+      "status": "active",
+      "purpose": "Per-project execution board for Talaria and Auralis client applications",
+      "owner": "operations",
+      "workflow": "stage_flow",
+      "live_creation": "created_2026-11-10_project_13"
+    },
+    "agent-platform": {
+      "name": "Agent Platform",
+      "status": "active",
+      "purpose": "Per-project execution board for Herdr console, portable Agent Plugins, SDLC, Context Library, and Agent Operations",
+      "owner": "operations",
+      "workflow": "stage_flow",
+      "live_creation": "created_2026-11-10_project_14"
+    },
+    "home-lab": {
+      "name": "Home Lab",
+      "status": "active",
+      "purpose": "Per-project execution board for Proxmox/Ceph home-lab infrastructure, Ansible collections, AWS org stacks, Hermes runtime, and Voice Forge",
+      "owner": "operations",
+      "workflow": "stage_flow",
+      "live_creation": "created_2026-11-10_project_15"
+    },
+    "eve-mimir": {
+      "name": "EVE Mimir",
+      "status": "active",
+      "purpose": "Per-project execution board for the EVE Online companion application and context library",
+      "owner": "operations",
+      "workflow": "stage_flow",
+      "live_creation": "created_2026-11-10_project_16"
+    },
+    "cognitive-ai-research": {
+      "name": "Cognitive AI Research",
+      "status": "active",
+      "purpose": "Per-project execution board for the Cognitive AI Research lab application",
+      "owner": "operations",
+      "workflow": "stage_flow",
+      "live_creation": "created_2026-11-10_project_17"
+    },
+    "ai-native-engine": {
+      "name": "AI-Native Engine",
+      "status": "active",
+      "purpose": "Per-project execution board for the Rust/Bevy 3D engine, Blender asset pipeline, and reference applications",
+      "owner": "operations",
+      "workflow": "stage_flow",
+      "live_creation": "created_2026-11-10_project_18"
     }
   },
   "workflows": {
@@ -148,7 +230,7 @@
       "terminal_statuses": ["Ready to close"],
       "entry_option_rule": "The first name in each stage_statuses list is the entry option: defaulting there invents no recorded progress (R49). Ready for Active (Planning) and Ready to close (Verify/Retro) are terminal exceptions that preserve recorded progress.",
       "status_scoping": "A GitHub single-select field cannot scope options per stage, so each board's Status field carries the flat 26-option union and the per-stage sets are authoritative only here. No defensive mechanism blocks a manual out-of-stage choice (R42); consistency is descriptive.",
-      "canonical_for": ["operations", "asgard", "campps"]
+      "canonical_for": ["campps", "sovereign-circuit", "company", "argus", "talaria", "agent-platform", "home-lab", "eve-mimir", "cognitive-ai-research", "ai-native-engine"]
     },
     "campps_initiative": {
       "status": "retired_historical",
@@ -165,9 +247,16 @@
   },
   "fields": {
     "common": ["Stage", "Status", "Objective", "Priority"],
-    "operations": ["Stage", "Status", "Objective", "Priority"],
-    "asgard": ["Stage", "Status", "Objective", "Priority"],
-    "campps": ["Stage", "Status", "Objective", "Priority"]
+    "campps": ["Stage", "Status", "Objective", "Priority"],
+    "sovereign-circuit": ["Stage", "Status", "Objective", "Priority"],
+    "company": ["Stage", "Status", "Objective", "Priority"],
+    "argus": ["Stage", "Status", "Objective", "Priority"],
+    "talaria": ["Stage", "Status", "Objective", "Priority"],
+    "agent-platform": ["Stage", "Status", "Objective", "Priority"],
+    "home-lab": ["Stage", "Status", "Objective", "Priority"],
+    "eve-mimir": ["Stage", "Status", "Objective", "Priority"],
+    "cognitive-ai-research": ["Stage", "Status", "Objective", "Priority"],
+    "ai-native-engine": ["Stage", "Status", "Objective", "Priority"]
   },
   "work_hierarchy": {
     "source_note": "Canonical machine-readable hierarchy for the Objective, Outcome and Capability roles, plus the structural meaning of Component in the components block below. Component is NOT one of these roles and never was a legitimate one: it is an architectural and structural concept - a named part of a larger system - that an issue may name as scope metadata, never a dispatch role and never an issue type (E7, operator decision 2026-09-06, which closed the graduation hypothesis permanently and superseded the 2026-06-17 role-plus-field decision).",
@@ -331,7 +420,7 @@
     "rule": {
       "applies_to": "every board that uses workflows.stage_flow and dispatches Active work",
       "gate": "planning_to_active_readiness",
-      "bound": ["operations", "asgard", "campps"],
+      "bound": ["campps", "sovereign-circuit", "company", "argus", "talaria", "agent-platform", "home-lab", "eve-mimir", "cognitive-ai-research", "ai-native-engine"],
       "inherited_by_contract": true,
       "note": "adding a board binds it; no per-board policy"
     },
@@ -344,6 +433,33 @@
     },
     "campps": {
       "Ready": ["Outcome or Capability is admitted to the initiative portfolio", "Objective field is set"],
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
+    },
+    "sovereign-circuit": {
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
+    },
+    "company": {
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
+    },
+    "argus": {
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
+    },
+    "talaria": {
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
+    },
+    "agent-platform": {
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
+    },
+    "home-lab": {
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
+    },
+    "eve-mimir": {
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
+    },
+    "cognitive-ai-research": {
+      "Active": ["dispatch_gates.planning_to_active_readiness"]
+    },
+    "ai-native-engine": {
       "Active": ["dispatch_gates.planning_to_active_readiness"]
     },
     "planning_to_active_readiness": {
@@ -1215,42 +1331,6 @@
         "source": "mission-control plugin skills/issues/SKILL.md create-prepared readiness checks; the six checks are Appendix A item 3 of docs/plans/2026-09-07-sdlc-documentation-update-plan.md, landing operator decision A3",
         "classification_basis": "Mandatory evidence: the Issue Reviewer's six named checks are the evidence, and the review returns a two-valued verdict - ready or not ready - that stops the issue when it fails. Classified by decision item [A3](../engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md#a3-issue-readiness-who-validates-that-a-github-issue-is-properly-formatted-carries-the-correct-information-and-has-its-claims-verified-and-whether-an-issue-readiness-reviewer-role-exists) (2026-09-06 \u2014 the ruling that created the independent Issue Reviewer and its six named readiness checks), unit U6. The earlier UNCLASSIFIED reading was correct about its own evidence - X7 found a vague forward reference with no enumerated checks and no pass/fail language - and decision A3 supplies exactly what was missing: the six checks by name and a two-valued verdict, ready or not ready, that stops the issue when it fails. Check six is the Risk value, which exists only because decision item [E1](../engineering-journal/narratives/2026-09-06-sdlc-documentation-decision-record.md#e1-the-risk-value-has-no-defined-source-the-readiness-rules-risk-scaling-ships-refusing) (2026-09-06 \u2014 the ruling that Risk becomes the fourteenth card-contract field, authored by the Architect) added the field in this same unit."
       },
-      "scanner-validator-gate": {
-        "id": "scanner-validator-gate",
-        "x7_ref": "E2",
-        "evidence": "security-scanner, iac-cost-scanner, api-compat-scanner, dependency-scanner findings",
-        "applicability": "Team-execution runs: auto-merge, nonprod deploy, and completion",
-        "owner": "per-scanner agent",
-        "classification": "blocking",
-        "override_policy": "not stated",
-        "failure_route": "Blocks auto-merge/deploy/completion; a missing required tool fails loud with setup guidance",
-        "source": "team-execution plugin skills/team-execution/references/validator-registry.md scanner row; skills/team-execution/SKILL.md:507",
-        "classification_basis": "Mandatory evidence: \"Scanner hard-fail findings block auto-merge, nonprod deploy, and completion.\""
-      },
-      "tester-validator-gate": {
-        "id": "tester-validator-gate",
-        "x7_ref": "E3",
-        "evidence": "smoke/scenario/api-contract/sdk-regression/event-flow/ui-regression/performance/concurrency tester findings",
-        "applicability": "Team-execution runs: completion",
-        "owner": "not stated",
-        "classification": "blocking",
-        "override_policy": "not stated",
-        "failure_route": "Blocks completion; maximum 3 remediation loops, then escalate to the user",
-        "source": "team-execution plugin skills/team-execution/references/validator-registry.md tester row; skills/team-execution/SKILL.md:534-535",
-        "classification_basis": "Mandatory evidence: \"Tester hard-fail findings block completion.\""
-      },
-      "monitor-validator-gate": {
-        "id": "monitor-validator-gate",
-        "x7_ref": "E4",
-        "evidence": "github-actions-monitor, runtime-monitor reachability",
-        "applicability": "Team-execution runs: monitor reachability signals",
-        "owner": "not stated",
-        "classification": "unclassified",
-        "override_policy": "not stated",
-        "failure_route": "Blocked if the signal was required; warn if optional",
-        "source": "team-execution plugin skills/team-execution/SKILL.md:548-549",
-        "classification_basis": "UNCLASSIFIED by W4's transcription judgment, flagged in the plan's Open Questions: X7 records it \"conditional - mark the gate blocked or warn based on whether the signal was required\", a context-dependent classification rather than a fixed one. R24's pause is the honest handling."
-      },
       "automation-eligibility-gate": {
         "id": "automation-eligibility-gate",
         "x7_ref": "E5",
@@ -1995,84 +2075,91 @@
     },
     "phase_board_map": {
       "ideation": {
-        "operations": [
-          "Intake"
-        ],
-        "asgard": [
-          "Intake"
-        ],
-        "campps": [
-          "Intake"
-        ]
+        "campps": ["Intake"],
+        "sovereign-circuit": ["Intake"],
+        "company": ["Intake"],
+        "argus": ["Intake"],
+        "talaria": ["Intake"],
+        "agent-platform": ["Intake"],
+        "home-lab": ["Intake"],
+        "eve-mimir": ["Intake"],
+        "cognitive-ai-research": ["Intake"],
+        "ai-native-engine": ["Intake"]
       },
       "brainstorm": {
-        "operations": [
-          "Shaping"
-        ],
-        "asgard": [
-          "Shaping"
-        ],
-        "campps": [
-          "Shaping"
-        ]
+        "campps": ["Shaping"],
+        "sovereign-circuit": ["Shaping"],
+        "company": ["Shaping"],
+        "argus": ["Shaping"],
+        "talaria": ["Shaping"],
+        "agent-platform": ["Shaping"],
+        "home-lab": ["Shaping"],
+        "eve-mimir": ["Shaping"],
+        "cognitive-ai-research": ["Shaping"],
+        "ai-native-engine": ["Shaping"]
       },
       "plan": {
-        "operations": [
-          "Planning"
-        ],
-        "asgard": [
-          "Planning"
-        ],
-        "campps": [
-          "Planning"
-        ]
+        "campps": ["Planning"],
+        "sovereign-circuit": ["Planning"],
+        "company": ["Planning"],
+        "argus": ["Planning"],
+        "talaria": ["Planning"],
+        "agent-platform": ["Planning"],
+        "home-lab": ["Planning"],
+        "eve-mimir": ["Planning"],
+        "cognitive-ai-research": ["Planning"],
+        "ai-native-engine": ["Planning"]
       },
       "review": {
-        "operations": [
-          "Planning"
-        ],
-        "asgard": [
-          "Planning"
-        ],
-        "campps": [
-          "Planning"
-        ],
-        "note": "The doc-review gate is the Planning->Active gate on all three active boards (plan approved before work goes Active)."
+        "campps": ["Planning"],
+        "sovereign-circuit": ["Planning"],
+        "company": ["Planning"],
+        "argus": ["Planning"],
+        "talaria": ["Planning"],
+        "agent-platform": ["Planning"],
+        "home-lab": ["Planning"],
+        "eve-mimir": ["Planning"],
+        "cognitive-ai-research": ["Planning"],
+        "ai-native-engine": ["Planning"],
+        "note": "The doc-review gate is the Planning->Active gate on all active boards (plan approved before work goes Active)."
       },
       "work": {
-        "operations": [
-          "Active"
-        ],
-        "asgard": [
-          "Active"
-        ],
-        "campps": [
-          "Active"
-        ],
-        "note": "Work (with code-review at the PR boundary) runs in Active on all three active boards."
+        "campps": ["Active"],
+        "sovereign-circuit": ["Active"],
+        "company": ["Active"],
+        "argus": ["Active"],
+        "talaria": ["Active"],
+        "agent-platform": ["Active"],
+        "home-lab": ["Active"],
+        "eve-mimir": ["Active"],
+        "cognitive-ai-research": ["Active"],
+        "ai-native-engine": ["Active"],
+        "note": "Work (with code-review at the PR boundary) runs in Active on all active boards."
       },
       "qa": {
-        "operations": [
-          "Verify"
-        ],
-        "asgard": [
-          "Verify"
-        ],
-        "campps": [
-          "Verify"
-        ],
+        "campps": ["Verify"],
+        "sovereign-circuit": ["Verify"],
+        "company": ["Verify"],
+        "argus": ["Verify"],
+        "talaria": ["Verify"],
+        "agent-platform": ["Verify"],
+        "home-lab": ["Verify"],
+        "eve-mimir": ["Verify"],
+        "cognitive-ai-research": ["Verify"],
+        "ai-native-engine": ["Verify"],
         "note": "Verify is entered when delivery succeeds, so a card whose stored phase is already qa can still be sitting in the Active column: the acceptance verdict is evaluated against the delivered outcome once the card is in Verify. The entry condition itself is defined once, in the verify_entry block of config/sdlc-schema.json, and is not restated here. CAMPPS gained a separate Verify column on 2026-08-16."
       },
       "retro": {
-        "operations": [
-          "Retro"
-        ],
-        "asgard": [
-          "Retro"
-        ],
-        "campps": [
-          "Retro"
-        ],
+        "campps": ["Retro"],
+        "sovereign-circuit": ["Retro"],
+        "company": ["Retro"],
+        "argus": ["Retro"],
+        "talaria": ["Retro"],
+        "agent-platform": ["Retro"],
+        "home-lab": ["Retro"],
+        "eve-mimir": ["Retro"],
+        "cognitive-ai-research": ["Retro"],
+        "ai-native-engine": ["Retro"],
         "note": "Learn (/retro) runs in the Retro Stage after verification closes."
       }
     },
@@ -2127,7 +2214,8 @@
         "/tier": "Sets a run-scoped model/effort tier ceiling or patches a not-yet-run unit's tier mid-run without aborting and re-planning; it writes the override and drives patch/validate/emit without running leaf work, merging, or deploying, so the unit's Stage stays wherever its work put it."
       },
       "excluded": {
-        "/engines": "Excluded: a utility that lists and inspects configured engines; it reads and writes no lifecycle state and has no Stage."
+        "/engines": "Excluded: a utility that lists and inspects configured engines; it reads and writes no lifecycle state and has no Stage.",
+        "/setup": "Excluded: saga's setup step, which checks the machine and the repository for the tools saga needs and records what it finds; it runs outside every run, touches no issue and no Stage, and is classified here before saga ships it."
       }
     },
     "foreign_commands": {

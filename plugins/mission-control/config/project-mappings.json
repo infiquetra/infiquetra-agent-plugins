@@ -1,32 +1,180 @@
 {
-  "_comment": "Vendored canonical project mapping for the Infiquetra org. Plugin reads this by default. Override at $INFIQUETRA_SDLC_PATH/config/project-mappings.json (per the resolution order in load_config). Project node IDs and field/option IDs are NOT cached here \u2014 they rotate on rename/recreate; fetched live via _resolve_project_field and discover_project_field_options.",
-  "_provenance": "Verified 2026-06-20: `gh project list --owner infiquetra` shows the active boards CAMPPS #4, Jeff Intent #3, and Asgard #2. Mount Olympus (former project #1) was retired 2026-06-17 and is closed externally; it is preserved only as historical context in sdlc-schema.json and is NOT an active routing target. No board is a default: board commands require an explicit --project (KTD17). The `repositories` lists are intentionally empty \u2014 repo-based default routing was removed so work is never silently routed to a board. Project #3 'Jeff Intent' was renamed to 'Operations' on 2026-06-27.",
+  "_comment": "Vendored canonical project-to-repository mapping for the Infiquetra org (fallback #2 in _resolve_project_mappings). External $INFIQUETRA_SDLC_PATH/config/project-mappings.json takes precedence when present. Workflow names are NOT pinned here (#1020 U5): sdlc-schema.json boards.<key>.workflow is the single workflow authority.",
+  "_provenance": "Updated 2026-11-10 for the 10-board per-project topology (CAMPPS #4 plus Projects #10-#18). Operations (#3) and Asgard (#2) retired and closed 2026-11-10 alongside Mount Olympus (#1, retired 2026-06-17).",
   "organization": "infiquetra",
   "projects": {
-    "operations": {
-      "number": 3,
-      "id": "PVT_kwDODdfJoc4BZLMK",
-      "name": "Operations",
-      "board_key": "operations",
-      "_id_note": "Project node id captured 2026-05-29. If it rotates, re-fetch via: gh project view 3 --owner infiquetra --format json -q .id",
-      "repositories": []
+    "campps": {
+      "number": 4,
+      "id": "PVT_kwDODdfJoc4BanD0",
+      "name": "campps",
+      "board_key": "campps",
+      "repositories": [
+        "campps-context-library",
+        "campps-platform",
+        "campps-contracts",
+        "campps-identity-access",
+        "campps-tenant-setup",
+        "campps-coppa-consent",
+        "campps-registration",
+        "campps-payments",
+        "campps-health-forms",
+        "campps-activities-achievements",
+        "campps-staff-management",
+        "campps-web-app",
+        "campps-marketing",
+        "campps-e2e-canary",
+        "campps-ios",
+        "campps-android",
+        "campps-support"
+      ]
+    },
+    "sovereign-circuit": {
+      "number": 10,
+      "id": "PVT_kwDODdfJoc4BrC-C",
+      "name": "Sovereign Circuit",
+      "board_key": "sovereign-circuit",
+      "repositories": [
+        "sovereign-circuit"
+      ]
+    },
+    "company": {
+      "number": 11,
+      "id": "PVT_kwDODdfJoc4BrC-J",
+      "name": "Infiquetra Company",
+      "board_key": "company",
+      "repositories": [
+        "infiquetra-company",
+        "team-freya",
+        "team-norns",
+        "team-mimir",
+        "team-njord",
+        "team-heimdall",
+        "team-hermod",
+        "mimir-pilot-claude-plugins"
+      ]
+    },
+    "argus": {
+      "number": 12,
+      "id": "PVT_kwDODdfJoc4BrC-X",
+      "name": "Argus",
+      "board_key": "argus",
+      "repositories": [
+        "argus",
+        "argus-ears",
+        "eidolon"
+      ]
+    },
+    "talaria": {
+      "number": 13,
+      "id": "PVT_kwDODdfJoc4BrC-c",
+      "name": "Talaria",
+      "board_key": "talaria",
+      "repositories": [
+        "talaria",
+        "talaria-context-library",
+        "auralis",
+        "auralis-context-library"
+      ]
+    },
+    "agent-platform": {
+      "number": 14,
+      "id": "PVT_kwDODdfJoc4BrC-h",
+      "name": "Agent Platform",
+      "board_key": "agent-platform",
+      "repositories": [
+        "infiquetra-agent-plugins",
+        "infiquetra-herdr-console",
+        "saga-review-corpus",
+        "infiquetra-sdlc",
+        "infiquetra-context-library",
+        "infiquetra-agent-operations",
+        "infiquetra-claude-plugins",
+        "infiquetra-codex-plugins",
+        "infiquetra-antigravity-plugins",
+        "infiquetra-opencode-plugins"
+      ]
+    },
+    "home-lab": {
+      "number": 15,
+      "id": "PVT_kwDODdfJoc4BrC-q",
+      "name": "Home Lab",
+      "board_key": "home-lab",
+      "repositories": [
+        "home-lab",
+        "infiquetra-ansible-collections",
+        "infiquetra-aws-infra",
+        "infiquetra-hermes-plugins",
+        "infiquetra-hermes-overlay",
+        "hermes-claude-code-router",
+        "voice-forge"
+      ]
+    },
+    "eve-mimir": {
+      "number": 16,
+      "id": "PVT_kwDODdfJoc4BrC-x",
+      "name": "EVE Mimir",
+      "board_key": "eve-mimir",
+      "repositories": [
+        "mimir",
+        "mimir-context-library"
+      ]
+    },
+    "cognitive-ai-research": {
+      "number": 17,
+      "id": "PVT_kwDODdfJoc4BrC-5",
+      "name": "Cognitive AI Research",
+      "board_key": "cognitive-ai-research",
+      "repositories": [
+        "cognitive-ai-research"
+      ]
+    },
+    "ai-native-engine": {
+      "number": 18,
+      "id": "PVT_kwDODdfJoc4BrC_A",
+      "name": "AI-Native Engine",
+      "board_key": "ai-native-engine",
+      "repositories": [
+        "ai-native-engine"
+      ]
+    }
+  },
+  "retired_projects": {
+    "mount-olympus": {
+      "number": 1,
+      "id": "PVT_kwDODdfJoc4BVHOl",
+      "name": "Olympus",
+      "board_key": "olympus",
+      "status": "closed_retired_historical",
+      "terminal_disposition": "retired_preserved",
+      "active_routing": false,
+      "retired_on": "2026-06-17",
+      "closed_on": "2026-06-17"
     },
     "asgard": {
       "number": 2,
       "id": "PVT_kwDODdfJoc4BZLMH",
       "name": "Asgard",
       "board_key": "asgard",
-      "_id_note": "Project node id captured 2026-05-29. If it rotates, re-fetch via: gh project view 2 --owner infiquetra --format json -q .id",
-      "repositories": []
+      "status": "closed_retired_historical",
+      "terminal_disposition": "retired_preserved",
+      "active_routing": false,
+      "retired_on": "2026-11-10",
+      "closed_on": "2026-11-10"
     },
-    "campps": {
-      "number": 4,
-      "id": "PVT_kwDODdfJoc4BanD0",
-      "name": "CAMPPS",
-      "board_key": "campps",
-      "_id_note": "Project node id captured 2026-06-20. If it rotates, re-fetch via: gh project view 4 --owner infiquetra --format json -q .id",
-      "repositories": []
+    "operations": {
+      "number": 3,
+      "id": "PVT_kwDODdfJoc4BZLMK",
+      "name": "Operations",
+      "board_key": "operations",
+      "status": "closed_retired_historical",
+      "terminal_disposition": "retired_preserved",
+      "active_routing": false,
+      "retired_on": "2026-11-10",
+      "closed_on": "2026-11-10"
     }
   },
-  "excluded_repositories": []
+  "excluded_repositories": [
+    "infiquetra-website",
+    "infiquetra-opmodel-explorer"
+  ]
 }

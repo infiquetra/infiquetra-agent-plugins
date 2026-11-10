@@ -498,7 +498,7 @@ def reconcile(
 
 
 def default_live_reader(
-    *, project: str = "operations", runner: Callable[..., Any] | None = None
+    *, project: str = "", runner: Callable[..., Any] | None = None
 ) -> Callable[[str, str, int], str]:
     """The production ``live_reader``: read the live board Status / issue state via ``outcome_github``.
 
@@ -540,7 +540,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--number", required=True, type=int)
     p.add_argument("--target-state", default="", help="e.g. Done (for set-field-status)")
-    p.add_argument("--project", default="operations")
+    p.add_argument("--project", default="")
     p.add_argument("--payload", default="", help='JSON object, e.g. {"body": "..."}')
     p.add_argument(
         "--ledger-dir", default="", help="override the default board-progression ledger dir"
@@ -562,7 +562,7 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--repo", required=True, help="owner/repo (owner used only for the record)")
     d.add_argument("--number", required=True, type=int)
     d.add_argument("--target-state", required=True, help="the saga-asserted value to verify")
-    d.add_argument("--project", default="operations")
+    d.add_argument("--project", default="")
 
     args = parser.parse_args(argv)
 
