@@ -63,10 +63,10 @@ class BoundedRunnerContractTests(unittest.TestCase):
     def test_stdin_is_closed_and_the_deadline_is_attached(self) -> None:
         seam = _RunSeam()
         process.run(
-            ["herdr", "agent", "get", "example-agent"], timeout=10, spawn=seam
+            ["hc", "get", "example-agent", "--json"], timeout=10, spawn=seam
         )
         ((command, kwargs),) = seam.calls
-        self.assertEqual(command, ["herdr", "agent", "get", "example-agent"])
+        self.assertEqual(command, ["hc", "get", "example-agent", "--json"])
         self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
         self.assertEqual(kwargs["timeout"], 10)
 
@@ -86,7 +86,7 @@ class BoundedRunnerContractTests(unittest.TestCase):
 
     def test_a_shell_string_is_rejected_by_type(self) -> None:
         with self.assertRaises(TypeError):
-            process.run("herdr agent get example-agent", timeout=10)
+            process.run("hc get example-agent --json", timeout=10)
         with self.assertRaises(TypeError):
             process.spawn_detached("voice stop")
 

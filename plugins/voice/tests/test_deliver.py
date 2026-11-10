@@ -1,8 +1,8 @@
 """Tests for the delivery path (R16, R17, R18, R19; KTD11).
 
-Every external seam is injected per KTD12 — herdr invocations through U1's
+Every external seam is injected per KTD12 — hc invocations through U1's
 subprocess seam, the audible refusal through the speak seam — so no test
-runs the real herdr CLI, sends text to a real pane, or synthesizes speech.
+runs the real herdr core, types into a real terminal, or synthesizes speech.
 The state directory points at a temp dir for the same reason.
 """
 
@@ -25,50 +25,48 @@ import providers  # noqa: E402
 
 AGENT_NAME = "test-agent"
 SESSION_ID = "test-session-id"
-BOUND_PANE_ID = "wTEST:p1"  # the pane id stored in the binding at bind time
-LIVE_PANE_ID = "wTEST:p9"  # the pane id herdr re-resolves at send time
+TERMINAL = "t7"  # the herdr core address stored in the binding at bind time
+
+HELLO_KEYS = ["H", "e", "l", "l", "o", "space", "t", "h", "e", "r", "e"]
 
 
-def _agent_get_result(
-    agent_status: str = "idle",
-    pane_id: str = LIVE_PANE_ID,
-    name: str = AGENT_NAME,
+def _keys(text: str) -> list[str]:
+    return ["space" if character == " " else character for character in text]
+
+
+def _hc_get_result(
+    status: str | None = "idle",
+    *,
+    address: str = TERMINAL,
+    state: str = "live",
 ) -> subprocess.CompletedProcess:
-    """One herdr agent get envelope, shaped like the installed CLI's output."""
+    """One hc get --json record, shaped like herdr core's output."""
     payload = {
-        "id": "cli:agent:get",
-        "result": {
-            "agent": {
-                "agent": "claude",
-                "agent_session": {
-                    "agent": "claude",
-                    "kind": "id",
-                    "source": "herdr:claude",
-                    "value": SESSION_ID,
-                },
-                "agent_status": agent_status,
-                "name": name,
-                "pane_id": pane_id,
-            },
-            "type": "agent_info",
-        },
+        "address": address,
+        "name": AGENT_NAME,
+        "state": state,
+        "status": None if status is None else {"state": status, "app": "claude"},
+        "labels": {"voice.agent-session": SESSION_ID},
+        "argv": ["claude"],
     }
     return subprocess.CompletedProcess(
         args=None, returncode=0, stdout=json.dumps(payload), stderr=""
     )
 
 
-def _send_text_result() -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(args=None, returncode=0, stdout="", stderr="")
+def _keys_result() -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(
+        args=None, returncode=0, stdout=json.dumps({"turn": 3, "status": "idle"}), stderr=""
+    )
 
 
-def _idle_delivery_seam(agent_status: str = "idle") -> "_HerdrSpawnSeam":
-    """A resolution that succeeds, followed by the send it triggers."""
-    return _HerdrSpawnSeam([_agent_get_result(agent_status=agent_status), _send_text_result()])
+def _idle_delivery_seam(status: str | None = "idle") -> "_HcSpawnSeam":
+    """A read that succeeds, followed by the keys it triggers."""
+    return _HcSpawnSeam([_hc_get_result(status), _keys_result()])
 
 
-class _HerdrSpawnSeam:
-    """Records herdr invocations instead of running the CLI (KTD12)."""
+class _HcSpawnSeam:
+    """Records hc invocations instead of running the CLI (KTD12)."""
 
     def __init__(self, results) -> None:
         self.calls: list[tuple[list[str], dict]] = []
@@ -77,7 +75,7 @@ class _HerdrSpawnSeam:
     def __call__(self, command, **kwargs):
         self.calls.append((command, kwargs))
         if not self._results:
-            raise AssertionError(f"unexpected herdr invocation: {command!r}")
+            raise AssertionError(f"unexpected hc invocation: {command!r}")
         result = self._results.pop(0)
         if isinstance(result, BaseException):
             raise result
@@ -95,10 +93,13 @@ class DeliverTestBase(unittest.TestCase):
         state = tempfile.TemporaryDirectory()
         self.addCleanup(state.cleanup)
         self.state_dir = Path(state.name)
-        env = mock.patch.dict(os.environ, {"VOICE_STATE_DIR": str(self.state_dir)})
+        env = mock.patch.dict(
+            os.environ,
+            {"VOICE_STATE_DIR": str(self.state_dir), "VOICE_HC_BIN": "hc"},
+        )
         env.start()
         self.addCleanup(env.stop)
-        binding.write_binding(AGENT_NAME, SESSION_ID, BOUND_PANE_ID)
+        binding.write_binding(AGENT_NAME, SESSION_ID, TERMINAL)
 
     def _refused_path(self) -> Path:
         return self.state_dir / deliver.REFUSED_TRANSCRIPT_FILENAME
@@ -108,95 +109,86 @@ class DeliverTestBase(unittest.TestCase):
 
 
 class DeliveryPathTests(DeliverTestBase):
-    """Delivery resolves through herdr agent get and sends with send-text."""
+    """Delivery re-reads the terminal with hc get and types it with hc keys."""
 
-    def test_delivery_resolves_the_bound_agent_with_agent_get_then_sends(
-        self,
-    ) -> None:
+    def test_delivery_reads_the_bound_terminal_then_types_into_it(self) -> None:
         spawn = _idle_delivery_seam()
         deliver.deliver("Hello there", spawn=spawn)
         self.assertEqual(len(spawn.calls), 2)
         get_command, _ = spawn.calls[0]
-        self.assertEqual(get_command, ["herdr", "agent", "get", AGENT_NAME])
-        send_command, _ = spawn.calls[1]
-        self.assertEqual(
-            send_command,
-            ["herdr", "pane", "send-text", LIVE_PANE_ID, "Hello there"],
-        )
+        self.assertEqual(get_command, ["hc", "get", TERMINAL, "--json"])
+        keys_command, _ = spawn.calls[1]
+        self.assertEqual(keys_command, ["hc", "keys", TERMINAL, *HELLO_KEYS])
 
     def test_delivery_is_unsubmitted_literal_text_without_enter(self) -> None:
-        # send-text sends literal text with no Enter appended, so the text
-        # arrives unsubmitted and editable (R16); no newline survives to
-        # reach the terminal as Enter.
+        # One key per character and no Enter, so the text arrives
+        # unsubmitted and editable (R16); no newline survives to reach the
+        # terminal as Enter.
         spawn = _idle_delivery_seam()
         deliver.deliver("Deploy the fix", spawn=spawn)
-        send_command, _ = spawn.calls[1]
-        self.assertEqual(send_command[:3], ["herdr", "pane", "send-text"])
-        self.assertEqual(send_command[4], "Deploy the fix")
-        self.assertNotIn("\n", send_command[4])
+        keys_command, _ = spawn.calls[1]
+        self.assertEqual(keys_command[:3], ["hc", "keys", TERMINAL])
+        self.assertEqual(keys_command[3:], _keys("Deploy the fix"))
+        for name in ("enter", "return", "\n", "\r"):
+            self.assertNotIn(name, keys_command)
 
-    def test_the_submitting_pane_verb_is_never_invoked(self) -> None:
+    def test_the_submitting_send_verb_is_never_invoked(self) -> None:
+        # hc send presses Enter and tags text sent from inside a terminal.
         spawn = _idle_delivery_seam()
         deliver.deliver("Hello there", spawn=spawn)
-        pane_verbs = [
-            command[2]
-            for command, _ in spawn.calls
-            if command[:2] == ["herdr", "pane"]
-        ]
-        self.assertEqual(pane_verbs, ["send-text"])
+        verbs = [command[1] for command, _ in spawn.calls]
+        self.assertEqual(verbs, ["get", "keys"])
 
-    def test_delivery_targets_the_freshly_resolved_pane_not_the_stored_copy(
+    def test_delivery_targets_the_bound_terminal_address_not_the_agent_name(
         self,
     ) -> None:
-        # The binding stores one pane id; herdr agent get re-resolves another
-        # at send time, and delivery follows the fresh resolution (KTD7).
-        self.assertNotEqual(LIVE_PANE_ID, BOUND_PANE_ID)
+        # Names can be reused by a later terminal; the address never is.
         spawn = _idle_delivery_seam()
         deliver.deliver("Hello there", spawn=spawn)
-        send_command, _ = spawn.calls[1]
-        self.assertEqual(send_command[3], LIVE_PANE_ID)
+        for command, _ in spawn.calls:
+            with self.subTest(command=command):
+                self.assertEqual(command[2], TERMINAL)
+                self.assertNotIn(AGENT_NAME, command)
 
     def test_only_the_bound_agent_is_ever_targeted(self) -> None:
         # No broadcast, no fallback, no recency inference: exactly one
-        # resolution and one send, both keyed to the bound agent (R17).
+        # read and one keys call, both keyed to the bound terminal (R17).
         spawn = _idle_delivery_seam()
         deliver.deliver("Hello there", spawn=spawn)
-        get_command, _ = spawn.calls[0]
-        self.assertEqual(get_command[3], AGENT_NAME)
         self.assertEqual(len(spawn.calls), 2)
 
-    def test_both_herdr_calls_carry_the_pinned_deadline_and_closed_stdin(
+    def test_both_hc_calls_carry_the_pinned_deadline_and_closed_stdin(
         self,
     ) -> None:
         spawn = _idle_delivery_seam()
         deliver.deliver("Hello there", spawn=spawn)
         for command, kwargs in spawn.calls:
             with self.subTest(command=command):
-                self.assertEqual(kwargs["timeout"], deliver.HERDR_TIMEOUT_SECONDS)
+                self.assertEqual(kwargs["timeout"], deliver.HC_TIMEOUT_SECONDS)
                 self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
-        self.assertEqual(deliver.HERDR_TIMEOUT_SECONDS, 10.0)
+        self.assertEqual(deliver.HC_TIMEOUT_SECONDS, 10.0)
 
     def test_a_multi_line_transcript_is_delivered_as_one_line(self) -> None:
         spawn = _idle_delivery_seam()
         deliver.deliver("line one\nline two\r\n  line three\twith tabs", spawn=spawn)
-        send_command, _ = spawn.calls[1]
-        self.assertEqual(send_command[4], "line one line two line three with tabs")
+        keys_command, _ = spawn.calls[1]
+        self.assertEqual(keys_command[3:], _keys("line one line two line three with tabs"))
 
-    def test_an_empty_transcript_is_refused_by_name_and_calls_no_herdr(
+    def test_an_empty_transcript_is_refused_by_name_and_calls_no_hc(
         self,
     ) -> None:
         for text in ("", "   ", "\n\t  "):
             with self.subTest(text=text):
-                spawn = _HerdrSpawnSeam([])
+                spawn = _HcSpawnSeam([])
                 with self.assertRaises(deliver.DeliveryRefusal):
                     deliver.deliver(text, spawn=spawn)
                 self.assertEqual(spawn.calls, [])
 
-    def test_delivery_with_no_binding_is_a_named_refusal_and_calls_no_herdr(
+    def test_delivery_with_no_binding_is_a_named_refusal_and_calls_no_hc(
         self,
     ) -> None:
         (self.state_dir / binding.BINDING_FILENAME).unlink()
-        spawn = _HerdrSpawnSeam([])
+        spawn = _HcSpawnSeam([])
         with self.assertRaises(deliver.DeliveryRefusal) as caught:
             deliver.deliver("Hello there", spawn=spawn)
         self.assertEqual(spawn.calls, [])
@@ -206,7 +198,7 @@ class DeliveryPathTests(DeliverTestBase):
         (self.state_dir / binding.BINDING_FILENAME).write_text(
             "not json", encoding="utf-8"
         )
-        spawn = _HerdrSpawnSeam([])
+        spawn = _HcSpawnSeam([])
         with self.assertRaises(deliver.DeliveryRefusal) as caught:
             deliver.deliver("Hello there", spawn=spawn)
         self.assertEqual(spawn.calls, [])
@@ -214,55 +206,82 @@ class DeliveryPathTests(DeliverTestBase):
 
 
 class UnresolvableAgentTests(DeliverTestBase):
-    """An unresolvable bound agent is a named error, never a fallback (R17)."""
+    """An unresolvable bound terminal is a named error, never a fallback (R17)."""
 
-    def test_an_unresolvable_bound_agent_sends_nothing_anywhere(self) -> None:
+    def test_an_unresolvable_bound_terminal_sends_nothing_anywhere(self) -> None:
         failures = [
             subprocess.CalledProcessError(
-                1, ["herdr", "agent", "get", AGENT_NAME], "", "no such agent"
+                3,
+                ["hc", "get", TERMINAL, "--json"],
+                "",
+                json.dumps({"error": {"kind": "not_found", "message": "no t7"}}),
             ),
             subprocess.TimeoutExpired(
-                ["herdr", "agent", "get", AGENT_NAME],
-                deliver.HERDR_TIMEOUT_SECONDS,
+                ["hc", "get", TERMINAL, "--json"],
+                deliver.HC_TIMEOUT_SECONDS,
             ),
-            FileNotFoundError("herdr not found"),
+            FileNotFoundError("hc not found"),
         ]
         for failure in failures:
             with self.subTest(failure=type(failure).__name__):
-                spawn = _HerdrSpawnSeam([failure])
+                spawn = _HcSpawnSeam([failure])
                 with self.assertRaises(deliver.DeliveryRefusal):
                     deliver.deliver("Hello there", spawn=spawn)
                 self.assertEqual(
                     len(spawn.calls),
                     1,
-                    "the resolution failed; nothing was sent anywhere else",
+                    "the read failed; nothing was typed anywhere else",
                 )
 
-    def test_a_malformed_agent_get_response_is_a_named_error(self) -> None:
+    def test_a_malformed_hc_get_response_is_a_named_error(self) -> None:
         payloads = [
             "not json",
             "[]",
             "{}",
-            json.dumps({"result": {}}),
-            json.dumps({"result": {"agent": None}}),
-            json.dumps({"result": {"agent": {"pane_id": LIVE_PANE_ID}}}),
-            json.dumps({"result": {"agent": {"agent_status": "idle"}}}),
-            json.dumps(
-                {"result": {"agent": {"pane_id": 42, "agent_status": "idle"}}}
-            ),
-            json.dumps(
-                {"result": {"agent": {"pane_id": "  ", "agent_status": "idle"}}}
-            ),
+            json.dumps({"address": ""}),
+            json.dumps({"address": 7, "state": "live"}),
         ]
         for stdout in payloads:
             with self.subTest(stdout=stdout):
                 result = subprocess.CompletedProcess(
                     args=None, returncode=0, stdout=stdout, stderr=""
                 )
-                spawn = _HerdrSpawnSeam([result])
+                spawn = _HcSpawnSeam([result])
                 with self.assertRaises(deliver.DeliveryRefusal):
                     deliver.deliver("Hello there", spawn=spawn)
                 self.assertEqual(len(spawn.calls), 1)
+
+    def test_a_record_for_another_terminal_types_nothing(self) -> None:
+        spawn = _HcSpawnSeam([_hc_get_result(address="t8")])
+        with self.assertRaises(deliver.DeliveryRefusal) as caught:
+            deliver.deliver("Hello there", spawn=spawn)
+        self.assertEqual(len(spawn.calls), 1)
+        self.assertIn("t8", str(caught.exception))
+
+    def test_a_finished_terminal_types_nothing_and_asks_for_a_rebind(self) -> None:
+        spawn = _HcSpawnSeam([_hc_get_result(state="finished", status=None)])
+        with self.assertRaises(deliver.DeliveryRefusal) as caught:
+            deliver.deliver("Hello there", spawn=spawn)
+        self.assertEqual(len(spawn.calls), 1)
+        self.assertIn("finished", str(caught.exception))
+        self.assertIn("rebind", str(caught.exception))
+
+    def test_a_rejected_key_is_a_named_delivery_failure(self) -> None:
+        # hc keys validates key names; its own message rides the refusal so
+        # the operator can see which character it would not type.
+        rejected = subprocess.CompletedProcess(
+            args=None,
+            returncode=1,
+            stdout="",
+            stderr=json.dumps(
+                {"error": {"kind": "invalid_params", "message": "unknown key ~"}}
+            ),
+        )
+        spawn = _HcSpawnSeam([_hc_get_result(), rejected])
+        with self.assertRaises(deliver.DeliveryRefusal) as caught:
+            deliver.deliver("a~b", spawn=spawn)
+        self.assertIn("delivery failed", str(caught.exception))
+        self.assertIn("unknown key ~", str(caught.exception))
 
 
 class BlockedRefusalTests(DeliverTestBase):
@@ -271,7 +290,7 @@ class BlockedRefusalTests(DeliverTestBase):
     def test_a_blocked_agent_receives_no_text_and_the_refusal_is_spoken(
         self,
     ) -> None:
-        spawn = _HerdrSpawnSeam([_agent_get_result(agent_status="blocked")])
+        spawn = _HcSpawnSeam([_hc_get_result("blocked")])
         spoken: list[str] = []
         with self.assertRaises(deliver.DeliveryRefusal) as caught:
             deliver.deliver(
@@ -279,7 +298,7 @@ class BlockedRefusalTests(DeliverTestBase):
             )
         self.assertEqual(len(spawn.calls), 1, "a blocked agent is never sent text")
         get_command, _ = spawn.calls[0]
-        self.assertEqual(get_command[:3], ["herdr", "agent", "get"])
+        self.assertEqual(get_command[:2], ["hc", "get"])
         self.assertEqual(spoken, [deliver.BLOCKED_REFUSAL_PHRASE])
         self.assertIn("blocked", str(caught.exception))
         # The transcript is held for the operator's explicit use or discard.
@@ -293,10 +312,10 @@ class BlockedRefusalTests(DeliverTestBase):
     ) -> None:
         # One current file, never appended, so the hold is not a transcript
         # log (KTD1): a second refusal replaces the first held transcript.
-        spawn = _HerdrSpawnSeam(
+        spawn = _HcSpawnSeam(
             [
-                _agent_get_result(agent_status="blocked"),
-                _agent_get_result(agent_status="blocked"),
+                _hc_get_result("blocked"),
+                _hc_get_result("blocked"),
             ]
         )
         for text in ("first transcript", "second transcript"):
@@ -310,7 +329,7 @@ class BlockedRefusalTests(DeliverTestBase):
     def test_a_blocked_refusal_holds_the_transcript_even_when_speech_fails(
         self,
     ) -> None:
-        spawn = _HerdrSpawnSeam([_agent_get_result(agent_status="blocked")])
+        spawn = _HcSpawnSeam([_hc_get_result("blocked")])
         refusal = providers.ProviderRefusal(
             providers.VOICE_FORGE, "synthesis unreachable"
         )
@@ -326,11 +345,11 @@ class BlockedRefusalTests(DeliverTestBase):
         )
 
     def test_states_other_than_blocked_still_deliver(self) -> None:
-        # Only blocked withholds delivery; every other state in the closed
-        # set delivers.
-        for agent_status in ("idle", "working", "done", "unknown"):
+        # Only blocked withholds delivery; every other status word herdr
+        # core reports, and no status at all, delivers.
+        for agent_status in ("idle", "working", "done", "error", None):
             with self.subTest(agent_status=agent_status):
-                spawn = _idle_delivery_seam(agent_status=agent_status)
+                spawn = _idle_delivery_seam(agent_status)
                 deliver.deliver("Hello there", spawn=spawn)
                 self.assertEqual(len(spawn.calls), 2)
                 self.assertFalse(self._refused_path().exists())
@@ -344,14 +363,14 @@ class RefusedHoldTests(DeliverTestBase):
         spawn = _idle_delivery_seam()
         deliver.use_refused(spawn=spawn)
         self.assertEqual(len(spawn.calls), 2)
-        send_command, _ = spawn.calls[1]
-        self.assertEqual(send_command[4], "Approve the deploy")
+        keys_command, _ = spawn.calls[1]
+        self.assertEqual(keys_command[3:], _keys("Approve the deploy"))
         self.assertFalse(self._refused_path().exists())
 
-    def test_use_refused_with_no_hold_is_refused_by_name_and_calls_no_herdr(
+    def test_use_refused_with_no_hold_is_refused_by_name_and_calls_no_hc(
         self,
     ) -> None:
-        spawn = _HerdrSpawnSeam([])
+        spawn = _HcSpawnSeam([])
         with self.assertRaises(deliver.DeliveryRefusal):
             deliver.use_refused(spawn=spawn)
         self.assertEqual(spawn.calls, [])
@@ -360,7 +379,7 @@ class RefusedHoldTests(DeliverTestBase):
         self,
     ) -> None:
         self._write_hold("Approve the deploy")
-        spawn = _HerdrSpawnSeam([_agent_get_result(agent_status="blocked")])
+        spawn = _HcSpawnSeam([_hc_get_result("blocked")])
         with self.assertRaises(deliver.DeliveryRefusal):
             deliver.use_refused(spawn=spawn, speak_text=lambda phrase: None)
         self.assertEqual(len(spawn.calls), 1, "a blocked agent is never sent text")
@@ -376,20 +395,20 @@ class RefusedHoldTests(DeliverTestBase):
         text = "Approve the deploy"
         failures = [
             subprocess.TimeoutExpired(
-                ["herdr", "pane", "send-text", LIVE_PANE_ID, text],
-                deliver.HERDR_TIMEOUT_SECONDS,
+                ["hc", "keys", TERMINAL, *_keys(text)],
+                deliver.HC_TIMEOUT_SECONDS,
             ),
             subprocess.CalledProcessError(
-                1,
-                ["herdr", "pane", "send-text", LIVE_PANE_ID, text],
+                11,
+                ["hc", "keys", TERMINAL, *_keys(text)],
                 "",
-                "pane gone",
+                json.dumps({"error": {"kind": "finished", "message": "t7 finished"}}),
             ),
         ]
         for failure in failures:
             with self.subTest(failure=type(failure).__name__):
                 self._write_hold(text)
-                spawn = _HerdrSpawnSeam([_agent_get_result(), failure])
+                spawn = _HcSpawnSeam([_hc_get_result(), failure])
                 with self.assertRaises(deliver.DeliveryRefusal):
                     deliver.use_refused(spawn=spawn)
                 self.assertEqual(
@@ -398,11 +417,11 @@ class RefusedHoldTests(DeliverTestBase):
                 )
 
     def test_use_refused_keeps_the_hold_when_the_binding_is_gone(self) -> None:
-        # An unbound agent refuses the delivery before any herdr call; the
+        # An unbound agent refuses the delivery before any hc call; the
         # hold read just before must survive that refusal (F02).
         self._write_hold("Approve the deploy")
         (self.state_dir / binding.BINDING_FILENAME).unlink()
-        spawn = _HerdrSpawnSeam([])
+        spawn = _HcSpawnSeam([])
         with self.assertRaises(deliver.DeliveryRefusal):
             deliver.use_refused(spawn=spawn)
         self.assertEqual(spawn.calls, [])
@@ -429,8 +448,8 @@ class RefusedHoldTests(DeliverTestBase):
         self._write_hold("Approve the deploy")
         spawn = _idle_delivery_seam()
         deliver.deliver("Something new", spawn=spawn)
-        send_command, _ = spawn.calls[1]
-        self.assertEqual(send_command[4], "Something new")
+        keys_command, _ = spawn.calls[1]
+        self.assertEqual(keys_command[3:], _keys("Something new"))
         self.assertEqual(
             self._refused_path().read_text(encoding="utf-8"),
             "Approve the deploy",

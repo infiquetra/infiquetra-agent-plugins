@@ -1,23 +1,33 @@
 """Delivery path for the voice package (R16, R17, R18, R19; KTD11).
 
-Returns a transcript to the bound Herdr agent's input box — literal text,
+Returns a transcript to the bound agent's input box — literal text,
 unsubmitted, still editable (R16) — or refuses audibly when that agent is
 blocked on a human decision, holding the transcript for the operator's
 explicit use or discard (R18, R19).
 
-Delivery is a two-step sequence against the installed Herdr CLI:
+Delivery is a two-step sequence against herdr core (``hc``), the program
+that runs the bound agent's terminal:
 
-1. ``herdr agent get <agent>`` re-resolves the bound agent's pane id and
-   current status from the closed agent-state set (``idle``, ``working``,
-   ``blocked``, ``done``, ``unknown``) under the 10-second deadline pinned
-   for bounded helper calls (KTD3a).
-2. ``herdr pane send-text <pane_id> <text>`` sends the transcript,
-   whitespace-normalized to a single line, as literal text without Enter —
-   the unsubmitted, editable delivery R16 requires.
+1. ``hc get <terminal> --json`` re-reads the bound terminal at send time:
+   it must still be live, and its status word (``idle``, ``working``,
+   ``done``, ``blocked``, ``error``, or none) decides whether text may go
+   in. The call runs under the 10-second deadline pinned for bounded
+   helper calls (KTD3a).
+2. ``hc keys <terminal> <key>...`` types the transcript, whitespace-
+   normalized to a single line, one key per character with ``space`` for
+   the space bar and no Enter — the unsubmitted, editable delivery R16
+   requires.
 
-Only the bound agent is ever targeted (R17): no broadcast, no fallback
-target, no recency inference. An unresolvable bound agent is a named error,
-never a reason to try another pane.
+``hc send`` is never used. It always presses Enter, so a misheard
+transcript would be submitted to the agent, and when called from inside a
+Herdr terminal (the Voice pane is one) it wraps the text in an
+``<hc from=...>`` tag, so the operator's words would arrive labelled as
+another agent's report.
+
+Only the bound terminal is ever targeted (R17): no broadcast, no fallback
+target, no recency inference. The binding stores the terminal's address,
+which herdr core never reuses, so a terminal that has ended is a named
+error, never a reason to try another one.
 
 Speech is never an approval channel. When the bound agent is blocked on a
 permission, approval, or other human-decision prompt, keystrokes are
@@ -28,11 +38,13 @@ appended, consumed or discarded only by an explicit operator act (R19,
 KTD1). A refused transcript is never delivered automatically and never
 queued for automatic delivery.
 
-The blocked-state check is not atomic with the send: the agent can become
-blocked between the resolution and the send. That race is the contract's
-stated residual — narrowed here, deliberately not closed. The guard belongs
-to Herdr's delivery command as a proposed enhancement, and no workaround
-machinery is built in this module.
+The blocked-state check is not atomic with the typing: the agent can
+become blocked between the read and the keys. That race is the contract's
+stated residual — narrowed here, deliberately not closed. ``hc send``
+refuses a blocked program on its own, but it submits; ``hc keys`` does not
+check. The guard belongs to herdr core as a proposed enhancement (keys
+that refuse a blocked program), and no workaround machinery is built in
+this module.
 
 The entry points are module-level so the pane and the CLI can reach them
 through their lazy-import seam (KTD16): :func:`deliver`,
@@ -41,7 +53,7 @@ through their lazy-import seam (KTD16): :func:`deliver`,
 
 from __future__ import annotations
 
-import json
+import functools
 import os
 import subprocess
 import uuid
@@ -49,6 +61,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import binding
+import herdr_core
 import process
 import settings
 import speak
@@ -57,21 +70,22 @@ __all__ = [
     "DeliveryRefusal",
     "AGENT_STATUS_BLOCKED",
     "BLOCKED_REFUSAL_PHRASE",
-    "HERDR_TIMEOUT_SECONDS",
+    "HC_TIMEOUT_SECONDS",
     "REFUSED_TRANSCRIPT_FILENAME",
     "deliver",
     "use_refused",
     "discard_refused",
 ]
 
-#: Both herdr calls are bounded helper invocations and share the 10-second
-#: deadline pinned for that class (KTD3a).
-HERDR_TIMEOUT_SECONDS = 10.0
+#: Both hc calls are bounded helper invocations and share the 10-second
+#: deadline pinned for that class (KTD3a). ``hc keys`` waits for about three
+#: seconds of quiet from the person before it types, which fits inside it.
+HC_TIMEOUT_SECONDS = 10.0
 
-#: The one state, out of the closed agent-state set, that must never
-#: receive keystrokes: a blocked agent is waiting on a human decision, and
-#: a keystroke there is a choice, not text (R18).
-AGENT_STATUS_BLOCKED = "blocked"
+#: The one status that must never receive keystrokes: a blocked agent is
+#: waiting on a human decision, and a keystroke there is a choice, not
+#: text (R18).
+AGENT_STATUS_BLOCKED = herdr_core.STATUS_BLOCKED
 
 REFUSED_TRANSCRIPT_FILENAME = "refused-transcript.txt"
 
@@ -103,17 +117,17 @@ def deliver(
 ) -> None:
     """Deliver ``text`` to the bound agent's input box, unsubmitted.
 
-    Resolves the bound agent's pane id and current status through
-    ``herdr agent get``, then sends the whitespace-normalized single-line
-    transcript with ``herdr pane send-text`` — literal text, no Enter
-    (R16). A blocked agent receives nothing: the refusal is spoken and the
-    transcript is held for the operator's explicit use or discard (R18,
-    R19). Only the bound agent is ever targeted (R17).
+    Re-reads the bound terminal through ``hc get``, then types the
+    whitespace-normalized single-line transcript with ``hc keys`` — one
+    key per character, no Enter (R16). A blocked agent receives nothing:
+    the refusal is spoken and the transcript is held for the operator's
+    explicit use or discard (R18, R19). Only the bound terminal is ever
+    targeted (R17).
 
     The transcript is held before the refusal is spoken, so the hold
-    survives even when speech itself fails. Both herdr calls go through
-    U1's process helper under the pinned deadline with standard input
-    closed; the seams mirror KTD12 so tests never run the real CLI.
+    survives even when speech itself fails. Both hc calls go through U1's
+    process helper under the pinned deadline with standard input closed;
+    the seams mirror KTD12 so tests never run the real CLI.
     """
     line = _single_line(text)
     if not line:
@@ -124,9 +138,11 @@ def deliver(
     if report.binding is None:
         raise DeliveryRefusal(_unbound_reason(report.status))
     agent_name = report.binding.agent
+    terminal = report.binding.terminal
+    run_process = functools.partial(process.run, spawn=spawn)
 
-    state = _resolve_agent(agent_name, spawn=spawn)
-    if state["agent_status"] == AGENT_STATUS_BLOCKED:
+    status = _resolve_status(agent_name, terminal, run_process=run_process)
+    if status == AGENT_STATUS_BLOCKED:
         _hold_refused(text)
         speak_text(BLOCKED_REFUSAL_PHRASE)
         raise DeliveryRefusal(
@@ -134,7 +150,12 @@ def deliver(
             "nothing was sent — the transcript is held for explicit use or "
             "discard"
         )
-    _send_text(state["pane_id"], line, spawn=spawn)
+    try:
+        herdr_core.type_text(
+            terminal, line, timeout=HC_TIMEOUT_SECONDS, run_process=run_process
+        )
+    except herdr_core.CoreRefusal as refusal:
+        raise DeliveryRefusal(f"delivery failed: {refusal.reason}") from refusal
 
 
 def use_refused(
@@ -182,10 +203,10 @@ def _unbound_reason(status: str) -> str:
     if status == binding.STATUS_CORRUPT:
         return (
             "the binding store cannot be read; rebind with `voice bind "
-            "<agent>` before delivering"
+            "<terminal>` before delivering"
         )
     return (
-        "voice is not bound to an agent; bind one with `voice bind <agent>` "
+        "voice is not bound to an agent; bind one with `voice bind <terminal>` "
         "before delivering"
     )
 
@@ -200,100 +221,32 @@ def _single_line(text: str) -> str:
     return " ".join(text.split())
 
 
-def _resolve_agent(agent_name: str, *, spawn: Callable) -> dict[str, str]:
-    """Re-resolve the bound agent's pane id and status at send time (KTD7).
+def _resolve_status(
+    agent_name: str, terminal: str, *, run_process: Callable
+) -> str | None:
+    """Re-read the bound terminal at send time and return its status word (KTD7).
 
-    The binding stores a pane id, but delivery does not trust the stored
-    copy: panes move between bind and deliver, and herdr is the authority
-    for both. An unresolvable bound agent is a named error; nothing falls
-    back to another target (R17).
+    The terminal must still answer to its own address and still be live.
+    Anything else is a named error; nothing falls back to another target
+    (R17).
     """
+    unresolved = f"the bound agent {agent_name!r} (terminal {terminal}) could not be resolved"
     try:
-        result = process.run(
-            ["herdr", "agent", "get", agent_name],
-            timeout=HERDR_TIMEOUT_SECONDS,
-            spawn=spawn,
+        record = herdr_core.get_terminal(
+            terminal, timeout=HC_TIMEOUT_SECONDS, run_process=run_process
         )
-    except subprocess.TimeoutExpired as error:
+    except herdr_core.CoreRefusal as refusal:
+        raise DeliveryRefusal(f"{unresolved}: {refusal.reason}") from refusal
+    if record["address"] != terminal:
         raise DeliveryRefusal(
-            f"the bound agent {agent_name!r} could not be resolved: "
-            f"herdr agent get passed its "
-            f"{HERDR_TIMEOUT_SECONDS:.0f}-second deadline"
-        ) from error
-    except subprocess.CalledProcessError as error:
-        raise DeliveryRefusal(
-            f"the bound agent {agent_name!r} could not be resolved: "
-            f"herdr agent get exited with status {error.returncode}"
-        ) from error
-    except OSError as error:
-        raise DeliveryRefusal(
-            f"the bound agent {agent_name!r} could not be resolved: "
-            f"the herdr CLI cannot start ({error})"
-        ) from error
-    try:
-        payload = json.loads(result.stdout)
-    except (TypeError, ValueError) as error:
-        raise DeliveryRefusal(
-            f"the bound agent {agent_name!r} could not be resolved: "
-            "herdr agent get returned no parseable agent record"
-        ) from error
-    record = _agent_record(payload)
-    pane_id = _stated_str(record, "pane_id")
-    agent_status = _stated_str(record, "agent_status")
-    if pane_id is None or agent_status is None:
-        raise DeliveryRefusal(
-            f"the bound agent {agent_name!r} could not be resolved: "
-            "herdr agent get returned no usable pane id and status"
+            f"{unresolved}: hc get answered for terminal {record['address']!r}"
         )
-    return {"pane_id": pane_id, "agent_status": agent_status}
-
-
-def _agent_record(payload: object) -> dict | None:
-    """Walk the herdr envelope to the agent record, or ``None``."""
-    if not isinstance(payload, dict):
-        return None
-    result = payload.get("result")
-    if not isinstance(result, dict):
-        return None
-    agent = result.get("agent")
-    if not isinstance(agent, dict):
-        return None
-    return agent
-
-
-def _stated_str(record: dict | None, field: str) -> str | None:
-    """A stated string field, or ``None`` when absent, non-string, or empty."""
-    if record is None:
-        return None
-    value = record.get(field)
-    if not isinstance(value, str):
-        return None
-    value = value.strip()
-    return value or None
-
-
-def _send_text(pane_id: str, line: str, *, spawn: Callable) -> None:
-    """Send one single-line transcript as literal text, without Enter."""
-    try:
-        process.run(
-            ["herdr", "pane", "send-text", pane_id, line],
-            timeout=HERDR_TIMEOUT_SECONDS,
-            spawn=spawn,
+    if not herdr_core.is_live(record):
+        raise DeliveryRefusal(
+            f"the bound agent {agent_name!r} (terminal {terminal}) has finished; "
+            "rebind with `voice bind <terminal>`"
         )
-    except subprocess.TimeoutExpired as error:
-        raise DeliveryRefusal(
-            "delivery failed: herdr pane send-text passed its "
-            f"{HERDR_TIMEOUT_SECONDS:.0f}-second deadline"
-        ) from error
-    except subprocess.CalledProcessError as error:
-        raise DeliveryRefusal(
-            "delivery failed: herdr pane send-text exited with status "
-            f"{error.returncode}"
-        ) from error
-    except OSError as error:
-        raise DeliveryRefusal(
-            f"delivery failed: the herdr CLI cannot start ({error})"
-        ) from error
+    return herdr_core.status_word(record)
 
 
 def _hold_refused(text: str) -> None:
