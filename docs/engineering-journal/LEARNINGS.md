@@ -2,6 +2,32 @@
 
 ## 2026-11-11
 
+### A committed profile's test command assumes a shell the checks do not use
+
+**Evidence.** With dependencies installed, the two-runs listing still exited 4 with "file or
+directory not found: plugins/*/tests", and the mutation baseline failed the same way. The runner
+takes the test command from the base commit's `.saga-profile.json` before any external profile
+(`review_tools._profile_for_run`), and this repository's command is
+`python3 -m pytest plugins/*/tests ...`; the checks run it as an argument list, so pytest receives
+the glob literally. The fix names the change's test files explicitly
+(`review_checks._two_pytest_runs`, `review_adapters_python._cosmic_tests`); tests
+`test_a_profile_glob_the_shell_never_expanded_does_not_stop_the_check` and
+`test_cosmic_ray_names_the_change_s_test_files_instead_of_the_default_collection`.
+
+**Mechanism.** Profile commands are written for a person's shell, which expands globs; a check
+that runs them without a shell must either expand them itself or not depend on them. Only the
+change's own test files can hold a new test, and the tests that exercise a mutated module are the
+ones that mention it, so naming those files is both independent of the project's collection
+settings and much faster than the whole suite.
+
+Once named, two further failures showed: copied test files that import a module only the change
+adds abort an old-version run given node ids, and tests that read a file the review checkout
+strips (a fixture named like a tool configuration) fail the unmutated baseline.
+
+**Generalizable rule.** When a check needs particular tests, name them; use a project's default
+collection only as a fallback, and say in the degraded reason that the fallback was used. A test
+that cannot pass before any mutation is left out of mutation testing, not allowed to stop it.
+
 ### A uv lock holds hashes only for the Python versions its project allows
 
 **Evidence.** A locked project with `requires-python = ">=3.12,<3.14"` installed into the review

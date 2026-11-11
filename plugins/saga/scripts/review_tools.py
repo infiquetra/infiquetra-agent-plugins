@@ -3242,6 +3242,80 @@ def read_pytest_command(command: str) -> PytestCommand | None:
     )
 
 
+#: pytest options that take the next word as their value (when not written ``--name=value``).
+_PYTEST_VALUE_OPTIONS = frozenset({
+    "-k", "-m", "-p", "-c", "-o", "-W", "-n", "-r", "--rootdir", "--confcutdir", "--basetemp",
+    "--ignore", "--ignore-glob", "--deselect", "--import-mode", "--cov", "--cov-report",
+    "--cov-config", "--cov-fail-under", "--junitxml", "--junit-xml", "--junit-prefix",
+    "--log-level", "--log-cli-level", "--log-file", "--log-file-level", "--log-format",
+    "--tb", "--maxfail", "--durations", "--durations-min", "--timeout", "--override-ini",
+    "--config-file", "--capture", "--color", "--code-highlight", "--dist", "--numprocesses",
+    "--randomly-seed", "--show-capture", "--report-log", "--pastebin",
+})
+_GLOB = frozenset("*?[")
+
+
+def pytest_options(arguments: Sequence[str]) -> list[str]:
+    """pytest's options from *arguments*, without the paths and node ids it would collect.
+
+    A check that names the tests to run passes them itself, so a project's own default
+    collection (a directory glob the shell never expanded, a ``testpaths`` setting) cannot fail
+    the run. An option's value stays with it.
+    """
+    kept: list[str] = []
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--":
+            break
+        if word.startswith("-") and word != "-":
+            kept.append(word)
+            if word in _PYTEST_VALUE_OPTIONS and index + 1 < len(arguments):
+                kept.append(arguments[index + 1])
+                index += 2
+                continue
+        index += 1
+    return kept
+
+
+def is_python_test_file(path: str) -> bool:
+    """Whether pytest's default file pattern (``test_*.py``, ``*_test.py``) names *path*."""
+    name = Path(path).name
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
+
+
+def changed_test_files(change: review_diff.Change | None, root: Path) -> list[str]:
+    """The Python test files the change added or edited, that exist under *root*, sorted."""
+    if change is None:
+        return []
+    found = set()
+    for item in change.files:
+        if item.status not in {"added", "modified", "renamed"}:
+            continue
+        if not is_python_test_file(item.path):
+            continue
+        if Path(item.path).is_absolute() or ".." in Path(item.path).parts:
+            continue
+        if (root / item.path).is_file():
+            found.add(item.path)
+    return sorted(found)
+
+
+def expand_globs(arguments: Sequence[str], root: Path) -> list[str]:
+    """Expand each glob word, relative to *root*, as a shell would; one with no match stays."""
+    expanded: list[str] = []
+    for word in arguments:
+        if word.startswith("-") or not _GLOB & set(word) or Path(word).is_absolute():
+            expanded.append(word)
+            continue
+        matches = sorted(
+            path.relative_to(root).as_posix() for path in root.glob(word)
+            if _within_root(root, path)
+        )
+        expanded.extend(matches or [word])
+    return expanded
+
+
 def python_env_argv(python_env: Path, arguments: Sequence[str]) -> list[str]:
     """pytest with *arguments*, run by the interpreter of the saga-written environment."""
     return [str(python_env / "bin" / "python3"), "-m", "pytest", *arguments]

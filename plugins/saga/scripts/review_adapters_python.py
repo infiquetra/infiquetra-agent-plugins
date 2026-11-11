@@ -154,27 +154,62 @@ except (OSError, ValueError, KeyError):
     _done(True, [], "init-failed")
 if not isinstance(test_command, str):
     _done(True, [], "init-failed")
-try:
-    proc = subprocess.Popen(
-        shlex.split(test_command),
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, start_new_session=True,
-    )
-except (OSError, ValueError):
-    _done(True, [], "baseline-failed")
-try:
-    baseline_out, baseline_err = proc.communicate(timeout=budget)
-except subprocess.TimeoutExpired:
+def _baseline(command):
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (AttributeError, OSError):
-        proc.kill()
-    late_out, late_err = proc.communicate()
-    _tail(late_out, late_err)
+        proc = subprocess.Popen(
+            shlex.split(command),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
+        )
+    except (OSError, ValueError):
+        return "failed", "", ""
+    try:
+        out, err = proc.communicate(timeout=budget)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (AttributeError, OSError):
+            proc.kill()
+        out, err = proc.communicate()
+        return "timeout", out, err
+    return ("passed" if proc.returncode == 0 else "failed"), out, err
+def _without_failures(command, out):
+    # pytest's summary names each failing test (FAILED id - why) and each file or test that
+    # errored (ERROR id - why). A test that fails on the unmutated tree, often because the
+    # review's checkout lacks something the test reads, cannot judge a mutant: leave it out.
+    flags = []
+    for line in (out or "").splitlines():
+        for word in ("FAILED ", "ERROR "):
+            if line.startswith(word):
+                node = line[len(word):].split(" - ", 1)[0].strip()
+                if node:
+                    flags.append("--deselect=" + node if "::" in node else "--ignore=" + node)
+    if not flags or len(flags) > 200:
+        return None
+    return shlex.join([*shlex.split(command), *flags])
+def _rewrite(command):
+    with open(config, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+    lines = [("test-command = " + json.dumps(command)) if line.startswith("test-command = ")
+             else line for line in lines]
+    with open(config, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+state, out, err = _baseline(test_command)
+if state == "timeout":
+    _tail(out, err)
     _done(True, [], "baseline-timeout")
-if proc.returncode != 0:
-    _tail(baseline_out, baseline_err)
-    _done(True, [], "baseline-failed")
+if state == "failed":
+    narrowed = _without_failures(test_command, out)
+    if narrowed is None:
+        _tail(out, err)
+        _done(True, [], "baseline-failed")
+    state, again_out, again_err = _baseline(narrowed)
+    if state != "passed":
+        _tail(out, err, again_out, again_err)
+        _done(True, [], "baseline-timeout" if state == "timeout" else "baseline-failed")
+    sys.stderr.write("baseline: left out the tests that failed before any mutation\n")
+    _tail(out)
+    _rewrite(narrowed)
 session = config + ".sqlite"
 init = subprocess.run(["cosmic-ray", "init", config, session], capture_output=True, text=True)
 if init.returncode != 0:
@@ -660,33 +695,74 @@ def _parse_import_linter(text: str) -> ParseResult:
     return ParseResult(tuple(hits))
 
 
-def _cosmic_test_argv(context: ScanContext, command: str) -> list[str]:
+#: The most test files a mutation run names when none of the change's own test files fit.
+_COSMIC_MAX_TEST_FILES = 50
+
+
+def _mentions(path: Path, names: frozenset[str]) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(re.search(rf"\b{re.escape(name)}\b", text) for name in names)
+
+
+def _cosmic_tests(context: ScanContext, modules: list[str]) -> list[str]:
+    """The test files the baseline and every mutant run, named explicitly.
+
+    The change's own test files that mention a mutated module, else all the change's test files,
+    else up to ``_COSMIC_MAX_TEST_FILES`` test files in the tree that mention one. Naming them
+    keeps a project's default collection (a glob a shell never expanded, a ``testpaths``
+    setting) from failing the baseline, and keeps each mutant's run to the tests that matter.
+    """
+    names = frozenset(Path(module).stem for module in modules)
+    changed = review_tools.changed_test_files(context.change, context.root)
+    mentioning = [rel for rel in changed if _mentions(context.root / rel, names)]
+    if mentioning or changed:
+        return mentioning or changed
+    found: list[str] = []
+    for path in review_tools.scan_files(context.root):
+        rel = path.relative_to(context.root).as_posix()
+        if review_tools.is_python_test_file(rel) and path.is_file() and _mentions(path, names):
+            found.append(rel)
+    return sorted(found)[:_COSMIC_MAX_TEST_FILES]
+
+
+def _cosmic_test_argv(context: ScanContext, command: str, modules: list[str]) -> list[str]:
     """The baseline's and every mutant's test command.
 
-    With the packet's Python environment, a command that runs pytest runs it with that
-    environment's interpreter, by path, so the tests import the change's installed dependencies
-    and not ``uv run``'s temporary environment (the one that holds cosmic-ray). Any other command
-    runs as before.
+    A command that runs pytest runs the tests :func:`_cosmic_tests` names, with the command's
+    own options. With the packet's Python environment it runs them with that environment's
+    interpreter, by path, so the tests import the change's installed dependencies and not
+    ``uv run``'s temporary environment (the one that holds cosmic-ray). No test file to name is
+    the gap ``no-tests-for-change``. Any other command runs as before.
     """
-    read = review_tools.read_pytest_command(command) if context.python_env is not None else None
-    if read is not None and context.python_env is not None:
-        argv = review_tools.python_env_argv(
-            context.python_env, [*_strip_randomly(list(read.arguments)), "-p", "no:randomly"],
-        )
-        # The command's own ``NAME=value`` assignments (``PYTHONPATH=tests``) stay with it.
-        assigned = [f"{name}={value}" for name, value in read.env]
-        return ["env", *assigned, *argv] if assigned else argv
-    return _resolve_python_head([*_strip_randomly(shlex.split(command)), "-p", "no:randomly"])
+    read = review_tools.read_pytest_command(command)
+    if read is None:
+        return _resolve_python_head([*_strip_randomly(shlex.split(command)), "-p", "no:randomly"])
+    tests = _cosmic_tests(context, modules)
+    if not tests:
+        raise ToolGap("no-tests-for-change", "testing.surviving-mutant")
+    options = [*_strip_randomly(review_tools.pytest_options(read.arguments)), "-p", "no:randomly"]
+    if context.python_env is not None:
+        argv = review_tools.python_env_argv(context.python_env, [*options, *tests])
+    else:
+        argv = [*_resolve_python_head(list(read.launcher)), *options, *tests]
+    # The command's own ``NAME=value`` assignments (``PYTHONPATH=tests``) stay with it.
+    assigned = [f"{name}={value}" for name, value in read.env]
+    return ["env", *assigned, *argv] if assigned else argv
 
 
 def _invoke_cosmic(context: ScanContext) -> list[str]:
     command = context.test_command.strip()
     if not command:
         raise ToolGap("known-gap", "testing.surviving-mutant")
-    parts = _cosmic_test_argv(context, command)
-    modules = _changed_python(context)
+    # Test files are what the mutants are checked against, never mutated themselves.
+    modules = [rel for rel in _changed_python(context)
+               if not review_tools.is_python_test_file(rel)]
     if not modules:
         return []
+    parts = _cosmic_test_argv(context, command, modules)
     # The config, and the session database the wrapper writes beside it, live in the scan's own
     # folder. In the runner home the session database survived into the next prepare (issue 147).
     toml = review_tools.scan_folder(context, "cosmic-ray") / "cosmic-ray.toml"

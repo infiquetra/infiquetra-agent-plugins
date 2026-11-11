@@ -2,6 +2,33 @@
 
 ## 2026-11-11
 
+### The testing checks name the change's test files instead of the default collection
+
+**Decision.** For a pytest command, two-runs drops the command's own paths, keeps its options, and
+lists only the test files the change added or edited (a file the old version lacks counts as all
+new); the new tests run in one batched pytest run per version, read from the `-rA` summary, under
+a 600 second check limit. The default collection, with globs expanded relative to the project, runs
+only when the change touched no test file, and its failure is `no-test-list-default-collection`.
+cosmic-ray names the change's test files that mention a mutated module, else all its test files,
+else up to 50 test files in the tree that mention one, and records `no-tests-for-change` when there
+are none; test files are no longer mutated. A baseline that fails is rerun once without the tests
+pytest's summary names as failing, and the mutants use that narrowed command; the old-version run
+of two-runs names files and continues past a file that cannot be collected there.
+
+**Rejected alternatives.** Running the profile command through a shell: it would also run whatever
+else a committed command does, which the argument-list design avoids. Expanding globs only: it
+fixes this shape but keeps every quirk of a project's collection and runs the whole suite per
+mutant. Running each new test on its own, as before: a change that adds many tests ran out of time.
+
+**Rationale.** Only the change's test files can hold a new test, and the mutated modules are
+exercised by the tests that mention them; naming them makes both checks independent of the
+project's collection settings and bounded by the change's size.
+
+**Revisit when.** A project's tests reach a changed module only indirectly (no test file mentions
+it), or a single change's test files take longer than the batched run allows.
+
+---
+
 ### Install a lock for an interpreter its requires-python covers
 
 **Decision.** The Python fetch reads `requires-python` from `uv.lock` (else `pyproject.toml`). When

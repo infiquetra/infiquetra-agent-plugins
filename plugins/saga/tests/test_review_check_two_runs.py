@@ -166,7 +166,7 @@ def test_pytest_that_exits_nonzero_is_no_test_list(
     )
     assert code == 0
     assert H.read(output, "findings.json") == []
-    assert any(item["reason"] == "no-test-list" for item in _review_gaps(output))
+    assert any(item["reason"] == "no-test-list-default-collection" for item in _review_gaps(output))
 
 
 def test_pytest_that_prints_no_node_id_is_no_test_list(
@@ -178,7 +178,7 @@ def test_pytest_that_prints_no_node_id_is_no_test_list(
     )
     assert code == 0
     assert H.read(output, "findings.json") == []
-    assert any(item["reason"] == "no-test-list" for item in _review_gaps(output))
+    assert any(item["reason"] == "no-test-list-default-collection" for item in _review_gaps(output))
 
 
 def test_a_listing_timeout_is_reason_timeout(
@@ -451,9 +451,60 @@ def test_a_failed_listing_keeps_its_output_s_end_in_the_diagnostics_folder(
     repo, base, _sha = H.make_repo(tmp_path, {"notes.txt": "one\n"}, {"notes.txt": "two\n"})
     diagnostics = tmp_path / "diagnostics"
     payload = H.C.two_runs(repo, base, [("none", "pytest -q")], diagnostics=diagnostics)
-    assert payload["gaps"][0]["reason"] == "no-test-list"
+    # The change touched no test file, so the default collection ran, and the reason says so.
+    assert payload["gaps"][0]["reason"] == "no-test-list-default-collection"
     [tail] = list(diagnostics.glob("two-runs-head-listing-*/tail.txt"))
     text = tail.read_text(encoding="utf-8")
     assert "exit code: 2" in text and "out-line" in text
     assert "line-59" in text and "line-20" in text and "line-19\n" not in text
     assert oct(tail.stat().st_mode & 0o777) == "0o600"
+
+
+def test_a_profile_glob_the_shell_never_expanded_does_not_stop_the_check(tmp_path: Path) -> None:
+    """A committed profile command such as ``python3 -m pytest plugins/*/tests`` runs without a
+    shell, so pytest would get the glob literally. Two-runs names the change's own test files
+    instead, keeping the command's options."""
+    repo, base, _sha = H.make_repo(tmp_path, _base(), _head(SAMPLE))
+    command = f"{sys.executable} -m pytest nowhere/*/tests -q -p no:cacheprovider"
+    payload = H.C.two_runs(repo, base, [("python", command)])
+    assert payload["gaps"] == []
+    assert [hit["anchor"] for hit in payload["hits"]] == [ALREADY]
+
+
+def test_an_edited_test_file_is_listed_on_both_versions(tmp_path: Path) -> None:
+    base_files = {**_base(), "tests/test_sample.py": SAMPLE.split("def test_already")[0]}
+    repo, base, _sha = H.make_repo(tmp_path, base_files, _head(SAMPLE))
+    payload = H.C.two_runs(repo, base, [("python", H.PYTEST)])
+    assert payload["gaps"] == []
+    assert [hit["anchor"] for hit in payload["hits"]] == [ALREADY]
+
+
+def test_pytest_options_keep_values_and_drop_paths() -> None:
+    options = H.T.pytest_options([
+        "plugins/*/tests", "-q", "-k", "not slow", "--import-mode=importlib", "-p",
+        "no:randomly", "tests/test_x.py::test_y", "-x", "--", "after",
+    ])
+    assert options == [
+        "-q", "-k", "not slow", "--import-mode=importlib", "-p", "no:randomly", "-x",
+    ]
+
+
+def test_globs_expand_relative_to_the_project_as_a_shell_would(tmp_path: Path) -> None:
+    for name in ("b", "a"):
+        (tmp_path / "plugins" / name / "tests").mkdir(parents=True)
+    assert H.T.expand_globs(["-q", "plugins/*/tests", "none/*/x", "plain"], tmp_path) == [
+        "-q", "plugins/a/tests", "plugins/b/tests", "none/*/x", "plain",
+    ]
+
+
+def test_a_copied_test_file_that_cannot_load_on_the_old_version_does_not_stop_the_others(
+    tmp_path: Path,
+) -> None:
+    """On the old version a copied test file may import a module only the change adds. pytest
+    then cannot collect it; its tests do not pass there, and the other files still run."""
+    needs_new = "from newmod import VALUE\n\n\ndef test_new():\n    assert VALUE == 1\n"
+    head_files = {**_head(SAMPLE), "newmod.py": "VALUE = 1\n", "tests/test_new.py": needs_new}
+    repo, base, _sha = H.make_repo(tmp_path, _base(), head_files)
+    payload = H.C.two_runs(repo, base, [("python", H.PYTEST)])
+    assert payload["gaps"] == []
+    assert [hit["anchor"] for hit in payload["hits"]] == [ALREADY]
