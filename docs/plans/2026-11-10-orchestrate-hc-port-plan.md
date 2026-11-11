@@ -310,45 +310,56 @@ Each one changes how Orchestrate behaves, so each takes the conservative side.
 
 ---
 
-## Live smoke test
+## Live smoke test — passed
 
-Jeff approved it on 2026-11-10 and the team lead ran it from PR #312 with
-`ORCHESTRATE_AGENT_LAUNCHER` pointed at the launcher from `feat/launcher-no-old-herdr`. S1 and S3
-passed. S2 failed twice: in a new scratch folder Claude opened its folder-trust question and
-reported no status, `await_ready` spent its 30 s, and the prompt's Enter answered the question
-"No, exit", so Claude quit and the receipt said `prompt_delivered: false` (terminals t9t and t9v).
-D17 fixes it. Re-run S2 twice: once in a new folder, expecting the stop "hc-smoke has not reported
-a status after 30 s; a startup question such as folder trust may be open: read it with
-`hc read tN`", the tab left open and the receipt showing `status_reported: false`; then answer the
-question in the tab and run `launcher.py redeliver --receipt-json receipt.json` with the same
-flags, expecting the reply and `prompt_delivered: true`. Then a folder Claude already trusts,
-expecting S2 as written.
+Jeff approved it on 2026-11-10. The team lead ran it on the Studio from PR #312, with
+`ORCHESTRATE_AGENT_LAUNCHER` pointed at the launcher from infiquetra-herdr-console branch
+`feat/launcher-no-old-herdr`, in the scratch repository `hc-smoke-repo`. The full results are in a
+comment on PR #312. All five steps pass on 74053b0, after four fixes the run itself found:
 
-The trusted-folder run then found G11: the launch failed with "session workspace 'hc-smoke-repo'
-does not match requested workspace 'HC Smoke'" and closed its own session, because the check read
-the window's `where` label before the rename. D18 fixes it; that re-run should confirm
-`workspace` in `confirmed_against_herdr`, with `workspace_shown` holding whichever name the window
-showed at that moment.
+| Fix | Commit | What the smoke test found |
+| --- | --- | --- |
+| D17, no status means not ready | 45f148b | In a new folder Claude held its folder-trust question and reported no status; after the 30 s readiness window the launcher sent anyway, and the Enter answered "No, exit" (terminals t9t, t9v). |
+| D18, workspace by id | 76af887 | A launch read the window's `where` label as "hc-smoke-repo / 1" before the seat-board mod renamed it, called it a mismatch with "HC Smoke" and closed its own session (G11). The same commit reads each hc status in its own command's shape. |
+| D1, known placeholders | 6c8585a | After Codex's trust question was answered, `redeliver` refused Codex's own placeholder "Ask Codex to do anything" as staged input (24 chars). The same commit lets `redeliver` take its flags from the receipt. |
+| OpenCode facts | 74053b0 | OpenCode reports an hc status; its placeholders are recorded. |
 
-The re-run on 76af887 passed S2 for Claude (reply "ready", workspace confirmed, close removed the
-terminal) and the not-ready stop fired for Codex's "Trust this folder?" question. The recovery
-then found the D1 gap: after the question was answered, `redeliver` refused because Codex's
-placeholder read as staged input. The known-placeholder match fixes it, and `redeliver` now takes
-`--vendor`, `--task`, `--cwd` and `--workspace` from the receipt when they are not passed (a
-`--vendor` the receipt contradicts is refused). Re-run: answer Codex's question, then
-`launcher.py redeliver --prompt "..." --receipt-json receipt.json`, expecting
-`input_box_placeholder: "Ask Codex to do anything"` and `prompt_delivered: true`.
+Results, step by step:
 
-Steps, from a Herdr terminal on the Studio, in a scratch repository:
-
-- S1. `python3 launcher.py preview --vendor claude --task hc-smoke --cwd <scratch repo>`: expect
+- **S1, preview.** `launcher.py preview --vendor claude --task hc-smoke --cwd <repo>` printed
   `backend=herdr-app` and the folder.
-- S2. `python3 launcher.py launch --vendor claude --task hc-smoke --cwd <scratch repo> --workspace "HC Smoke" --prompt "Reply with the word ready and stop." > receipt.json`:
-  expect a tab named hc-smoke in a new "HC Smoke" workspace, the reply, and a receipt with
-  `owned: true`, `pane` and `tab_id` both the hc address, and `prompt_delivered: true`.
-- S3. `python3 launcher.py close --receipt-json receipt.json`: expect the terminal gone from
-  `hc ls` and the tab gone from the window.
-- S4. The same three with `--vendor codex` (D1: Codex's placeholder reads as empty) and
-  `--vendor opencode --variant high` (G4: the `/variants` picker through `hc send`).
-- S5. A one-unit Orchestrate run with `go`, `wait`, `settle` and `clean` on the same scratch
-  repository.
+- **S2, launch (Claude).** In a folder Claude trusts, the prompt was delivered, the reply was
+  "ready", `workspace` was in `confirmed_against_herdr`, and the receipt showed `owned: true`, the
+  hc address as both `pane` and `tab_id`, and `prompt_delivered: true`. In a new folder, the D17
+  stop fired as designed: nothing sent, the session left open, `status_reported: false`.
+- **S3, close.** `launcher.py close --receipt-json receipt.json` ended and removed the terminal;
+  it was gone from `hc ls` and its tab from the window.
+- **S4, Codex and OpenCode.** Codex in a new folder stopped at its "Trust this folder?" question
+  (the D17 stop, nothing sent). Once the trust was saved, Codex launched clean. After a prompt-less
+  launch, `redeliver --receipt-json … --prompt …` read the box as Codex's placeholder, delivered,
+  and Codex answered. OpenCode reported `{"app": "opencode", "state": "idle"}`; `--variant high`
+  drove the `/variants` picker through `hc send`, read it, and refused "requested variant 'high' is
+  not among the 1 options the live picker offered", which is correct for the default model (Muse
+  Spark 1.3 Contributor OpenCode Go, one variant).
+- **S5, one-unit Orchestrate run** (`scratchpad/s5/plan.json`, run record issue 905, run branch
+  `s5/run`). `start`, then `go`, `wait` ("readme-line is done"), `settle` ("done then done ->
+  done"), `status` (one commit, "docs: S5 smoke line", on `orch/s5-readme-line`) and `clean`
+  ("closed: readme-line", worktree removed, no terminal or workspace left) all behaved as
+  predicted.
+
+**Trust once for new worktrees.** Every Orchestrate unit runs in a new worktree beside the
+repository (`<repo parent>/orch-<run>-<unit>`), and Claude and Codex ask whether to trust a folder
+they have not seen. That question holds the agent silent, so D17 fails the unit with nothing sent;
+it is the right stop, but a fresh setup hits it on every unit. Claude Code 2.1.322 accepts a
+trusted parent folder (its trust check walks up the path), so trusting the folder that holds the
+worktrees once covers every unit; S5 did that for the scratchpad. The Orchestrate skill says so.
+
+**Follow-ups.**
+
+- `status` shows `-` in the `herdr` column for a unit that has settled. That is how
+  `status_snapshot` is written, not a fault in the port: it asks herdr core only about running
+  units, so a done unit's session, still open until `clean`, has no reading. Showing the live
+  status for any unit that still records a terminal would make "done, session still open" visible;
+  a small change in `status_snapshot`.
+- Agent-launcher `SKILL.md` and `README.md` (D15), after PR #310 merges, with one mutation proof.
+- The release pull request: major versions and Orchestrate's agent-launcher floor (D16).
