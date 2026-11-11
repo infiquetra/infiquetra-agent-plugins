@@ -163,9 +163,11 @@ def _no_status_core(
 ) -> subprocess.CompletedProcess[str]:
     """herdr core with one terminal, ``t5``, whose program has never reported a status word.
 
-    That is hc's form of "this agent does not report readiness": ``hc get`` shows no status, so
-    the launcher hands a long task over as a file. ``hc ls`` shows an empty core before the launch
-    (the ownership snapshot) and ``hc send`` and ``hc read`` succeed.
+    The launcher sends to such a terminal only when its vendor is confirmed never to report a
+    status (``VENDORS_WITHOUT_STATUS``; each test below marks claude as one) and its screen shows
+    no selection menu; then it hands a long task over as a file. ``hc ls`` shows an empty core
+    before the launch (the ownership snapshot), ``hc read`` shows a blank screen and ``hc send``
+    succeeds.
     """
     terminal = {
         "address": "t5",
@@ -209,6 +211,7 @@ def test_delivery_warning_appends_to_the_file_handover_note(
     monkeypatch.setattr(
         orchestrate, "run", lambda cmd, **kw: _no_status_core(list(cmd), launch=True, **kw)
     )
+    monkeypatch.setattr(orchestrate, "VENDORS_WITHOUT_STATUS", frozenset({"claude"}))
     monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
     monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: False)
     monkeypatch.setattr(
@@ -247,6 +250,7 @@ def test_long_task_handover_appends_after_the_setup_prompt_fallback_note(
     )
 
     monkeypatch.setattr(orchestrate, "run", lambda cmd, **kw: _no_status_core(list(cmd), **kw))
+    monkeypatch.setattr(orchestrate, "VENDORS_WITHOUT_STATUS", frozenset({"claude"}))
     unit.launch_receipt = {"owned": True}
 
     orchestrate.send(unit, orchestrate.PaneWriter(unit, "t5", wrote_before=False))
@@ -265,6 +269,7 @@ def test_long_task_without_setup_keeps_both_pane_fallback_diagnostics(
     unit = orchestrate.Unit(name="review", vendor="claude", task="x" * 900)
 
     monkeypatch.setattr(orchestrate, "run", lambda cmd, **kw: _no_status_core(list(cmd), **kw))
+    monkeypatch.setattr(orchestrate, "VENDORS_WITHOUT_STATUS", frozenset({"claude"}))
     unit.launch_receipt = {"owned": True}
 
     orchestrate.send(unit, orchestrate.PaneWriter(unit, "t5", wrote_before=False))

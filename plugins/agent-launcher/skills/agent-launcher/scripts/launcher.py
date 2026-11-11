@@ -1699,6 +1699,20 @@ def _deliver(
     """
     writer = PaneWriter(unit, pane_id, wrote_before=wrote_before)
     ready = await_ready(unit)
+    if not ready and reports_no_status(pane_id) and unit.vendor not in VENDORS_WITHOUT_STATUS:
+        # Silent after the whole readiness window: the agent is not ready, most likely held at a
+        # startup question. Nothing is sent and nothing is closed; the receipt says why, and once
+        # the question is answered in the tab the retry door (``redeliver``) can deliver.
+        message = no_status_message(unit, pane_id, LAUNCH_SETTLE_SECONDS)
+        unit.status = PROMPT_UNDELIVERED
+        not_ready_note = "not ready: no status after the readiness window, nothing sent"
+        if not_ready_note not in unit.note.split("; "):
+            append_unit_note(unit, not_ready_note)
+        if isinstance(unit.launch_receipt, dict):
+            unit.launch_receipt.update(
+                {"status_reported": False, "readiness": False, "prompt_delivered": False}
+            )
+        raise SystemExit(message)
     identity = None
     if not session_owned(unit):
         identity = verify_unit_identity(unit, pane_id, ready=ready)
@@ -1903,14 +1917,83 @@ def pane_text(unit: Any, text: str) -> str:
     ).strip()
 
 
-def reports_no_status(pane_id: str) -> bool:
-    """Whether this terminal's program has never reported a status word to herdr core.
+# Vendors confirmed NEVER to report a status word to herdr core (OSC 7501). Only these may be
+# sent a line while they report none, and only after the screen shows no selection menu.
+#
+# Every other vendor's silence means "not ready yet", never "does not report readiness". Claude
+# Code, Codex, Antigravity and Muse all report one: read off live terminals on the Studio on
+# 2026-11-10 (``hc get``: ``status.app`` claude-code, codex, antigravity, muse). An agent that
+# reports says nothing until it is past its startup screens -- Claude stays silent through its
+# folder-trust question -- and ``hc send`` presses Enter, which answers such a question with its
+# highlighted default. The live smoke test of 2026-11-10 did exactly that: a prompt sent after 30 s
+# of silence answered Claude's trust question "No, exit" and Claude quit (terminals t9t and t9v).
+# No vendor is confirmed silent: Grok and OpenCode were not seen live (OpenCode's binary carries
+# the OSC 7501 sequence). Add one here only after watching a ready session of it stay silent.
+VENDORS_WITHOUT_STATUS: frozenset[str] = frozenset()
 
-    hc's form of "this agent does not report readiness". A terminal hc cannot describe counts
-    as reporting none, which only routes a long task through the file handoff.
+# What a selection menu shows on a plain-text screen: a numbered choice under the ``❯`` cursor
+# (a border glyph may precede it), or the menu's own key hint.
+STARTUP_MENU_CHOICE = re.compile(r"^[\s│┃|]*❯\s*\d+[.)]\s+\S", re.MULTILINE)
+STARTUP_MENU_HINTS = ("enter to confirm", "enter to select")
+
+
+def startup_menu_on_screen(text: str) -> bool:
+    """Whether a screen shows a selection menu: a ``❯`` numbered choice list or "Enter to confirm".
+
+    An empty composer (``❯``) or a draft in one (``❯ fix the bug``) is not a menu: a draft has no
+    number after the cursor.
+    """
+    clean = strip_ansi(text)
+    lowered = clean.lower()
+    if any(hint in lowered for hint in STARTUP_MENU_HINTS):
+        return True
+    return STARTUP_MENU_CHOICE.search(clean) is not None
+
+
+def reports_no_status(pane_id: str) -> bool:
+    """Whether this terminal's program has not reported a status word to herdr core.
+
+    A terminal hc cannot describe counts as reporting none, which refuses the send rather than
+    risking an Enter into a question nobody has read.
     """
     terminal = hc_terminal(pane_id)
     return terminal is None or hc_status_word(terminal.get("status")) is None
+
+
+def no_status_message(unit: Any, pane_id: str, seconds: float | None = None) -> str:
+    """The plain stop for a session that has not reported a status."""
+    waited = f" after {seconds:.0f} s" if seconds else ""
+    return (
+        f"{unit.name} has not reported a status{waited}; a startup question such as folder trust "
+        f"may be open: read it with `hc read {pane_id}`. Nothing was sent and the session was "
+        "left open."
+    )
+
+
+def refuse_without_status(unit: Any, pane_id: str, *, seconds: float | None = None) -> None:
+    """The one rule for a line bound for a session that reports no status. Raises to refuse.
+
+    A vendor not confirmed silent is not ready: refuse. A vendor confirmed silent may be sent a
+    line, but only when its screen can be read and shows no selection menu -- an Enter there
+    answers the menu.
+    """
+    if unit.vendor not in VENDORS_WITHOUT_STATUS:
+        raise SystemExit(no_status_message(unit, pane_id, seconds))
+    screen = run(
+        [HC, "read", str(pane_id), "--lines", "0"],
+        check=False,
+        timeout=PANE_INPUT_READ_SECONDS,
+    )
+    if screen.returncode != 0 or isinstance(screen, TimedOutProcess):
+        raise SystemExit(
+            f"{unit.name}: {pane_id} reports no status and its screen could not be read; "
+            "nothing was sent"
+        )
+    if startup_menu_on_screen(screen.stdout):
+        raise SystemExit(
+            f"{unit.name}: {pane_id} shows a selection menu (read it with `hc read {pane_id}`); "
+            "an Enter would answer it, so nothing was sent and the session was left open"
+        )
 
 
 class PaneWriter:
@@ -1928,10 +2011,12 @@ class PaneWriter:
     redelivery and for Orchestrate's later senders, where a person may have typed since.
 
     Doors. herdr core has one way in: ``hc send`` pastes the line and presses Enter. The two
-    door names keep what each write is for. ``door="prompt"`` sends the line whole to an agent
-    that reports a status; to one that has never reported one it sends what a pasted line still
-    carries as an instruction (``pane_text``), as old Herdr's pane fallback did.
-    ``door="pane"`` sends verbatim: the OpenCode picker is driven line by line. Every send is
+    door names keep what each write is for. ``door="prompt"`` sends the line whole and
+    ``door="pane"`` sends verbatim (the OpenCode picker is driven line by line). Neither sends to a
+    session that reports no status (``refuse_without_status``): its Enter could answer a startup
+    question. Only a vendor confirmed never to report one is sent a line, after its screen shows no
+    menu, and a prompt to it is what a pasted line still carries as an instruction
+    (``pane_text``), as old Herdr's pane fallback did. Every send is
     bounded by ``PANE_WRITE_SECONDS``; a send that times out is a named stop saying the line may
     or may not have reached the session -- never a retry, which would be the second delivery
     every guard in this file exists to prevent. A blocked session (a permission or a question)
@@ -1977,14 +2062,17 @@ class PaneWriter:
                 )
 
         def open_door(line: str, *, via: str) -> None:
-            if via == "pane":
-                send_line(line)
-                return
-            if via != "prompt":
+            if via not in ("pane", "prompt"):
                 raise SystemExit(f"{unit.name}: unknown pane-write door {via!r}")
             if not pane_id:
                 raise SystemExit(f"{unit.name}: no herdr core terminal to send to")
             if not reports_no_status(str(pane_id)):
+                send_line(line)
+                return
+            # No status: ``hc send``'s Enter could answer a startup question. Refused unless the
+            # vendor is confirmed never to report one and its screen shows no menu.
+            refuse_without_status(unit, str(pane_id))
+            if via == "pane":
                 send_line(line)
                 return
             send_line(pane_text(unit, line))

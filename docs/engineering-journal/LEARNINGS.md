@@ -2,6 +2,26 @@
 
 ## 2026-11-10
 
+### An agent that has not reported a status may be holding a question, and Enter answers it
+
+**Evidence.** The live smoke test of the herdr core port, run on the Studio on 2026-11-10 from PR
+#312 (terminals t9t and t9v). In a new scratch folder Claude Code opened its folder-trust question
+and reported no hc status. `await_ready` waited its 30 s, the launcher read the silence as "this
+agent does not report readiness" and sent the prompt with `hc send`, and the send's Enter answered
+the question with its highlighted "No, exit". Claude quit, twice. The fix is `VENDORS_WITHOUT_STATUS`,
+`refuse_without_status` and the gate in `_deliver`
+(`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`), proved by
+`test_a_session_silent_through_the_readiness_window_is_not_ready_and_nothing_is_sent`.
+
+**Mechanism.** Claude, Codex, Antigravity and Muse report a status word only once they are past
+their startup screens, so "no status yet" and "never reports a status" look identical from hc.
+`hc send` pastes and presses Enter whatever is on screen; on a selection menu (folder trust, an MCP
+server approval, a theme or login picker) that Enter picks the default.
+
+**Generalizable rule.** Treat a missing status from an agent known to report one as "not ready",
+never as "cannot report"; send blind only to a vendor proved silent, and read the screen for a
+menu first.
+
 ### A plain-text screen read cannot tell an agent's placeholder from a person's draft
 
 **Evidence.** `hc read` (herdr core 0.1.20) prints plain text only. The launcher's composer parser
