@@ -193,6 +193,43 @@ def write_residue(
         print("review diagnostics: residue record not written", file=sys.stderr)
 
 
+#: How many lines of a failed run's output a failure record keeps, per stream.
+TAIL_LINES = 40
+
+
+def tail_lines(text: str | bytes | None, count: int = TAIL_LINES) -> str:
+    """The last *count* lines of *text*, decoded leniently."""
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
+    lines = (text or "").splitlines()
+    return "\n".join(lines[-count:])
+
+
+def write_failure_tail(
+    root: Path, adapter: str, step: str, exit_code: int | None,
+    stdout: str | bytes | None, stderr: str | bytes | None,
+) -> None:
+    """Keep the end of a failed run's output (a test listing, a baseline) for the operator.
+
+    The output is the reviewed change's own test output, so it lives only in this private
+    directory, never in a record, a hash or a packet. Nothing is added to it beyond what the
+    run printed.
+    """
+    try:
+        _private_root(root)
+        directory = Path(tempfile.mkdtemp(prefix=f"{adapter}-{step}-", dir=root))
+        body = (
+            f"adapter: {adapter}\nstep: {step}\nexit code: {exit_code}\n"
+            f"--- stdout, last {TAIL_LINES} lines ---\n{tail_lines(stdout)}\n"
+            f"--- stderr, last {TAIL_LINES} lines ---\n{tail_lines(stderr)}\n"
+        ).encode("utf-8", errors="replace")[:MAX_BYTES]
+        descriptor = os.open(directory / "tail.txt", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(body)
+    except (OSError, ValueError):
+        print("review diagnostics: failure tail not written", file=sys.stderr)
+
+
 @dataclass(frozen=True)
 class AttemptRecord:
     schema: str

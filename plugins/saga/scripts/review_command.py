@@ -226,7 +226,9 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
     a saga-written Python environment over the packet's packages, both or neither (``None``)."""
     vendor = review_dependencies.rust_vendor(packet)
     deps = review_dependencies.python_environment(packet)
-    python = shutil.which("python3") if deps is not None else None
+    # The interpreter the packages were installed for, which prepare may have chosen to match the
+    # project's ``requires-python`` rather than the operator's ``python3``.
+    python = review_dependencies.python_for(deps) if deps is not None else None
     modules = review_dependencies_node.node_modules(packet)
     dart = _offline_dart(packet)
     if vendor is None and python is None and modules is None and dart is None:

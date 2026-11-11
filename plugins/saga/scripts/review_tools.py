@@ -1900,11 +1900,16 @@ def _retry(
     return result, parsed
 
 
+#: Adapters whose attempts keep their console output in the private diagnostics folder: the
+#: mutation runs, whose failing baseline is otherwise invisible.
+_DIAGNOSED = frozenset({"cargo-mutants", "cosmic-ray"})
+
+
 def _attempt_diagnostic(
     adapter: Adapter, context: ScanContext, label: str,
     attempt: Literal["initial", "retry"], deadline: float | None,
 ) -> review_diagnostics.Attempt | None:
-    if context.diagnostics_directory is None or adapter.id != "cargo-mutants":
+    if context.diagnostics_directory is None or adapter.id not in _DIAGNOSED:
         return None
     try:
         return review_diagnostics.Attempt.create(
@@ -2116,7 +2121,8 @@ def _capture(
         return result, problem, True
     finally:
         if diagnostic is not None and executed:
-            diagnostic.logs(scan.root)
+            if adapter.id == "cargo-mutants":
+                diagnostic.logs(scan.root)
         if report_dir is not None:
             shutil.rmtree(report_dir, ignore_errors=True)
 
@@ -3111,8 +3117,36 @@ def _pytest_launcher(tokens: Sequence[str]) -> int | None:
     return None
 
 
+#: ``"$@"`` (or ``$@``) closing a ``-c`` command: the words after the command's ``$0`` name.
+_ALL_ARGUMENTS = ('"$@"', "$@")
+_ASSIGNMENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.DOTALL)
+#: Names a leading assignment may not set: they choose the interpreter or the programs found, and
+#: saga sets them itself for the packet's Python environment.
+_RESERVED_ASSIGNMENTS = frozenset({
+    "PATH", "VIRTUAL_ENV", "PYTHONHOME", "PYTHONEXECUTABLE", "PYTHONSTARTUP",
+})
+#: Characters a shell would expand in an assignment's value.
+_VALUE_SYNTAX = frozenset("$`")
+
+
+@dataclass(frozen=True)
+class PytestCommand:
+    """A command that runs pytest, read into what to run it with."""
+
+    #: Leading ``NAME=value`` assignments, literal, in order.
+    env: tuple[tuple[str, str], ...]
+    #: The words that start pytest: ``pytest``, ``python -m pytest``, or either after ``uv run``.
+    launcher: tuple[str, ...]
+    #: pytest's own options and paths.
+    arguments: tuple[str, ...]
+
+
 def _shell_inner(tokens: Sequence[str]) -> list[str] | None:
-    """The words of ``bash -c '<one simple command>'`` (or ``sh``), or ``None``."""
+    """The words ``bash -c '<one simple command>'`` (or ``sh``) runs, or ``None``.
+
+    The command may end in ``"$@"`` with a ``$0`` name after it; the words after the name are
+    then its last arguments, as the shell would pass them.
+    """
     if len(tokens) < 3 or Path(tokens[0]).name not in _SHELLS:
         return None
     index = 1
@@ -3121,30 +3155,56 @@ def _shell_inner(tokens: Sequence[str]) -> list[str] | None:
     flag = tokens[index]
     if not (flag.startswith("-") and not flag.startswith("--") and flag.endswith("c")):
         return None
-    # ``bash -c 'cmd' name args`` sets $0 and $@: words after the command are refused.
-    if index + 2 != len(tokens):
+    if index + 1 >= len(tokens):
         return None
-    inner = tokens[index + 1]
+    inner = tokens[index + 1].strip()
+    rest = list(tokens[index + 2:])
+    passed: list[str] = []
+    ending = next((item for item in _ALL_ARGUMENTS if inner.endswith(" " + item)), None)
+    if ending is not None:
+        inner = inner[: -len(ending)].rstrip()
+        # ``$0`` is the first word after the command; ``"$@"`` is every word after that.
+        passed = rest[1:]
+    elif rest:
+        # ``bash -c 'cmd' name args`` without ``"$@"`` drops the arguments: refused.
+        return None
     if any(char in _SHELL_SYNTAX for char in inner):
         return None
     try:
         words = shlex.split(inner)
     except ValueError:
         return None
-    if not words or "=" in words[0]:
+    if not words:
         return None
-    return words
+    return [*words, *passed]
 
 
-def pytest_command(command: str) -> tuple[list[str], list[str]] | None:
-    """``(launcher, arguments)`` when *command* runs pytest, else ``None``.
+def _leading_assignments(tokens: Sequence[str]) -> tuple[tuple[tuple[str, str], ...], int] | None:
+    """The literal ``NAME=value`` words that start *tokens*, and how many; ``None`` to refuse."""
+    found: list[tuple[str, str]] = []
+    for word in tokens:
+        match = _ASSIGNMENT.fullmatch(word)
+        if match is None:
+            break
+        name, value = match.group(1), match.group(2)
+        if name in _RESERVED_ASSIGNMENTS or any(char in _VALUE_SYNTAX for char in value):
+            return None
+        if value.startswith("~"):
+            return None
+        found.append((name, value))
+    return tuple(found), len(found)
+
+
+def read_pytest_command(command: str) -> PytestCommand | None:
+    """*command* read as a pytest run, or ``None`` when it is not one this reader can trust.
 
     Read: ``pytest``, ``python -m pytest`` (any ``python``, ``python3`` or ``python3.N``, by name
-    or path), either one after ``uv run`` and its options, and any of those as the one simple
-    command of ``bash -c`` or ``sh -c``. Running ``launcher + arguments`` runs what the command
-    runs; a shell wrapper is dropped, which is safe because its command holds no shell syntax.
-    Anything else is refused, so a caller never appends pytest's options to a program that is
-    not pytest.
+    or by path, such as ``.venv/bin/python``), either one after ``uv run`` and its options, each
+    optionally after literal ``NAME=value`` assignments, and any of those as the one simple
+    command of ``bash -c`` or ``sh -c``, which may end in ``"$@"``. Running ``launcher +
+    arguments`` with ``env`` added runs what the command runs; a shell wrapper is dropped, which
+    is safe because its command holds no shell syntax. Anything else is refused, so a caller
+    never appends pytest's options to a program that is not pytest.
     """
     try:
         tokens = shlex.split(command)
@@ -3153,11 +3213,16 @@ def pytest_command(command: str) -> tuple[list[str], list[str]] | None:
     inner = _shell_inner(tokens)
     if inner is not None:
         tokens = inner
+    assigned = _leading_assignments(tokens)
+    if assigned is None:
+        return None
+    env, skip = assigned
+    tokens = tokens[skip:]
     if not tokens:
         return None
     count = _pytest_launcher(tokens)
     if count is not None:
-        return list(tokens[:count]), list(tokens[count:])
+        return PytestCommand(env, tuple(tokens[:count]), tuple(tokens[count:]))
     if Path(tokens[0]).name != "uv" or len(tokens) < 3 or tokens[1] != "run":
         return None
     index = 2
@@ -3172,7 +3237,9 @@ def pytest_command(command: str) -> tuple[list[str], list[str]] | None:
     count = _pytest_launcher(tokens[index:])
     if count is None:
         return None
-    return list(tokens[:index + count]), list(tokens[index + count:])
+    return PytestCommand(
+        env, tuple(tokens[:index + count]), tuple(tokens[index + count:]),
+    )
 
 
 def python_env_argv(python_env: Path, arguments: Sequence[str]) -> list[str]:

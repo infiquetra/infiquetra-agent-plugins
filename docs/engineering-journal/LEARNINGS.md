@@ -2,6 +2,40 @@
 
 ## 2026-11-11
 
+### A uv lock holds hashes only for the Python versions its project allows
+
+**Evidence.** A locked project with `requires-python = ">=3.12,<3.14"` installed into the review
+packet as `partial`: its compiled packages were `install-failed` when prepare installed them for a
+Python 3.14 interpreter. A synthetic lock with the same bound records no `cp314` wheel for those
+packages, and `uv pip install --require-hashes` with the lock's hashes fails with "Hash mismatch"
+because uv picks the index's newer `cp314` wheel. The fix picks an interpreter the requirement
+covers (`plugins/saga/scripts/review_dependencies.py`, `choose_python`, `python_for`); tests
+`test_an_interpreter_the_lock_excludes_is_replaced_by_one_it_covers` and
+`test_the_environment_uses_the_interpreter_the_packet_was_installed_for`.
+
+**Mechanism.** `uv lock` prunes wheels for interpreters outside `requires-python`, so the exported
+requirements carry no hash for them. With the interpreter excluded, uv either finds no wheel
+(`no-wheel`) or downloads one that the lock does not list (a hash failure, recorded as
+`install-failed`).
+
+**Generalizable rule.** Install a lock only for an interpreter its `requires-python` admits, and
+find the same interpreter again, by version, wherever the installed packages are used.
+
+### A profile's test command often wraps pytest in a shell with a variable and "$@"
+
+**Evidence.** A profile used `bash -c 'PYTHONPATH=tests .venv/bin/python -m pytest -q ... "$@"'
+bash`; two-runs refused it and cosmic-ray's baseline failed because the review checkout has no
+`.venv`. Reading assignments, `.venv/bin/python` and `"$@"` (`review_tools.read_pytest_command`)
+and running the packet environment's interpreter with the assignment set lets both checks run;
+test `test_a_project_venv_command_with_a_pythonpath_runs_in_the_python_environment`.
+
+**Mechanism.** The wrapper exists so that callers can append arguments (`"$@"`) and set a search
+path; the named interpreter belongs to a virtual environment the reviewed checkout never has.
+
+**Generalizable rule.** When a check rewrites a command onto its own interpreter, carry the
+command's literal assignments and passed arguments with it, and keep the failing run's output
+somewhere private so the next failure is diagnosable.
+
 ### A check that runs the change's tests must run them where its dependencies are installed
 
 **Evidence.** In a measured review run of a Python project, the two-runs check

@@ -1423,3 +1423,110 @@ def test_live_uv_installs_a_lock_twice_identically_and_sets_aside_an_sdist(
     assert not any(str(tmp_path).encode() in value
                    for value in packets[0][1].values() if isinstance(value, bytes))
     assert not any(name.endswith("pyvenv.cfg") or "/bin/" in name for name in packets[0][1])
+
+
+@pytest.mark.parametrize(("version", "requirement", "held"), [
+    ("3.14.8", ">=3.12, <3.14", False),
+    ("3.13.15", ">=3.12,<3.14", True),
+    ("3.12.0", ">=3.12", True),
+    ("3.11.9", ">=3.12", False),
+    ("3.12.4", "~=3.12", True),
+    ("4.0.0", "~=3.12", False),
+    ("3.13.1", "==3.12.*", False),
+    ("3.12.7", "==3.12.*", True),
+    ("3.13.0", "!=3.13.*", False),
+    ("3.13.0", ">3.12", True),
+    ("3.14.0", "<=3.13", False),
+    ("3.14.0", ">=3.12; python_version", None),
+    ("3.14.0", "latest", None),
+    ("3.14.0", "===3.14.0", None),
+])
+def test_requires_python_is_read_as_pep_440_release_clauses(
+    version: str, requirement: str, held: bool | None,
+) -> None:
+    assert D.python_satisfies(version, requirement) is held
+
+
+def test_requires_python_comes_from_the_lock_before_the_project(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nrequires-python = ">=3.10"\n', encoding="utf-8")
+    assert D.requires_python(tmp_path) == ">=3.10"
+    (tmp_path / "uv.lock").write_text(
+        'version = 1\nrequires-python = ">=3.12, <3.14"\n', encoding="utf-8")
+    assert D.requires_python(tmp_path) == ">=3.12, <3.14"
+    (tmp_path / "uv.lock").write_text("not toml [", encoding="utf-8")
+    assert D.requires_python(tmp_path) == ">=3.10"
+    assert D.requires_python(tmp_path / "missing") is None
+
+
+def _interpreters(monkeypatch: pytest.MonkeyPatch, operator: str | None,
+                  versions: dict[str, str], found: dict[str, str]) -> list[str]:
+    asked: list[str] = []
+    monkeypatch.setattr(D.shutil, "which", lambda name, *a, **k: operator if name == "python3"
+                        else shutil.which(name, *a, **k))
+    monkeypatch.setattr(D, "interpreter_version", lambda python: versions.get(python))
+
+    def find(request: str) -> str | None:
+        asked.append(request)
+        return found.get(request)
+
+    monkeypatch.setattr(D, "find_python", find)
+    return asked
+
+
+def test_an_interpreter_the_lock_excludes_is_replaced_by_one_it_covers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lock made for ``<3.14`` holds no hashes for 3.14 wheels: uv would install a wheel the
+    lock cannot verify, so the install picks an installed interpreter the lock covers."""
+    asked = _interpreters(monkeypatch, "/op/python3", {"/op/python3": "3.14.8"},
+                          {">=3.12, <3.14": "/found/python3.13"})
+    assert D.choose_python(">=3.12, <3.14") == "/found/python3.13"
+    assert asked == [">=3.12, <3.14"]
+
+
+def test_the_operator_s_python3_stays_when_the_project_allows_it_or_says_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked = _interpreters(monkeypatch, "/op/python3", {"/op/python3": "3.13.2"}, {})
+    assert D.choose_python(">=3.12, <3.14") == "/op/python3"
+    assert D.choose_python(None) == "/op/python3"
+    # An unreadable requirement is never handed to uv.
+    assert D.choose_python("whatever --flag") == "/op/python3"
+    assert asked == []
+    # No installed interpreter fits: the operator's, as before, and the install may be partial.
+    _interpreters(monkeypatch, "/op/python3", {"/op/python3": "3.14.8"}, {})
+    assert D.choose_python(">=3.12, <3.14") == "/op/python3"
+
+
+def test_the_environment_finds_the_interpreter_the_packages_were_installed_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    deps = D.PythonDependencies(site=Path("/site"), version="3.13.15")
+    asked = _interpreters(monkeypatch, "/op/python3", {"/op/python3": "3.14.8"},
+                          {"3.13": "/found/python3.13"})
+    assert D.python_for(deps) == "/found/python3.13"
+    assert asked == ["3.13"]
+    asked = _interpreters(monkeypatch, "/op/python3", {"/op/python3": "3.13.1"}, {})
+    assert D.python_for(deps) == "/op/python3"
+    assert asked == []
+
+
+def test_the_install_uses_the_interpreter_the_lock_covers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chosen: list[str | None] = []
+
+    def choose(requirement: str | None) -> str | None:
+        chosen.append(requirement)
+        return sys.executable
+
+    monkeypatch.setattr(D, "choose_python", choose)
+    uv = FakeUv(exported=_EXPORTED, compiled=_PYTEST)
+    tree = {**_LOCKED, "uv.lock": 'version = 1\nrequires-python = ">=3.12, <3.14"\n'}
+    record, _packet = _python(tmp_path, uv, tree)
+    assert chosen == [">=3.12, <3.14"]
+    assert record["python"]["interpreter"] == {"version": D.interpreter_version(sys.executable)}
+    for call in uv.calls:
+        if call["argv"][1:3] in (["pip", "install"], ["pip", "compile"]):
+            assert call["argv"][call["argv"].index("--python") + 1] == sys.executable

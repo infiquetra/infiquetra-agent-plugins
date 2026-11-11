@@ -282,11 +282,16 @@ def _python_env(tmp: Path) -> Path:
     "bash -lc 'uv run --no-sync pytest -q tests'",
     "sh -c \"python3 -m pytest -k 'a or b'\"",
     "/bin/bash -e -c 'pytest -q'",
+    ".venv/bin/python -m pytest -q",
+    "PYTHONPATH=tests python -m pytest -q",
+    "bash -c 'FOO=1 python -m pytest'",
+    "bash -c 'PYTHONPATH=tests .venv/bin/python -m pytest -q \"$@\"' bash",
+    "bash -c 'pytest -q $@' runner",
 ])
 def test_pytest_commands_are_recognised_behind_their_launchers(command: str) -> None:
     classified = H.C._classify(command)
     assert classified is not None
-    kind, tokens = classified
+    kind, tokens, _assigned = classified
     assert kind == "pytest"
     assert Path(tokens[0]).name not in {"bash", "sh"}
     assert {"pytest", "py.test"} & {Path(token).name for token in tokens}
@@ -302,7 +307,9 @@ def test_pytest_commands_are_recognised_behind_their_launchers(command: str) -> 
     "bash -c 'cd tests && python -m pytest'",
     "bash -c 'python -m pytest $ARGS'",
     "bash -c 'python -m pytest tests/*'",
-    "bash -c 'FOO=1 python -m pytest'",
+    "bash -c 'PATH=/tmp python -m pytest'",
+    "bash -c 'PYTHONPATH=$HOME python -m pytest'",
+    "PYTHONPATH=~/x pytest",
     "bash -c 'python -m pytest' name extra",
     "bash -c 'make test'",
     "bash --norc -c 'pytest'",
@@ -317,16 +324,37 @@ def test_a_shell_wrapper_runs_its_inner_command_with_the_listing_options() -> No
     classified = H.C._classify("bash -c 'uv run --no-sync python -m pytest -q tests'")
     assert classified == ("pytest", [
         "uv", "run", "--no-sync", "python", "-m", "pytest", "-q", "tests",
-    ])
-    kind, tokens = classified
+    ], {})
+    kind, tokens, _assigned = classified
     assert H.C._list_argv(kind, tokens)[-1] == "--collect-only"
 
 
 def test_with_a_python_environment_pytest_runs_with_its_interpreter(tmp_path: Path) -> None:
     env = tmp_path / "env"
     classified = H.C._classify("bash -c 'uv run --no-sync pytest -q tests'", env)
-    assert classified == ("pytest", [str(env / "bin" / "python3"), "-m", "pytest", "-q", "tests"])
-    assert H.C._classify("cargo test", env) == ("cargo", ["cargo", "test"])
+    assert classified == (
+        "pytest", [str(env / "bin" / "python3"), "-m", "pytest", "-q", "tests"], {},
+    )
+    assert H.C._classify("cargo test", env) == ("cargo", ["cargo", "test"], {})
+
+
+def test_a_shell_command_s_assignments_and_passed_words_are_kept(tmp_path: Path) -> None:
+    """``"$@"`` with a ``$0`` name passes the words after it; a project ``.venv`` interpreter is
+    replaced by the packet environment's, since the review's checkout has no ``.venv``."""
+    env = tmp_path / "env"
+    command = (
+        "bash -c 'PYTHONPATH=tests .venv/bin/python -m pytest -q --import-mode=importlib "
+        "\"$@\"' bash -x"
+    )
+    assert H.C._classify(command) == (
+        "pytest", [".venv/bin/python", "-m", "pytest", "-q", "--import-mode=importlib", "-x"],
+        {"PYTHONPATH": "tests"},
+    )
+    assert H.C._classify(command, env) == (
+        "pytest",
+        [str(env / "bin" / "python3"), "-m", "pytest", "-q", "--import-mode=importlib", "-x"],
+        {"PYTHONPATH": "tests"},
+    )
 
 
 def test_tests_that_import_a_locked_dependency_need_the_python_environment(
@@ -379,3 +407,53 @@ def test_a_failed_old_version_checkout_is_a_gap_not_an_error(
     assert payload == {"hits": [], "where_to_look": [], "gaps": [{
         "reason": "no-test-list", "row": "testing.test-passes-before-change",
     }]}
+
+
+HELPER = "ZERO = 0\n"
+SAMPLE_HELPER = (
+    "import helpers\n"
+    "from app import add\n"
+    "\n"
+    "\n"
+    "def test_fixed():\n"
+    "    assert add(1, 1) == 2\n"
+    "\n"
+    "\n"
+    "def test_already():\n"
+    "    assert add(helpers.ZERO, helpers.ZERO) == 0\n"
+)
+
+
+def test_a_project_venv_command_with_a_pythonpath_runs_in_the_python_environment(
+    tmp_path: Path,
+) -> None:
+    """A profile that names the project's own ``.venv`` interpreter and sets ``PYTHONPATH`` in a
+    ``bash -c`` wrapper. The review's checkout has no ``.venv``; the packet's environment stands
+    in for it, and the assignment still reaches the tests."""
+    base_files = {**_dep_files(DEP_APP_BASE), "tests/helpers.py": HELPER}
+    head_files = {**_dep_files(DEP_APP_HEAD, SAMPLE_HELPER), "tests/helpers.py": HELPER}
+    repo, base, _sha = H.make_repo(tmp_path, base_files, head_files)
+    command = (
+        "bash -c 'PYTHONPATH=tests .venv/bin/python -m pytest -q --import-mode=importlib "
+        "\"$@\"' bash"
+    )
+    shim = _python_env(tmp_path)
+    payload = H.C.two_runs(repo, base, [("python", command)], python_env=shim)
+    assert payload["gaps"] == []
+    assert [hit["anchor"] for hit in payload["hits"]] == [ALREADY]
+
+
+def test_a_failed_listing_keeps_its_output_s_end_in_the_diagnostics_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines = "".join(f"echo line-{number} >&2\n" for number in range(60))
+    _pytest_stub(tmp_path / "bin", f"#!/bin/sh\necho out-line\n{lines}exit 2\n", monkeypatch)
+    repo, base, _sha = H.make_repo(tmp_path, {"notes.txt": "one\n"}, {"notes.txt": "two\n"})
+    diagnostics = tmp_path / "diagnostics"
+    payload = H.C.two_runs(repo, base, [("none", "pytest -q")], diagnostics=diagnostics)
+    assert payload["gaps"][0]["reason"] == "no-test-list"
+    [tail] = list(diagnostics.glob("two-runs-head-listing-*/tail.txt"))
+    text = tail.read_text(encoding="utf-8")
+    assert "exit code: 2" in text and "out-line" in text
+    assert "line-59" in text and "line-20" in text and "line-19\n" not in text
+    assert oct(tail.stat().st_mode & 0o777) == "0o600"

@@ -14,7 +14,10 @@ operator variable beyond the allow-list. A watcher stops it once its folders pas
 
 For Python (a root ``uv.lock``, ``pyproject.toml`` or ``requirements*.txt``), uv installs prebuilt
 wheels into a plain ``<packet>/dependencies/python/site-packages`` with ``--target`` against the
-operator's ``python3``, never building one and never starting an interpreter over what it
+operator's ``python3``, or, when the project's ``requires-python`` (the lock's, else
+``pyproject.toml``'s) excludes it, an installed interpreter ``uv python find`` picks for that
+requirement, since the lock holds hashes only for the wheels of the versions it covers; never
+building one and never starting an interpreter over what it
 installed: the frozen lock with every package, group and extra when there is one, otherwise what
 the files declare, read by saga and passed to uv only as plain ``name[extras] specifier ; marker``
 lines, resolved as of the head's commit time. pytest is added when nothing declares it. The packet
@@ -220,6 +223,124 @@ def interpreter_version(python: str) -> str | None:
         return None
     version = proc.stdout.strip()
     return version if proc.returncode == 0 and re.fullmatch(r"\d+\.\d+\.\d+", version) else None
+
+
+_CLAUSE = re.compile(r"\s*(~=|==|!=|<=|>=|<|>)\s*(\d+(?:\.\d+){0,2})(\.\*)?\s*")
+
+
+def _release(text: str) -> tuple[int, int, int]:
+    parts = [int(piece) for piece in text.split(".")] + [0, 0, 0]
+    return parts[0], parts[1], parts[2]
+
+
+def _clause_holds(version: tuple[int, int, int], operator: str, text: str, star: bool) -> bool:
+    bound = _release(text)
+    width = len(text.split("."))
+    if star or operator == "~=":
+        if operator == "~=":
+            if width < 2:
+                raise ValueError("~= needs two parts")
+            return version >= bound and version[:width - 1] == bound[:width - 1]
+        same = version[:width] == bound[:width]
+        if operator == "==":
+            return same
+        if operator == "!=":
+            return not same
+        raise ValueError("a wildcard needs == or !=")
+    return {
+        "==": version == bound, "!=": version != bound, "<": version < bound,
+        "<=": version <= bound, ">": version > bound, ">=": version >= bound,
+    }[operator]
+
+
+def python_satisfies(version: str, requirement: str) -> bool | None:
+    """Whether the interpreter *version* (``major.minor.micro``) meets *requirement*, a
+    ``requires-python`` specifier; ``None`` when the specifier is not one saga reads."""
+    clauses = [part for part in requirement.split(",")]
+    if not clauses or len(requirement) > 200:
+        return None
+    try:
+        release = _release(version)
+        held = True
+        for clause in clauses:
+            match = _CLAUSE.fullmatch(clause)
+            if match is None:
+                return None
+            held = _clause_holds(release, match.group(1), match.group(2),
+                                 bool(match.group(3))) and held
+    except ValueError:
+        return None
+    return held
+
+
+def requires_python(source: Path) -> str | None:
+    """The Python versions the head's lock was made for: ``uv.lock``'s ``requires-python``, else
+    ``pyproject.toml``'s ``[project] requires-python``; ``None`` when neither says.
+
+    uv records wheels, and their hashes, only for the versions the lock covers, so an interpreter
+    outside them would install a wheel the lock has no hash for.
+    """
+    for name, path in (("uv.lock", ("requires-python",)),
+                       ("pyproject.toml", ("project", "requires-python"))):
+        file = source / name
+        if file.is_symlink() or not file.is_file():
+            continue
+        try:
+            value: Any = tomllib.loads(file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+            continue
+        for key in path:
+            value = value.get(key) if isinstance(value, Mapping) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def find_python(request: str) -> str | None:
+    """An installed interpreter for *request* (a version or a specifier), as ``uv python find``
+    picks it, never downloading one and ignoring any project or configuration file."""
+    env = {name: os.environ[name] for name in (*_ENV_COPIED, "HOME", "XDG_DATA_HOME",
+                                                "UV_PYTHON_INSTALL_DIR") if name in os.environ}
+    env.update(_PYTHON_ENV_FLAGS)
+    try:
+        proc = subprocess.run(  # nosec B603
+            ["uv", "python", "find", "--no-project", "--no-config", request],
+            capture_output=True, text=True, timeout=60, check=False, env=env,
+            cwd=tempfile.gettempdir(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = proc.stdout.strip()
+    return found if proc.returncode == 0 and found and Path(found).is_absolute() else None
+
+
+def choose_python(requirement: str | None) -> str | None:
+    """The interpreter to install the head's packages for.
+
+    The operator's ``python3`` when the project's *requirement* allows it (or says nothing, or
+    cannot be read); otherwise an installed interpreter uv finds for the requirement. Without
+    one, the operator's ``python3`` still, as before: its install may then leave packages out.
+    """
+    operator = shutil.which("python3")
+    if requirement is None:
+        return operator
+    version = interpreter_version(operator) if operator else None
+    held = python_satisfies(version, requirement) if version else None
+    if held is not False:
+        return operator
+    if python_satisfies("3.0.0", requirement) is None:
+        return operator
+    return find_python(requirement) or operator
+
+
+def python_for(deps: PythonDependencies) -> str | None:
+    """The interpreter a packet's packages were installed for: the operator's ``python3`` when it
+    is that minor version, otherwise the installed one uv finds for it, otherwise ``None``."""
+    operator = shutil.which("python3")
+    version = interpreter_version(operator) if operator else None
+    if version is not None and ".".join(version.split(".")[:2]) == deps.minor:
+        return operator
+    return find_python(deps.minor)
 
 
 def write_python_shim(directory: Path, deps: PythonDependencies, python: str) -> Path | None:
@@ -800,7 +921,8 @@ def _install_python(
             for name in inputs:
                 if (source / name).is_symlink() or not (source / name).is_file():
                     raise _PythonFailure("symlinked-input")
-            interpreter = shutil.which("python3")
+            # The lock holds hashes only for the wheels of the Python versions it was made for.
+            interpreter = choose_python(requires_python(source))
             version = interpreter_version(interpreter) if interpreter else None
             if interpreter is None or version is None:
                 raise _PythonFailure("python3-missing")

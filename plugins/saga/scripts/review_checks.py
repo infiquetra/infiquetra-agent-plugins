@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import review_dependencies
+import review_diagnostics
 import review_diff
 import review_formula
 import review_tools
@@ -243,6 +244,21 @@ def _run_argv(
     untrusted: bool = True,
     extra_env: Mapping[str, str] | None = None,
 ) -> tuple[str, int] | str:
+    """``(stdout, exit code)`` of :func:`_run_capture`, or its reason."""
+    result = _run_capture(argv, cwd, timeout, untrusted=untrusted, extra_env=extra_env)
+    if isinstance(result, str):
+        return result
+    return result[0], result[2]
+
+
+def _run_capture(
+    argv: Sequence[str],
+    cwd: Path,
+    timeout: int,
+    *,
+    untrusted: bool = True,
+    extra_env: Mapping[str, str] | None = None,
+) -> tuple[str, str, int] | str:
     """Run one argument vector. A missing program or a timeout is that reason, not a hit.
 
     A command that runs code from the change under review (its test suite) gets the review-tools
@@ -272,25 +288,28 @@ def _run_argv(
     finally:
         for path in temps:
             shutil.rmtree(path, ignore_errors=True)
-    return proc.stdout or "", proc.returncode
+    return proc.stdout or "", proc.stderr or "", proc.returncode
 
 
 def _classify(
     command: str, python_env: Path | None = None,
-) -> tuple[str, list[str]] | None:
-    """The kind of test runner and the words to append its listing and selection options to.
+) -> tuple[str, list[str], dict[str, str]] | None:
+    """The kind of test runner, the words to append its listing and selection options to, and
+    the variables the command sets for it.
 
-    pytest is recognised by :func:`review_tools.pytest_command`, behind ``uv run`` or a
-    ``bash -c`` wrapper too. With *python_env*, pytest runs with that environment's interpreter,
-    the one the reviewer's re-runs get, so the tests import the change's installed dependencies.
-    Anything not recognised is ``None``: options are never appended to an unknown program.
+    pytest is recognised by :func:`review_tools.read_pytest_command`: behind ``uv run``, after
+    literal ``NAME=value`` assignments, or as the one command of a ``bash -c`` wrapper. With
+    *python_env*, pytest runs with that environment's interpreter, the one the reviewer's re-runs
+    get, whatever interpreter the command named (a project ``.venv`` does not exist in the review's
+    checkout), so the tests import the change's installed dependencies. Anything not recognised
+    is ``None``: options are never appended to an unknown program.
     """
-    parsed = review_tools.pytest_command(command)
-    if parsed is not None:
-        launcher, arguments = parsed
+    read = review_tools.read_pytest_command(command)
+    if read is not None:
+        assigned = dict(read.env)
         if python_env is not None:
-            return "pytest", review_tools.python_env_argv(python_env, arguments)
-        return "pytest", [*launcher, *arguments]
+            return "pytest", review_tools.python_env_argv(python_env, read.arguments), assigned
+        return "pytest", [*read.launcher, *read.arguments], assigned
     try:
         tokens = shlex.split(command)
     except ValueError:
@@ -299,9 +318,9 @@ def _classify(
         return None
     base = Path(tokens[0]).name
     if base == "cargo" and "test" in tokens:
-        return "cargo", tokens
+        return "cargo", tokens, {}
     if base == "swift" and "test" in tokens:
-        return "swift", tokens
+        return "swift", tokens, {}
     return None
 
 
@@ -356,15 +375,24 @@ def _list_ids(
     cwd: Path,
     timeout: int,
     extra_env: Mapping[str, str] | None = None,
+    diagnostics: Path | None = None,
+    step: str = "listing",
 ) -> list[str] | str:
-    result = _run_argv(_list_argv(kind, tokens), cwd, timeout, extra_env=extra_env)
+    """The test ids the runner lists in *cwd*, or the reason there are none.
+
+    A listing that fails keeps the end of its output in *diagnostics*, the private prepare
+    diagnostics folder, never in the packet.
+    """
+    result = _run_capture(_list_argv(kind, tokens), cwd, timeout, extra_env=extra_env)
     if isinstance(result, str):
         return result
-    stdout, code = result
-    if code != 0:
-        return "no-test-list"
-    parsed = _parse_ids(kind, stdout)
+    stdout, stderr, code = result
+    parsed = _parse_ids(kind, stdout) if code == 0 else None
     if parsed is None:
+        if diagnostics is not None:
+            review_diagnostics.write_failure_tail(
+                diagnostics, "two-runs", step, code, stdout, stderr,
+            )
         return "no-test-list"
     return parsed
 
@@ -447,6 +475,7 @@ def two_runs(
     *,
     command_timeout: int = COMMAND_TIMEOUT,
     python_env: Path | None = None,
+    diagnostics: Path | None = None,
 ) -> dict[str, Any]:
     """A new test that passes at head and on the base tree, with the head's tests copied in.
 
@@ -462,12 +491,14 @@ def two_runs(
         if classified is None:
             gaps.append(_gap("no-test-list", ROW_BEFORE))
             continue
-        kind, tokens = classified
-        extra: dict[str, str] | None = None
+        kind, tokens, assigned = classified
+        extra: dict[str, str] = dict(assigned)
         if kind == "pytest" and shim is not None:
             path = os.environ.get("PATH", "")
-            extra = review_dependencies.python_shim_env(shim, path)
-        head_ids = _list_ids(kind, tokens, root, command_timeout, extra)
+            extra.update(review_dependencies.python_shim_env(shim, path))
+        head_ids = _list_ids(
+            kind, tokens, root, command_timeout, extra, diagnostics, "head-listing",
+        )
         if isinstance(head_ids, str):
             reason = head_ids if head_ids in {"missing", "timeout"} else "no-test-list"
             gaps.append(_gap(reason, ROW_BEFORE))
@@ -480,7 +511,9 @@ def two_runs(
             except (RuntimeError, OSError):
                 gaps.append(_gap("no-test-list", ROW_BEFORE))
                 continue
-            base_ids = _list_ids(kind, tokens, base_root, command_timeout, extra)
+            base_ids = _list_ids(
+                kind, tokens, base_root, command_timeout, extra, diagnostics, "base-listing",
+            )
             if isinstance(base_ids, str):
                 reason = base_ids if base_ids in {"missing", "timeout"} else "no-test-list"
                 gaps.append(_gap(reason, ROW_BEFORE))
@@ -750,18 +783,19 @@ def _collect_for_ci(
         if classified is None:
             gaps.append(_gap("no-test-list", ROW_BEFORE))
             continue
-        kind, tokens = classified
-        head_ids = _list_ids(kind, tokens, root, timeout)
+        kind, tokens, assigned = classified
+        head_ids = _list_ids(kind, tokens, root, timeout, assigned)
         if isinstance(head_ids, str):
             gaps.append(_reason_gap(head_ids, ROW_BEFORE, "no-test-list"))
             continue
-        try:
-            detached = _detached(root, base)
-        except RuntimeError:
-            gaps.append(_gap("no-test-list", ROW_BEFORE))
-            continue
-        with detached as base_root:
-            base_ids = _list_ids(kind, tokens, base_root, timeout)
+        with ExitStack() as stack:
+            # Entering the checkout runs ``git worktree add``; its failure is a gap here.
+            try:
+                base_root = stack.enter_context(_detached(root, base))
+            except (RuntimeError, OSError):
+                gaps.append(_gap("no-test-list", ROW_BEFORE))
+                continue
+            base_ids = _list_ids(kind, tokens, base_root, timeout, assigned)
         if isinstance(base_ids, str):
             gaps.append(_reason_gap(base_ids, ROW_BEFORE, "no-test-list"))
             continue
@@ -1383,6 +1417,8 @@ def _invoke_two_runs(context: ScanContext) -> list[str]:
     extra = ["--base", context.base, "--commands", _commands_arg(context)]
     if context.python_env is not None:
         extra += ["--python-env", str(context.python_env)]
+    if context.diagnostics_directory is not None:
+        extra += ["--diagnostics-directory", str(context.diagnostics_directory)]
     return _invoke(context, "two-runs", extra)
 
 
@@ -1490,6 +1526,7 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--commands", required=True)
         if name == "two-runs":
             command.add_argument("--python-env", default=None)
+            command.add_argument("--diagnostics-directory", default=None)
     machine = sub.add_parser("machine-values")
     machine.add_argument("--base", required=True)
     machine.add_argument("--user", required=True)
@@ -1516,6 +1553,8 @@ def main(argv: list[str] | None = None) -> int:
             payload = two_runs(
                 root, parsed.base, _pairs(parsed.commands),
                 python_env=Path(parsed.python_env) if parsed.python_env else None,
+                diagnostics=(Path(parsed.diagnostics_directory)
+                             if parsed.diagnostics_directory else None),
             )
         elif command == "ci-skips":
             payload = ci_skips(root, parsed.base, _pairs(parsed.commands))

@@ -2046,3 +2046,74 @@ def test_cosmic_ray_without_a_python_environment_keeps_the_command(tmp_path: Pat
     with open(kept, "rb") as handle:
         written = tomllib.load(handle)["cosmic-ray"]["test-command"]
     assert written == "uv run --no-sync pytest -q -p no:randomly"
+
+
+def test_cosmic_ray_keeps_the_command_s_assignments_with_the_environment_s_interpreter(
+    tmp_path: Path,
+) -> None:
+    import tomllib
+
+    kept = tmp_path / "kept-cosmic-ray.toml"
+    repo, base, head = _changed(tmp_path)
+    env = tmp_path / "env"
+    command = (
+        "bash -c 'PYTHONPATH=tests .venv/bin/python -m pytest -q --import-mode=importlib "
+        "\"$@\"' bash"
+    )
+    payload = json.dumps({"unfinished": False, "survivors": []})
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json", command),
+        tmp_path / "out", tmp_path / "home", [_adapter("cosmic-ray")],
+        _Calls(base, payload, keep=kept), python_env=env,
+    )
+    assert code == 0
+    with open(kept, "rb") as handle:
+        written = tomllib.load(handle)["cosmic-ray"]["test-command"]
+    assert shlex.split(written) == [
+        "env", "PYTHONPATH=tests", str(env / "bin" / "python3"), "-m", "pytest", "-q",
+        "--import-mode=importlib", "-p", "no:randomly",
+    ]
+
+
+def test_cosmic_ray_failing_baseline_prints_the_end_of_its_output(tmp_path: Path) -> None:
+    stub_dir = tmp_path / "stub"
+    stub_dir.mkdir()
+    _write_cosmic_stub(stub_dir / "cosmic-ray")
+    env = _wrapper_env(stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE))
+    script = tmp_path / "red.py"
+    script.write_text(
+        "import sys\n"
+        "for number in range(60):\n"
+        "    print(f'collect-error-{number}', file=sys.stderr)\n"
+        "raise SystemExit(4)\n",
+        encoding="utf-8",
+    )
+    config = _wrapper_config(tmp_path / "red.toml", f"{sys.executable} {shlex.quote(str(script))}")
+    argv = [sys.executable, "-c", P._COSMIC_WRAPPER, str(config)]
+    proc = subprocess.run(argv, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=180)
+    assert json.loads(proc.stdout)["reason"] == "baseline-failed"
+    assert "collect-error-59" in proc.stderr and "collect-error-20" in proc.stderr
+    assert "collect-error-19\n" not in proc.stderr
+
+
+def test_cosmic_ray_console_is_kept_in_the_private_diagnostics_folder(tmp_path: Path) -> None:
+    repo, base, head = _changed(tmp_path)
+
+    def choose(argv: list[str], _cwd: Path) -> Any:
+        if "--with" in argv and "cosmic-ray==8.7.0" in argv:
+            body = json.dumps({"unfinished": True, "survivors": [], "reason": "baseline-failed"})
+            return T.ProcessResult(0, body, "ImportError: no module named extdep\n")
+        return None
+
+    diagnostics = tmp_path / "diagnostics"
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
+        output, tmp_path / "home", [_adapter("cosmic-ray")],
+        _Calls(base, "{}", choose=choose), diagnostics_directory=diagnostics,
+    )
+    assert code == 0
+    assert _reasons(output) == ["baseline-failed"]
+    [stderr] = list(diagnostics.glob("cosmic-ray-initial-*/stderr.txt"))
+    assert "no module named extdep" in stderr.read_text(encoding="utf-8")
+    assert "extdep" not in json.dumps(_read(output, "degraded.json"))

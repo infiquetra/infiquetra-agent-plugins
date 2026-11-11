@@ -134,6 +134,13 @@ except (IndexError, ValueError):
     budget = 300.0
 if not budget > 0:
     budget = 300.0
+def _tail(*outputs):
+    # The end of a failed step's output, for the operator's private prepare diagnostics: the
+    # runner keeps this script's stderr there, never in the packet.
+    for text in outputs:
+        lines = (text or "").splitlines()[-40:]
+        if lines:
+            sys.stderr.write("\n".join(lines) + "\n")
 def _done(unfinished, survivors, reason=None):
     payload = {"unfinished": unfinished, "survivors": survivors}
     if unfinished:
@@ -156,31 +163,37 @@ try:
 except (OSError, ValueError):
     _done(True, [], "baseline-failed")
 try:
-    proc.communicate(timeout=budget)
+    baseline_out, baseline_err = proc.communicate(timeout=budget)
 except subprocess.TimeoutExpired:
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except (AttributeError, OSError):
         proc.kill()
-    proc.communicate()
+    late_out, late_err = proc.communicate()
+    _tail(late_out, late_err)
     _done(True, [], "baseline-timeout")
 if proc.returncode != 0:
+    _tail(baseline_out, baseline_err)
     _done(True, [], "baseline-failed")
 session = config + ".sqlite"
 init = subprocess.run(["cosmic-ray", "init", config, session], capture_output=True, text=True)
 if init.returncode != 0:
+    _tail(init.stdout, init.stderr)
     _done(True, [], "init-failed")
 # Skip every mutant off the change's lines; init alone queues whole files.
 scoped = subprocess.run(
     ["cr-filter-git", session, "--config", config], capture_output=True, text=True
 )
 if scoped.returncode != 0:
+    _tail(scoped.stdout, scoped.stderr)
     _done(True, [], "init-failed")
 ran = subprocess.run(["cosmic-ray", "exec", config, session], capture_output=True, text=True)
 dump = subprocess.run(
     ["cosmic-ray", "dump", session], capture_output=True, text=True
 )
 unfinished = ran.returncode != 0 or dump.returncode != 0
+if unfinished:
+    _tail(ran.stdout, ran.stderr, dump.stderr)
 survivors = []
 for line in (dump.stdout or "").splitlines():
     text = line.strip()
@@ -655,12 +668,14 @@ def _cosmic_test_argv(context: ScanContext, command: str) -> list[str]:
     and not ``uv run``'s temporary environment (the one that holds cosmic-ray). Any other command
     runs as before.
     """
-    parsed = review_tools.pytest_command(command) if context.python_env is not None else None
-    if parsed is not None and context.python_env is not None:
-        _launcher, arguments = parsed
-        return review_tools.python_env_argv(
-            context.python_env, [*_strip_randomly(arguments), "-p", "no:randomly"],
+    read = review_tools.read_pytest_command(command) if context.python_env is not None else None
+    if read is not None and context.python_env is not None:
+        argv = review_tools.python_env_argv(
+            context.python_env, [*_strip_randomly(list(read.arguments)), "-p", "no:randomly"],
         )
+        # The command's own ``NAME=value`` assignments (``PYTHONPATH=tests``) stay with it.
+        assigned = [f"{name}={value}" for name, value in read.env]
+        return ["env", *assigned, *argv] if assigned else argv
     return _resolve_python_head([*_strip_randomly(shlex.split(command)), "-p", "no:randomly"])
 
 

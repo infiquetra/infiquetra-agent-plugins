@@ -2,6 +2,30 @@
 
 ## 2026-11-11
 
+### Install a lock for an interpreter its requires-python covers
+
+**Decision.** The Python fetch reads `requires-python` from `uv.lock` (else `pyproject.toml`). When
+the operator's `python3` is outside it, `uv python find --no-project --no-config <requirement>`
+(downloads off) picks an installed interpreter, and the install and the recorded version use it.
+The environment the tools and the re-runs share finds the interpreter again by the recorded minor
+version (the operator's `python3` when it matches, else `uv python find <minor>`); the sandbox's
+read list already follows the environment's interpreter link, so it needs no change. A requirement
+saga cannot read, or no installed interpreter that fits, keeps the operator's `python3`, as before.
+
+**Rejected alternatives.** Recording the interpreter's path in `dependencies.json`: it would put a
+machine path into the packet the reviewer reads. Downloading an interpreter: prepare stays off the
+network beyond the package index. Allowing builds from source for the missing wheels: builds run
+the packages' code during the fetch, which the design forbids. Dropping `--require-hashes`: the
+hashes are what make the install trustworthy.
+
+**Rationale.** The lock's hashes cover exactly the interpreters its project admits, so choosing one
+of them is the smallest change that makes the hashed install succeed.
+
+**Revisit when.** A machine has no installed interpreter inside a project's `requires-python`, or a
+project's lock is restricted by `[tool.uv] environments` rather than `requires-python`.
+
+---
+
 ### Prepare's testing checks use the reviewer's Python environment, through the packet's interpreter
 
 **Decision.** `prepare` fetches the head's dependencies before the tools run, builds the

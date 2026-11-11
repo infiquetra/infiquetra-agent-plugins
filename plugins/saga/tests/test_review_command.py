@@ -4150,3 +4150,33 @@ def test_prepare_without_python_dependencies_hands_the_tools_no_environment(
     ], adapters=[adapter], runner=_Runner())
     assert code == 0, err
     assert seen == [None]
+
+
+def test_the_environment_uses_the_interpreter_the_packet_was_installed_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prepare may install for an interpreter other than the operator's ``python3`` (one the
+    project's ``requires-python`` covers); the environment, and the sandbox's read list, follow
+    the interpreter the packet records, found again by its version."""
+    packet, _runner = _python_packet(tmp_path)
+    data = _read(packet / "dependencies.json")
+    data["python"]["interpreter"]["version"] = "3.0.0"
+    _dump(packet / "dependencies.json", data)
+    asked: list[str] = []
+    real = C.review_dependencies.interpreter_version
+
+    def find(request: str) -> str | None:
+        asked.append(request)
+        return sys.executable
+
+    monkeypatch.setattr(C.review_dependencies, "find_python", find)
+    monkeypatch.setattr(C.review_dependencies, "interpreter_version",
+                        lambda python: "3.0.0" if python == sys.executable else real(python))
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None and offline.python is not None
+        linked = (offline.python / "bin" / "python3").resolve()
+        assert linked == Path(sys.executable).resolve()
+        prefix = linked.parent.parent
+        assert any(path == prefix / "lib" for path in offline.toolchain) or not (
+            prefix / "lib").is_dir()
+    assert asked == ["3.0"]

@@ -110,6 +110,14 @@
 
 ### Fixed
 
+- **A locked Python project installs for an interpreter its lock covers.** The fetch reads the
+  lock's (else the project's) `requires-python` and, when the operator's `python3` is outside it,
+  installs for an installed interpreter `uv python find` picks for it; the shared environment finds
+  that interpreter again by version. Before, a lock made for `<3.14` left its compiled packages
+  `install-failed` on Python 3.14. The two testing checks also read `NAME=value` assignments, a
+  `.venv/bin/python` launcher and a `bash -c '... "$@"' name` wrapper, and keep the end of a failed
+  listing's or baseline's output in the private prepare diagnostics folder.
+
 - **The two-runs and cosmic-ray testing checks run with the packet's Python dependencies.**
   `prepare` now fetches the head's dependencies before the tools run and hands them the same
   saga-written Python environment the reviewer's re-runs get. A pytest command, also behind
