@@ -22,6 +22,12 @@ were unreachable from 0.4.1.
   `hc send`, which presses Enter. A blocked agent still gets nothing, and the transcript
   is still held.
 
+- `hc keys` can type only letters, digits, spaces and `` . , ' - ; / = ` [ ] `` exactly
+  (herdr core 0.1.20). **A transcript with any other character, including every
+  question mark, is held and never typed**, and so is one starting with `/`. The
+  refusal is spoken; `d` discards it. Spoken questions cannot be delivered until herdr
+  core can paste text without Enter. A failed `hc keys` call also holds the transcript.
+
 - The Auralis bridge identity comes from herdr core: `HC_TERMINAL_ID`, `hc get`, and the
   terminal's `voice.agent-session` label. The terminal address is both `terminal_id` and
   `pane_id`. It is resolved only while Auralis has published its bridge discovery file,

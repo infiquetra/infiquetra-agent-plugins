@@ -132,10 +132,11 @@ class LabelAndKeysTests(unittest.TestCase):
 
     def test_type_text_presses_one_key_per_character_and_never_enter(self) -> None:
         run = _RunSeam(_completed())
-        herdr_core.type_text("t7", "Hi, you!", timeout=10.0, run_process=run, hc="hc")
+        herdr_core.type_text("t7", "Hi, you.", timeout=10.0, run_process=run, hc="hc")
         command, kwargs = run.calls[0]
         self.assertEqual(
-            command, ["hc", "keys", "t7", "H", "i", ",", "space", "y", "o", "u", "!"]
+            command,
+            ["hc", "keys", "t7", "shift+h", "i", ",", "space", "y", "o", "u", "."],
         )
         self.assertNotIn("enter", command)
         self.assertEqual(kwargs, {"timeout": 10.0, "check": True})
@@ -159,8 +160,48 @@ class LabelAndKeysTests(unittest.TestCase):
             subprocess.CalledProcessError(1, ["hc"], output="", stderr=stderr)
         )
         with self.assertRaises(herdr_core.CoreRefusal) as caught:
-            herdr_core.type_text("t7", "a~b", timeout=10.0, run_process=run, hc="hc")
+            herdr_core.type_text("t7", "a-b", timeout=10.0, run_process=run, hc="hc")
         self.assertIn("unknown key ~", caught.exception.reason)
+
+    def test_untypable_text_is_refused_before_any_hc_call(self) -> None:
+        run = _RunSeam()
+        with self.assertRaises(herdr_core.UntypableText):
+            herdr_core.type_text("t7", "Why?", timeout=10.0, run_process=run, hc="hc")
+        self.assertEqual(run.calls, [])
+
+
+class KeyNameTests(unittest.TestCase):
+    """Only characters herdr core 0.1.20 was seen to type exactly are mapped."""
+
+    def test_letters_digits_spaces_and_plain_punctuation_map(self) -> None:
+        self.assertEqual(
+            herdr_core.key_names("ab 09 .,'-;/=`[]"),
+            ["a", "b", "space", "0", "9", "space",
+             ".", ",", "'", "-", ";", "/", "=", "`", "[", "]"],
+        )
+
+    def test_a_capital_letter_is_shift_plus_its_lowercase(self) -> None:
+        # A bare "A" types "a" in hc keys; only shift+a types "A".
+        self.assertEqual(herdr_core.key_names("AZ"), ["shift+a", "shift+z"])
+
+    def test_untypable_characters_refuse_the_whole_line(self) -> None:
+        with self.assertRaises(herdr_core.UntypableText) as caught:
+            herdr_core.key_names("Is it ready? Yes! Is it? é")
+        self.assertEqual(caught.exception.characters, ["?", "!", "é"])
+        self.assertIn("'?'", caught.exception.reason)
+
+    def test_every_character_hc_keys_rejected_or_mistyped_is_untypable(self) -> None:
+        # Rejected by herdr core 0.1.20, or typed as something else (a
+        # backslash is left out on purpose: before Enter it means new line).
+        for character in '?!":()@#$%&*+_~^{}|<>\\\t\né€':
+            with self.subTest(character=character):
+                with self.assertRaises(herdr_core.UntypableText):
+                    herdr_core.key_names(f"a{character}b")
+
+    def test_no_key_name_ever_submits(self) -> None:
+        keys = herdr_core.key_names("Send it now, please.")
+        for name in ("enter", "return", "\n", "\r"):
+            self.assertNotIn(name, keys)
 
 
 class RecordReadingTests(unittest.TestCase):

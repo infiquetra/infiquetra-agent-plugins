@@ -147,7 +147,7 @@ with standard input closed and a deadline:
 |---|---|---|
 | `hc label $HC_TERMINAL_ID voice.agent-session=<id>` | The SessionStart hook, in the Claude session | herdr core does not know which Claude session runs in a terminal. The hook records it on every start, resume, clear and compact |
 | `hc get <terminal> --json` | `voice bind`, delivery, and the Auralis bridge identity | Read a terminal: its address, whether it is live, its status word (`idle`, `working`, `done`, `blocked`, `error`), and its labels |
-| `hc keys <terminal> <key>...` | Delivery | Type the transcript one key per character, `space` for the space bar, never Enter |
+| `hc keys <terminal> <key>...` | Delivery | Type the transcript one key per character (`space` for a space, `shift+<letter>` for a capital), never Enter |
 
 `voice bind <terminal>` takes a terminal's name or address (`t7`). It refuses a
 terminal on another machine (`mini/t3`): voice records and plays audio on this
@@ -156,10 +156,24 @@ terminal, and one without the `voice.agent-session` label, which means the
 voice plugin's SessionStart hook has not run there yet. The binding stores the
 terminal's address, which herdr core never reuses.
 
-Delivery never uses `hc send`. That command always presses Enter, so a misheard
-transcript would be submitted to the agent, and when it is run from inside a
-Herdr terminal (the Voice pane is one) it wraps the text in an `<hc from=...>`
-tag, so the operator's words would arrive labelled as another agent's report.
+Delivery never uses `hc send`, and nothing falls back to it: that command always
+presses Enter, so a misheard transcript would be submitted to the agent. herdr
+core has no command that pastes text without Enter, so delivery types with
+`hc keys`, which takes key names, not text.
+
+That limits what can be typed. A probe of herdr core 0.1.20 in an isolated core
+(2026-11-10) found that `hc keys` types lowercase letters, digits and
+`` . , ' - ; / = ` [ ] `` as themselves, `space` as a space, and `shift+a` as
+`A`, while a bare `A` types `a` and `shift+/` types `/`, not `?`. It rejects
+every other character, including `? ! " : ( ) @ # $ % & * + _ ~ ^ { } | < >` and
+anything outside ASCII, and a rejected key fails the whole call before anything
+is typed. So delivery maps only the characters known to type correctly. A
+transcript with any other character, or one starting with `/` (which opens
+Claude Code's command menu), is not typed at all: the refusal is spoken and the
+transcript is held in the Voice pane, where `d` discards it (`u` would only
+refuse it again). In practice every spoken question is held until herdr core
+can paste text without Enter.
+
 `hc keys` does not refuse a blocked program on its own, so delivery reads the
 status first and refuses `blocked` itself; the race between that read and the
 keys is the stated residual.

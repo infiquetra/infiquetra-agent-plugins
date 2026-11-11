@@ -27,11 +27,19 @@ AGENT_NAME = "test-agent"
 SESSION_ID = "test-session-id"
 TERMINAL = "t7"  # the herdr core address stored in the binding at bind time
 
-HELLO_KEYS = ["H", "e", "l", "l", "o", "space", "t", "h", "e", "r", "e"]
+HELLO_KEYS = ["shift+h", "e", "l", "l", "o", "space", "t", "h", "e", "r", "e"]
 
 
 def _keys(text: str) -> list[str]:
-    return ["space" if character == " " else character for character in text]
+    """The key names delivery uses for a typable line."""
+    return [
+        "space"
+        if character == " "
+        else f"shift+{character.lower()}"
+        if character.isupper()
+        else character
+        for character in text
+    ]
 
 
 def _hc_get_result(
@@ -266,22 +274,91 @@ class UnresolvableAgentTests(DeliverTestBase):
         self.assertIn("finished", str(caught.exception))
         self.assertIn("rebind", str(caught.exception))
 
-    def test_a_rejected_key_is_a_named_delivery_failure(self) -> None:
-        # hc keys validates key names; its own message rides the refusal so
-        # the operator can see which character it would not type.
+    def test_a_failed_keys_call_is_named_and_holds_the_transcript(self) -> None:
+        # herdr core's own message rides the refusal, and the transcript is
+        # held, so a failed call never loses what the operator said.
         rejected = subprocess.CompletedProcess(
             args=None,
-            returncode=1,
+            returncode=6,
             stdout="",
             stderr=json.dumps(
-                {"error": {"kind": "invalid_params", "message": "unknown key ~"}}
+                {"error": {"kind": "invalid_params", "message": "unknown key x"}}
             ),
         )
         spawn = _HcSpawnSeam([_hc_get_result(), rejected])
         with self.assertRaises(deliver.DeliveryRefusal) as caught:
-            deliver.deliver("a~b", spawn=spawn)
+            deliver.deliver("ab", spawn=spawn)
         self.assertIn("delivery failed", str(caught.exception))
-        self.assertIn("unknown key ~", str(caught.exception))
+        self.assertIn("unknown key x", str(caught.exception))
+        self.assertEqual(self._refused_path().read_text(encoding="utf-8"), "ab")
+
+
+class UntypableTranscriptTests(DeliverTestBase):
+    """A transcript hc keys cannot type exactly is held whole, never typed."""
+
+    def test_a_question_is_held_spoken_and_never_typed(self) -> None:
+        spawn = _HcSpawnSeam([])
+        spoken: list[str] = []
+        with self.assertRaises(deliver.DeliveryRefusal) as caught:
+            deliver.deliver("Can you check it?", spawn=spawn, speak_text=spoken.append)
+        self.assertEqual(spawn.calls, [], "nothing reaches hc, not even hc get")
+        self.assertEqual(spoken, [deliver.UNTYPABLE_REFUSAL_PHRASE])
+        self.assertIn("'?'", str(caught.exception))
+        self.assertIn("held", str(caught.exception))
+        self.assertEqual(
+            self._refused_path().read_text(encoding="utf-8"), "Can you check it?"
+        )
+
+    def test_every_untypable_character_is_named_once(self) -> None:
+        spawn = _HcSpawnSeam([])
+        with self.assertRaises(deliver.DeliveryRefusal) as caught:
+            deliver.deliver(
+                "Wow! Really? Yes! café", spawn=spawn, speak_text=lambda phrase: None
+            )
+        message = str(caught.exception)
+        for character in ("'!'", "'?'", "'é'"):
+            self.assertEqual(message.count(character), 1, character)
+
+    def test_a_leading_slash_is_held_because_it_opens_the_command_menu(self) -> None:
+        spawn = _HcSpawnSeam([])
+        with self.assertRaises(deliver.DeliveryRefusal) as caught:
+            deliver.deliver("/clear the cache", spawn=spawn, speak_text=lambda phrase: None)
+        self.assertEqual(spawn.calls, [])
+        self.assertIn("command menu", str(caught.exception))
+        self.assertTrue(self._refused_path().exists())
+
+    def test_a_slash_inside_the_transcript_is_typed(self) -> None:
+        spawn = _idle_delivery_seam()
+        deliver.deliver("and/or", spawn=spawn)
+        keys_command, _ = spawn.calls[1]
+        self.assertEqual(keys_command[3:], ["a", "n", "d", "/", "o", "r"])
+
+    def test_capitals_are_typed_with_shift(self) -> None:
+        spawn = _idle_delivery_seam()
+        deliver.deliver("I am OK", spawn=spawn)
+        keys_command, _ = spawn.calls[1]
+        self.assertEqual(
+            keys_command[3:],
+            ["shift+i", "space", "a", "m", "space", "shift+o", "shift+k"],
+        )
+
+    def test_the_hold_survives_when_speech_fails(self) -> None:
+        refusal = providers.ProviderRefusal(providers.VOICE_FORGE, "synthesis unreachable")
+        with self.assertRaises(providers.ProviderRefusal):
+            deliver.deliver(
+                "Ready?",
+                spawn=_HcSpawnSeam([]),
+                speak_text=mock.Mock(side_effect=refusal),
+            )
+        self.assertEqual(self._refused_path().read_text(encoding="utf-8"), "Ready?")
+
+    def test_use_refused_on_an_untypable_hold_keeps_it(self) -> None:
+        self._write_hold("Ready?")
+        spawn = _HcSpawnSeam([])
+        with self.assertRaises(deliver.DeliveryRefusal):
+            deliver.use_refused(spawn=spawn, speak_text=lambda phrase: None)
+        self.assertEqual(spawn.calls, [])
+        self.assertEqual(self._refused_path().read_text(encoding="utf-8"), "Ready?")
 
 
 class BlockedRefusalTests(DeliverTestBase):

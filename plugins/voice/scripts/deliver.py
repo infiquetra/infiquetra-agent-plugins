@@ -14,15 +14,21 @@ that runs the bound agent's terminal:
    in. The call runs under the 10-second deadline pinned for bounded
    helper calls (KTD3a).
 2. ``hc keys <terminal> <key>...`` types the transcript, whitespace-
-   normalized to a single line, one key per character with ``space`` for
-   the space bar and no Enter — the unsubmitted, editable delivery R16
-   requires.
+   normalized to a single line, one key per character (``space`` for a
+   space, ``shift+<letter>`` for a capital) and no Enter — the
+   unsubmitted, editable delivery R16 requires.
 
-``hc send`` is never used. It always presses Enter, so a misheard
-transcript would be submitted to the agent, and when called from inside a
-Herdr terminal (the Voice pane is one) it wraps the text in an
-``<hc from=...>`` tag, so the operator's words would arrive labelled as
-another agent's report.
+``hc send`` is never used, and nothing falls back to it: it always presses
+Enter, so a misheard transcript would be submitted to the agent.
+
+``hc keys`` types only lowercase and capital letters, digits, spaces and
+``. , ' - ; / = ` [ ]`` correctly (see ``herdr_core``). A transcript with
+any other character — a question mark, an exclamation mark, a colon,
+quotes, anything outside ASCII — is not typed at all: it is held for the
+operator's explicit use or discard, and the refusal is spoken, before any
+``hc`` call. So is a transcript that starts with ``/``, which would open
+Claude Code's command menu instead of landing as text. If the ``hc keys``
+call itself fails, the transcript is held as well.
 
 Only the bound terminal is ever targeted (R17): no broadcast, no fallback
 target, no recency inference. The binding stores the terminal's address,
@@ -70,6 +76,7 @@ __all__ = [
     "DeliveryRefusal",
     "AGENT_STATUS_BLOCKED",
     "BLOCKED_REFUSAL_PHRASE",
+    "UNTYPABLE_REFUSAL_PHRASE",
     "HC_TIMEOUT_SECONDS",
     "REFUSED_TRANSCRIPT_FILENAME",
     "deliver",
@@ -95,6 +102,14 @@ BLOCKED_REFUSAL_PHRASE = (
     "The bound session is blocked on a prompt; not delivering that."
 )
 
+#: The short fixed phrase spoken when a transcript cannot be typed exactly.
+UNTYPABLE_REFUSAL_PHRASE = "Voice cannot type that transcript exactly; it is held."
+
+#: Leading characters that Claude Code treats as a command rather than text
+#: when they open its input box. ``hc keys`` can type ``/``; the others it
+#: cannot type at all.
+_COMMAND_PREFIXES = ("/",)
+
 
 class DeliveryRefusal(Exception):
     """A named refusal on the delivery path.
@@ -117,12 +132,14 @@ def deliver(
 ) -> None:
     """Deliver ``text`` to the bound agent's input box, unsubmitted.
 
-    Re-reads the bound terminal through ``hc get``, then types the
+    Checks first that every character can be typed exactly; if not,
+    nothing is typed, the refusal is spoken, and the transcript is held.
+    Then re-reads the bound terminal through ``hc get`` and types the
     whitespace-normalized single-line transcript with ``hc keys`` — one
     key per character, no Enter (R16). A blocked agent receives nothing:
     the refusal is spoken and the transcript is held for the operator's
-    explicit use or discard (R18, R19). Only the bound terminal is ever
-    targeted (R17).
+    explicit use or discard (R18, R19). A failed ``hc keys`` call holds it
+    too. Only the bound terminal is ever targeted (R17).
 
     The transcript is held before the refusal is spoken, so the hold
     survives even when speech itself fails. Both hc calls go through U1's
@@ -141,6 +158,15 @@ def deliver(
     terminal = report.binding.terminal
     run_process = functools.partial(process.run, spawn=spawn)
 
+    untypable = _untypable_reason(line)
+    if untypable is not None:
+        _hold_refused(text)
+        speak_text(UNTYPABLE_REFUSAL_PHRASE)
+        raise DeliveryRefusal(
+            f"{untypable}; nothing was typed — the transcript is held for "
+            "explicit use or discard"
+        )
+
     status = _resolve_status(agent_name, terminal, run_process=run_process)
     if status == AGENT_STATUS_BLOCKED:
         _hold_refused(text)
@@ -155,7 +181,25 @@ def deliver(
             terminal, line, timeout=HC_TIMEOUT_SECONDS, run_process=run_process
         )
     except herdr_core.CoreRefusal as refusal:
-        raise DeliveryRefusal(f"delivery failed: {refusal.reason}") from refusal
+        _hold_refused(text)
+        raise DeliveryRefusal(
+            f"delivery failed: {refusal.reason} — the transcript is held for "
+            "explicit use or discard"
+        ) from refusal
+
+
+def _untypable_reason(line: str) -> str | None:
+    """Why ``line`` cannot be typed exactly, or ``None`` when it can."""
+    try:
+        herdr_core.key_names(line)
+    except herdr_core.UntypableText as untypable:
+        return untypable.reason
+    if line.startswith(_COMMAND_PREFIXES):
+        return (
+            f"the transcript starts with {line[0]!r}, which would open Claude "
+            "Code's command menu instead of landing as text"
+        )
+    return None
 
 
 def use_refused(

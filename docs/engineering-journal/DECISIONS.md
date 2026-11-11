@@ -5,17 +5,22 @@
 ### Voice types into herdr core with `hc keys` and labels its own session
 
 **Decision.** Voice 0.5.0 moves from old Herdr to herdr core. Delivery types the
-transcript with `hc keys <terminal> <char>...` (`space` for the space bar, never
-Enter) and never uses `hc send`. herdr core does not know which Claude session runs in
+transcript with `hc keys <terminal> <key>...` (`space` for a space, `shift+<letter>`
+for a capital, never Enter) and never uses `hc send`. Only characters a probe of herdr
+core 0.1.20 showed `hc keys` types exactly are mapped: letters, digits, spaces and
+`` . , ' - ; / = ` [ ] ``. A transcript with any other character (a question mark, an
+exclamation mark, a colon, quotes, anything outside ASCII), or one starting with `/`,
+is held whole for the operator's explicit use or discard and never partly typed. herdr core does not know which Claude session runs in
 a terminal, so the voice Claude adapter's SessionStart hook runs `hc label
 $HC_TERMINAL_ID voice.agent-session=<id>`, and `voice bind`, delivery and the Auralis
 bridge identity read that label back with `hc get --json`. The bridge identity uses the
 terminal address as both `terminal_id` and `pane_id`.
 
 **Rejected alternatives.** `hc send` always presses Enter, so a misheard transcript
-would be submitted to an agent that may run with bypassed permissions, and from inside
-a Herdr terminal it wraps the text in an `<hc from=...>` tag that marks it as another
-agent's report. A raw `terminal.attach` stream could write a bracketed paste, but it is
+would be submitted to an agent that may run with bypassed permissions. Mapping
+untypable characters to near neighbours (`?` to nothing, `!` to `.`) or typing
+`shift+/` for `?` was rejected: the first changes the operator's words, and the second
+types `/` in a program that has not enabled the kitty keyboard protocol. A raw `terminal.attach` stream could write a bracketed paste, but it is
 a framed binary protocol and a non-observing attach can resize the person's terminal.
 Writing the console's `herdr.agentSession` label instead of a voice-owned one would
 switch on seat-board and usage-limits behaviour in herdr-console as a side effect.
@@ -23,7 +28,9 @@ Finding the session through `~/.claude/sessions/<pid>.json` and the process tree
 herdr-console does) ties a portable package to Claude's private files and account homes.
 
 **Rationale.** The voice contract is that a transcript lands unsubmitted and editable
-(R16); `hc keys` is the only herdr core command that types without submitting. The
+(R16); `hc keys` is the only herdr core command that types without submitting. Holding
+what it cannot type exactly keeps both that contract and the operator's words; the cost
+is that every spoken question is held until herdr core can paste without Enter. The
 label mirrors what old Herdr's own SessionStart hook did: it recorded the session id
 from the same hook payload.
 

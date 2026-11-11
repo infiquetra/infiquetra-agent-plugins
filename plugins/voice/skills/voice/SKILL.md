@@ -25,6 +25,13 @@ the terminal's Claude session from a `voice.agent-session` label that the
 plugin's SessionStart hook writes. Old Herdr (`herdr agent`, `herdr pane`)
 is retired.
 
+`hc keys` types only letters, digits, spaces and `` . , ' - ; / = ` [ ] ``
+exactly. A transcript with any other character (every question mark, for
+one) or one starting with `/` is not typed: voice says so and holds it.
+Press `d` to discard it; `u` would only refuse it again, because the
+characters do not change. Until herdr core can paste text without Enter,
+spoken questions cannot be delivered.
+
 ## Script
 
 Every command below runs the bundled CLI from the voice package root

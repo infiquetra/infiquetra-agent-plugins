@@ -12,9 +12,20 @@ only the core, and only three of its commands:
   adapter's ``SessionStart`` hook labels its own terminal.
 - ``hc keys <terminal> <key>...`` types a transcript into the bound
   terminal one key at a time, with no Enter. Voice never uses ``hc send``:
-  it always presses Enter, and when called from inside a terminal it wraps
-  the text in an ``<hc from=...>`` tag, so the operator's words would arrive
-  submitted and labelled as another agent's report (R16).
+  it always presses Enter, so the operator's words would arrive submitted
+  (R16).
+
+``hc keys`` takes key names, not text, and only a small set of characters
+can be typed with them. Probing herdr core 0.1.20 on 2026-11-10 in an
+isolated core showed: lowercase letters, digits, the backslash and
+``. , ' - ; / = ` [ ]`` type as themselves; ``space`` types a space;
+``shift+a`` types ``A`` while a bare ``A`` types ``a``; ``shift+/`` types
+``/``, not ``?``; and every other character (``? ! " : ( ) @ # $ % & * +
+_ ~ ^ { } | < >``, a literal space, and anything outside ASCII) is rejected
+as an unknown key. A rejected key fails
+the whole call before anything is typed. ``key_names`` therefore maps only
+the characters known to type correctly and refuses the whole line otherwise,
+so nothing partial and nothing wrong is ever typed.
 
 Every call is a bounded helper call through ``process.run``: argv only, no
 shell, standard input closed, and a deadline. herdr core reports a failure
@@ -34,6 +45,7 @@ import settings
 
 __all__ = [
     "CoreRefusal",
+    "UntypableText",
     "SESSION_LABEL",
     "STATUS_BLOCKED",
     "STATE_LIVE",
@@ -59,9 +71,14 @@ STATUS_BLOCKED = "blocked"
 #: ``finished``.
 STATE_LIVE = "live"
 
-#: How ``hc keys`` names the space bar. Every other character is its own
-#: key name.
+#: How ``hc keys`` names the space bar.
 _SPACE_KEY = "space"
+
+#: Characters ``hc keys`` types exactly as themselves (herdr core 0.1.20,
+#: probed 2026-11-10). A backslash also types as itself but is left out:
+#: Claude Code reads a backslash before Enter as "new line", so a transcript
+#: ending in one would not submit when the operator presses Enter.
+_TYPED_AS_ITSELF = frozenset("abcdefghijklmnopqrstuvwxyz0123456789.,'-;/=`[]")
 
 
 class CoreRefusal(Exception):
@@ -74,6 +91,19 @@ class CoreRefusal(Exception):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(reason)
+
+
+class UntypableText(CoreRefusal):
+    """A line holding characters ``hc keys`` cannot type correctly.
+
+    Raised before any ``hc`` call; ``characters`` lists each offending
+    character once, in the order it first appears.
+    """
+
+    def __init__(self, characters: list[str]) -> None:
+        self.characters = characters
+        shown = " ".join(repr(character) for character in characters)
+        super().__init__(f"hc keys cannot type these characters: {shown}")
 
 
 def get_terminal(
@@ -137,13 +167,27 @@ def type_text(
 
 
 def key_names(line: str) -> list[str]:
-    """The ``hc keys`` names that type ``line``: one per character.
+    """The ``hc keys`` names that type ``line`` exactly: one per character.
 
-    A space is the named key ``space``; every other character is passed as
-    itself. Line breaks never reach this point: delivery collapses every
-    whitespace run to one space first, so no key here can submit.
+    A space is ``space``, a capital letter is ``shift+<letter>``, and the
+    characters in ``_TYPED_AS_ITSELF`` are their own names. Any other
+    character raises ``UntypableText`` for the whole line, so a caller never
+    types part of it. No name here is ``enter``, so nothing can submit.
     """
-    return [_SPACE_KEY if character == " " else character for character in line]
+    keys: list[str] = []
+    untypable: list[str] = []
+    for character in line:
+        if character == " ":
+            keys.append(_SPACE_KEY)
+        elif character in _TYPED_AS_ITSELF:
+            keys.append(character)
+        elif "A" <= character <= "Z":
+            keys.append(f"shift+{character.lower()}")
+        elif character not in untypable:
+            untypable.append(character)
+    if untypable:
+        raise UntypableText(untypable)
+    return keys
 
 
 def status_word(record: dict) -> str | None:
