@@ -32,6 +32,15 @@ Herdr call and the decisions below, is `docs/plans/2026-11-10-orchestrate-hc-por
   `antigravity`, `muse`, and the console's names for Grok and OpenCode). Before an agent reports,
   hc shows a shell or a version string instead: that stops an unowned session, as before, and is
   recorded as an unconfirmed kind for a session the launch created.
+- The workspace is checked by id: the terminal's `herdr.space` label against the `space` in the
+  launcher's result (or, when the result names none, the id `herdr-app ls` gives the one workspace
+  of that name). A new terminal's shown name moves while the window adopts it -- "<folder> / 1"
+  first, the requested name a few seconds later -- and a name read in that gap closed a session
+  that was in the right workspace during the smoke test. The shown name is kept in the receipt as
+  `workspace_shown`.
+- Each `hc` status is read in its own command's shape: `hc get` prints the Status record
+  (`{"app", "state", ...}`, null until the program reports), while `hc ls` rows and `hc wait`
+  print the bare word. Roster's status read follows the same rule.
 - The input-box guard reads plain text, because `hc read` has no styled form. Any text in the box
   is a staged-input stop. Codex's placeholder therefore reads as staged, so a later write to a
   Codex session can stop until the box is cleared; the first write into a session the launch just

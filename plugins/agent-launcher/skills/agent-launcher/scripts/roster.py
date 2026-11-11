@@ -755,6 +755,8 @@ def wait(
             check=False,
             timeout=seconds + HERDR_TIMEOUT_SECONDS,
         )
+        # ``hc wait`` prints a WaitResult; its ``status`` is the bare word. Only its ``reason`` is
+        # read here -- the status is then read from ``hc get``.
         result = _json_object(proc)
         if proc.returncode != 0 or result is None or result.get("reason") == "timeout":
             unsettled.append(f"{row.get('pane_name')} (wait did not settle within {timeout_ms}ms)")
@@ -808,9 +810,11 @@ def _agent_status(runner: Runner, target: str) -> str:
     terminal = payload.get("terminal") if isinstance(payload.get("terminal"), dict) else payload
     if terminal.get("state") == "finished":
         return "exited"
+    # ``hc get`` prints the status as the Status record ``{"app", "state", ...}``, null until the
+    # program reports; only ``hc ls`` rows and ``hc wait`` print the bare word.
     status = terminal.get("status")
-    word = status.get("state") if isinstance(status, dict) else status
-    return str(word or "unknown")
+    word = status.get("state") if isinstance(status, dict) else None
+    return str(word) if isinstance(word, str) and word else "unknown"
 
 
 def _agent_tail(runner: Runner, target: str) -> str:

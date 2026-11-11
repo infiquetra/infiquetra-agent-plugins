@@ -256,14 +256,21 @@ def _ls_json(*addresses: str, cwd: str = "/wt", where: str = "WS / unit") -> str
     return json.dumps({"terminals": rows, "machines": [], "hidden_finished": 0})
 
 
-def _get_json(address: str, *, where: str = "WS / unit", cwd: str = "/wt") -> str:
-    """``hc get ADDRESS --json`` for a terminal whose program is still running."""
+def _get_json(
+    address: str, *, where: str = "WS / unit", cwd: str = "/wt", space: str = "sp1"
+) -> str:
+    """``hc get ADDRESS --json`` for a terminal whose program is still running.
+
+    ``status`` is the Status record (``{app, state}``), as ``hc get`` prints it; only ``hc ls``
+    rows and ``hc wait`` print the bare word. ``herdr.space`` is the workspace id the session was
+    placed in, the same id the launcher's result names as ``space``.
+    """
     return json.dumps(
         {
             "address": address,
             "state": "live",
             "cwd": cwd,
-            "labels": {"where": where},
+            "labels": {"where": where, "herdr.space": space},
             "status": {"app": "claude-code", "state": "idle"},
         }
     )
@@ -1671,8 +1678,8 @@ class TestOpenCodeLaunchAndVariantRecipe:
         repo: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The plan names a workspace; hc's ``where`` label names the one the window shows the
-        session in, and the two are compared by name."""
+        """The session's ``herdr.space`` label names another workspace id than the ``space`` the
+        launcher's result placed it in: the run-owned session is closed and the task withheld."""
         monkeypatch.chdir(repo)
         _write_run(
             repo,
@@ -1699,7 +1706,9 @@ class TestOpenCodeLaunchAndVariantRecipe:
             if _is(cmd, "hc", "ls"):
                 return _done(cmd, 0, _ls_json())
             if _is(cmd, "hc", "get"):
-                return _done(cmd, 0, _get_json("t7", where="somewhere else / worker"))
+                return _done(
+                    cmd, 0, _get_json("t7", where="somewhere else / worker", space="sp9")
+                )
             if _is(cmd, "hc", "kill"):
                 closed_tabs.append(cmd[2])
                 return _done(cmd, 0, "{}")
@@ -1722,7 +1731,67 @@ class TestOpenCodeLaunchAndVariantRecipe:
         r = orchestrate.Run.load(TEST_ISSUE, test_store(repo))
         unit = r.units[0]
         assert unit.status == "failed"
-        assert "does not match requested workspace" in unit.note
+        assert "session is in workspace id 'sp9'" in unit.note
+        assert "not 'sp1', the workspace the launcher placed it in for 'defects-a'" in unit.note
+
+    def test_a_workspace_name_still_showing_the_folder_is_not_a_mismatch(
+        self,
+        orchestrate: ModuleType,
+        repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The smoke-test race: within about 3 s of a --no-focus launch the window writes
+        ``where`` as "<folder> / 1", and only later renames it from the labels. The check reads
+        the ``herdr.space`` id, which matches, so the session is kept and the task goes in."""
+        monkeypatch.chdir(repo)
+        _write_run(
+            repo,
+            [
+                _unit(
+                    "worker",
+                    vendor="claude",
+                    task="do work",
+                    status="pending",
+                    branch=None,
+                    workspace="HC Smoke",
+                )
+            ],
+        )
+        closed_tabs: list[str] = []
+        executed_cmds: list[list[str]] = []
+        original_run = orchestrate.run
+
+        def mocked_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            executed_cmds.append(cmd)
+            if cmd and cmd[0] == orchestrate.launcher():
+                core = _wrapper_json("t7", placement="core", space="sp1", created_space=True)
+                return _done(cmd, 0, json.dumps(core) + "\n")
+            if _is(cmd, "hc", "ls"):
+                return _done(cmd, 0, _ls_json())
+            if _is(cmd, "hc", "get"):
+                return _done(cmd, 0, _get_json("t7", where="hc-smoke-repo / 1", space="sp1"))
+            if _is(cmd, "hc", "kill"):
+                closed_tabs.append(cmd[2])
+                return _done(cmd, 0, "{}")
+            if _is(cmd, "hc", "rm") or _is(cmd, "hc", "send") or _is(cmd, "hc", "read"):
+                return _done(cmd, 0, "{}")
+            return cast(subprocess.CompletedProcess[str], original_run(cmd, **kwargs))
+
+        monkeypatch.setattr(orchestrate, "run", mocked_run)
+        monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
+        monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: True)
+        monkeypatch.setattr(
+            orchestrate,
+            "live_agents",
+            lambda: [{"pane_id": "t7", "agent": "claude", "cwd": None}],
+        )
+
+        assert orchestrate.cmd_go(_ns(repo, limit=0)) == 0
+
+        assert closed_tabs == []
+        assert _sends(executed_cmds, "t7") == ["do work"]
+        unit = orchestrate.Run.load(TEST_ISSUE, test_store(repo)).units[0]
+        assert unit.status == "running"
 
     def test_receipt_separates_what_herdr_confirmed_from_what_was_only_requested(
         self,

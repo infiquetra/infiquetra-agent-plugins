@@ -2,6 +2,25 @@
 
 ## 2026-11-10
 
+### A new terminal's workspace name is still moving when a launch checks it; its id is not
+
+**Evidence.** The smoke test of the herdr core port, 2026-11-10: after the folder was trusted, a
+launch into workspace "HC Smoke" failed with "session workspace 'hc-smoke-repo' does not match
+requested workspace 'HC Smoke'" and closed its own session. The team lead's probe measured the
+cause: a `--no-focus` launch is placed with labels `herdr.space=<id>` and
+`herdr-console.space-name=HC Smoke` and no `where`; about 3 s later the window writes `where` =
+"<folder> / 1"; a few seconds after that the seat-board mod renames it to "HC Smoke / <tab>". The
+fix compares `herdr.space` with the launcher's `space` (`verify_unit_identity`,
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`), proved by
+`test_a_new_terminal_still_showing_its_folder_name_is_not_a_workspace_mismatch`.
+
+**Mechanism.** The shown name is written by two later actors (the window, then a mod) after
+placement; the space id is written once, at placement, by whoever placed it, and the launcher's
+result names the same id.
+
+**Generalizable rule.** Verify where something was placed by the identifier written at placement,
+never by a display name another process may still be rewriting.
+
 ### An agent that has not reported a status may be holding a question, and Enter answers it
 
 **Evidence.** The live smoke test of the herdr core port, run on the Studio on 2026-11-10 from PR

@@ -859,7 +859,11 @@ def test_clean_keeps_worktree_when_owned_tab_close_fails(
             return subprocess.CompletedProcess(cmd, 1, "", "hc refused; terminal is busy")
         if cmd[:3] == ["hc", "get", "t5"]:
             # hc still shows the program running, so the refused kill is a real failure.
-            live = {"address": "t5", "state": "live", "status": {"app": "claude-code"}}
+            live = {
+                "address": "t5",
+                "state": "live",
+                "status": {"app": "claude-code", "state": "working"},
+            }
             return subprocess.CompletedProcess(cmd, 0, json.dumps(live), "")
         return real_run(cmd, **kwargs)
 
