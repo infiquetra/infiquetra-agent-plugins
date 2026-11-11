@@ -309,10 +309,13 @@ with none, the change's own test files; with no test file at all, the row is the
 `no-tests-for-change`. Test files are never mutated, and `cr-filter-git` skips every mutant whose
 lines the change did not add or edit. Each mutant's run stops at its first failing test (`-x`;
 the baseline runs without it, so every failing test is named). Of the changed-line mutants, at
-most 10 run, chosen in a
-stable order (file, line, column, operator, occurrence), so a repeat prepare runs the same set; when
-the budget leaves some out, the degraded entry `mutant-budget` carries `detail` "ran N of M mutants
-on changed lines", and the survivors found are still reported. A survivor's statement names its
+most 10 run, spread over the change and chosen the same way every time: one mutant per changed
+line (a second per line only once every line has one), lines inside control flow first (an `if`,
+`elif`, `else`, `except`, `return` or `raise` line, or the body of one), then lines in an order
+fixed by a hash of file and line, taken round-robin across the changed files. When the budget
+leaves some out, the degraded entry `mutant-budget` carries `detail` "ran N of M mutants on changed
+lines, covering L of T changed lines in F of G files", and the survivors found are still
+reported. A survivor's statement names its
 operator. The session also stops 60 seconds inside its share of the 900 second cap, a safety stop
 only: what finished by then depends on the clock, so it is reason `cap` and no survivor is
 reported. When the unmutated

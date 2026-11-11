@@ -112,8 +112,9 @@
 
 - **Mutation results are a repeatable lead.** `testing.surviving-mutant` now fixes later, and the
   reviewer prompt tells the reviewer to escalate a survivor on the line the change exists for as
-  `testing.accepts-broken-code`. cosmic-ray runs a fixed number of changed-line mutants in a stable
-  order instead of whatever finished before a time limit, records `mutant-budget` with how many it
+  `testing.accepts-broken-code`. cosmic-ray runs a fixed number of changed-line mutants, spread one
+  per line across the change's files with control-flow lines first and chosen the same way every
+  time, instead of whatever finished before a time limit, records `mutant-budget` with how many it
   left out, and its time limit is a safety stop reported as `cap` with no survivors. Runs over the
   packet's Python environment no longer write bytecode into the packet.
 

@@ -2,6 +2,21 @@
 
 ## 2026-11-11
 
+### A stable order is not a representative sample
+
+**Evidence.** The first mutant budget took the first ten changed-line mutants sorted by file, line
+and operator; on a change with thousands of them, all ten sat at the top of the alphabetically
+first file. The selection now takes one mutant per line, control-flow lines first, in an order fixed
+by a hash of file and line, round-robin across files (`review_adapters_python._COSMIC_SELECT`);
+tests `test_the_mutant_budget_spreads_over_files_and_lines_and_prefers_control_flow` and
+`test_the_mutant_budget_is_repeatable_whatever_order_the_session_lists_them`.
+
+**Mechanism.** Several mutation operators apply to each line, so a sorted list spends a small budget
+on a handful of neighbouring lines.
+
+**Generalizable rule.** When a budget must be repeatable, make it spread by construction (one per
+unit, hashed order, round-robin), not merely sorted.
+
 ### A prepare-side result must not depend on the clock, nor write into the packet
 
 **Evidence.** In a measured run, most versions' two prepares gave different packets. The mutation

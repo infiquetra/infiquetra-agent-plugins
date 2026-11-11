@@ -374,25 +374,92 @@ for line in (dump.stdout or "").splitlines():
 _done(unfinished, survivors, "mutant-abnormal")
 """
 
-# Marks every changed-line mutant past the budget skipped, in a stable order: file, line, column,
-# operator, occurrence. Prints the counts. Runs inside the cosmic-ray environment.
-_COSMIC_BUDGET = r"""
+# Chooses which changed-line mutants a budget runs, spread over the change: one mutant per line,
+# lines inside control flow first (an if, elif, else, except or return line, or the body of one),
+# then lines in an order fixed by a hash of (file, line), taken round-robin across the files.
+# Plain Python, so the tests run it as is; _COSMIC_BUDGET runs it inside the cosmic-ray
+# environment against the session.
+_COSMIC_SELECT = r"""
+import hashlib
+_FLOW = ("if ", "if(", "elif ", "else:", "else ", "except", "return", "raise")
+def _flow_line(lines, number):
+    if not 1 <= number <= len(lines):
+        return False
+    text = lines[number - 1]
+    if text.strip().startswith(_FLOW):
+        return True
+    indent = len(text) - len(text.lstrip())
+    for earlier in range(number - 2, -1, -1):
+        above = lines[earlier]
+        if not above.strip():
+            continue
+        if len(above) - len(above.lstrip()) < indent:
+            return above.strip().startswith(_FLOW)
+    return False
+def select(candidates, budget, read):
+    # candidates: (file, line, column, operator, occurrence, job_id); read(file) -> list of lines.
+    # One mutant per line per round; a second round only when every line already has one.
+    per_line = {}
+    for item in sorted(candidates):
+        per_line.setdefault((item[0], item[1]), []).append(item)
+    files = {}
+    for (name, number) in per_line:
+        files.setdefault(name, []).append(number)
+    ordered = []
+    for name in sorted(files):
+        lines = read(name)
+        def order(number, name=name, lines=lines):
+            digest = hashlib.sha256(f"{name}:{number}".encode()).hexdigest()
+            return (not _flow_line(lines, number), digest)
+        ordered.append([(name, number) for number in sorted(files[name], key=order)])
+    chosen = []
+    depth = 0
+    while len(chosen) < budget and depth < max((len(v) for v in per_line.values()), default=0):
+        queues = [list(lines) for lines in ordered]
+        while len(chosen) < budget and any(queues):
+            for queue in queues:
+                while queue and len(chosen) < budget:
+                    key = queue.pop(0)
+                    if depth < len(per_line[key]):
+                        chosen.append(per_line[key][depth])
+                        break
+        depth += 1
+    return chosen, len(per_line), len(files)
+"""
+
+# Marks every changed-line mutant the budget does not choose skipped, and prints the counts.
+# Runs inside the cosmic-ray environment, from the scan's root.
+_COSMIC_BUDGET = _COSMIC_SELECT + r"""
 import json, sys
 from cosmic_ray.work_db import WorkDB, use_db
 from cosmic_ray.work_item import WorkerOutcome, WorkResult
 session, budget = sys.argv[1], int(sys.argv[2])
+def read(name):
+    try:
+        with open(name, encoding="utf-8", errors="replace") as handle:
+            return handle.read().splitlines()
+    except OSError:
+        return []
 with use_db(session, WorkDB.Mode.open) as db:
     pending = list(db.pending_work_items)
-    def key(item):
+    candidates = []
+    for item in pending:
         first = item.mutations[0]
-        return (str(first.module_path), tuple(first.start_pos), first.operator_name,
-                first.occurrence, item.job_id)
-    ordered = sorted(pending, key=key)
-    over = [item.job_id for item in ordered[budget:]]
+        candidates.append((str(first.module_path), int(first.start_pos[0]),
+                           int(first.start_pos[1]), first.operator_name, int(first.occurrence),
+                           item.job_id))
+    chosen, lines, files = select(candidates, budget, read)
+    keep = {item[5] for item in chosen}
+    over = [item.job_id for item in pending if item.job_id not in keep]
     if over:
         db.set_multiple_results(over, WorkResult(output="mutant budget",
                                                  worker_outcome=WorkerOutcome.SKIPPED))
-print(json.dumps({"changed": len(pending), "run": min(len(pending), budget)}))
+print(json.dumps({
+    "changed": len(pending), "run": len(chosen),
+    "lines": lines, "files": files,
+    "covered_lines": len({(item[0], item[1]) for item in chosen}),
+    "covered_files": len({item[0] for item in chosen}),
+}))
 """
 
 
@@ -968,8 +1035,13 @@ def _parse_cosmic(text: str) -> ParseResult:
         if isinstance(changed, int) and isinstance(ran, int) and changed > ran:
             # Coverage was partial: the reviewer sees how much.
             gaps = (("mutant-budget", "testing.surviving-mutant"),)
-            details = (("mutant-budget",
-                        f"ran {ran} of {changed} mutants on changed lines"),)
+            detail = f"ran {ran} of {changed} mutants on changed lines"
+            spread = [counts.get(key) for key in ("covered_lines", "lines", "covered_files",
+                                                   "files")]
+            if all(isinstance(value, int) for value in spread):
+                detail += (f", covering {spread[0]} of {spread[1]} changed lines in "
+                           f"{spread[2]} of {spread[3]} files")
+            details = (("mutant-budget", detail),)
     if unfinished:
         known = reason if reason in _COSMIC_REASONS else "mutant-abnormal"
         return ParseResult(tuple(hits), unfinished=True, unfinished_reason=known, gaps=gaps,

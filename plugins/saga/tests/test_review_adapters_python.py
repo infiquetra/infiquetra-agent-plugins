@@ -2400,3 +2400,66 @@ def test_cosmic_ray_mutants_stop_at_their_first_failing_test(tmp_path: Path) -> 
     with open(config, "rb") as handle:
         written = shlex.split(tomllib.load(handle)["cosmic-ray"]["test-command"])
     assert written[-1] == "-x"
+
+
+def _select() -> Any:
+    namespace: dict[str, Any] = {}
+    exec(P._COSMIC_SELECT, namespace)  # noqa: S102 - saga's own selection code, run as shipped
+    return namespace["select"]
+
+
+def _candidates() -> list[tuple[str, int, int, str, int, str]]:
+    many = [("b.py", line, 0, "core/X", occurrence, f"b-{line}-{occurrence}")
+            for line in range(1, 41) for occurrence in range(3)]
+    few = [("a.py", line, 0, "core/X", 0, f"a-{line}") for line in range(1, 4)]
+    return many + few
+
+
+_SOURCES = {
+    "a.py": ["x = 1"] * 5,
+    "b.py": ["def f(x):", "    if x:", "        y()", "    return 1"] + ["z = 1"] * 40,
+}
+
+
+def test_the_mutant_budget_is_repeatable_whatever_order_the_session_lists_them() -> None:
+    select = _select()
+    first, lines, files = select(_candidates(), 10, _SOURCES.__getitem__)
+    again, _lines, _files = select(list(reversed(_candidates())), 10, _SOURCES.__getitem__)
+    assert first == again
+    assert (lines, files) == (43, 2)
+
+
+def test_the_mutant_budget_spreads_over_files_and_lines_and_prefers_control_flow() -> None:
+    chosen, _lines, _files = _select()(_candidates(), 10, _SOURCES.__getitem__)
+    assert len(chosen) == 10
+    assert {item[0] for item in chosen} == {"a.py", "b.py"}
+    assert len({(item[0], item[1]) for item in chosen}) == 10, "one mutant per line"
+    b_lines = [item[1] for item in chosen if item[0] == "b.py"]
+    # The if line, its body and the return line come before the file's other lines.
+    assert set(b_lines[:3]) == {2, 3, 4}
+    assert b_lines != sorted(b_lines) or len(b_lines) < 4, "not simply top of file"
+
+
+def test_the_mutant_budget_takes_a_second_mutant_per_line_only_when_lines_run_out() -> None:
+    one_line = [("c.py", 1, column, "core/X", 0, f"c-{column}") for column in range(5)]
+    chosen, lines, files = _select()(one_line, 3, lambda _name: ["return 1"])
+    assert [item[5] for item in chosen] == ["c-0", "c-1", "c-2"]
+    assert (lines, files) == (1, 1)
+    assert _select()(one_line, 10, lambda _name: [])[0] == sorted(one_line)
+
+
+def test_cosmic_ray_budget_detail_names_the_lines_and_files_it_covered(tmp_path: Path) -> None:
+    repo, base, head = _cosmic_changed(tmp_path)
+    payload = json.dumps({"unfinished": False, "survivors": [],
+                          "mutants": {"changed": 300, "run": 10, "lines": 120, "files": 4,
+                                      "covered_lines": 10, "covered_files": 4}})
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
+        output, tmp_path / "home", [_adapter("cosmic-ray")], _Calls(base, payload),
+    )
+    assert code == 0
+    [entry] = _read(output, "degraded.json")
+    assert entry["detail"] == (
+        "ran 10 of 300 mutants on changed lines, covering 10 of 120 changed lines in 4 of 4 files"
+    )

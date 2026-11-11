@@ -7,7 +7,10 @@
 **Decision.** `testing.surviving-mutant` fixes later for every language, keeps its builder excuse,
 and the reviewer escalates a survivor on the change's purpose line as
 `testing.accepts-broken-code` with traced evidence naming the mutant. cosmic-ray runs at most 10
-changed-line mutants, chosen in a stable order (file, line, column, operator, occurrence), against
+changed-line mutants, spread over the change: one per changed line (a second only once every line
+has one), lines inside control flow first, then lines ordered by a hash of file and line, taken
+round-robin across files. Sorting by file, line and operator was rejected: all 10 landed at the top
+of the alphabetically first file and said nothing about the branch the change adds. They run against
 at most 10 test files that mention a mutated module, and each mutant's run stops at its first
 failing test; `mutant-budget` records how many changed-line mutants were left out. The numbers come
 from a large real change (over 3,000 changed-line mutants): with 30 test files a single baseline
