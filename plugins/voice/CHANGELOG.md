@@ -23,7 +23,10 @@ were unreachable from 0.4.1.
   presses Enter and never uses `hc send` or `hc keys`; `hc keys` could not type `?`,
   `!`, quotes or anything outside ASCII. A program that has not turned on bracketed
   paste gets nothing and the transcript is held, and so is a transcript starting with
-  `/` or `!`, which Claude Code would run as a command.
+  `/` or `!`, which Claude Code would run as a command. The paste happens only when the
+  attach reply names exactly the bound terminal and carries its status. A live check on
+  a real Claude Code 2.1 session confirmed the text lands in the input box, intact and
+  unsubmitted.
 
 - Delivery pastes only into an agent whose status is `idle` or `done`; any other
   status, or none, holds the transcript with a spoken refusal. After the paste, voice

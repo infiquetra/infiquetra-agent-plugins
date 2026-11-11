@@ -11,7 +11,12 @@ target programs. The first used `hc keys`. It rejected
 character as unknown keys, typed a bare `A` as `a`, and typed `shift+/` as `/`. The
 second captured `hc attach` through a logging proxy, then pasted through `hc connect`
 (`plugins/voice/scripts/herdr_core.py`, `paste_text`). Every one of those characters,
-Chinese text and emoji arrived intact as one bracketed paste.
+Chinese text and emoji arrived intact as one bracketed paste. A live check on a real
+Claude Code 2.1 session on the Studio the same day (a throwaway session in a scratch
+folder, closed afterwards) put `Is this working? Yes! (test) path a/b: "quoted"
+@mention cafe é 50% + done` into the input box intact through `paste_text`, with
+nothing submitted (turn 0, status `idle` before and after) and the size unchanged at
+200x120.
 
 **Mechanism.** `hc keys` sends named key events encoded for the program's keyboard mode,
 so it covers only characters with an unshifted key name. The attach stream is the

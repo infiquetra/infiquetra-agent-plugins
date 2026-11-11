@@ -85,11 +85,13 @@ def attach_server(
     close_echo: bool = True,
     echo: bytes = b"",
     stop_after: str | None = None,
+    record: object = "default",
 ) -> bytes:
     """Everything herdr core sends back for one paste, in order.
 
     ``stop_after`` cuts the script short ("hello", "reply" or "paint") to
-    play a connection that ends there.
+    play a connection that ends there. ``record`` replaces the terminal
+    record in the attach reply outright (any value, ``None`` included).
     """
     hello = hello or {
         "id": 0,
@@ -112,7 +114,11 @@ def attach_server(
                 "automatic_input": automatic_input,
                 "channel": channel,
                 "resize_notifications": False,
-                "terminal": {"address": terminal, "status": reported, "turn": turn},
+                "terminal": (
+                    {"address": terminal, "status": reported, "turn": turn}
+                    if record == "default"
+                    else record
+                ),
             },
         }
     # An unrelated frame first: the client must skip it.

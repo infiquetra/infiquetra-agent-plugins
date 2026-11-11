@@ -335,10 +335,18 @@ def _attach(talk, terminal: str, cols: int, rows: int) -> tuple[dict, int, int]:
         result = reply.get("result")
         if not isinstance(result, dict) or not isinstance(result.get("channel"), int):
             raise PasteRefusal("herdr core answered the attach without a channel")
-        record = result.get("terminal") if isinstance(result.get("terminal"), dict) else {}
-        if record.get("address") not in (None, terminal):
+        record = result.get("terminal")
+        # Fail closed: paste only when the reply names exactly this terminal
+        # and carries its status, so the after-paste check has something to
+        # compare. A record with no address, or no status, is not proof.
+        if not isinstance(record, dict) or record.get("address") != terminal:
+            shown = record.get("address") if isinstance(record, dict) else None
             raise PasteRefusal(
-                f"herdr core attached {printable(str(record.get('address')))}, not {terminal}"
+                f"herdr core attached {printable(str(shown))}, not {terminal}"
+            )
+        if not isinstance(record.get("status"), dict):
+            raise PasteRefusal(
+                f"herdr core's attach reply carries no status for {terminal}"
             )
         kind = _KIND_AUTOMATIC_INPUT if result.get("automatic_input") is True else _KIND_DATA
         return record, result["channel"], kind

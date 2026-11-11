@@ -194,6 +194,15 @@ unchanged; a second viewer, standing in for the window, still attached, still
 typing, and not resized; and no connection left on the core afterwards. The
 whole read, attach, paste and detach took about 0.1 seconds.
 
+A live check on a real Claude Code 2.1 session on the Studio (2026-11-10, a
+throwaway session in a scratch folder, closed afterwards) confirmed it:
+`herdr_core.paste_text` put `Is this working? Yes! (test) path a/b: "quoted"
+@mention cafe é 50% + done` into the input box intact, nothing was submitted
+(turn 0, status `idle` before and after), and the terminal stayed 200x120.
+
+Voice pastes only when the attach reply names exactly the bound terminal and
+carries its status; a reply without either is refused and nothing is pasted.
+
 A transcript starting with `/` or `!` is held instead of pasted: Claude Code
 runs those as a command or a shell command when you press Enter.
 

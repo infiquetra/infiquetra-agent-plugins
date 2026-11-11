@@ -246,6 +246,27 @@ class PasteTests(unittest.TestCase):
             herdr_core.paste_text("t7", "hi", cols=100, rows=30, timeout=10.0, converse=talk)
         self.assertEqual(talk.pastes(), [])
 
+    def test_an_attach_reply_that_does_not_prove_the_target_gets_nothing(self) -> None:
+        # Fail closed: no address, an empty one, no record, or no status in
+        # the reply is not proof of the target, so nothing is pasted.
+        for record in (
+            {"status": {"state": "idle"}, "turn": 3},
+            {"address": None, "status": {"state": "idle"}, "turn": 3},
+            {"address": "", "status": {"state": "idle"}, "turn": 3},
+            None,
+            "t7",
+            {"address": "t7", "turn": 3},
+            {"address": "t7", "status": None, "turn": 3},
+            {"address": "t7", "status": "idle", "turn": 3},
+        ):
+            with self.subTest(record=record):
+                talk = FakeConversation(attach_server(record=record))
+                with self.assertRaises(herdr_core.PasteRefusal):
+                    herdr_core.paste_text(
+                        "t7", "hi", cols=100, rows=30, timeout=10.0, converse=talk
+                    )
+                self.assertEqual(talk.pastes(), [])
+
     def test_a_connection_that_ends_before_the_paste_is_a_refusal(self) -> None:
         for stop_after in ("hello", "reply", None):
             with self.subTest(stop_after=stop_after):
