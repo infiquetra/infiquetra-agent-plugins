@@ -392,7 +392,10 @@ is not sent anything either: Claude, Codex, Antigravity, Muse and OpenCode say n
 are past their startup screens, so silence after the 30-second readiness window means a question such as
 folder trust may be open, and an Enter would answer it with its default. The unit fails with
 "<unit> has not reported a status after 30 s ... read it with `hc read tN`" and its tab is left
-open; answer the question there, then redeliver by hand with `launcher.py redeliver`.
+open; answer the question there, then redeliver by hand with `launcher.py redeliver`. Every unit
+runs in a new worktree beside the repository (`<repo parent>/orch-<run>-<unit>`), so a fresh setup
+meets the folder-trust question on every unit. Trust the folder that holds the worktrees once
+before `go`: Claude accepts a trusted parent folder, so that covers every unit after it.
 
 `hc read` returns plain text, so the input-box guard cannot tell a placeholder an agent draws from
 text a person typed by its colour. It reads a box whose whole content is exactly one of the
