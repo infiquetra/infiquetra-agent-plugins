@@ -174,9 +174,23 @@ transcript is held in the Voice pane, where `d` discards it (`u` would only
 refuse it again). In practice every spoken question is held until herdr core
 can paste text without Enter.
 
-`hc keys` does not refuse a blocked program on its own, so delivery reads the
-status first and refuses `blocked` itself; the race between that read and the
-keys is the stated residual.
+Delivery types only into an agent whose status is exactly `idle`: a program
+waiting for input raises no dialog on its own. `blocked` holds the transcript
+with the blocked refusal; `working`, `done`, `error`, any other word, or no
+status holds it with a "not idle" refusal. Both are spoken, and `u` retries
+once the agent is idle again.
+
+**Residual window.** `hc keys` has no guard of its own and waits for about
+three seconds of quiet from the person before it presses anything. If the agent
+raises a menu or a permission dialog between voice's status read and the keys,
+single characters of the transcript (a `1`, a `y`) can answer it. Voice narrows
+the window by typing only into an idle agent, and detects it afterwards: it
+compares the status and turn `hc keys` reports for the moment its keys went in,
+and a fresh `hc get`, with the idle read. If anything changed, voice says, out
+loud and in the pane, that the transcript may have reached a prompt and the
+session needs checking before Enter. It never presses Enter and cannot take the
+keys back; such a transcript is not held, so it is never typed twice. Only a
+herdr core guard on `terminal.keys` (refuse unless idle) closes the window.
 
 The Auralis bridge identity is the terminal's `voice.agent-session` label as
 `agent_session_id`, and the terminal's address as both `terminal_id` and

@@ -48,12 +48,14 @@ __all__ = [
     "UntypableText",
     "SESSION_LABEL",
     "STATUS_BLOCKED",
+    "STATUS_IDLE",
     "STATE_LIVE",
     "get_terminal",
     "label_session",
     "type_text",
     "key_names",
     "status_word",
+    "turn_of",
     "session_of",
     "is_live",
     "is_other_machine",
@@ -66,6 +68,9 @@ SESSION_LABEL = "voice.agent-session"
 #: The status word a program reports while it waits on a person (a
 #: permission, a question, a login). Keystrokes there are answers, not text.
 STATUS_BLOCKED = "blocked"
+
+#: The status word of a program that is waiting for input and doing nothing.
+STATUS_IDLE = "idle"
 
 #: A terminal whose program is still running. The other state is
 #: ``finished``.
@@ -157,13 +162,23 @@ def type_text(
     timeout: float,
     run_process: Callable = process.run,
     hc: str | None = None,
-) -> None:
-    """Type one line into ``terminal`` key by key, without pressing Enter."""
+) -> dict:
+    """Type one line into ``terminal`` key by key, without pressing Enter.
+
+    Returns what ``hc keys`` reported: ``{"status": <word or None>,
+    "turn": <int>}``, the program's status and turn when the keys went in,
+    or ``{}`` when its output is not that object.
+    """
     keys = key_names(line)
     if not keys:
         raise CoreRefusal("there is no text to type")
     command = [_hc(hc), "keys", terminal, *keys]
-    _run(command, f"hc keys {terminal}", timeout, run_process)
+    completed = _run(command, f"hc keys {terminal}", timeout, run_process)
+    try:
+        result = json.loads(completed.stdout)
+    except (TypeError, ValueError):
+        return {}
+    return result if isinstance(result, dict) else {}
 
 
 def key_names(line: str) -> list[str]:
@@ -204,6 +219,14 @@ def status_word(record: dict) -> str | None:
     if not isinstance(state, str) or not state.strip():
         return None
     return state.strip()
+
+
+def turn_of(record: dict) -> int | None:
+    """The terminal's turn number, which goes up each time its status leaves ``working``."""
+    turn = record.get("turn")
+    if isinstance(turn, bool) or not isinstance(turn, int):
+        return None
+    return turn
 
 
 def session_of(record: dict) -> str | None:

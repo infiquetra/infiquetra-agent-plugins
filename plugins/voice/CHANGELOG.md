@@ -28,6 +28,12 @@ were unreachable from 0.4.1.
   refusal is spoken; `d` discards it. Spoken questions cannot be delivered until herdr
   core can paste text without Enter. A failed `hc keys` call also holds the transcript.
 
+- Delivery types only into an agent whose status is exactly `idle`; any other status,
+  or none, holds the transcript with a spoken refusal. After typing, voice compares the
+  status and turn `hc keys` reported, and a fresh `hc get`, with the idle read; if
+  anything changed it says the transcript may have reached a prompt and never presses
+  Enter. The window between the status read and the keys remains (see the README).
+
 - The Auralis bridge identity comes from herdr core: `HC_TERMINAL_ID`, `hc get`, and the
   terminal's `voice.agent-session` label. The terminal address is both `terminal_id` and
   `pane_id`. It is resolved only while Auralis has published its bridge discovery file,

@@ -47,13 +47,19 @@ def _hc_get_result(
     *,
     address: str = TERMINAL,
     state: str = "live",
+    turn: int = 3,
+    msg: str | None = None,
 ) -> subprocess.CompletedProcess:
     """One hc get --json record, shaped like herdr core's output."""
+    reported = None if status is None else {"state": status, "app": "claude"}
+    if reported is not None and msg is not None:
+        reported["msg"] = msg
     payload = {
         "address": address,
         "name": AGENT_NAME,
         "state": state,
-        "status": None if status is None else {"state": status, "app": "claude"},
+        "status": reported,
+        "turn": turn,
         "labels": {"voice.agent-session": SESSION_ID},
         "argv": ["claude"],
     }
@@ -62,15 +68,16 @@ def _hc_get_result(
     )
 
 
-def _keys_result() -> subprocess.CompletedProcess:
+def _keys_result(status: str | None = "idle", turn: int = 3) -> subprocess.CompletedProcess:
+    """What hc keys prints: the status and turn when its keys went in."""
     return subprocess.CompletedProcess(
-        args=None, returncode=0, stdout=json.dumps({"turn": 3, "status": "idle"}), stderr=""
+        args=None, returncode=0, stdout=json.dumps({"turn": turn, "status": status}), stderr=""
     )
 
 
-def _idle_delivery_seam(status: str | None = "idle") -> "_HcSpawnSeam":
-    """A read that succeeds, followed by the keys it triggers."""
-    return _HcSpawnSeam([_hc_get_result(status), _keys_result()])
+def _idle_delivery_seam() -> "_HcSpawnSeam":
+    """An idle read, the keys it triggers, and an idle read after typing."""
+    return _HcSpawnSeam([_hc_get_result(), _keys_result(), _hc_get_result()])
 
 
 class _HcSpawnSeam:
@@ -122,11 +129,13 @@ class DeliveryPathTests(DeliverTestBase):
     def test_delivery_reads_the_bound_terminal_then_types_into_it(self) -> None:
         spawn = _idle_delivery_seam()
         deliver.deliver("Hello there", spawn=spawn)
-        self.assertEqual(len(spawn.calls), 2)
+        self.assertEqual(len(spawn.calls), 3)
         get_command, _ = spawn.calls[0]
         self.assertEqual(get_command, ["hc", "get", TERMINAL, "--json"])
         keys_command, _ = spawn.calls[1]
         self.assertEqual(keys_command, ["hc", "keys", TERMINAL, *HELLO_KEYS])
+        after_command, _ = spawn.calls[2]
+        self.assertEqual(after_command, ["hc", "get", TERMINAL, "--json"])
 
     def test_delivery_is_unsubmitted_literal_text_without_enter(self) -> None:
         # One key per character and no Enter, so the text arrives
@@ -141,11 +150,11 @@ class DeliveryPathTests(DeliverTestBase):
             self.assertNotIn(name, keys_command)
 
     def test_the_submitting_send_verb_is_never_invoked(self) -> None:
-        # hc send presses Enter and tags text sent from inside a terminal.
+        # hc send presses Enter.
         spawn = _idle_delivery_seam()
         deliver.deliver("Hello there", spawn=spawn)
         verbs = [command[1] for command, _ in spawn.calls]
-        self.assertEqual(verbs, ["get", "keys"])
+        self.assertEqual(verbs, ["get", "keys", "get"])
 
     def test_delivery_targets_the_bound_terminal_address_not_the_agent_name(
         self,
@@ -159,11 +168,11 @@ class DeliveryPathTests(DeliverTestBase):
                 self.assertNotIn(AGENT_NAME, command)
 
     def test_only_the_bound_agent_is_ever_targeted(self) -> None:
-        # No broadcast, no fallback, no recency inference: exactly one
-        # read and one keys call, both keyed to the bound terminal (R17).
+        # No broadcast, no fallback, no recency inference: one read, one
+        # keys call and one read back, all keyed to the bound terminal (R17).
         spawn = _idle_delivery_seam()
         deliver.deliver("Hello there", spawn=spawn)
-        self.assertEqual(len(spawn.calls), 2)
+        self.assertEqual(len(spawn.calls), 3)
 
     def test_both_hc_calls_carry_the_pinned_deadline_and_closed_stdin(
         self,
@@ -421,15 +430,98 @@ class BlockedRefusalTests(DeliverTestBase):
             "Approve the deploy",
         )
 
-    def test_states_other_than_blocked_still_deliver(self) -> None:
-        # Only blocked withholds delivery; every other status word herdr
-        # core reports, and no status at all, delivers.
-        for agent_status in ("idle", "working", "done", "error", None):
+    def test_only_an_idle_agent_is_typed_into(self) -> None:
+        # Every status other than exactly idle, and no status at all, holds
+        # the transcript: an idle agent raises no dialog on its own, so the
+        # window in which typed keys could answer one stays small.
+        for agent_status in ("working", "done", "error", "unknown", "thinking", None):
             with self.subTest(agent_status=agent_status):
-                spawn = _idle_delivery_seam(agent_status)
-                deliver.deliver("Hello there", spawn=spawn)
-                self.assertEqual(len(spawn.calls), 2)
-                self.assertFalse(self._refused_path().exists())
+                self._refused_path().unlink(missing_ok=True)
+                spawn = _HcSpawnSeam([_hc_get_result(agent_status)])
+                spoken: list[str] = []
+                with self.assertRaises(deliver.DeliveryRefusal) as caught:
+                    deliver.deliver("Hello there", spawn=spawn, speak_text=spoken.append)
+                self.assertNotIsInstance(caught.exception, deliver.DeliveryUncertain)
+                self.assertEqual(len(spawn.calls), 1, "nothing was typed")
+                self.assertEqual(spoken, [deliver.BUSY_REFUSAL_PHRASE])
+                self.assertIn("not idle", str(caught.exception))
+                self.assertEqual(
+                    self._refused_path().read_text(encoding="utf-8"), "Hello there"
+                )
+        self.assertEqual(deliver.TYPABLE_STATUSES, ("idle",))
+
+
+class AfterTypingTests(DeliverTestBase):
+    """A change while the keys went in is reported; Enter is never pressed."""
+
+    def _deliver_expecting_uncertain(self, results) -> tuple[str, list, list[str]]:
+        spawn = _HcSpawnSeam(results)
+        spoken: list[str] = []
+        with self.assertRaises(deliver.DeliveryUncertain) as caught:
+            deliver.deliver("yes 1", spawn=spawn, speak_text=spoken.append)
+        for command, _ in spawn.calls:
+            self.assertNotIn("enter", command)
+            self.assertNotIn("send", command)
+        return str(caught.exception), spawn.calls, spoken
+
+    def test_a_dialog_reported_by_hc_keys_is_reported_as_a_possible_prompt(self) -> None:
+        message, calls, spoken = self._deliver_expecting_uncertain(
+            [_hc_get_result(), _keys_result("blocked")]
+        )
+        self.assertIn("may have reached a prompt", message)
+        self.assertIn("'blocked'", message)
+        self.assertEqual(spoken, [deliver.UNCERTAIN_DELIVERY_PHRASE])
+        self.assertEqual([command[1] for command, _ in calls], ["get", "keys"])
+
+    def test_a_dialog_seen_on_the_read_back_names_its_question(self) -> None:
+        message, calls, _ = self._deliver_expecting_uncertain(
+            [
+                _hc_get_result(),
+                _keys_result(),
+                _hc_get_result("blocked", msg="Allow Bash: rm -rf build?"),
+            ]
+        )
+        self.assertIn("may have reached a prompt", message)
+        self.assertIn("Allow Bash: rm -rf build?", message)
+        self.assertEqual(len(calls), 3)
+
+    def test_a_turn_that_moved_is_reported(self) -> None:
+        for results in (
+            [_hc_get_result(turn=3), _keys_result(turn=4)],
+            [_hc_get_result(turn=3), _keys_result(turn=3), _hc_get_result(turn=4)],
+        ):
+            with self.subTest(calls=len(results)):
+                message, _, _ = self._deliver_expecting_uncertain(results)
+                self.assertIn("turn moved", message)
+
+    def test_a_read_back_that_fails_is_reported(self) -> None:
+        message, _, _ = self._deliver_expecting_uncertain(
+            [
+                _hc_get_result(),
+                _keys_result(),
+                subprocess.TimeoutExpired(["hc", "get"], deliver.HC_TIMEOUT_SECONDS),
+            ]
+        )
+        self.assertIn("could not be read again", message)
+
+    def test_typed_text_is_never_held_so_it_is_never_typed_twice(self) -> None:
+        self._deliver_expecting_uncertain([_hc_get_result(), _keys_result("working")])
+        self.assertFalse(self._refused_path().exists())
+
+    def test_use_refused_clears_a_hold_whose_keys_went_in(self) -> None:
+        self._write_hold("yes 1")
+        spawn = _HcSpawnSeam([_hc_get_result(), _keys_result("blocked")])
+        with self.assertRaises(deliver.DeliveryUncertain):
+            deliver.use_refused(spawn=spawn, speak_text=lambda phrase: None)
+        self.assertFalse(self._refused_path().exists())
+
+    def test_a_failed_spoken_warning_still_reports_the_possible_prompt(self) -> None:
+        spawn = _HcSpawnSeam([_hc_get_result(), _keys_result("blocked")])
+        refusal = providers.ProviderRefusal(providers.VOICE_FORGE, "synthesis unreachable")
+        with self.assertRaises(deliver.DeliveryUncertain) as caught:
+            deliver.deliver("yes 1", spawn=spawn, speak_text=mock.Mock(side_effect=refusal))
+        self.assertIn("may have reached a prompt", str(caught.exception))
+        self.assertIn("spoken warning failed", str(caught.exception))
 
 
 class RefusedHoldTests(DeliverTestBase):
@@ -439,7 +531,7 @@ class RefusedHoldTests(DeliverTestBase):
         self._write_hold("Approve the deploy")
         spawn = _idle_delivery_seam()
         deliver.use_refused(spawn=spawn)
-        self.assertEqual(len(spawn.calls), 2)
+        self.assertEqual(len(spawn.calls), 3)
         keys_command, _ = spawn.calls[1]
         self.assertEqual(keys_command[3:], _keys("Approve the deploy"))
         self.assertFalse(self._refused_path().exists())

@@ -141,6 +141,18 @@ class LabelAndKeysTests(unittest.TestCase):
         self.assertNotIn("enter", command)
         self.assertEqual(kwargs, {"timeout": 10.0, "check": True})
 
+    def test_type_text_returns_the_status_and_turn_hc_keys_reported(self) -> None:
+        run = _RunSeam(_completed(json.dumps({"status": "blocked", "turn": 9})))
+        result = herdr_core.type_text("t7", "ok", timeout=10.0, run_process=run, hc="hc")
+        self.assertEqual(result, {"status": "blocked", "turn": 9})
+        for stdout in ("", "not json", "[]"):
+            with self.subTest(stdout=stdout):
+                run = _RunSeam(_completed(stdout))
+                self.assertEqual(
+                    herdr_core.type_text("t7", "ok", timeout=10.0, run_process=run, hc="hc"),
+                    {},
+                )
+
     def test_type_text_never_uses_hc_send(self) -> None:
         run = _RunSeam(_completed())
         herdr_core.type_text("t7", "Deploy it", timeout=10.0, run_process=run, hc="hc")
@@ -213,6 +225,12 @@ class RecordReadingTests(unittest.TestCase):
         for record in ({}, {"status": None}, {"status": "idle"}, {"status": {"state": ""}}):
             with self.subTest(record=record):
                 self.assertIsNone(herdr_core.status_word(record))
+
+    def test_turn_of_reads_an_integer_turn_only(self) -> None:
+        self.assertEqual(herdr_core.turn_of({"turn": 4}), 4)
+        for record in ({}, {"turn": None}, {"turn": "4"}, {"turn": True}):
+            with self.subTest(record=record):
+                self.assertIsNone(herdr_core.turn_of(record))
 
     def test_session_of_reads_only_the_voice_label(self) -> None:
         self.assertEqual(

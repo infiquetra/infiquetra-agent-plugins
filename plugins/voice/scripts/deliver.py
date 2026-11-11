@@ -8,15 +8,21 @@ explicit use or discard (R18, R19).
 Delivery is a two-step sequence against herdr core (``hc``), the program
 that runs the bound agent's terminal:
 
-1. ``hc get <terminal> --json`` re-reads the bound terminal at send time:
-   it must still be live, and its status word (``idle``, ``working``,
-   ``done``, ``blocked``, ``error``, or none) decides whether text may go
-   in. The call runs under the 10-second deadline pinned for bounded
-   helper calls (KTD3a).
+1. ``hc get <terminal> --json`` re-reads the bound terminal at send time.
+   It must still be live, and its status word must be exactly ``idle``:
+   an idle agent is waiting for input and raises no dialog on its own.
+   ``blocked``, ``working``, ``done``, ``error``, any other word, or no
+   status at all holds the transcript instead. The call runs under the
+   10-second deadline pinned for bounded helper calls (KTD3a).
 2. ``hc keys <terminal> <key>...`` types the transcript, whitespace-
    normalized to a single line, one key per character (``space`` for a
    space, ``shift+<letter>`` for a capital) and no Enter — the
    unsubmitted, editable delivery R16 requires.
+3. The status is checked again: the status and turn ``hc keys`` reports
+   for the moment its keys went in, and a fresh ``hc get``. If either is
+   not ``idle``, or the turn moved, the transcript may have reached a
+   prompt instead of the input box. Voice says so, out loud and in the
+   pane, and never presses Enter; it cannot take the keys back.
 
 ``hc send`` is never used, and nothing falls back to it: it always presses
 Enter, so a misheard transcript would be submitted to the agent.
@@ -44,13 +50,14 @@ appended, consumed or discarded only by an explicit operator act (R19,
 KTD1). A refused transcript is never delivered automatically and never
 queued for automatic delivery.
 
-The blocked-state check is not atomic with the typing: the agent can
-become blocked between the read and the keys. That race is the contract's
-stated residual — narrowed here, deliberately not closed. ``hc send``
-refuses a blocked program on its own, but it submits; ``hc keys`` does not
-check. The guard belongs to herdr core as a proposed enhancement (keys
-that refuse a blocked program), and no workaround machinery is built in
-this module.
+The status check is not atomic with the typing. ``hc keys`` waits for
+about three seconds of quiet from the person before it presses anything,
+and has no guard of its own (``hc send`` refuses a blocked program, but it
+submits). If the agent raises a menu or a permission dialog in that
+window, single characters of the transcript (a ``1``, a ``y``) can answer
+it. That race is the residual: narrowed by typing only into an idle agent,
+detected after the fact by step 3, and closed only when herdr core gives
+``terminal.keys`` a guard that refuses unless the program is idle.
 
 The entry points are module-level so the pane and the CLI can reach them
 through their lazy-import seam (KTD16): :func:`deliver`,
@@ -76,6 +83,10 @@ __all__ = [
     "DeliveryRefusal",
     "AGENT_STATUS_BLOCKED",
     "BLOCKED_REFUSAL_PHRASE",
+    "BUSY_REFUSAL_PHRASE",
+    "UNCERTAIN_DELIVERY_PHRASE",
+    "TYPABLE_STATUSES",
+    "DeliveryUncertain",
     "UNTYPABLE_REFUSAL_PHRASE",
     "HC_TIMEOUT_SECONDS",
     "REFUSED_TRANSCRIPT_FILENAME",
@@ -102,6 +113,18 @@ BLOCKED_REFUSAL_PHRASE = (
     "The bound session is blocked on a prompt; not delivering that."
 )
 
+#: The only status words delivery types into. Everything else holds the
+#: transcript: a program waiting for input raises no dialog on its own.
+TYPABLE_STATUSES = (herdr_core.STATUS_IDLE,)
+
+#: The short fixed phrase spoken when the bound agent is not idle.
+BUSY_REFUSAL_PHRASE = "The bound session is not idle; not delivering that."
+
+#: The short fixed phrase spoken when the agent changed while keys went in.
+UNCERTAIN_DELIVERY_PHRASE = (
+    "That transcript may have reached a prompt. Check the session before pressing Enter."
+)
+
 #: The short fixed phrase spoken when a transcript cannot be typed exactly.
 UNTYPABLE_REFUSAL_PHRASE = "Voice cannot type that transcript exactly; it is held."
 
@@ -122,6 +145,15 @@ class DeliveryRefusal(Exception):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(reason)
+
+
+class DeliveryUncertain(DeliveryRefusal):
+    """The transcript was typed, but the agent changed while the keys went in.
+
+    The keys cannot be taken back and Enter was never pressed. The operator
+    has to look at the session: the transcript may sit in a prompt or
+    dialog rather than the input box.
+    """
 
 
 def deliver(
@@ -167,7 +199,8 @@ def deliver(
             "explicit use or discard"
         )
 
-    status = _resolve_status(agent_name, terminal, run_process=run_process)
+    before = _resolve_terminal(agent_name, terminal, run_process=run_process)
+    status = herdr_core.status_word(before)
     if status == AGENT_STATUS_BLOCKED:
         _hold_refused(text)
         speak_text(BLOCKED_REFUSAL_PHRASE)
@@ -176,8 +209,16 @@ def deliver(
             "nothing was sent — the transcript is held for explicit use or "
             "discard"
         )
+    if status not in TYPABLE_STATUSES:
+        _hold_refused(text)
+        speak_text(BUSY_REFUSAL_PHRASE)
+        shown = repr(status) if status is not None else "not reporting a status"
+        raise DeliveryRefusal(
+            f"the bound agent {agent_name!r} is {shown}, not idle; nothing was "
+            "typed — the transcript is held for explicit use or discard"
+        )
     try:
-        herdr_core.type_text(
+        typed = herdr_core.type_text(
             terminal, line, timeout=HC_TIMEOUT_SECONDS, run_process=run_process
         )
     except herdr_core.CoreRefusal as refusal:
@@ -186,6 +227,20 @@ def deliver(
             f"delivery failed: {refusal.reason} — the transcript is held for "
             "explicit use or discard"
         ) from refusal
+    change = _change_while_typing(
+        terminal, before, typed, run_process=run_process
+    )
+    if change is not None:
+        warning = (
+            f"the transcript was typed into {agent_name!r}, but {change}; it may "
+            "have reached a prompt instead of the input box. Nothing was "
+            "submitted — check the session before pressing Enter"
+        )
+        try:
+            speak_text(UNCERTAIN_DELIVERY_PHRASE)
+        except Exception as error:  # the written warning must still surface
+            warning += f" (the spoken warning failed: {error})"
+        raise DeliveryUncertain(warning)
 
 
 def _untypable_reason(line: str) -> str | None:
@@ -210,7 +265,8 @@ def use_refused(
     """Explicitly use the held refused transcript (R19).
 
     Reads the hold file and delivers that text, deleting the hold only
-    after a successful send. When the agent is still blocked, delivery
+    after the keys went in (including a typing the agent may have caught
+    in a prompt, which is reported, not retried). When the agent is still blocked, delivery
     refuses again and the transcript is held anew — it is never forced
     through. Any other delivery failure likewise leaves the hold in
     place, so a failed send never consumes the only remaining copy of a
@@ -223,7 +279,12 @@ def use_refused(
         raise DeliveryRefusal(
             "there is no refused transcript to use"
         ) from error
-    deliver(text, spawn=spawn, speak_text=speak_text)
+    try:
+        deliver(text, spawn=spawn, speak_text=speak_text)
+    except DeliveryUncertain:
+        # The keys went in; keeping the hold would invite typing it twice.
+        path.unlink(missing_ok=True)
+        raise
     path.unlink(missing_ok=True)
 
 
@@ -265,10 +326,10 @@ def _single_line(text: str) -> str:
     return " ".join(text.split())
 
 
-def _resolve_status(
+def _resolve_terminal(
     agent_name: str, terminal: str, *, run_process: Callable
-) -> str | None:
-    """Re-read the bound terminal at send time and return its status word (KTD7).
+) -> dict:
+    """Re-read the bound terminal at send time and return its record (KTD7).
 
     The terminal must still answer to its own address and still be live.
     Anything else is a named error; nothing falls back to another target
@@ -290,7 +351,43 @@ def _resolve_status(
             f"the bound agent {agent_name!r} (terminal {terminal}) has finished; "
             "rebind with `voice bind <terminal>`"
         )
-    return herdr_core.status_word(record)
+    return record
+
+
+def _change_while_typing(
+    terminal: str, before: dict, typed: dict, *, run_process: Callable
+) -> str | None:
+    """What changed while the keys went in, or ``None`` when nothing did.
+
+    Compares the status and turn ``hc keys`` reported for the moment its
+    keys went in, then a fresh ``hc get``, against the idle record read
+    before typing. A status that is not idle (a blocked one names its
+    question when the program gave one), a turn that moved, or a terminal
+    that can no longer be read all count as a change.
+    """
+    turn = herdr_core.turn_of(before)
+    status = typed.get("status")
+    if status not in TYPABLE_STATUSES:
+        return f"hc keys reported its status as {status!r} when the keys went in"
+    if typed.get("turn") != turn:
+        return "its turn moved while the keys went in"
+    try:
+        after = herdr_core.get_terminal(
+            terminal, timeout=HC_TIMEOUT_SECONDS, run_process=run_process
+        )
+    except herdr_core.CoreRefusal as refusal:
+        return f"it could not be read again after typing ({refusal.reason})"
+    status = herdr_core.status_word(after)
+    if status not in TYPABLE_STATUSES:
+        reported = after.get("status")
+        question = reported.get("msg") if isinstance(reported, dict) else None
+        asked = ""
+        if isinstance(question, str) and question.strip():
+            asked = f" ({question.strip()})"
+        return f"its status is now {status!r}{asked}"
+    if herdr_core.turn_of(after) != turn:
+        return "its turn moved while the keys went in"
+    return None
 
 
 def _hold_refused(text: str) -> None:

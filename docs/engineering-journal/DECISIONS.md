@@ -10,7 +10,10 @@ for a capital, never Enter) and never uses `hc send`. Only characters a probe of
 core 0.1.20 showed `hc keys` types exactly are mapped: letters, digits, spaces and
 `` . , ' - ; / = ` [ ] ``. A transcript with any other character (a question mark, an
 exclamation mark, a colon, quotes, anything outside ASCII), or one starting with `/`,
-is held whole for the operator's explicit use or discard and never partly typed. herdr core does not know which Claude session runs in
+is held whole for the operator's explicit use or discard and never partly typed.
+Typing happens only when the agent reports exactly `idle`, and the status and turn are
+checked again after the keys go in; a change is reported as "the transcript may have
+reached a prompt", never followed by Enter. herdr core does not know which Claude session runs in
 a terminal, so the voice Claude adapter's SessionStart hook runs `hc label
 $HC_TERMINAL_ID voice.agent-session=<id>`, and `voice bind`, delivery and the Auralis
 bridge identity read that label back with `hc get --json`. The bridge identity uses the
@@ -34,7 +37,8 @@ is that every spoken question is held until herdr core can paste without Enter. 
 label mirrors what old Herdr's own SessionStart hook did: it recorded the session id
 from the same hook payload.
 
-**Revisit when.** herdr core gains a command that pastes text without Enter, or herdr
+**Revisit when.** herdr core gains a command that pastes text without Enter or a
+`terminal.keys` guard that refuses unless the program is idle, or herdr
 core or the `agents` launcher starts publishing a terminal's Claude session id; voice
 should then use those instead.
 
