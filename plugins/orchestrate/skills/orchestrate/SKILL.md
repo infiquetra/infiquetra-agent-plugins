@@ -395,10 +395,11 @@ folder trust may be open, and an Enter would answer it with its default. The uni
 open; answer the question there, then redeliver by hand with `launcher.py redeliver`.
 
 `hc read` returns plain text, so the input-box guard cannot tell a placeholder an agent draws from
-text a person typed: any text it finds in the box is a staged-input stop. Codex shows a placeholder
-in an empty box, so a later write to a Codex session (a setup line, a resend, a routed repair) can
-stop there; clear the box by hand or redrive the unit. The first write into a session the launcher
-just created is not inspected, so a Codex unit's task still goes in.
+text a person typed by its colour. It reads a box whose whole content is exactly one of the
+vendor's known placeholders (Codex's "Ask Codex to do anything" or "Ask a follow-up question",
+Claude's `Try "..."` hints) as empty, and any other text as a staged-input stop, including a
+placeholder with anything typed beside it. A stopped unit is redelivered by hand with
+`launcher.py redeliver`, once the box is cleared.
 
 ## Writing, and saga commands
 

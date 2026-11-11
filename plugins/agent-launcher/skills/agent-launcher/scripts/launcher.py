@@ -1028,6 +1028,49 @@ def should_guard_pane_write(unit: Any, *, wrote_before: bool) -> bool:
     return wrote_before or not session_owned(unit)
 
 
+# What a vendor draws in its own EMPTY input box, read from the installed binaries on the Studio on
+# 2026-11-10. ``hc read`` has no colours, so these read as typed text (D1); a box whose whole
+# content is exactly one of them is the vendor's, not a person's. Anything else -- including a
+# placeholder with any other text beside it -- stays a staged-input stop.
+#
+# Codex 0.167.1 (``strings`` on .codex/packages/standalone/releases/0.167.1-*/bin/codex): "Ask
+# Codex to do anything" for a new session and "Ask a follow-up question" beside it in the same
+# string group, for a session with a conversation. It does not rotate: none of the older example
+# prompts ("Explain this codebase", ...) is in the binary. "Waiting for startup" sits next to the
+# first in the startup code but is not shown to be composer text, so it is left out; a session
+# still starting is held back by the status rule anyway (``refuse_without_status``).
+KNOWN_PLACEHOLDERS: dict[str, frozenset[str]] = {
+    "codex": frozenset({"Ask Codex to do anything", "Ask a follow-up question"}),
+}
+
+# Claude Code 2.1.322 draws ``Try "<example>"``, rotating among eight examples; four of them name a
+# file taken from the project's git history (``<filepath>`` when it has none). The fixed four are
+# matched exactly; the other four by their template, with the file as one token without spaces
+# or quotes, and still against the whole box.
+CLAUDE_PLACEHOLDER_EXAMPLES = (
+    "fix lint errors",
+    "fix typecheck errors",
+    "how do I log an error?",
+    "create a util logging.py that...",
+)
+CLAUDE_PLACEHOLDER_TEMPLATES = re.compile(
+    r'Try "(?:how does [^\s"]+ work\?|refactor [^\s"]+|edit [^\s"]+ to\.\.\.'
+    r'|write a test for [^\s"]+)"'
+)
+KNOWN_PLACEHOLDERS["claude"] = frozenset(f'Try "{text}"' for text in CLAUDE_PLACEHOLDER_EXAMPLES)
+
+
+def known_placeholder(vendor: str, box: str | None) -> str | None:
+    """``box`` when its whole content is a placeholder ``vendor`` draws in an empty input box."""
+    if not box:
+        return None
+    if box in KNOWN_PLACEHOLDERS.get(vendor, frozenset()):
+        return box
+    if vendor == "claude" and CLAUDE_PLACEHOLDER_TEMPLATES.fullmatch(box):
+        return box
+    return None
+
+
 def guard_pane_before_write(unit: Any, pane_id: str) -> None:
     """Inspect a pane before a write that could concatenate with staged input.
 
@@ -1065,6 +1108,16 @@ def guard_pane_before_write(unit: Any, pane_id: str) -> None:
     if inspection.state is ComposerState.EMPTY:
         if receipt is not None:
             receipt["input_box"] = "empty"
+            receipt.pop("input_box_text_chars", None)
+            receipt.pop("input_box_placeholder", None)
+        return
+    placeholder = known_placeholder(unit.vendor, inspection.text)
+    if placeholder is not None:
+        # The vendor's own empty-box text, matched whole. Recorded as such: it is the vendor's
+        # constant, not anything a person typed.
+        if receipt is not None:
+            receipt["input_box"] = "empty"
+            receipt["input_box_placeholder"] = placeholder
             receipt.pop("input_box_text_chars", None)
         return
     staged = inspection.text or ""
@@ -5477,9 +5530,13 @@ def _reviewer_cli(args: argparse.Namespace) -> int:
     return code
 
 
-def _add_launch_flags(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--vendor", required=True)
-    parser.add_argument("--task", required=True, help="Herdr tab label and agent name")
+def _add_launch_flags(parser: argparse.ArgumentParser, *, from_receipt: bool = False) -> None:
+    # ``redeliver`` reads its session from a receipt, which records the vendor, the task name,
+    # the folder and the workspace; there they default from it (``_defaults_from_receipt``).
+    parser.add_argument("--vendor", required=not from_receipt)
+    parser.add_argument(
+        "--task", required=not from_receipt, help="Herdr tab label and agent name"
+    )
     parser.add_argument("--cwd", default=None, help="Working directory (default: cwd)")
     parser.add_argument("--model", default=None)
     parser.add_argument("--effort", default=None)
@@ -5518,7 +5575,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "redeliver",
         help="Re-prompt the pane a staged-input stop recorded; never creates a session",
     )
-    _add_launch_flags(redeliver_p)
+    _add_launch_flags(redeliver_p, from_receipt=True)
     redeliver_p.add_argument(
         "--receipt-json",
         required=True,
@@ -5566,6 +5623,31 @@ def _load_receipt(raw: str) -> dict[str, Any]:
     return loaded
 
 
+def _defaults_from_receipt(args: argparse.Namespace, receipt: Mapping[str, Any]) -> None:
+    """Fill ``redeliver``'s unset flags from the receipt it retries; refuse a conflicting vendor.
+
+    The folder matters as much as the names: the preflight compares the session's folder with the
+    unit's, and a redeliver run from another directory without ``--cwd`` would close the session
+    it came to prompt.
+    """
+    recorded_vendor = receipt.get("vendor")
+    if args.vendor and recorded_vendor and args.vendor != recorded_vendor:
+        raise RetryReceiptRefused(
+            f"cannot redeliver: --vendor {args.vendor!r} but the receipt was written for "
+            f"{recorded_vendor!r}"
+        )
+    args.vendor = args.vendor or recorded_vendor
+    args.task = args.task or receipt.get("unit_name")
+    args.cwd = args.cwd or receipt.get("worktree") or receipt.get("working_directory")
+    args.workspace = args.workspace or receipt.get("workspace")
+    flags = (("--vendor", args.vendor), ("--task", args.task))
+    missing = [flag for flag, value in flags if not value]
+    if missing:
+        raise RetryReceiptRefused(
+            f"cannot redeliver: pass {' and '.join(missing)}; the receipt does not record them"
+        )
+
+
 def cli_main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.cmd in ("review", "reviewer-probe"):
@@ -5589,12 +5671,18 @@ def cli_main(argv: list[str] | None = None) -> int:
         )
         close_owned_session(unit, receipt=receipt)
         return 0
+    if args.cmd == "redeliver":
+        receipt = _load_receipt(args.receipt_json)
+        try:
+            _defaults_from_receipt(args, receipt)
+        except RetryReceiptRefused as refused:
+            print(refused, file=sys.stderr)
+            return 2
     unit = _request_from_args(args)
     if args.cmd == "redeliver":
         # Exit codes (cycle 2, F64): 0 delivered; 1 the retry ran and the prompt was not
         # observed to be taken, or a stop was raised after the receipt was adopted (the receipt
         # is printed first); 2 the receipt was refused before any Herdr call.
-        receipt = _load_receipt(args.receipt_json)
         try:
             _adopt_retry_receipt(unit, receipt)
         except RetryReceiptRefused as refused:

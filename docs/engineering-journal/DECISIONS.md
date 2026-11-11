@@ -23,8 +23,10 @@ ones the run does not own.
 scripts had to move; each choice takes the side that never sends behind a person's text, never
 closes what the run did not create, and never reads missing data as a finished session.
 
-**Revisit when.** hc gains a styled screen read (the guard can then classify placeholders again),
-or Orchestrate starts units on other machines (the address rules assume this machine's core).
+**Revisit when.** hc gains a styled screen read (the guard can then classify placeholders again
+without the known-placeholder list), a Codex or Claude Code update changes its empty-box text (the
+list in `launcher.py` names the versions it was read from), or Orchestrate starts units on other
+machines (the address rules assume this machine's core).
 
 ---
 

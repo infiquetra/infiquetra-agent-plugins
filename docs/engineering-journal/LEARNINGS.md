@@ -46,15 +46,25 @@ menu first.
 **Evidence.** `hc read` (herdr core 0.1.20) prints plain text only. The launcher's composer parser
 classifies the checked-in Codex capture `codex_closed_placeholder`
 (`plugins/agent-launcher/tests/fixtures/composer-panes.json`) as `unclassifiable` with its colour
-codes and as `staged` without them; the three Claude captures read `empty` either way
-(`test_the_closed_codex_placeholder_without_colour_codes_stops_a_guarded_write_as_staged`).
+codes and as `staged` without them; the three Claude captures read `empty` either way. The first
+port kept the stop on any text, and the smoke-test re-run of 2026-11-10 showed the cost: after
+Codex's trust question was answered, `launcher.py redeliver` refused "pane t102 already holds
+staged input (24 chars)" -- the box held Codex 0.167.1's "› Ask Codex to do anything". The fix
+reads a box whose whole content is a placeholder taken from the installed binary as empty
+(`KNOWN_PLACEHOLDERS`, `test_codexs_own_placeholder_reads_as_an_empty_box_and_the_write_goes_in`)
+and keeps every near miss a stop (`test_a_placeholder_with_anything_else_in_the_box_still_stops`).
 
 **Mechanism.** The guard proved typed text by its being unstyled; a client-drawn placeholder is
 styled. Old Herdr's `pane read --format ansi` kept the styling, and herdr core's command line has
-no styled read, so every non-empty box looks typed.
+no styled read, so every non-empty box looks typed. A vendor's placeholder strings are fixed in its
+binary (Codex's does not rotate; Claude's rotates among eight `Try "..."` examples), so a
+whole-box comparison against them separates "the vendor's empty box" from "a person's draft"
+without the colours.
 
 **Generalizable rule.** When a terminal backend changes, check whether any parser relied on styling
-the new read drops, and decide explicitly which way an unprovable reading falls.
+the new read drops; replace the lost signal with an exact, sourced list (here, placeholder strings
+read from the installed binaries) rather than a looser heuristic, and re-read the list when the
+vendor updates.
 
 ### A send from inside an agent's terminal is tagged, so commands must go out untagged
 
