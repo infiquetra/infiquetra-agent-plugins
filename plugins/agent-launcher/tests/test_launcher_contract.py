@@ -3219,16 +3219,17 @@ argv = sys.argv[1:]
 with open(log, "a") as fh:
     fh.write(" ".join(argv) + "\\n")
 status = "working" if os.path.exists(state) else "idle"
+app = os.environ.get("HC_APP", "claude-code")
 if argv[:2] == ["ls", "--json"]:
-    row = {"address": "t5", "agent": "claude-code", "cwd": os.environ["HC_CWD"],
+    row = {"address": "t5", "agent": app, "cwd": os.environ["HC_CWD"],
            "state": "live", "status": status, "turn": 1, "where": "WS / worker"}
     print(json.dumps({"terminals": [row], "machines": [], "hidden_finished": 0}))
 elif argv[:2] == ["get", "t5"]:
     print(json.dumps({"address": "t5", "state": "live", "cwd": os.environ["HC_CWD"],
                       "labels": {"where": "WS / worker"},
-                      "status": {"app": "claude-code", "state": status}, "name": None}))
+                      "status": {"app": app, "state": status}, "name": None}))
 elif argv[:1] == ["read"]:
-    print("────\\n❯ \\n────")
+    print(os.environ.get("HC_SCREEN", "────\\n❯ \\n────"))
 elif argv[:1] == ["send"]:
     open(state, "w").close()
 sys.exit(0)
@@ -5235,32 +5236,178 @@ def test_the_input_box_inspection_reads_the_screen_only_as_plain_text(
     assert calls == [["hc", "read", "t5", "--lines", "0"]]
 
 
-def test_the_closed_codex_placeholder_without_colour_codes_stops_a_guarded_write_as_staged(
-    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """D1: ``hc read`` has no styled form, so Codex's client-drawn placeholder reads as typed
-    text. With the colour codes stripped the checked-in capture classifies as staged, and a
-    guarded write stops with the staged-input message instead of being sent behind it."""
-    captured = CAPTURED_COMPOSERS["codex_closed_placeholder"]
-    plain = _plain(captured)
-    assert "\x1b" not in plain and "Ask Codex to do anything" in plain
-    assert launcher.inspect_composer(captured, vendor="codex").state is (
-        launcher.ComposerState.UNCLASSIFIABLE
-    )
-    assert launcher.inspect_composer(plain, vendor="codex").state is launcher.ComposerState.STAGED
+# The line Codex 0.167.1 draws in an empty box, as ``hc read`` printed it in the smoke test
+# re-run of 2026-11-10 (terminal t102): its placeholder, 24 characters after the marker.
+CODEX_EMPTY_BOX = "› Ask Codex to do anything"
+
+
+def _guarded_codex_write(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, screen: str
+) -> tuple[Any, list[list[str]]]:
     calls: list[list[str]] = []
 
     def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
         calls.append(cmd)
-        return _done(cmd, 0, plain)
+        return _done(cmd, 0, screen)
 
     monkeypatch.setattr(launcher, "run", fake_run)
     monkeypatch.setattr(launcher, "reports_no_status", lambda _pane: False)
     unit = launcher.LaunchRequest(name="worker", vendor="codex", launch_receipt={"owned": False})
+    return unit, calls
+
+
+@pytest.mark.parametrize("source", ["smoke test line", "checked-in capture"])
+def test_codexs_own_placeholder_reads_as_an_empty_box_and_the_write_goes_in(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    """D1: ``hc read`` has no colours, so Codex's placeholder reads as typed text. A box whose
+    whole content is exactly that placeholder is Codex's, not a person's: the guarded write goes
+    in, and the receipt says the box held the known placeholder."""
+    if source == "smoke test line":
+        screen = CODEX_EMPTY_BOX
+    else:
+        captured = CAPTURED_COMPOSERS["codex_closed_placeholder"]
+        assert launcher.inspect_composer(captured, vendor="codex").state is (
+            launcher.ComposerState.UNCLASSIFIABLE
+        )
+        screen = _plain(captured)
+    assert launcher.inspect_composer(screen, vendor="codex").state is (
+        launcher.ComposerState.STAGED
+    )
+    unit, calls = _guarded_codex_write(launcher, monkeypatch, screen)
+    launcher.PaneWriter(unit, "t5", wrote_before=False).write("/saga:work x")
+    assert [c[3] for c in calls if _is_send(c)] == ["/saga:work x"]
+    assert unit.launch_receipt["input_box"] == "empty"
+    assert unit.launch_receipt["input_box_placeholder"] == "Ask Codex to do anything"
+
+
+@pytest.mark.parametrize(
+    "screen",
+    [
+        "› Ask Codex to do anything and fix the login bug",
+        "› fix the login bug Ask Codex to do anything",
+        "› Ask Codex to do anything.",
+        "› ask codex to do anything",
+    ],
+)
+def test_a_placeholder_with_anything_else_in_the_box_still_stops(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, screen: str
+) -> None:
+    """Whole-box matches only: the placeholder with typed text beside it, or a near spelling, is
+    a person's draft and stays a staged-input stop."""
+    unit, calls = _guarded_codex_write(launcher, monkeypatch, screen)
     with pytest.raises(launcher.StagedInputError, match="already holds staged input"):
         launcher.PaneWriter(unit, "t5", wrote_before=False).write("/saga:work x")
     assert unit.launch_receipt["input_box"] == "staged"
+    assert "input_box_placeholder" not in unit.launch_receipt
     assert [c for c in calls if _is_send(c)] == []
+
+
+@pytest.mark.parametrize(
+    ("vendor", "box", "known"),
+    [
+        ("codex", "Ask Codex to do anything", True),
+        ("codex", "Ask a follow-up question", True),
+        ("codex", "Waiting for startup", False),
+        ("codex", "Explain this codebase", False),
+        ("claude", 'Try "fix lint errors"', True),
+        ("claude", 'Try "create a util logging.py that..."', True),
+        ("claude", 'Try "refactor src/app.py"', True),
+        ("claude", 'Try "how does <filepath> work?"', True),
+        ("claude", 'Try "write a test for plugins/x/test_y.py"', True),
+        ("claude", 'Try "refactor src/app.py" and the tests', False),
+        ("claude", 'Try "refactor two files"', False),
+        ("claude", "fix lint errors", False),
+        ("codex", 'Try "fix lint errors"', False),
+        ("claude", "Ask Codex to do anything", False),
+        ("grok", "Ask Codex to do anything", False),
+        ("codex", "", False),
+    ],
+)
+def test_known_placeholder_matches_the_whole_box_for_its_own_vendor_only(
+    launcher: ModuleType, vendor: str, box: str, known: bool
+) -> None:
+    assert (launcher.known_placeholder(vendor, box) == box) is known
+
+
+def test_redeliver_cli_into_codex_showing_its_placeholder_takes_its_flags_from_the_receipt(
+    tmp_path: Path,
+) -> None:
+    """The smoke-test recovery: Codex's trust question stopped the launch (nothing sent), the
+    operator answered it, and the retry ran with only ``--prompt`` and ``--receipt-json``. The
+    vendor, task, folder and workspace come from the receipt; the box shows Codex's placeholder,
+    which reads as empty; the prompt goes in once."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hc = bin_dir / "hc"
+    hc.write_text(FAKE_HC_FOR_REDELIVER, encoding="utf-8")
+    hc.chmod(0o755)
+    receipt_path = tmp_path / "receipt.json"
+    stop_receipt = _staged_receipt(
+        unit_name="hc-smoke-codex",
+        vendor="codex",
+        agent_name="hc-smoke-codex",
+        worktree=str(worktree.resolve()),
+        input_box=None,
+        input_box_text_chars=None,
+        status_reported=False,
+        readiness=False,
+        prompt_delivered=False,
+    )
+    receipt_path.write_text(json.dumps(stop_receipt))
+    log = tmp_path / "hc.log"
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "HC_LOG": str(log),
+        "HC_STATE": str(tmp_path / "prompted"),
+        "HC_CWD": str(worktree.resolve()),
+        "HC_APP": "codex",
+        "HC_SCREEN": CODEX_EMPTY_BOX,
+    }
+    argv = [sys.executable, str(LAUNCHER), "redeliver", "--prompt", "Reply with the word ready."]
+    proc = subprocess.run(
+        [*argv, "--receipt-json", str(receipt_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=tmp_path,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    receipt = json.loads(proc.stdout)
+    assert receipt["prompt_delivered"] is True
+    assert receipt["input_box"] == "empty"
+    assert receipt["input_box_placeholder"] == "Ask Codex to do anything"
+    sends = [line.split(" ", 2) for line in log.read_text(encoding="utf-8").splitlines()]
+    sends = [c for c in sends if c[:1] == ["send"]]
+    assert len(sends) == 1 and sends[0][1] == "t5"
+
+
+def test_redeliver_refuses_a_vendor_the_receipt_contradicts(
+    launcher: ModuleType, tmp_path: Path, capsys: Any
+) -> None:
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text(json.dumps(_staged_receipt(vendor="codex")))
+    code = launcher.cli_main(
+        ["redeliver", "--vendor", "claude", "--prompt", "x", "--receipt-json", str(receipt_path)]
+    )
+    assert code == 2
+    assert "receipt was written for 'codex'" in capsys.readouterr().err
+
+
+def test_redeliver_without_vendor_or_task_needs_a_receipt_that_records_them(
+    launcher: ModuleType, tmp_path: Path, capsys: Any
+) -> None:
+    receipt = _staged_receipt()
+    del receipt["vendor"], receipt["unit_name"]
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text(json.dumps(receipt))
+    code = launcher.cli_main(["redeliver", "--prompt", "x", "--receipt-json", str(receipt_path)])
+    assert code == 2
+    assert "pass --vendor and --task" in capsys.readouterr().err
 
 
 def test_current_workspace_is_the_herdr_space_label_of_the_callers_terminal(

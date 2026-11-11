@@ -42,9 +42,14 @@ Herdr call and the decisions below, is `docs/plans/2026-11-10-orchestrate-hc-por
   (`{"app", "state", ...}`, null until the program reports), while `hc ls` rows and `hc wait`
   print the bare word. Roster's status read follows the same rule.
 - The input-box guard reads plain text, because `hc read` has no styled form. Any text in the box
-  is a staged-input stop. Codex's placeholder therefore reads as staged, so a later write to a
-  Codex session can stop until the box is cleared; the first write into a session the launch just
-  created is not inspected.
+  is a staged-input stop, except a placeholder the vendor itself draws in an empty box, matched
+  against the whole box: Codex 0.167.1's "Ask Codex to do anything" and "Ask a follow-up
+  question", and Claude Code 2.1.322's `Try "<example>"` hints, all read from the installed
+  binaries. The receipt records the match as `input_box_placeholder`. The placeholder with any
+  typed text beside it is still a stop. Found by the smoke test: a redeliver into a Codex session
+  refused its own placeholder as staged input.
+- `launcher.py redeliver` takes `--vendor`, `--task`, `--cwd` and `--workspace` from the receipt
+  when they are not passed, and refuses a `--vendor` the receipt contradicts (exit 2).
 - A blocked session refuses a send (hc exit 9) and the launcher never forces it.
 - `PANE_WRITE_SECONDS` is 90 (was 30): `hc send` holds a send for up to 60 seconds while a
   person's draft is open.

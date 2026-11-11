@@ -190,13 +190,21 @@ event client (2), kind names (1), preview (1).
 
 Each one changes how Orchestrate behaves, so each takes the conservative side.
 
-- **D1. The input-box guard keeps its stop on plain text.** Non-empty text the parser reads as
-  typed is still a staged-input stop, never sent behind. Consequence: a Codex session showing its
-  placeholder reads as staged, so a guarded write to it (a setup line, a resend, a routed review
-  repair) stops with the existing staged-input message instead of being sent. The first write into
-  a session the launcher just created is not guarded, so a Codex unit's task still goes in.
-  Rejected: reading every non-empty plain box as `unclassifiable` (always sends); that removes the
-  stop the guard exists for.
+- **D1. The input-box guard keeps its stop on plain text, except for a vendor's own placeholder,
+  matched whole.** Non-empty text the parser reads as typed is still a staged-input stop, never
+  sent behind. A box whose whole content is exactly a placeholder the vendor draws in an empty box
+  is read as empty, and the receipt records it (`input_box: "empty"`,
+  `input_box_placeholder: "<the text>"`). The table (`KNOWN_PLACEHOLDERS` in `launcher.py`) comes
+  from the installed binaries, 2026-11-10: Codex 0.167.1 draws "Ask Codex to do anything" (new
+  session) and "Ask a follow-up question" (the string beside it); it does not rotate. Claude Code
+  2.1.322 draws `Try "<example>"`, rotating among eight examples: four fixed, matched exactly, and
+  four naming a file from the project's git history, matched by their template with the file as one
+  token. Anything else, including a placeholder with typed text beside it, stays a stop. Found
+  by the smoke-test re-run: a `redeliver` into a Codex session showing "› Ask Codex to do
+  anything" refused as staged input (24 chars), which would have stopped every redeliver, resend
+  and routed repair to a Codex unit. Rejected: reading every non-empty plain box as
+  `unclassifiable` (always sends), which removes the stop the guard exists for; and prefix or
+  substring matching, which would let a draft that starts with the placeholder's words through.
 - **D2. Ownership is the pre-launch address snapshot.** `owned` is true only when the launcher's
   terminal address was absent from this machine's terminal list (finished ones included) taken
   just before the launcher ran. hc never reuses an address, so the proof is exact. No label is
@@ -315,6 +323,15 @@ the window's `where` label before the rename. D18 fixes it; that re-run should c
 `workspace` in `confirmed_against_herdr`, with `workspace_shown` holding whichever name the window
 showed at that moment.
 
+The re-run on 76af887 passed S2 for Claude (reply "ready", workspace confirmed, close removed the
+terminal) and the not-ready stop fired for Codex's "Trust this folder?" question. The recovery
+then found the D1 gap: after the question was answered, `redeliver` refused because Codex's
+placeholder read as staged input. The known-placeholder match fixes it, and `redeliver` now takes
+`--vendor`, `--task`, `--cwd` and `--workspace` from the receipt when they are not passed (a
+`--vendor` the receipt contradicts is refused). Re-run: answer Codex's question, then
+`launcher.py redeliver --prompt "..." --receipt-json receipt.json`, expecting
+`input_box_placeholder: "Ask Codex to do anything"` and `prompt_delivered: true`.
+
 Steps, from a Herdr terminal on the Studio, in a scratch repository:
 
 - S1. `python3 launcher.py preview --vendor claude --task hc-smoke --cwd <scratch repo>`: expect
@@ -324,7 +341,7 @@ Steps, from a Herdr terminal on the Studio, in a scratch repository:
   `owned: true`, `pane` and `tab_id` both the hc address, and `prompt_delivered: true`.
 - S3. `python3 launcher.py close --receipt-json receipt.json`: expect the terminal gone from
   `hc ls` and the tab gone from the window.
-- S4. The same three with `--vendor codex` (D1: no guarded write on a fresh launch) and
+- S4. The same three with `--vendor codex` (D1: Codex's placeholder reads as empty) and
   `--vendor opencode --variant high` (G4: the `/variants` picker through `hc send`).
 - S5. A one-unit Orchestrate run with `go`, `wait`, `settle` and `clean` on the same scratch
   repository.
