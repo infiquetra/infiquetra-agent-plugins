@@ -19,23 +19,19 @@ voice to an agent, start or quit the Voice pane, check that voice is ready
 to run (preflight), stop playback, or toggle a recording outside the pane.
 
 Herdr is herdr core (`hc`, which runs the session's terminal) and the Herdr
-app (the window). Voice reads the bound terminal with `hc get`, types the
-transcript with `hc keys` (never `hc send`, which presses Enter), and learns
-the terminal's Claude session from a `voice.agent-session` label that the
-plugin's SessionStart hook writes. Old Herdr (`herdr agent`, `herdr pane`)
-is retired.
+app (the window). Voice reads the bound terminal with `hc get`, pastes the
+transcript into it through `hc connect` the way the window does (one
+bracketed paste, never Enter; never `hc send`, which presses Enter), and
+learns the terminal's Claude session from a `voice.agent-session` label that
+the plugin's SessionStart hook writes. Old Herdr (`herdr agent`, `herdr
+pane`) is retired.
 
-`hc keys` types only letters, digits, spaces and `` . , ' - ; / = ` [ ] ``
-exactly. A transcript with any other character (every question mark, for
-one) or one starting with `/` is not typed: voice says so and holds it.
-Press `d` to discard it; `u` would only refuse it again, because the
-characters do not change. Until herdr core can paste text without Enter,
-spoken questions cannot be delivered.
-
-Voice types only into an agent that reports `idle` or `done`; otherwise it
-says so and holds the transcript (`u` retries once the agent is settled). If the agent
-changed while the keys went in, voice says the transcript may have reached a
-prompt: look at the session before pressing Enter.
+Voice pastes only into an agent that reports `idle` or `done`; otherwise it
+says so and holds the transcript (`u` retries once the agent is settled). A
+transcript starting with `/` or `!` is held too, because Claude Code would run
+it as a command. If the agent changed around the paste, voice says the
+transcript may have reached a prompt: look at the session before pressing
+Enter.
 
 ## Script
 

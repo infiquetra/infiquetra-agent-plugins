@@ -17,22 +17,19 @@ were unreachable from 0.4.1.
   place of the pane id, so **a binding from 0.4.1 reads as unreadable: run `voice bind`
   again**.
 
-- Delivery types the transcript into the bound terminal with `hc keys`, one key per
-  character and never Enter, after reading its status with `hc get`. It never uses
-  `hc send`, which presses Enter. A blocked agent still gets nothing, and the transcript
-  is still held.
+- Delivery pastes the transcript into the bound terminal the way the Herdr app's window
+  does: `hc connect`, a framed `terminal.attach` at the terminal's own size, one
+  bracketed paste with every control character removed, and a clean detach. It never
+  presses Enter and never uses `hc send` or `hc keys`; `hc keys` could not type `?`,
+  `!`, quotes or anything outside ASCII. A program that has not turned on bracketed
+  paste gets nothing and the transcript is held, and so is a transcript starting with
+  `/` or `!`, which Claude Code would run as a command.
 
-- `hc keys` can type only letters, digits, spaces and `` . , ' - ; / = ` [ ] `` exactly
-  (herdr core 0.1.20). **A transcript with any other character, including every
-  question mark, is held and never typed**, and so is one starting with `/`. The
-  refusal is spoken; `d` discards it. Spoken questions cannot be delivered until herdr
-  core can paste text without Enter. A failed `hc keys` call also holds the transcript.
-
-- Delivery types only into an agent whose status is `idle` or `done`; any other status,
-  or none, holds the transcript with a spoken refusal. After typing, voice compares the
-  status and turn `hc keys` reported, and a fresh `hc get`, with the idle read; if
-  anything changed it says the transcript may have reached a prompt and never presses
-  Enter. The window between the status read and the keys remains (see the README).
+- Delivery pastes only into an agent whose status is `idle` or `done`; any other
+  status, or none, holds the transcript with a spoken refusal. After the paste, voice
+  checks the status and turn in the attach reply and a fresh `hc get`; if anything
+  changed it says the transcript may have reached a prompt and never presses Enter.
+  The window between the status read and the paste remains (see the README).
 
 - Text a program reports through herdr core (a status question, a terminal name, an
   error message) loses every control character and is capped at 120 characters before

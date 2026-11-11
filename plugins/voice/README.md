@@ -29,13 +29,13 @@ the run-wide implementation plan is
 | [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) | Claude Code packaging manifest. A different specification, required by the Claude CLI to sit at the installed package root. Holds no behaviour: it declares the hooks and MCP server paths into `com.infiquetra.claude/` and the portable skills directory |
 | [`scripts/providers.py`](scripts/providers.py) | Provider declaration contract: closed egress set, declarations, named refusals |
 | [`scripts/settings.py`](scripts/settings.py) | The one settings reader: stated names, split defaults, absent never means empty |
-| [`scripts/process.py`](scripts/process.py) | Subprocess discipline: closed stdin and a deadline on every child |
+| [`scripts/process.py`](scripts/process.py) | Subprocess discipline: a deadline on every child, and none reads the operator's terminal |
 | [`scripts/text_cleanup.py`](scripts/text_cleanup.py) | Markdown cleanup for the speak path: formatting syntax stripped, fenced code blocks omitted |
 | [`scripts/speak.py`](scripts/speak.py) | Speak path: synthesize and play one completed response through the declared `voice-forge` provider |
 | [`scripts/record.py`](scripts/record.py) | Capture path: toggled recording tracked in state; nothing transcribed or kept without an explicit stop |
 | [`scripts/transcribe.py`](scripts/transcribe.py) | Transcription path through the declared Hermes relay: session token in process memory only, nothing kept |
 | [`scripts/binding.py`](scripts/binding.py) | Sticky single-agent binding store: one explicit bind to a herdr core terminal, replaced only by an explicit rebind |
-| [`scripts/deliver.py`](scripts/deliver.py) | Delivery path: transcript typed into the bound agent's input box with `hc keys`, unsubmitted, or a named audible refusal that holds it |
+| [`scripts/deliver.py`](scripts/deliver.py) | Delivery path: transcript pasted into the bound agent's input box through an attach, unsubmitted, or a named audible refusal that holds it |
 | [`scripts/preflight.py`](scripts/preflight.py) | Preflight the declared providers, the stop keybinding, and the executables; report by name, never install or repair |
 | [`scripts/pane.py`](scripts/pane.py) | The Voice pane: the one long-running operator surface and listen-path sequencer |
 | [`scripts/voice_cli.py`](scripts/voice_cli.py) | The one command surface: `pane`, `bind`, `preflight`, `toggle`, `stop`, `policy` |
@@ -129,7 +129,7 @@ non-sensitive.
 | `VOICE_STATE_DIR` | `~/.local/state/voice` | Machine-local runtime state directory |
 | `VOICE_RETENTION` | none — must be stated | Retention posture; version one accepts exactly `ephemeral` |
 | `HC_TERMINAL_ID` | none — refused by name when unset | This session's herdr core terminal address (`t21`). herdr core sets it in every terminal; voice reads it for the Auralis bridge identity and the SessionStart label |
-| `VOICE_HC_BIN` | `hc` | The herdr core command voice runs for `get`, `label` and `keys` |
+| `VOICE_HC_BIN` | `hc` | The herdr core command voice runs for `get`, `label` and `connect` |
 
 Retention behaviour is a stated setting rather than a silent default: the
 empty case — audio deleted after success and failure, no transcript log, no
@@ -141,13 +141,13 @@ honoured.
 
 herdr core (`hc`) runs every terminal on its machine. Voice uses three of its
 commands, all through [`scripts/herdr_core.py`](scripts/herdr_core.py), each
-with standard input closed and a deadline:
+under a deadline:
 
 | Command | Who runs it | What for |
 |---|---|---|
 | `hc label $HC_TERMINAL_ID voice.agent-session=<id>` | The SessionStart hook, in the Claude session | herdr core does not know which Claude session runs in a terminal. The hook records it on every start, resume, clear and compact |
 | `hc get <terminal> --json` | `voice bind`, delivery, and the Auralis bridge identity | Read a terminal: its address, whether it is live, its status word (`idle`, `working`, `done`, `blocked`, `error`), and its labels |
-| `hc keys <terminal> <key>...` | Delivery | Type the transcript one key per character (`space` for a space, `shift+<letter>` for a capital), never Enter |
+| `hc connect`, then `terminal.attach` | Delivery | Paste the transcript into the terminal the way a window does: one bracketed paste, never Enter, then detach |
 
 Text a program reports through herdr core (a status question, a terminal
 name, an error message) is shown only after `herdr_core.printable` removes every
@@ -162,42 +162,51 @@ terminal, and one without the `voice.agent-session` label, which means the
 voice plugin's SessionStart hook has not run there yet. The binding stores the
 terminal's address, which herdr core never reuses.
 
+### How a transcript reaches the session
+
 Delivery never uses `hc send`, and nothing falls back to it: that command always
-presses Enter, so a misheard transcript would be submitted to the agent. herdr
-core has no command that pastes text without Enter, so delivery types with
-`hc keys`, which takes key names, not text.
+presses Enter, so a misheard transcript would be submitted to the agent. It no
+longer uses `hc keys` either. A probe of herdr core 0.1.20 in an isolated core
+(2026-11-10) found that `hc keys` takes key names, not text: it rejects
+`? ! " : ( ) @ # $ % & * + _ ~ ^ { } | < >` and anything outside ASCII, types a
+bare `A` as `a`, and could not deliver a spoken question.
 
-That limits what can be typed. A probe of herdr core 0.1.20 in an isolated core
-(2026-11-10) found that `hc keys` types lowercase letters, digits and
-`` . , ' - ; / = ` [ ] `` as themselves, `space` as a space, and `shift+a` as
-`A`, while a bare `A` types `a` and `shift+/` types `/`, not `?`. It rejects
-every other character, including `? ! " : ( ) @ # $ % & * + _ ~ ^ { } | < >` and
-anything outside ASCII, and a rejected key fails the whole call before anything
-is typed. So delivery maps only the characters known to type correctly. A
-transcript with any other character, or one starting with `/` (which opens
-Claude Code's command menu), is not typed at all: the refusal is spoken and the
-transcript is held in the Voice pane, where `d` discards it (`u` would only
-refuse it again). In practice every spoken question is held until herdr core
-can paste text without Enter.
+Instead delivery pastes, the way the Herdr app's window does:
 
-Delivery types only into an agent whose status is `idle` or `done` (a turn that
-finished while nobody watched its terminal, the usual state when you answer by
-voice): a settled program waiting for input raises no dialog on its own.
-`blocked` holds the transcript with the blocked refusal; `working`, `error`,
-any other word, or no status holds it with a "busy" refusal. Both are spoken, and `u` retries
-once the agent is idle again.
+1. `hc get` reads the bound terminal. It must be live and its status `idle` or
+   `done` (a turn that finished while nobody watched its terminal, the usual
+   state when you answer by voice). `blocked` holds the transcript with the
+   blocked refusal; `working`, `error`, any other word, or no status holds it
+   with a "busy" refusal. Both are spoken, and `u` retries once the agent is
+   settled.
+2. `hc connect` opens herdr core's own protocol. Voice says hello in framed mode,
+   attaches to the terminal at the size `hc get` reported (so nothing resizes),
+   reads the first paint, and checks that the program turned on bracketed paste
+   (Claude Code does). It then sends one input frame, `ESC[200~` + transcript +
+   `ESC[201~`, with every control character removed from the transcript first,
+   so nothing presses Enter and nothing can end the paste early. It closes the
+   attach and waits for herdr core to confirm, so no viewer is left behind.
+3. The status is checked again, from the attach reply and a fresh `hc get`.
 
-**Residual window.** `hc keys` has no guard of its own and waits for about
-three seconds of quiet from the person before it presses anything. If the agent
-raises a menu or a permission dialog between voice's status read and the keys,
-single characters of the transcript (a `1`, a `y`) can answer it. Voice narrows
-the window by typing only into a settled agent, and detects it afterwards: it
-compares the status and turn `hc keys` reports for the moment its keys went in,
-and a fresh `hc get`, with the idle read. If anything changed, voice says, out
-loud and in the pane, that the transcript may have reached a prompt and the
-session needs checking before Enter. It never presses Enter and cannot take the
-keys back; such a transcript is not held, so it is never typed twice. Only a
-herdr core guard on `terminal.keys` (refuse unless idle) closes the window.
+A probe on an isolated core showed every character above, Chinese text and
+emoji arriving intact as one bracketed paste with no Enter; the terminal's size
+unchanged; a second viewer, standing in for the window, still attached, still
+typing, and not resized; and no connection left on the core afterwards. The
+whole read, attach, paste and detach took about 0.1 seconds.
+
+A transcript starting with `/` or `!` is held instead of pasted: Claude Code
+runs those as a command or a shell command when you press Enter.
+
+**Residual window.** The status read and the paste are not one step. If the
+agent raises a menu or a permission dialog in the fraction of a second between
+them, the paste can land in it. Voice narrows the window by pasting only into a
+settled agent, quickly, and detects it afterwards: if the status in the attach
+reply or a fresh `hc get` is no longer `idle` or `done`, or the turn moved,
+voice says, out loud and in the pane, that the transcript may have reached a
+prompt and the session needs checking before Enter. It never presses Enter and
+cannot take a paste back; such a transcript is not held, so it is never pasted
+twice. Only herdr core can close the window, with a paste or keys that refuse
+unless the program is settled at the moment they land.
 
 The Auralis bridge identity is the terminal's `voice.agent-session` label as
 `agent_session_id`, and the terminal's address as both `terminal_id` and
@@ -320,10 +329,12 @@ governed by the six-route Auralis Bridge Contract v1 (`GET /v1/health`,
 
 ## Subprocess discipline
 
-Every subprocess Voice starts runs with its standard input explicitly closed
-and a deadline attached. Bounded helper calls carry the caller's deadline; a
-fully detached child runs in its own session with closed streams and carries
-its deadlines internally, because its parent never waits for it. No
+Every subprocess Voice starts runs under a deadline, and none reads the
+operator's terminal. Bounded helper calls have their standard input closed and
+carry the caller's deadline; a fully detached child runs in its own session
+with closed streams and carries its deadlines internally, because its parent
+never waits for it. The one conversation, `hc connect` for a paste, gets pipes
+voice writes and reads, and a watchdog kills it when its deadline passes. No
 subprocess is ever started through a shell.
 
 ## Runtime floor

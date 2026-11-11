@@ -140,3 +140,50 @@ class RealSubprocessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConversationTests(unittest.TestCase):
+    """converse: pipes voice owns, and a watchdog at the deadline."""
+
+    def test_the_child_gets_pipes_and_never_a_shell(self) -> None:
+        calls = []
+
+        class _Child:
+            stdin = stdout = None
+
+            def kill(self):
+                pass
+
+        def seam(command, **kwargs):
+            calls.append((command, kwargs))
+            return _Child()
+
+        talk = process.converse(["hc", "connect"], timeout=5, spawn=seam)
+        talk._timer.cancel()
+        ((command, kwargs),) = calls
+        self.assertEqual(command, ["hc", "connect"])
+        self.assertIs(kwargs["stdin"], subprocess.PIPE)
+        self.assertIs(kwargs["stdout"], subprocess.PIPE)
+        self.assertNotIn("shell", kwargs)
+        with self.assertRaises(TypeError):
+            process.converse("hc connect", timeout=5)
+        with self.assertRaises(TypeError):
+            process.converse(["hc", "connect"])  # the deadline is required
+
+    def test_finish_closes_input_and_returns_the_exit_code(self) -> None:
+        script = "import sys; sys.stdout.write(sys.stdin.read().upper())"
+        talk = process.converse([sys.executable, "-c", script], timeout=10)
+        talk.stdin.write(b"hello")
+        talk.stdin.flush()
+        code = talk.finish(timeout=10)
+        self.assertEqual(code, 0)
+        self.assertEqual(talk.stdout.read(), b"HELLO")
+        self.assertFalse(talk.expired)
+
+    def test_the_watchdog_ends_a_child_that_outlives_its_deadline(self) -> None:
+        talk = process.converse(
+            [sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.3
+        )
+        self.assertEqual(talk.stdout.read(), b"", "the kill ends the blocked read")
+        self.assertTrue(talk.expired)
+        talk.finish(timeout=5)

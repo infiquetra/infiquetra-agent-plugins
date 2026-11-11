@@ -2,6 +2,31 @@
 
 ## 2026-11-10
 
+### herdr core's key and paste paths differ, and only the attach carries text
+
+**Evidence.** Two probes against isolated herdr core 0.1.20 cores (own HOME,
+`HC_SESSION`, `HC_SOCKET` and XDG folders) on 2026-11-10, with raw-byte readers as the
+target programs. The first used `hc keys`. It rejected
+`? ! " : ( ) @ # $ % & * + _ ~ ^ { } | < >`, a literal space and every non-ASCII
+character as unknown keys, typed a bare `A` as `a`, and typed `shift+/` as `/`. The
+second captured `hc attach` through a logging proxy, then pasted through `hc connect`
+(`plugins/voice/scripts/herdr_core.py`, `paste_text`). Every one of those characters,
+Chinese text and emoji arrived intact as one bracketed paste.
+
+**Mechanism.** `hc keys` sends named key events encoded for the program's keyboard mode,
+so it covers only characters with an unshifted key name. The attach stream is the
+window's own input path: after `hello` with `framed: true`, each frame is channel (u32),
+kind (u8), length (u32), little-endian, then the payload. Channel 0 carries JSON-RPC;
+an attach gets its own channel, where kind 0 is data, 1 grants credit, 2 closes, and 6
+is input from automation. The attach's first paint replays the program's modes, so it
+also shows whether bracketed paste (mode 2004) is on.
+
+**Generalizable rule.** To put text into a herdr core terminal without submitting it,
+paste through a framed attach at the size `hc get` reports, check mode 2004 in the
+first paint, and close the attach; `hc keys` is for keys, not text. The frame layout is
+read from traffic, not documented, so re-check it on each herdr core release.
+
+
 ### Ambient ~/workspace/infiquetra/infiquetra-sdlc checkouts mask vendored project-mapping changes in local tests
 
 **Evidence.** Running `pytest` in `plugins/mission-control/tests/` and `plugins/saga/tests/test_review_state.py` without setting `INFIQUETRA_SDLC_PATH` read the workstation's unmerged `~/workspace/infiquetra/infiquetra-sdlc/config/project-mappings.json`, hiding eleven test fixtures that still passed retired `--project operations` or `--project asgard` (`plugins/mission-control/scripts/sdlc_manager.py:142-148`, `plugins/saga/scripts/board_progression.py:794-815`).

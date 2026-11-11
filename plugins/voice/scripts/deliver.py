@@ -5,7 +5,7 @@ unsubmitted, still editable (R16) — or refuses audibly when that agent is
 blocked on a human decision, holding the transcript for the operator's
 explicit use or discard (R18, R19).
 
-Delivery is a two-step sequence against herdr core (``hc``), the program
+Delivery is a three-step sequence against herdr core (``hc``), the program
 that runs the bound agent's terminal:
 
 1. ``hc get <terminal> --json`` re-reads the bound terminal at send time.
@@ -13,29 +13,28 @@ that runs the bound agent's terminal:
    ``done`` (a turn that finished while nobody watched): a settled agent
    is waiting for input and raises no dialog on its own. ``blocked``,
    ``working``, ``error``, any other word, or no status at all holds the
-   transcript instead. The call runs under the
-   10-second deadline pinned for bounded helper calls (KTD3a).
-2. ``hc keys <terminal> <key>...`` types the transcript, whitespace-
-   normalized to a single line, one key per character (``space`` for a
-   space, ``shift+<letter>`` for a capital) and no Enter — the
-   unsubmitted, editable delivery R16 requires.
-3. The status is checked again: the status and turn ``hc keys`` reports
-   for the moment its keys went in, and a fresh ``hc get``. If either is
-   not ``idle`` or ``done``, or the turn moved, the transcript may have reached a
-   prompt instead of the input box. Voice says so, out loud and in the
-   pane, and never presses Enter; it cannot take the keys back.
+   transcript instead. The call runs under the 10-second deadline pinned
+   for bounded helper calls (KTD3a).
+2. ``herdr_core.paste_text`` attaches to the terminal through ``hc
+   connect`` at the size step 1 reported, and pastes the transcript,
+   whitespace-normalized to a single line with every control character
+   removed, as one bracketed paste — no Enter, the unsubmitted, editable
+   delivery R16 requires — then detaches. A program that has not turned on
+   bracketed paste gets nothing, and the transcript is held.
+3. The status is checked again: the status and turn in the attach reply
+   (the moment of attaching), then a fresh ``hc get``. If either is not
+   ``idle`` or ``done``, or the turn moved, the transcript may have reached
+   a prompt instead of the input box. Voice says so, out loud and in the
+   pane, and never presses Enter; it cannot take the paste back.
 
 ``hc send`` is never used, and nothing falls back to it: it always presses
-Enter, so a misheard transcript would be submitted to the agent.
+Enter, so a misheard transcript would be submitted to the agent. ``hc
+keys`` is not used either: it cannot type ``?``, ``!``, quotes or anything
+outside ASCII, so it could not deliver a spoken question.
 
-``hc keys`` types only lowercase and capital letters, digits, spaces and
-``. , ' - ; / = ` [ ]`` correctly (see ``herdr_core``). A transcript with
-any other character — a question mark, an exclamation mark, a colon,
-quotes, anything outside ASCII — is not typed at all: it is held for the
-operator's explicit use or discard, and the refusal is spoken, before any
-``hc`` call. So is a transcript that starts with ``/``, which would open
-Claude Code's command menu instead of landing as text. If the ``hc keys``
-call itself fails, the transcript is held as well.
+A transcript that starts with ``/`` or ``!`` is held rather than pasted:
+in Claude Code's input box those start a command or a shell command, so
+pressing Enter would run it instead of sending text.
 
 Only the bound terminal is ever targeted (R17): no broadcast, no fallback
 target, no recency inference. The binding stores the terminal's address,
@@ -51,14 +50,15 @@ appended, consumed or discarded only by an explicit operator act (R19,
 KTD1). A refused transcript is never delivered automatically and never
 queued for automatic delivery.
 
-The status check is not atomic with the typing. ``hc keys`` waits for
-about three seconds of quiet from the person before it presses anything,
-and has no guard of its own (``hc send`` refuses a blocked program, but it
-submits). If the agent raises a menu or a permission dialog in that
-window, single characters of the transcript (a ``1``, a ``y``) can answer
-it. That race is the residual: narrowed by typing only into a settled agent,
-detected after the fact by step 3, and closed only when herdr core gives
-``terminal.keys`` a guard that refuses unless the program is idle.
+The status check is not atomic with the paste. On the scratch core the
+whole read-attach-paste-detach sequence took about 50 milliseconds, but
+nothing in herdr core stops the agent from raising a menu or a permission
+dialog inside that window, and a paste that lands in a dialog could answer
+it. That race is the residual: narrowed by pasting only into a settled
+agent and by the speed of the paste, detected after the fact by step 3,
+and closed only when herdr core offers a paste (``hc send --no-enter``) or
+keys (``hc keys --if idle``) that refuse unless the program is settled at
+the moment they land.
 
 The entry points are module-level so the pane and the CLI can reach them
 through their lazy-import seam (KTD16): :func:`deliver`,
@@ -85,10 +85,10 @@ __all__ = [
     "AGENT_STATUS_BLOCKED",
     "BLOCKED_REFUSAL_PHRASE",
     "BUSY_REFUSAL_PHRASE",
+    "COMMAND_REFUSAL_PHRASE",
     "UNCERTAIN_DELIVERY_PHRASE",
     "TYPABLE_STATUSES",
     "DeliveryUncertain",
-    "UNTYPABLE_REFUSAL_PHRASE",
     "HC_TIMEOUT_SECONDS",
     "REFUSED_TRANSCRIPT_FILENAME",
     "deliver",
@@ -96,9 +96,8 @@ __all__ = [
     "discard_refused",
 ]
 
-#: Both hc calls are bounded helper invocations and share the 10-second
-#: deadline pinned for that class (KTD3a). ``hc keys`` waits for about three
-#: seconds of quiet from the person before it types, which fits inside it.
+#: The hc calls (``get``, and the ``connect`` conversation that pastes) are
+#: bounded and share the 10-second deadline pinned for helper calls (KTD3a).
 HC_TIMEOUT_SECONDS = 10.0
 
 #: The one status that must never receive keystrokes: a blocked agent is
@@ -114,7 +113,7 @@ BLOCKED_REFUSAL_PHRASE = (
     "The bound session is blocked on a prompt; not delivering that."
 )
 
-#: The only status words delivery types into: a settled turn waiting for
+#: The only status words delivery pastes into: a settled turn waiting for
 #: input, which raises no dialog on its own. ``done`` is what a Claude
 #: session reports after its turn while nobody views its terminal, which is
 #: the usual state when the operator answers by voice. Everything else holds
@@ -124,18 +123,17 @@ TYPABLE_STATUSES = (herdr_core.STATUS_IDLE, herdr_core.STATUS_DONE)
 #: The short fixed phrase spoken when the bound agent is not settled.
 BUSY_REFUSAL_PHRASE = "The bound session is busy; not delivering that."
 
-#: The short fixed phrase spoken when the agent changed while keys went in.
+#: The short fixed phrase spoken when the agent changed around the paste.
 UNCERTAIN_DELIVERY_PHRASE = (
     "That transcript may have reached a prompt. Check the session before pressing Enter."
 )
 
-#: The short fixed phrase spoken when a transcript cannot be typed exactly.
-UNTYPABLE_REFUSAL_PHRASE = "Voice cannot type that transcript exactly; it is held."
+#: The short fixed phrase spoken when a transcript would run as a command.
+COMMAND_REFUSAL_PHRASE = "That transcript would run as a command; it is held."
 
-#: Leading characters that Claude Code treats as a command rather than text
-#: when they open its input box. ``hc keys`` can type ``/``; the others it
-#: cannot type at all.
-_COMMAND_PREFIXES = ("/",)
+#: Leading characters that turn Claude Code's input into a command (``/``)
+#: or a shell command (``!``) when the operator presses Enter.
+_COMMAND_PREFIXES = ("/", "!")
 
 
 class DeliveryRefusal(Exception):
@@ -152,9 +150,9 @@ class DeliveryRefusal(Exception):
 
 
 class DeliveryUncertain(DeliveryRefusal):
-    """The transcript was typed, but the agent changed while the keys went in.
+    """The transcript was pasted, but the agent changed around the paste.
 
-    The keys cannot be taken back and Enter was never pressed. The operator
+    A paste cannot be taken back and Enter was never pressed. The operator
     has to look at the session: the transcript may sit in a prompt or
     dialog rather than the input box.
     """
@@ -164,25 +162,27 @@ def deliver(
     text: str,
     *,
     spawn: Callable = subprocess.run,
+    converse: Callable = process.converse,
     speak_text: Callable = speak.speak,
 ) -> None:
     """Deliver ``text`` to the bound agent's input box, unsubmitted.
 
-    Checks first that every character can be typed exactly; if not,
-    nothing is typed, the refusal is spoken, and the transcript is held.
-    Then re-reads the bound terminal through ``hc get`` and types the
-    whitespace-normalized single-line transcript with ``hc keys`` — one
-    key per character, no Enter (R16). A blocked agent receives nothing:
-    the refusal is spoken and the transcript is held for the operator's
-    explicit use or discard (R18, R19). A failed ``hc keys`` call holds it
-    too. Only the bound terminal is ever targeted (R17).
+    Re-reads the bound terminal through ``hc get`` and pastes the
+    whitespace-normalized single-line transcript through an attach — one
+    bracketed paste, no Enter (R16) — then checks the terminal again. A
+    blocked or busy agent receives nothing: the refusal is spoken and the
+    transcript is held for the operator's explicit use or discard (R18,
+    R19). So is a transcript that would run as a command, and one whose
+    paste could not be sent. Only the bound terminal is ever targeted
+    (R17).
 
     The transcript is held before the refusal is spoken, so the hold
-    survives even when speech itself fails. Both hc calls go through U1's
-    process helper under the pinned deadline with standard input closed;
-    the seams mirror KTD12 so tests never run the real CLI.
+    survives even when speech itself fails. ``hc get`` goes through U1's
+    process helper and the paste through its bounded conversation, both
+    under the pinned deadline; the seams mirror KTD12 so tests never run
+    the real CLI.
     """
-    line = _single_line(text)
+    line = herdr_core.paste_safe(_single_line(text))
     if not line:
         raise DeliveryRefusal(
             "there is nothing to deliver; the transcript is empty"
@@ -194,13 +194,13 @@ def deliver(
     terminal = report.binding.terminal
     run_process = functools.partial(process.run, spawn=spawn)
 
-    untypable = _untypable_reason(line)
-    if untypable is not None:
+    if line.startswith(_COMMAND_PREFIXES):
         _hold_refused(text)
-        speak_text(UNTYPABLE_REFUSAL_PHRASE)
+        speak_text(COMMAND_REFUSAL_PHRASE)
         raise DeliveryRefusal(
-            f"{untypable}; nothing was typed — the transcript is held for "
-            "explicit use or discard"
+            f"the transcript starts with {line[0]!r}, which Claude Code would run "
+            "as a command when you press Enter; nothing was pasted — the "
+            "transcript is held for explicit use or discard"
         )
 
     before = _resolve_terminal(agent_name, terminal, run_process=run_process)
@@ -219,24 +219,39 @@ def deliver(
         shown = repr(status) if status is not None else "not reporting a status"
         raise DeliveryRefusal(
             f"the bound agent {agent_name!r} is {shown}, not idle or done; nothing was "
-            "typed — the transcript is held for explicit use or discard"
+            "pasted — the transcript is held for explicit use or discard"
         )
+    cols, rows = before.get("cols"), before.get("rows")
+    change = None
     try:
-        typed = herdr_core.type_text(
-            terminal, line, timeout=HC_TIMEOUT_SECONDS, run_process=run_process
+        if not _is_size(cols) or not _is_size(rows):
+            raise herdr_core.PasteRefusal(
+                "hc get reported no terminal size to attach at, and a guessed "
+                "size would resize the terminal"
+            )
+        attached = herdr_core.paste_text(
+            terminal,
+            line,
+            cols=cols,
+            rows=rows,
+            timeout=HC_TIMEOUT_SECONDS,
+            converse=converse,
         )
+    except herdr_core.PasteUncertain as uncertain:
+        change = uncertain.reason
     except herdr_core.CoreRefusal as refusal:
         _hold_refused(text)
         raise DeliveryRefusal(
-            f"delivery failed: {refusal.reason} — the transcript is held for "
-            "explicit use or discard"
+            f"delivery failed: {refusal.reason} — nothing was pasted; the "
+            "transcript is held for explicit use or discard"
         ) from refusal
-    change = _change_while_typing(
-        terminal, before, typed, run_process=run_process
-    )
+    else:
+        change = _change_while_pasting(
+            terminal, before, attached, run_process=run_process
+        )
     if change is not None:
         warning = (
-            f"the transcript was typed into {agent_name!r}, but {change}; it may "
+            f"the transcript was pasted into {agent_name!r}, but {change}; it may "
             "have reached a prompt instead of the input box. Nothing was "
             "submitted — check the session before pressing Enter"
         )
@@ -247,29 +262,20 @@ def deliver(
         raise DeliveryUncertain(warning)
 
 
-def _untypable_reason(line: str) -> str | None:
-    """Why ``line`` cannot be typed exactly, or ``None`` when it can."""
-    try:
-        herdr_core.key_names(line)
-    except herdr_core.UntypableText as untypable:
-        return untypable.reason
-    if line.startswith(_COMMAND_PREFIXES):
-        return (
-            f"the transcript starts with {line[0]!r}, which would open Claude "
-            "Code's command menu instead of landing as text"
-        )
-    return None
+def _is_size(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def use_refused(
     *,
     spawn: Callable = subprocess.run,
+    converse: Callable = process.converse,
     speak_text: Callable = speak.speak,
 ) -> None:
     """Explicitly use the held refused transcript (R19).
 
     Reads the hold file and delivers that text, deleting the hold only
-    after the keys went in (including a typing the agent may have caught
+    after the paste was sent (including a paste the agent may have caught
     in a prompt, which is reported, not retried). When the agent is still blocked, delivery
     refuses again and the transcript is held anew — it is never forced
     through. Any other delivery failure likewise leaves the hold in
@@ -284,9 +290,9 @@ def use_refused(
             "there is no refused transcript to use"
         ) from error
     try:
-        deliver(text, spawn=spawn, speak_text=speak_text)
+        deliver(text, spawn=spawn, converse=converse, speak_text=speak_text)
     except DeliveryUncertain:
-        # The keys went in; keeping the hold would invite typing it twice.
+        # The paste was sent; keeping the hold would invite pasting it twice.
         path.unlink(missing_ok=True)
         raise
     path.unlink(missing_ok=True)
@@ -358,42 +364,44 @@ def _resolve_terminal(
     return record
 
 
-def _change_while_typing(
-    terminal: str, before: dict, typed: dict, *, run_process: Callable
+def _change_while_pasting(
+    terminal: str, before: dict, attached: dict, *, run_process: Callable
 ) -> str | None:
-    """What changed while the keys went in, or ``None`` when nothing did.
+    """What changed around the paste, or ``None`` when nothing did.
 
-    Compares the status and turn ``hc keys`` reported for the moment its
-    keys went in, then a fresh ``hc get``, against the idle record read
-    before typing. A status that is not idle or done (a blocked one names its
-    question when the program gave one), a turn that moved, or a terminal
-    that can no longer be read all count as a change.
+    Compares the terminal record in the attach reply (its status and turn
+    at the moment of attaching), then a fresh ``hc get``, against the
+    settled record read before pasting. A status that is not idle or done
+    (a blocked one names its question when the program gave one), a turn
+    that moved, or a terminal that can no longer be read all count.
     """
     turn = herdr_core.turn_of(before)
-    status = typed.get("status")
-    if status not in TYPABLE_STATUSES:
-        return f"hc keys reported its status as {status!r} when the keys went in"
-    if typed.get("turn") != turn:
-        return "its turn moved while the keys went in"
-    try:
-        after = herdr_core.get_terminal(
-            terminal, timeout=HC_TIMEOUT_SECONDS, run_process=run_process
-        )
-    except herdr_core.CoreRefusal as refusal:
-        return f"it could not be read again after typing ({refusal.reason})"
-    status = herdr_core.status_word(after)
-    if status not in TYPABLE_STATUSES:
-        reported = after.get("status")
-        question = reported.get("msg") if isinstance(reported, dict) else None
-        asked = ""
-        if isinstance(question, str) and herdr_core.printable(question):
-            # The program wrote this text; strip anything that could act as a
-            # terminal escape sequence before the operator sees it.
-            asked = f" ({herdr_core.printable(question)})"
-        return f"its status is now {status!r}{asked}"
-    if herdr_core.turn_of(after) != turn:
-        return "its turn moved while the keys went in"
+    for label, record in (("when the paste attached", attached), (None, None)):
+        if record is None:
+            try:
+                record = herdr_core.get_terminal(
+                    terminal, timeout=HC_TIMEOUT_SECONDS, run_process=run_process
+                )
+            except herdr_core.CoreRefusal as refusal:
+                return f"it could not be read again after the paste ({refusal.reason})"
+            label = "now"
+        status = herdr_core.status_word(record)
+        if status not in TYPABLE_STATUSES:
+            return f"its status was {status!r} {label}{_question(record)}"
+        if herdr_core.turn_of(record) != turn:
+            return f"its turn had moved {label}"
     return None
+
+
+def _question(record: dict) -> str:
+    """The question a blocked program asked, cleaned for display, or nothing."""
+    reported = record.get("status")
+    question = reported.get("msg") if isinstance(reported, dict) else None
+    if isinstance(question, str) and herdr_core.printable(question):
+        # The program wrote this text; strip anything that could act as a
+        # terminal escape sequence before the operator sees it.
+        return f" ({herdr_core.printable(question)})"
+    return ""
 
 
 def _hold_refused(text: str) -> None:

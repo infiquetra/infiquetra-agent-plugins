@@ -15,9 +15,18 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import herdr_core  # noqa: E402
 import settings  # noqa: E402
+from hc_stub import (  # noqa: E402
+    AUTOMATIC_INPUT,
+    CLOSE,
+    CREDIT,
+    DATA,
+    FakeConversation,
+    attach_server,
+)
 
 
 def _completed(stdout: str = "", returncode: int = 0, stderr: str = ""):
@@ -120,7 +129,7 @@ class GetTerminalTests(unittest.TestCase):
                 self.assertIn(expected, caught.exception.reason)
 
 
-class LabelAndKeysTests(unittest.TestCase):
+class LabelTests(unittest.TestCase):
     def test_label_session_writes_the_voice_session_label(self) -> None:
         run = _RunSeam(_completed())
         herdr_core.label_session(
@@ -130,90 +139,152 @@ class LabelAndKeysTests(unittest.TestCase):
             run.calls[0][0], ["hc", "label", "t21", "voice.agent-session=session-abc"]
         )
 
-    def test_type_text_presses_one_key_per_character_and_never_enter(self) -> None:
-        run = _RunSeam(_completed())
-        herdr_core.type_text("t7", "Hi, you.", timeout=10.0, run_process=run, hc="hc")
-        command, kwargs = run.calls[0]
+
+#: Every character hc keys rejected or mistyped on herdr core 0.1.20, plus
+#: text outside ASCII. The paste must carry all of them intact.
+_HARD_TEXT = 'Is it? Yes! "q" a:b (c) @me #1 $2 50% & * + _ ~ ^ {x} |y| <z> A é 漢字 😀'
+
+
+class PasteTests(unittest.TestCase):
+    """A paste through `hc connect` and an attach, against a scripted core."""
+
+    def _paste(self, line: str = "Hello there", **server):
+        talk = FakeConversation(attach_server(**server))
+        record = herdr_core.paste_text(
+            "t7", line, cols=100, rows=30, timeout=10.0, converse=talk, hc="hc"
+        )
+        return talk, record
+
+    def test_a_paste_is_one_bracketed_input_frame_and_a_clean_detach(self) -> None:
+        talk, record = self._paste()
+        self.assertEqual(talk.argv, ["hc", "connect"])
+        self.assertEqual(talk.timeout, 10.0)
         self.assertEqual(
-            command,
-            ["hc", "keys", "t7", "shift+h", "i", ",", "space", "y", "o", "u", "."],
+            talk.client_hello(),
+            {"jsonrpc": "2.0", "id": 0, "method": "hello", "params": {"framed": True}},
         )
-        self.assertNotIn("enter", command)
-        self.assertEqual(kwargs, {"timeout": 10.0, "check": True})
-
-    def test_type_text_returns_the_status_and_turn_hc_keys_reported(self) -> None:
-        run = _RunSeam(_completed(json.dumps({"status": "blocked", "turn": 9})))
-        result = herdr_core.type_text("t7", "ok", timeout=10.0, run_process=run, hc="hc")
-        self.assertEqual(result, {"status": "blocked", "turn": 9})
-        for stdout in ("", "not json", "[]"):
-            with self.subTest(stdout=stdout):
-                run = _RunSeam(_completed(stdout))
-                self.assertEqual(
-                    herdr_core.type_text("t7", "ok", timeout=10.0, run_process=run, hc="hc"),
-                    {},
-                )
-
-    def test_type_text_never_uses_hc_send(self) -> None:
-        run = _RunSeam(_completed())
-        herdr_core.type_text("t7", "Deploy it", timeout=10.0, run_process=run, hc="hc")
-        self.assertNotIn("send", run.calls[0][0])
-
-    def test_type_text_with_nothing_to_type_is_refused_and_runs_nothing(self) -> None:
-        run = _RunSeam()
-        with self.assertRaises(herdr_core.CoreRefusal):
-            herdr_core.type_text("t7", "", timeout=10.0, run_process=run, hc="hc")
-        self.assertEqual(run.calls, [])
-
-    def test_a_rejected_key_name_is_carried_into_the_refusal(self) -> None:
-        stderr = json.dumps(
-            {"error": {"kind": "invalid_params", "message": "unknown key ~"}}
-        )
-        run = _RunSeam(
-            subprocess.CalledProcessError(1, ["hc"], output="", stderr=stderr)
-        )
-        with self.assertRaises(herdr_core.CoreRefusal) as caught:
-            herdr_core.type_text("t7", "a-b", timeout=10.0, run_process=run, hc="hc")
-        self.assertIn("unknown key ~", caught.exception.reason)
-
-    def test_untypable_text_is_refused_before_any_hc_call(self) -> None:
-        run = _RunSeam()
-        with self.assertRaises(herdr_core.UntypableText):
-            herdr_core.type_text("t7", "Why?", timeout=10.0, run_process=run, hc="hc")
-        self.assertEqual(run.calls, [])
-
-
-class KeyNameTests(unittest.TestCase):
-    """Only characters herdr core 0.1.20 was seen to type exactly are mapped."""
-
-    def test_letters_digits_spaces_and_plain_punctuation_map(self) -> None:
+        frames = talk.client_frames()
+        attach = json.loads(frames[0][2])
+        self.assertEqual(frames[0][:2], (0, DATA))
+        self.assertEqual(attach["method"], "terminal.attach")
         self.assertEqual(
-            herdr_core.key_names("ab 09 .,'-;/=`[]"),
-            ["a", "b", "space", "0", "9", "space",
-             ".", ",", "'", "-", ";", "/", "=", "`", "[", "]"],
+            attach["params"],
+            {
+                "caller": None,
+                "cols": 100,
+                "rows": 30,
+                "history": 0,
+                "observe": False,
+                "terminal": "t7",
+            },
+        )
+        # The first paint is credited back, as `hc attach` does.
+        self.assertEqual(frames[1][:2], (1, CREDIT))
+        self.assertGreater(int.from_bytes(frames[1][2], "little"), 0)
+        self.assertEqual(
+            frames[2], (1, AUTOMATIC_INPUT, b"\x1b[200~Hello there\x1b[201~")
+        )
+        self.assertEqual(frames[3], (1, CLOSE, b""))
+        self.assertEqual(len(frames), 4)
+        self.assertIsNotNone(talk.finished)
+        self.assertEqual(record["address"], "t7")
+
+    def test_every_character_keys_could_not_type_arrives_intact(self) -> None:
+        talk, _ = self._paste(_HARD_TEXT)
+        self.assertEqual(
+            talk.pastes(),
+            [b"\x1b[200~" + _HARD_TEXT.encode("utf-8") + b"\x1b[201~"],
         )
 
-    def test_a_capital_letter_is_shift_plus_its_lowercase(self) -> None:
-        # A bare "A" types "a" in hc keys; only shift+a types "A".
-        self.assertEqual(herdr_core.key_names("AZ"), ["shift+a", "shift+z"])
+    def test_the_paste_never_carries_enter_escape_or_a_planted_end_marker(self) -> None:
+        talk, _ = self._paste("a\x1b[201~b\rc\nd\x9be\x00f\x7fg")
+        (payload,) = talk.pastes()
+        self.assertEqual(payload, b"\x1b[200~a[201~bcdefg\x1b[201~")
+        self.assertEqual(payload.count(b"\x1b"), 2)
+        self.assertNotIn(b"\r", payload)
+        self.assertNotIn(b"\n", payload)
 
-    def test_untypable_characters_refuse_the_whole_line(self) -> None:
-        with self.assertRaises(herdr_core.UntypableText) as caught:
-            herdr_core.key_names("Is it ready? Yes! Is it? é")
-        self.assertEqual(caught.exception.characters, ["?", "!", "é"])
-        self.assertIn("'?'", caught.exception.reason)
+    def test_the_echo_of_the_paste_is_credited_before_the_close(self) -> None:
+        talk, _ = self._paste(echo=b"Hello there")
+        kinds = [kind for _, kind, _ in talk.client_frames()]
+        self.assertEqual(kinds, [DATA, CREDIT, AUTOMATIC_INPUT, CLOSE, CREDIT])
 
-    def test_every_character_hc_keys_rejected_or_mistyped_is_untypable(self) -> None:
-        # Rejected by herdr core 0.1.20, or typed as something else (a
-        # backslash is left out on purpose: before Enter it means new line).
-        for character in '?!":()@#$%&*+_~^{}|<>\\\t\né€':
-            with self.subTest(character=character):
-                with self.assertRaises(herdr_core.UntypableText):
-                    herdr_core.key_names(f"a{character}b")
+    def test_plain_data_is_used_when_automatic_input_is_not_offered(self) -> None:
+        talk, _ = self._paste(automatic_input=False)
+        self.assertIn((1, DATA, b"\x1b[200~Hello there\x1b[201~"), talk.client_frames())
 
-    def test_no_key_name_ever_submits(self) -> None:
-        keys = herdr_core.key_names("Send it now, please.")
-        for name in ("enter", "return", "\n", "\r"):
-            self.assertNotIn(name, keys)
+    def test_a_program_without_bracketed_paste_gets_nothing(self) -> None:
+        talk = FakeConversation(attach_server(paint=b"\x1b[?2004h\x1b[?2004l> "))
+        with self.assertRaises(herdr_core.PasteRefusal) as caught:
+            herdr_core.paste_text("t7", "hi", cols=100, rows=30, timeout=10.0, converse=talk)
+        self.assertIn("bracketed paste", caught.exception.reason)
+        self.assertEqual(talk.pastes(), [])
+        self.assertEqual(talk.client_frames()[-1], (1, CLOSE, b""))
+        self.assertIsNotNone(talk.finished)
+
+    def test_a_refused_attach_is_named_and_cleaned_for_display(self) -> None:
+        talk = FakeConversation(
+            attach_server(attach_error={"code": -32000, "message": "not_found\x1b[2J"})
+        )
+        with self.assertRaises(herdr_core.PasteRefusal) as caught:
+            herdr_core.paste_text("t7", "hi", cols=100, rows=30, timeout=10.0, converse=talk)
+        self.assertIn("not_found", caught.exception.reason)
+        self.assertNotIn("\x1b", caught.exception.reason)
+        self.assertEqual(talk.pastes(), [])
+
+    def test_a_core_without_framed_attach_gets_nothing_but_hello(self) -> None:
+        talk = FakeConversation(
+            attach_server(hello={"id": 0, "result": {"framed": False, "features": []}})
+        )
+        with self.assertRaises(herdr_core.PasteRefusal):
+            herdr_core.paste_text("t7", "hi", cols=100, rows=30, timeout=10.0, converse=talk)
+        self.assertEqual(talk.client_frames(), [])
+
+    def test_an_attach_to_another_terminal_gets_nothing(self) -> None:
+        talk = FakeConversation(attach_server(terminal="t8"))
+        with self.assertRaises(herdr_core.PasteRefusal):
+            herdr_core.paste_text("t7", "hi", cols=100, rows=30, timeout=10.0, converse=talk)
+        self.assertEqual(talk.pastes(), [])
+
+    def test_a_connection_that_ends_before_the_paste_is_a_refusal(self) -> None:
+        for stop_after in ("hello", "reply", None):
+            with self.subTest(stop_after=stop_after):
+                script = attach_server(stop_after=stop_after) if stop_after else b""
+                talk = FakeConversation(script)
+                with self.assertRaises(herdr_core.PasteRefusal):
+                    herdr_core.paste_text(
+                        "t7", "hi", cols=100, rows=30, timeout=10.0, converse=talk
+                    )
+                self.assertEqual(talk.pastes(), [])
+
+    def test_a_connection_that_ends_after_the_paste_is_uncertain(self) -> None:
+        talk = FakeConversation(attach_server(close_echo=False))
+        with self.assertRaises(herdr_core.PasteUncertain) as caught:
+            herdr_core.paste_text("t7", "hi", cols=100, rows=30, timeout=10.0, converse=talk)
+        self.assertIn("did not close cleanly", caught.exception.reason)
+        self.assertEqual(len(talk.pastes()), 1)
+
+    def test_a_passed_deadline_is_named(self) -> None:
+        talk = FakeConversation(attach_server(stop_after="hello"), expired=True)
+        with self.assertRaises(herdr_core.PasteRefusal) as caught:
+            herdr_core.paste_text("t7", "hi", cols=100, rows=30, timeout=10.0, converse=talk)
+        self.assertIn("10-second deadline", caught.exception.reason)
+
+    def test_nothing_left_to_paste_never_starts_hc(self) -> None:
+        talk = FakeConversation(attach_server())
+        with self.assertRaises(herdr_core.PasteRefusal):
+            herdr_core.paste_text("t7", "\x1b\x07", cols=100, rows=30, timeout=10.0, converse=talk)
+        self.assertFalse(talk.called)
+
+    def test_bracketed_paste_mode_is_the_last_word_in_the_paint(self) -> None:
+        on, off = b"\x1b[?2004h", b"\x1b[?2004l"
+        self.assertTrue(herdr_core.bracketed_paste_on(off + b"x" + on))
+        self.assertFalse(herdr_core.bracketed_paste_on(on + b"x" + off))
+        self.assertFalse(herdr_core.bracketed_paste_on(b"no modes at all"))
+
+    def test_paste_safe_keeps_text_and_spacing_but_drops_controls(self) -> None:
+        self.assertEqual(herdr_core.paste_safe("  a  b é 😀 "), "  a  b é 😀 ")
+        self.assertEqual(herdr_core.paste_safe("a\tb\x1bc\x85d"), "abcd")
 
 
 #: Every character a terminal acts on: C0 controls (ESC, BEL, NUL ...), DEL
