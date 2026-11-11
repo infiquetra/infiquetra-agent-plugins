@@ -95,6 +95,25 @@ class SessionStartHookTests(unittest.TestCase):
                 self.assertEqual(code, 0)
 
 
+class SessionStartRegistrationTests(unittest.TestCase):
+    """The hook runs on every SessionStart source, briefly, and cannot block."""
+
+    def test_registered_for_every_source_with_a_short_timeout(self) -> None:
+        hooks = json.loads(
+            (_PACKAGE / "com.infiquetra.claude" / "hooks" / "hooks.json").read_text(
+                encoding="utf-8"
+            )
+        )["hooks"]["SessionStart"]
+        self.assertEqual(len(hooks), 1)
+        # No matcher: startup, resume, clear and compact all run it, because
+        # /clear starts a new session id.
+        self.assertNotIn("matcher", hooks[0])
+        (command,) = hooks[0]["hooks"]
+        self.assertIn("session_start_hook.py", command["command"])
+        self.assertLessEqual(command["timeout"], 5)
+        self.assertEqual(session_start_hook.HC_TIMEOUT_SECONDS, 2.0)
+
+
 class SessionStartHookProcessTests(unittest.TestCase):
     """Runs the hook file as Claude does: ``python3 <hook>`` with the payload on stdin."""
 
