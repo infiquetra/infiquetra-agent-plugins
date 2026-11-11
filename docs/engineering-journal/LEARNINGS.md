@@ -2,6 +2,38 @@
 
 ## 2026-11-11
 
+### A prepare-side result must not depend on the clock, nor write into the packet
+
+**Evidence.** In a measured run, most versions' two prepares gave different packets. The mutation
+results came from whichever mutants had finished before a time limit (`partial-cap`), and running
+the tests over the packet's dependency environment wrote `__pycache__/*.pyc` files into the
+packet's `site-packages`. The fix runs a fixed number of changed-line mutants in a stable order
+(`review_adapters_python._COSMIC_BUDGET`), keeps the time limit as a safety stop that reports
+nothing, and turns bytecode writes off in the environment (`review_dependencies.python_shim_env`);
+tests `test_cosmic_ray_budget_runs_the_same_mutants_every_time` and
+`test_a_run_over_the_python_environment_leaves_the_packet_s_packages_untouched`.
+
+**Mechanism.** Anything that varies with machine load (how far a time-limited run got) or that a
+run leaves behind in an input folder (bytecode caches) makes two prepares of one change differ.
+
+**Generalizable rule.** Bound review work by count in a stable order, keep time limits as stops that
+report nothing partial, and never let a run write into the inputs it reads.
+
+### Surviving mutants on changed lines appear on clean changes as often as on broken ones
+
+**Evidence.** Once mutation testing ran on every Python packet, clean versions of changes had
+about as many survivors on their changed lines as the versions with planted defects, and an
+earlier wider run showed changes blocked by surviving mutants alone about as often on clean
+versions as on defect versions. `testing.surviving-mutant` now fixes later, and the reviewer
+prompt's "Surviving mutants on the change's lines" section has the reviewer escalate a survivor on
+the line the change exists for.
+
+**Mechanism.** Most changed lines carry mutants no reasonable test pins (log text, defaults,
+formatting); only a survivor on the change's purpose line says its tests miss the point.
+
+**Generalizable rule.** Treat a surviving mutant as a lead the reviewer weighs against the change's
+purpose, not as a verdict.
+
 ### A new test that passes before the change is a lead, not a defect
 
 **Evidence.** Once the two-runs check ran in a measured prepare, it flagged several new tests on a

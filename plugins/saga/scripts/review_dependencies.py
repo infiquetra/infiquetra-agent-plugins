@@ -370,11 +370,15 @@ def write_python_shim(directory: Path, deps: PythonDependencies, python: str) ->
 
 
 def python_shim_env(shim: Path, path: str | None = None) -> dict[str, str]:
-    """The shim's ``bin`` first on ``PATH``, and ``VIRTUAL_ENV``: for sandboxed commands only."""
+    """The shim's ``bin`` first on ``PATH``, ``VIRTUAL_ENV``, and no bytecode writes: for the
+    commands that run the change's code over the packet's packages."""
     rest = os.environ.get("PATH", "") if path is None else path
     return {
         "PATH": os.pathsep.join([str(shim / "bin"), *([rest] if rest else [])]),
         "VIRTUAL_ENV": str(shim),
+        # Importing the packet's packages must never write bytecode beside them: the packet stays
+        # byte-for-byte what the fetch wrote, so two prepares match and the reviewer gets it as is.
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
 
 

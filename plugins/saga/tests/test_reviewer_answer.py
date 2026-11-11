@@ -148,6 +148,15 @@ def test_prompt_tells_the_reviewer_how_to_judge_a_two_runs_lead() -> None:
     assert "leave the lead alone" in text
 
 
+def test_prompt_tells_the_reviewer_how_to_judge_a_surviving_mutant_lead() -> None:
+    text = " ".join(_section("Surviving mutants on the change's lines").split())
+    assert "testing.surviving-mutant" in text and "findings.json" in text
+    assert "a lead, not a block" in text
+    assert "testing.accepts-broken-code" in text and "`traced`" in text
+    assert "(file, line, operator)" in text and "still pass with it" in text
+    assert "incidental" in text and "leave the lead alone" in text
+
+
 def test_prompt_requires_a_sandboxed_reproduction_with_test_command_and_output() -> None:
     text = _section("Reproduce what you believe")
     assert "scratch copy" in text and "Only test files may change" in text

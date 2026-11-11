@@ -1022,7 +1022,7 @@ def _stryker_repo(tmp_path: Path) -> tuple[Path, Path]:
     return repo, source
 
 
-def test_stryker_survivor_on_changed_lines_blocks(tmp_path: Path) -> None:
+def test_stryker_survivor_on_changed_lines_is_a_lead(tmp_path: Path) -> None:
     repo, source = _stryker_repo(tmp_path)
     base = _commit(repo, "base")
     text = source.read_text(encoding="utf-8").splitlines(keepends=True)
@@ -1056,7 +1056,7 @@ def test_stryker_survivor_on_changed_lines_blocks(tmp_path: Path) -> None:
     assert {finding["rule"]["ref"] for finding in findings} == {"surviving-mutant"}
     assert findings[0]["location"]["file"] == "src/example.js"
     assert "ArithmeticOperator" in findings[0]["statement"]
-    assert _severity(output, "surviving-mutant") == "blocks"
+    assert _severity(output, "surviving-mutant") == "fix-later"
 
 
 def test_stryker_past_deadline_records_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

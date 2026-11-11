@@ -2,6 +2,36 @@
 
 ## 2026-11-11
 
+### Mutation testing is a deterministic lead with a fixed mutant budget
+
+**Decision.** `testing.surviving-mutant` fixes later for every language, keeps its builder excuse,
+and the reviewer escalates a survivor on the change's purpose line as
+`testing.accepts-broken-code` with traced evidence naming the mutant. cosmic-ray runs at most 10
+changed-line mutants, chosen in a stable order (file, line, column, operator, occurrence), against
+at most 10 test files that mention a mutated module, and each mutant's run stops at its first
+failing test; `mutant-budget` records how many changed-line mutants were left out. The numbers come
+from a large real change (over 3,000 changed-line mutants): with 30 test files a single baseline
+took about 250 seconds and three mutants could not finish inside the cap; with 10 test files and
+`-x`, the baseline took about 170 seconds (and its rerun without failing tests 145), and 10 mutants
+took about 300 seconds, about 30 each, so the session finished in about 620 seconds, well inside
+the 900 second cap with room for slower machines.
+The time limit stays only as a safety stop 60 seconds inside the cap, reported as `cap` with no
+survivors. Runs over the packet's Python environment set `PYTHONDONTWRITEBYTECODE=1`.
+
+**Rejected alternatives.** Reporting the mutants that finished before a time limit (`partial-cap`):
+the set depends on machine load, so two prepares differ. Sampling mutants at random with a fixed
+seed: stable, but it spreads the budget over files instead of reading the change in order. A
+bytecode prefix folder: it also works, but turning writes off covers every child process with one
+variable and leaves nothing to clean.
+
+**Rationale.** A packet must be the same for the same change, and a survivor is evidence for the
+reviewer, not a verdict.
+
+**Revisit when.** A budgeted run regularly reaches the safety stop on ordinary changes, or reviews
+show the budget leaves the purpose lines of large changes unmutated.
+
+---
+
 ### Two-runs is a reviewer lead; the reviewer escalates the purpose test
 
 **Decision.** `testing.test-passes-before-change` fixes later instead of blocking, keeps its builder

@@ -294,6 +294,22 @@ whether the test is meant to check what the change adds or fixes.
 - If it pins behaviour the change keeps, such as an existing path that still works or a fallback
   that still applies, leave the lead alone. It needs no finding of yours.
 
+### Surviving mutants on the change's lines
+
+Saga also lists mutants on lines the change added or edited that no test killed, on row
+`testing.surviving-mutant` in `findings.json`, each with its file, line and operator. That row is a
+lead, not a block: survivors on changed lines are as common on sound changes as on broken ones.
+
+For each, decide whether the mutated line belongs to the behaviour the change exists to add or fix,
+such as the new branch, the fixed condition or the new error path.
+
+- If it does, the mutant shows no test checks that behaviour. Cite `testing.accepts-broken-code`
+  with `traced` evidence and `introduced: true`. The `proof.steps` name the mutant (file, line,
+  operator), say that the change's tests still pass with it, and say why that line is the change's
+  purpose.
+- If the line is incidental, such as logging, formatting or a default the change only moved, leave
+  the lead alone.
+
 ## Disputes
 
 The builder record says, for each policy question, whether it applies and which test proves it is

@@ -51,7 +51,7 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 # Row: (base outcome, builder reason kind that excuses it, blocks when reproduced)
 EXPECTED_ROWS: dict[str, tuple[str, str | None, bool]] = {
     "testing.uncovered-branch": ("blocks", "coverage-gap", False),
-    "testing.surviving-mutant": ("blocks", "surviving-mutant", False),
+    "testing.surviving-mutant": ("fix-later", "surviving-mutant", False),
     "testing.test-passes-before-change": ("fix-later", "test-passes-before-change", False),
     "testing.test-skipped-in-ci": ("blocks", "test-skipped-in-ci", False),
     "testing.accepts-broken-code": ("blocks", None, False),
@@ -487,7 +487,7 @@ def test_jev_cannot_answer_the_llm_pick_applies_and_is_unconfirmed() -> None:
 
 def test_jev_only_never_blocks() -> None:
     finding = tool_finding(
-        "testing.surviving-mutant",
+        "testing.uncovered-branch",
         source={"kind": "classifier", "name": "jev", "model": "example-classifier"},
     )
     result = F.outcome(finding)
@@ -500,7 +500,7 @@ def test_jev_only_never_blocks() -> None:
 
 def test_a_degraded_blocking_input_counts_as_fix_later_and_is_marked() -> None:
     result = F.compute(
-        {"findings": [tool_finding("testing.surviving-mutant", degraded=True)]}
+        {"findings": [tool_finding("testing.uncovered-branch", degraded=True)]}
     )
     finding = result["findings"][0]
     assert finding["severity"] == "fix-later"
@@ -755,13 +755,13 @@ def test_a_tool_finding_is_never_capped_as_pre_existing() -> None:
     names.
     """
     outside = tool_finding(
-        "testing.surviving-mutant", introduced=True, location=located("template.yaml", 1, 1),
+        "testing.uncovered-branch", introduced=True, location=located("template.yaml", 1, 1),
     )
     result = F.outcome(outside, changed_lines=CHANGED)
     assert result["severity"] == "blocks"
     assert result["severity_basis"]["modifiers"] == []
     not_introduced = tool_finding(
-        "testing.surviving-mutant", "rf:3", introduced=False,
+        "testing.uncovered-branch", "rf:3", introduced=False,
         location=located("template.yaml", 1, 1),
     )
     assert F.outcome(not_introduced, changed_lines=CHANGED)["severity"] == "blocks"

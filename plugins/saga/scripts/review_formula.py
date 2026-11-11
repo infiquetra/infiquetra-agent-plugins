@@ -244,7 +244,10 @@ _PATTERN_CHECKS = (
 ROWS: Mapping[str, Row] = _rows(
     # Testing
     Row("testing.uncovered-branch", "testing", "blocks", excused_by="coverage-gap"),
-    Row("testing.surviving-mutant", "testing", "blocks", excused_by="surviving-mutant"),
+    # A lead for the reviewer, not a block: survivors on changed lines are as common on clean
+    # changes as on defective ones. The reviewer escalates a survivor on the line the change
+    # exists for as testing.accepts-broken-code.
+    Row("testing.surviving-mutant", "testing", "fix-later", excused_by="surviving-mutant"),
     # A lead for the reviewer, not a block: a new test that passes before the change is as often
     # one pinning behaviour the change keeps as one that fails to check what the change adds. The
     # reviewer escalates the second kind as testing.accepts-broken-code.

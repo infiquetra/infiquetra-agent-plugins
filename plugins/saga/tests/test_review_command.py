@@ -4180,3 +4180,21 @@ def test_the_environment_uses_the_interpreter_the_packet_was_installed_for(
         assert any(path == prefix / "lib" for path in offline.toolchain) or not (
             prefix / "lib").is_dir()
     assert asked == ["3.0"]
+
+
+def test_the_python_environment_never_writes_bytecode_into_the_packet(tmp_path: Path) -> None:
+    """The re-run, and prepare's testing checks, import the packet's packages with bytecode
+    writes off, so the packet's dependency folder stays what the fetch wrote."""
+    packet, _runner = _python_packet(tmp_path)
+    site = packet / "dependencies" / "python" / "site-packages"
+    before = sorted(path.relative_to(site).as_posix() for path in site.rglob("*"))
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None and offline.python is not None
+        assert offline.env["PYTHONDONTWRITEBYTECODE"] == "1"
+        env = {**C.child_environment(tmp_path), **offline.env}
+        ran = subprocess.run(
+            [str(offline.python / "bin" / "python3"), "-c", "import inertdep"],
+            env=env, capture_output=True, text=True, timeout=60, check=False,
+        )
+        assert ran.returncode == 0, ran.stderr
+    assert sorted(path.relative_to(site).as_posix() for path in site.rglob("*")) == before

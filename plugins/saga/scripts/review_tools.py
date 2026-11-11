@@ -334,6 +334,9 @@ class ParseResult:
     problems: tuple[str, ...] = ()
     items: tuple[Mapping[str, Any], ...] = ()
     gaps: tuple[tuple[str, str], ...] = ()
+    #: ``(reason, detail)``: a short fixed-form detail the degraded entry for that gap carries,
+    #: such as how many mutants a budget left out.
+    gap_details: tuple[tuple[str, str], ...] = ()
     #: A parse-time degraded input as ``(reason, row)``. Set when the output
     #: proves the run cannot answer its row (a shuffle run that executed zero
     #: tests) instead of emitting findings.
@@ -1808,6 +1811,7 @@ def _once(
             tuple(replace(hit, degraded=True) for hit in parsed.hits),
             unfinished=True,
             unfinished_reason=parsed.unfinished_reason,
+            gap_details=parsed.gap_details,
             problems=parsed.problems,
             items=parsed.items,
             gaps=parsed.gaps,
@@ -2364,8 +2368,12 @@ def _absorb(
     items: list[Mapping[str, Any]],
 ) -> None:
     """Record gaps without dropping hits. Where-to-look items come from the head scan only."""
+    details = dict(parsed.gap_details)
     for reason, row in parsed.gaps:
-        degraded.append(_degraded(adapter, row, reason))
+        entry = _degraded(adapter, row, reason)
+        if reason in details:
+            entry["detail"] = details[reason]
+        degraded.append(entry)
     if label == "head":
         items.extend(parsed.items)
 

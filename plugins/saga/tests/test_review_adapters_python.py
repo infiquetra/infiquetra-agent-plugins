@@ -1106,7 +1106,7 @@ def test_import_linter_without_a_contract_does_not_degrade(tmp_path: Path) -> No
     assert not any("--config" in argv for argv in runner.calls)
 
 
-def test_cosmic_ray_survivor_on_a_changed_line_blocks(tmp_path: Path) -> None:
+def test_cosmic_ray_survivor_on_a_changed_line_is_a_lead_that_fixes_later(tmp_path: Path) -> None:
     kept = tmp_path / "kept-cosmic-ray.toml"
     repo, base, head = _cosmic_changed(tmp_path)
     payload = json.dumps({"unfinished": False, "survivors": [{"path": "app.py", "line": 1}]})
@@ -1121,7 +1121,7 @@ def test_cosmic_ray_survivor_on_a_changed_line_blocks(tmp_path: Path) -> None:
     assert base in toml
     assert "-p no:randomly" in toml
     assert _row(output, "surviving-mutant") == "testing.surviving-mutant"
-    assert _severity(output, "surviving-mutant") == "blocks"
+    assert _severity(output, "surviving-mutant") == "fix-later"
 
 
 def test_cosmic_ray_module_path_lists_every_changed_python_file(tmp_path: Path) -> None:
@@ -1599,7 +1599,9 @@ def test_cosmic_ray_array_dump_yields_one_finding_per_survivor(tmp_path: Path) -
     config = _wrapper_config(tmp_path / "cosmic-ray.toml", f"{sys.executable} -c pass")
     out = _run_wrapper(config, tmp_path, env)
     assert out["unfinished"] is False
-    assert out["survivors"] == [{"path": "app.py", "line": 2}]
+    assert out["survivors"] == [
+        {"path": "app.py", "line": 2, "operator": "core/ReplaceBinaryOperator_Add_Sub"},
+    ]
 
 
 def test_cosmic_ray_array_dump_without_a_position_is_unfinished(tmp_path: Path) -> None:
@@ -2045,6 +2047,7 @@ def test_cosmic_ray_runs_pytest_with_the_python_environment_s_interpreter(
     with open(kept, "rb") as handle:
         written = tomllib.load(handle)["cosmic-ray"]["test-command"]
     assert shlex.split(written) == [
+        "env", "PYTHONDONTWRITEBYTECODE=1",
         str(env / "bin" / "python3"), "-m", "pytest", "-q", "-p", "no:randomly",
         "tests/test_app.py",
     ]
@@ -2089,7 +2092,8 @@ def test_cosmic_ray_keeps_the_command_s_assignments_with_the_environment_s_inter
     with open(kept, "rb") as handle:
         written = tomllib.load(handle)["cosmic-ray"]["test-command"]
     assert shlex.split(written) == [
-        "env", "PYTHONPATH=tests", str(env / "bin" / "python3"), "-m", "pytest", "-q",
+        "env", "PYTHONPATH=tests", "PYTHONDONTWRITEBYTECODE=1",
+        str(env / "bin" / "python3"), "-m", "pytest", "-q",
         "--import-mode=importlib", "-p", "no:randomly", "tests/test_app.py",
     ]
 
@@ -2261,34 +2265,25 @@ def test_cosmic_ray_baseline_that_still_fails_without_its_failures_is_baseline_f
     assert not record.exists()
 
 
-def test_cosmic_ray_stops_before_the_cap_and_reports_what_finished(tmp_path: Path) -> None:
-    """The session is interrupted at its stop-by time; the dump's finished mutants are reported,
-    a survivor among them, as unfinished with reason ``partial-cap``."""
+def test_cosmic_ray_safety_stop_reports_no_survivors_and_is_cap(tmp_path: Path) -> None:
+    """What finishes before a clock runs out differs between two prepares, so the safety stop
+    reports none of it: reason ``cap``, no survivors."""
     stub_dir = tmp_path / "stub"
     stub_dir.mkdir()
     _write_cosmic_stub(stub_dir / "cosmic-ray")
-    mutation = {"module_path": "app.py", "start_pos": [2, 16]}
-    dump = tmp_path / "dump.txt"
-    dump.write_text(
-        json.dumps([{"job_id": "s", "mutations": [mutation]},
-                    {"worker_outcome": "normal", "output": "", "test_outcome": "survived",
-                     "diff": ""}]) + "\n"
-        + json.dumps([{"job_id": "p", "mutations": [mutation]}, None]) + "\n",
-        encoding="utf-8",
-    )
-    env = _wrapper_env(stub_dir, (), STUB_DUMP=str(dump), STUB_EXEC_SLEEP="60")
+    env = _wrapper_env(stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE), STUB_EXEC_SLEEP="60")
     config = _wrapper_config(tmp_path / "cosmic-ray.toml", f"{sys.executable} -c pass")
     started = time.monotonic()
     out = _run_wrapper(config, tmp_path, env, "300", f"{time.time() + 3:.0f}")
     assert time.monotonic() - started < 30
-    assert out == {"unfinished": True, "survivors": [{"path": "app.py", "line": 2}],
-                   "reason": "partial-cap"}
+    assert out == {"unfinished": True, "survivors": [], "reason": "cap"}
 
 
-def test_cosmic_ray_partial_survivors_are_kept_degraded_under_partial_cap(tmp_path: Path) -> None:
+def test_cosmic_ray_budget_keeps_survivors_and_records_what_it_left_out(tmp_path: Path) -> None:
     repo, base, head = _cosmic_changed(tmp_path)
-    payload = json.dumps({"unfinished": True, "survivors": [{"path": "app.py", "line": 1}],
-                          "reason": "partial-cap"})
+    payload = json.dumps({"unfinished": False,
+                          "survivors": [{"path": "app.py", "line": 1, "operator": "core/X"}],
+                          "mutants": {"changed": 12, "run": 10}})
     output = tmp_path / "out"
     runner = _Calls(base, payload)
     code = _run(
@@ -2296,13 +2291,66 @@ def test_cosmic_ray_partial_survivors_are_kept_degraded_under_partial_cap(tmp_pa
         output, tmp_path / "home", [_adapter("cosmic-ray")], runner,
     )
     assert code == 0
-    assert _reasons(output) == ["partial-cap"]
+    [entry] = _read(output, "degraded.json")
+    assert entry["reason"] == "mutant-budget"
+    assert entry["detail"] == "ran 10 of 12 mutants on changed lines"
     [finding] = _read(output, "findings.json")
-    assert finding["degraded"] is True
+    assert finding["degraded"] is False
+    assert _severity(output, "surviving-mutant") == "fix-later"
     scan = next(argv for argv in runner.calls if "--with" in argv)
-    stop_by = float(scan[scan.index("-c") + 4])
-    # Inside the shared 900 second cap, with time kept in hand to dump.
-    assert time.time() < stop_by < time.time() + 900 - P._COSMIC_STOP_MARGIN + 5
+    at = scan.index("-c")
+    # The wrapper's arguments: config, baseline budget, stop-by time, mutant budget, its program.
+    assert scan[at + 5] == str(P.COSMIC_MUTANT_BUDGET) and scan[at + 6] == P._COSMIC_BUDGET
+    assert time.time() < float(scan[at + 4]) < time.time() + 900 - P._COSMIC_STOP_MARGIN + 5
+
+
+def test_cosmic_ray_capped_session_is_a_gap_without_findings(tmp_path: Path) -> None:
+    repo, base, head = _cosmic_changed(tmp_path)
+    payload = json.dumps({"unfinished": True, "survivors": [], "reason": "cap"})
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
+        output, tmp_path / "home", [_adapter("cosmic-ray")], _Calls(base, payload),
+    )
+    assert code == 0
+    assert _reasons(output) == ["cap"]
+    assert _read(output, "findings.json") == []
+
+
+@pytest.mark.skipif(
+    _probed(["cosmic-ray", "--version"]) != "8.7.0",
+    reason="cosmic-ray pin is not installed",
+)
+def test_cosmic_ray_budget_runs_the_same_mutants_every_time(tmp_path: Path) -> None:
+    """The budget picks changed-line mutants in a stable order, so two runs run the same set."""
+    exe = _usable_python()
+    if exe is None:
+        pytest.skip("no usable Python with pytest")
+    repo, base, _head = _repo(
+        tmp_path,
+        {"app.py": "def add(left, right):\n    return left\n"},
+        {
+            "app.py": "def add(left, right):\n    return left + right\n",
+            "test_app.py": "from app import add\n\ndef test_add():\n    assert True\n",
+        },
+    )
+    seen = []
+    for attempt in range(2):
+        config = tmp_path / f"cosmic-ray-{attempt}.toml"
+        config.write_text("\n".join([
+            "[cosmic-ray]", 'module-path = ["app.py"]', "timeout = 300.0",
+            "excluded-modules = []",
+            f"test-command = {json.dumps(f'{exe} -m pytest -q test_app.py')}",
+            "", "[cosmic-ray.distributor]", 'name = "local"', "",
+            "[cosmic-ray.filters.git-filter]", f"branch = {json.dumps(base)}", "",
+        ]), encoding="utf-8")
+        argv = [sys.executable, "-c", P._COSMIC_WRAPPER, str(config), "300",
+                f"{time.time() + 600:.0f}", "3", P._COSMIC_BUDGET]
+        proc = subprocess.run(argv, cwd=repo, capture_output=True, text=True, timeout=600)
+        out = json.loads(proc.stdout)
+        assert out["mutants"]["run"] == 3 and out["mutants"]["changed"] > 3
+        seen.append(out["survivors"])
+    assert seen[0] == seen[1] and len(seen[0]) == 3
 
 
 def test_cosmic_ray_runs_every_test_file_that_mentions_a_mutated_module(
@@ -2335,3 +2383,20 @@ def test_cosmic_ray_runs_every_test_file_that_mentions_a_mutated_module(
     assert "tests/test_unrelated.py" not in tests
     logged = capsys.readouterr().err
     assert "5 test files mention the mutated modules; running the first 3" in logged
+
+
+def test_cosmic_ray_mutants_stop_at_their_first_failing_test(tmp_path: Path) -> None:
+    """The baseline runs every test, so all failures are named; each mutant then stops at its
+    first failing test (-x), so a killed mutant costs a fraction of a full run."""
+    import tomllib
+
+    stub_dir = tmp_path / "stub"
+    stub_dir.mkdir()
+    _write_cosmic_stub(stub_dir / "cosmic-ray")
+    env = _wrapper_env(stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE))
+    config = _wrapper_config(tmp_path / "cosmic-ray.toml", f"{sys.executable} -c pass pytest -q")
+    out = _run_wrapper(config, tmp_path, env)
+    assert out["unfinished"] is False
+    with open(config, "rb") as handle:
+        written = shlex.split(tomllib.load(handle)["cosmic-ray"]["test-command"])
+    assert written[-1] == "-x"

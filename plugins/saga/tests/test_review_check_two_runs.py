@@ -512,3 +512,24 @@ def test_a_copied_test_file_that_cannot_load_on_the_old_version_does_not_stop_th
     payload = H.C.two_runs(repo, base, [("python", H.PYTEST)])
     assert payload["gaps"] == []
     assert [hit["anchor"] for hit in payload["hits"]] == [ALREADY]
+
+
+def _listing(folder: Path) -> list[str]:
+    return sorted(path.relative_to(folder).as_posix() for path in folder.rglob("*"))
+
+
+def test_a_run_over_the_python_environment_leaves_the_packet_s_packages_untouched(
+    tmp_path: Path,
+) -> None:
+    """Importing the packet's packages must not write bytecode beside them: the packet has to be
+    byte-for-byte what the fetch wrote, for a repeat prepare and for the reviewer."""
+    repo, base, _head = H.make_repo(
+        tmp_path, _dep_files(DEP_APP_BASE), _dep_files(DEP_APP_HEAD, SAMPLE),
+    )
+    shim = _python_env(tmp_path)
+    site = tmp_path / "packet-site"
+    before = _listing(site)
+    payload = H.C.two_runs(repo, base, [("python", "pytest -q")], python_env=shim)
+    assert [hit["anchor"] for hit in payload["hits"]] == [ALREADY]
+    assert _listing(site) == before
+    assert not list(site.rglob("__pycache__"))
