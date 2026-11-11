@@ -2,6 +2,36 @@
 
 ## 2026-11-11
 
+### A new test that passes before the change is a lead, not a defect
+
+**Evidence.** Once the two-runs check ran in a measured prepare, it flagged several new tests on a
+version with a planted defect, one of them the planted defect, and flagged the same other tests on
+the clean version of the change. Those other tests pinned behaviour the change keeps (an existing
+path that still matches, a fallback that still applies), so the row's base outcome of blocks would
+have held a clean change. The row now fixes later (`review_formula.ROWS`), and the reviewer prompt's
+"New tests that already pass before the change" section has the reviewer escalate the one meant to
+check the change.
+
+**Mechanism.** "Passes on the old code" is true both of a test that cannot detect the change and of
+a test that guards what the change leaves alone; only the change's purpose separates them, which is
+a judgment, not a mechanical fact.
+
+**Generalizable rule.** A mechanical signal whose meaning depends on intent should feed the reviewer
+as a lead, with instructions for the escalation, rather than block on its own.
+
+### A mutation run killed at its cap reports nothing it already learned
+
+**Evidence.** On a large change the mutation run reached the shared cap and was killed, so its
+result was only `cap`, with no survivors from the mutants that had finished. The wrapper now
+interrupts `cosmic-ray exec` before the cap and dumps what finished (`review_adapters_python`,
+`_COSMIC_STOP_MARGIN`); test `test_cosmic_ray_stops_before_the_cap_and_reports_what_finished`.
+
+**Mechanism.** The runner's timeout kills the whole process group, including the step that would
+have read the session database.
+
+**Generalizable rule.** A long tool with partial results should own a deadline inside the runner's,
+and report what it finished, degraded, rather than be killed.
+
 ### A committed profile's test command assumes a shell the checks do not use
 
 **Evidence.** With dependencies installed, the two-runs listing still exited 4 with "file or

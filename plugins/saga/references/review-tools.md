@@ -302,9 +302,14 @@ The optional `review_tools` block is documented in `plugins/saga/references/repo
 ## Python, CDK, shell, workflows and Markdown
 
 Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fix` and the runner does not start it, so it writes no record. Settings come from the base commit or from a file the adapter writes under the runner home. A settings file in the reviewed tree is not an input. actionlint still reads `.github/actionlint.yaml` beside the workflows when `-config-file` points elsewhere, so it scans a copy of the workflows and that file is left out of the copy. ruff lint uses `--isolated`, `--ignore-noqa`, and `--select ALL`, plus an inline `--config` that ignores `S101` (use of `assert`) for test paths: `test_*.py`, `*_test.py`, `tests.py`, `conftest.py` and anything under a `tests` or `test` folder, each pattern anchored at the scan root. `--isolated` drops the reviewed repository's own per-file ignores, so the convention is passed on the command line. The `S` family (flake8-bandit) is a lead for a security look, not a proven correctness error: it is mapped to `security.scanner-medium-low`, the row bandit's own MEDIUM and LOW findings use, which fixes later and never blocks. ruff reports no severity, so none is claimed HIGH. mypy passes `--config-file` for the base commit's config and does not pass `--strict`. An error is `correctness.type-error` (blocks), except `import-not-found` and `import-untyped`, which use `correctness.tool-style` (note). A mypy note is level `style` (note). cdk-nag raises a known gap when a project has `cdk.json` and synthesis ran no validation plugin. A clean plugin report is not a gap. Reason `missing` is recorded when `cdk` itself is absent, for cdk-nag and for the checkov-cdk synth. The anchor keeps the logical resource id or the construct path, so the same rule on two resources stays two findings. A tree with no `cdk.json` does not degrade. Checkov blocks only the curated ids below. zizmor's copy command runs `--offline` and receives no GitHub token. lychee has no line number, so a broken link is a whole-project hit compared base against head. markdownlint-cli2 prints `path:line:col MDxxx/name message` with no severity word. cosmic-ray's module-path is the list of changed Python files. Its wrapper reports why a session did not finish: `baseline-failed` (the unmutated tests fail or cannot start), `baseline-timeout` (they outlast the 300 second baseline bound), `init-failed` (the config, `cosmic-ray init` or `cr-filter-git` failed), each a gap on `testing.surviving-mutant` with no findings, and `mutant-abnormal` (a mutant's run or the dump did not end normally), which keeps the survivors it read as degraded findings. Only the shared 900 second cap is `cap`. When prepare has the packet's Python environment, a test command that runs pytest (see two-runs below) runs as that environment's `bin/python3 -m pytest` with the command's own pytest options (its
-paths dropped) and the test files named explicitly: the change's test files that mention a mutated
-module, else all its test files, else up to 50 test files in the tree that mention one; with none,
-the row is the gap `no-tests-for-change`. Test files are never mutated. When the unmutated
+paths dropped) and the test files named explicitly: every test file that mentions a mutated
+module, the change's own first and then the tree's, smallest first, up to 30 (a longer list is cut
+and the cut logged), so a mutant an existing test elsewhere kills is not reported as surviving;
+with none, the change's own test files; with no test file at all, the row is the gap
+`no-tests-for-change`. Test files are never mutated, and `cr-filter-git` skips every mutant whose
+lines the change did not add or edit. The session stops 60 seconds inside its share of the 900
+second cap: the wrapper interrupts `cosmic-ray exec`, dumps the mutants that finished, and reports
+their survivors as degraded findings with reason `partial-cap`. When the unmutated
 baseline fails, the wrapper reruns it once without the tests pytest's summary names (`FAILED` ids
 are deselected, `ERROR` files ignored, at most 200); if that passes, the mutants run the narrowed
 command, otherwise the reason is `baseline-failed`. The command runs behind
@@ -370,7 +375,7 @@ packet.
 
 | Adapter id | Comparison | Row | Computed severity |
 |---|---|---|---|
-| `two-runs` | lines, whole project | `testing.test-passes-before-change` | blocks, excused by `test-passes-before-change` |
+| `two-runs` | lines, whole project | `testing.test-passes-before-change` | fix later (a lead the reviewer judges), excused by `test-passes-before-change` |
 | `ci-skips` | lines, whole project | `testing.test-skipped-in-ci` | blocks, excused by `test-skipped-in-ci` |
 | `machine-values` | lines; items, not findings | `architecture-maintainability.machine-specific-value` | fix later. The item has no answer |
 | `changed-names` | lines, whole project | `correctness.unupdated-mention`; `correctness.unupdated-mention-in-document` for a document | blocks, excused by `unaffected`; fix later |

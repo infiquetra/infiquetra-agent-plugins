@@ -99,7 +99,11 @@ def _review_gaps(output: Path) -> list[dict[str, str]]:
     return [item for item in H.gaps(output) if item.get("tool") == "review-checks"]
 
 
-def test_a_new_test_that_passes_before_the_change_blocks(tmp_path: Path) -> None:
+def test_a_new_test_that_passes_before_the_change_is_a_lead_that_fixes_later(
+    tmp_path: Path,
+) -> None:
+    """Not a block on its own: a new test that passes before the change may pin behaviour the
+    change keeps. The reviewer escalates one that should check the change."""
     code, output, *_rest = H.one(tmp_path, _base(), _head(SAMPLE), "two-runs", H.PYTEST)
     assert code == 0
     H.valid(output)
@@ -108,7 +112,7 @@ def test_a_new_test_that_passes_before_the_change_blocks(tmp_path: Path) -> None
     assert FIXED not in refs
     found = H.outcomes_for(output, ALREADY)
     assert len(found) == 1
-    assert found[0]["severity"] == "blocks"
+    assert found[0]["severity"] == "fix-later"
     assert found[0]["rule"]["row"] == "testing.test-passes-before-change"
 
 

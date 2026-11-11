@@ -110,6 +110,15 @@
 
 ### Fixed
 
+- **A new test that passes before the change is a lead, and mutation runs report partial
+  results.** `testing.test-passes-before-change` now fixes later instead of blocking: many such
+  tests pin behaviour the change keeps. The reviewer prompt tells the reviewer to escalate one meant
+  to check what the change adds or fixes as `testing.accepts-broken-code`, with traced evidence,
+  and widens that row to a change whose purpose no test checks and a test that no longer exercises
+  what it names. cosmic-ray stops 60 seconds inside its share of the mutation cap and reports the
+  survivors found so far as degraded, reason `partial-cap`, and it runs every test file that
+  mentions a mutated module (up to 30, the cut logged) so tests elsewhere can kill a mutant.
+
 - **The testing checks name the change's test files.** A committed profile command such as
   `python3 -m pytest plugins/*/tests` is run without a shell, so pytest got the glob literally and
   both checks failed. Two-runs now lists only the test files the change added or edited, with the

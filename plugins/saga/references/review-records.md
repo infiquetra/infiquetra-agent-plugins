@@ -109,7 +109,7 @@ excuses it or a rule that reproduction makes it block. Tool adapters and our own
 |---|---|---|---|
 | `testing.uncovered-branch` | blocks | `coverage-gap` | |
 | `testing.surviving-mutant` | blocks | `surviving-mutant` | |
-| `testing.test-passes-before-change` | blocks | `test-passes-before-change` | |
+| `testing.test-passes-before-change` | fix later | `test-passes-before-change` | |
 | `testing.test-skipped-in-ci` | blocks | `test-skipped-in-ci` | |
 | `testing.accepts-broken-code` | blocks | | |
 | `testing.escapes-sandbox` | blocks | | |
@@ -145,9 +145,15 @@ excuses it or a rule that reproduction makes it block. Tool adapters and our own
 | `<lens>.dispute`, for each lens | fix later, flagged for merge confirmation | | |
 
 The reviewer may cite `testing.accepts-broken-code` for a serious newly added or weakened
-test that passes broken behavior, and `testing.escapes-sandbox` for a test that writes outside
+test that passes broken behavior, a test that no longer exercises what it names, or a change
+whose purpose no test checks, and `testing.escapes-sandbox` for a test that writes outside
 its temporary area or depends on real home-directory or machine state. Both need a trace or
 reproduction to escape the unreproduced cap and remain subject to the other caps.
+
+`testing.test-passes-before-change` is a lead, not a block: saga's two-runs check lists a new test
+that passes on the code before the change, and such a test often pins behaviour the change keeps.
+The reviewer escalates one meant to check what the change adds or fixes as
+`testing.accepts-broken-code`, with `traced` evidence naming the test and the two-runs result.
 
 ### Judged findings
 

@@ -245,7 +245,10 @@ ROWS: Mapping[str, Row] = _rows(
     # Testing
     Row("testing.uncovered-branch", "testing", "blocks", excused_by="coverage-gap"),
     Row("testing.surviving-mutant", "testing", "blocks", excused_by="surviving-mutant"),
-    Row("testing.test-passes-before-change", "testing", "blocks",
+    # A lead for the reviewer, not a block: a new test that passes before the change is as often
+    # one pinning behaviour the change keeps as one that fails to check what the change adds. The
+    # reviewer escalates the second kind as testing.accepts-broken-code.
+    Row("testing.test-passes-before-change", "testing", "fix-later",
         excused_by="test-passes-before-change"),
     Row("testing.test-skipped-in-ci", "testing", "blocks", excused_by="test-skipped-in-ci"),
     Row("testing.accepts-broken-code", "testing", "blocks"),

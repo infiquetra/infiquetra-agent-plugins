@@ -2,6 +2,30 @@
 
 ## 2026-11-11
 
+### Two-runs is a reviewer lead; the reviewer escalates the purpose test
+
+**Decision.** `testing.test-passes-before-change` fixes later instead of blocking, keeps its builder
+excuse kind, and stays in the packet's deterministic findings. The reviewer prompt gains a section
+telling the reviewer, for each listed test, to cite `testing.accepts-broken-code` with traced
+evidence (the test, the two-runs result, why it is the change's purpose test) when the test is
+meant to check what the change adds or fixes, and to leave it alone when it pins kept behaviour.
+`testing.accepts-broken-code` also covers a change whose purpose no test checks and a test that no
+longer exercises what it names.
+
+**Rejected alternatives.** Keeping the row blocking with a builder excuse: every clean change that
+adds regression tests would need a builder reason per test. Porting the reviewer's own "undo the
+change and rerun its tests" step: in measurement the reviewer never ran it, and the two-runs check
+does the same work deterministically. Making each flagged test a where-to-look item: it would force
+an answer per test, crowding the list on changes that add many regression tests.
+
+**Rationale.** Whether a test that passes before the change is a defect depends on the change's
+purpose, which the reviewer judges and the check cannot.
+
+**Revisit when.** Reviews leave flagged purpose tests unescalated, or escalate tests that pin kept
+behaviour.
+
+---
+
 ### The testing checks name the change's test files instead of the default collection
 
 **Decision.** For a pytest command, two-runs drops the command's own paths, keeps its options, and

@@ -294,6 +294,9 @@ class ScanContext:
     #: reviewer's re-runs get (``review_command._offline_dependencies``), or ``None`` when prepare
     #: has none. Adapters that run the change's Python tests run them with its interpreter.
     python_env: Path | None = None
+    #: For a mutation adapter, the monotonic time its share of the mutation cap runs out. A tool
+    #: that can stop on its own before then, and report what it finished, reads it.
+    mutation_deadline: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1645,6 +1648,7 @@ def _run_adapter(
                 scratch=scratch,
                 diagnostics_directory=diagnostics_directory,
                 python_env=python_env,
+                mutation_deadline=deadline if adapter.mutation else None,
             )
             if comparison == "base-head":
                 hits, digests = _base_and_head(

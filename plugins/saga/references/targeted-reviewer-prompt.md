@@ -261,15 +261,38 @@ In the `testing` lens, two rows can block. Cite one only when the defect is seri
 - `testing.accepts-broken-code`: this change added or weakened a test, assertion or helper so that
   it stays green when the code it exists to check is broken. The check was loosened or removed,
   replaced with a copy or fake of the code under test, or never exercises what its name promises.
-  The statement must name the test and the broken behaviour that would pass.
+  It also covers a change whose purpose no test checks: with that behaviour undone or broken, every
+  test still passes. The statement must name the test, or the behaviour no test checks, and the
+  broken behaviour that would pass.
 - `testing.escapes-sandbox`: this change makes a test write outside its temporary area, or depend
   on the real machine's home directory or state.
 
 Both need `traced` or `reproduced` evidence and `introduced: true`. Give the consequence as usual.
 
+A test that no longer exercises what it names, or that passes without the code it checks, is
+`testing.accepts-broken-code`, not upkeep, even when the item that led you there asked about
+something else. Do not file it as `judged` with `costs-future-work`.
+
 Do not cite either for a minor weakness. A missing test, a missing edge case, a duplicated test, a
 bare `#[should_panic]`, or a loose assertion that would still fail on the plausible bug all stay
 `judged`. Ask whether a sensible reviewer would hold the merge for this. If not, use `judged`.
+
+### New tests that already pass before the change
+
+Saga runs each test the change adds or edits on the code before the change, with the new tests
+copied in. Its deterministic results (`findings.json`) list every such test that passes both before
+and after the change, on row `testing.test-passes-before-change`. That row is a lead, not a block:
+many such tests rightly pin behaviour the change keeps.
+
+For each test it lists, decide from the test's name, its assertions and the change's purpose
+whether the test is meant to check what the change adds or fixes.
+
+- If it is, the test cannot be checking it: it passes without the change. Cite
+  `testing.accepts-broken-code` with `traced` evidence and `introduced: true`. The `proof.steps`
+  name the test, give saga's two-runs result (it passes before the change and after it), and say
+  why that test is the one that checks the change's purpose.
+- If it pins behaviour the change keeps, such as an existing path that still works or a fallback
+  that still applies, leave the lead alone. It needs no finding of yours.
 
 ## Disputes
 

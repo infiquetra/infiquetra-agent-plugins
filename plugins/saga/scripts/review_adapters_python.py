@@ -13,6 +13,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -117,7 +118,10 @@ _COSMIC_TIMEOUT_SECONDS = 300
 #: The wrapper's reasons for a session that ran no mutant: the row is a gap with that reason.
 _COSMIC_NO_RUN = frozenset({"baseline-failed", "baseline-timeout", "init-failed"})
 #: Every reason the wrapper writes. ``cap`` is not one: only the runner's shared cap is ``cap``.
-_COSMIC_REASONS = _COSMIC_NO_RUN | {"mutant-abnormal"}
+_COSMIC_REASONS = _COSMIC_NO_RUN | {"mutant-abnormal", "partial-cap"}
+#: Seconds the session keeps in hand under the shared cap, to interrupt cosmic-ray, dump what
+#: finished and return before the runner's own deadline.
+_COSMIC_STOP_MARGIN = 60
 
 # Runs one cosmic-ray session: baseline first, then init, exec, dump. Reads the
 # 8.7.0 dump as [work_item, result] arrays. Anything it cannot prove clean is
@@ -134,6 +138,15 @@ except (IndexError, ValueError):
     budget = 300.0
 if not budget > 0:
     budget = 300.0
+# argv[3], when given, is the wall-clock time (seconds since the epoch) by which the session must
+# have stopped and dumped what it finished: safely inside the runner's shared mutation cap.
+try:
+    stop_by = float(sys.argv[3])
+except (IndexError, ValueError):
+    stop_by = None
+import time
+def _left():
+    return None if stop_by is None else stop_by - time.time()
 def _tail(*outputs):
     # The end of a failed step's output, for the operator's private prepare diagnostics: the
     # runner keeps this script's stderr there, never in the packet.
@@ -163,8 +176,9 @@ def _baseline(command):
         )
     except (OSError, ValueError):
         return "failed", "", ""
+    left = _left()
     try:
-        out, err = proc.communicate(timeout=budget)
+        out, err = proc.communicate(timeout=budget if left is None else max(1.0, min(budget, left)))
     except subprocess.TimeoutExpired:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -222,13 +236,38 @@ scoped = subprocess.run(
 if scoped.returncode != 0:
     _tail(scoped.stdout, scoped.stderr)
     _done(True, [], "init-failed")
-ran = subprocess.run(["cosmic-ray", "exec", config, session], capture_output=True, text=True)
+left = _left()
+if left is not None and left <= 0:
+    _done(True, [], "partial-cap")
+runner = subprocess.Popen(
+    ["cosmic-ray", "exec", config, session],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+)
+stopped = False
+try:
+    ran_out, ran_err = runner.communicate(timeout=left)
+except subprocess.TimeoutExpired:
+    # Out of time: interrupt the session (cosmic-ray restores the module it is mutating on an
+    # interrupt), then dump the mutants that finished.
+    stopped = True
+    for sig, wait in ((signal.SIGINT, 10), (signal.SIGKILL, 10)):
+        try:
+            os.killpg(os.getpgid(runner.pid), sig)
+        except (AttributeError, OSError):
+            runner.kill()
+        try:
+            ran_out, ran_err = runner.communicate(timeout=wait)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    else:
+        ran_out, ran_err = "", ""
 dump = subprocess.run(
     ["cosmic-ray", "dump", session], capture_output=True, text=True
 )
-unfinished = ran.returncode != 0 or dump.returncode != 0
+unfinished = stopped or runner.returncode != 0 or dump.returncode != 0
 if unfinished:
-    _tail(ran.stdout, ran.stderr, dump.stderr)
+    _tail(ran_out, ran_err, dump.stderr)
 survivors = []
 for line in (dump.stdout or "").splitlines():
     text = line.strip()
@@ -247,6 +286,7 @@ for line in (dump.stdout or "").splitlines():
         unfinished = True
         continue
     if result is None:
+        # Not run: the session stopped before this mutant, or it never started.
         unfinished = True
         continue
     if result.get("worker_outcome") == "skipped":
@@ -271,7 +311,7 @@ for line in (dump.stdout or "").splitlines():
         survivors.append({"path": str(path), "line": number})
     elif lowered != "killed":
         unfinished = True
-_done(unfinished, survivors, "mutant-abnormal")
+_done(unfinished, survivors, "partial-cap" if stopped else "mutant-abnormal")
 """
 
 
@@ -695,8 +735,9 @@ def _parse_import_linter(text: str) -> ParseResult:
     return ParseResult(tuple(hits))
 
 
-#: The most test files a mutation run names when none of the change's own test files fit.
-_COSMIC_MAX_TEST_FILES = 50
+#: The most test files a mutation run names. The baseline and every mutant run them all, so the
+#: bound keeps one mutant's run short; when it cuts the list, the cut is logged.
+_COSMIC_MAX_TEST_FILES = 30
 
 
 def _mentions(path: Path, names: frozenset[str]) -> bool:
@@ -710,22 +751,32 @@ def _mentions(path: Path, names: frozenset[str]) -> bool:
 def _cosmic_tests(context: ScanContext, modules: list[str]) -> list[str]:
     """The test files the baseline and every mutant run, named explicitly.
 
-    The change's own test files that mention a mutated module, else all the change's test files,
-    else up to ``_COSMIC_MAX_TEST_FILES`` test files in the tree that mention one. Naming them
-    keeps a project's default collection (a glob a shell never expanded, a ``testpaths``
-    setting) from failing the baseline, and keeps each mutant's run to the tests that matter.
+    Every test file that mentions a mutated module, the change's own first and then the tree's,
+    smallest first, up to ``_COSMIC_MAX_TEST_FILES``: a mutant an existing test elsewhere kills
+    must not be reported as surviving. With none, the change's own test files. Naming them keeps a
+    project's default collection (a glob a shell never expanded, a ``testpaths`` setting) from
+    failing the baseline.
     """
     names = frozenset(Path(module).stem for module in modules)
     changed = review_tools.changed_test_files(context.change, context.root)
-    mentioning = [rel for rel in changed if _mentions(context.root / rel, names)]
-    if mentioning or changed:
-        return mentioning or changed
-    found: list[str] = []
+    own = [rel for rel in changed if _mentions(context.root / rel, names)]
+    others: list[tuple[int, str]] = []
     for path in review_tools.scan_files(context.root):
         rel = path.relative_to(context.root).as_posix()
-        if review_tools.is_python_test_file(rel) and path.is_file() and _mentions(path, names):
-            found.append(rel)
-    return sorted(found)[:_COSMIC_MAX_TEST_FILES]
+        if rel in own or not review_tools.is_python_test_file(rel) or not path.is_file():
+            continue
+        if _mentions(path, names):
+            others.append((path.stat().st_size, rel))
+    chosen = own + [rel for _size, rel in sorted(others)]
+    if not chosen:
+        return changed[:_COSMIC_MAX_TEST_FILES]
+    if len(chosen) > _COSMIC_MAX_TEST_FILES:
+        print(
+            f"cosmic-ray: {len(chosen)} test files mention the mutated modules; "
+            f"running the first {_COSMIC_MAX_TEST_FILES} (the change's own, then the smallest)",
+            file=sys.stderr,
+        )
+    return sorted(chosen[:_COSMIC_MAX_TEST_FILES])
 
 
 def _cosmic_test_argv(context: ScanContext, command: str, modules: list[str]) -> list[str]:
@@ -783,10 +834,15 @@ def _invoke_cosmic(context: ScanContext) -> list[str]:
         ]),
         encoding="utf-8",
     )
-    return [
+    argv = [
         "uv", "run", "--with", "cosmic-ray==8.7.0",
         sys.executable, "-c", _COSMIC_WRAPPER, str(toml), str(_COSMIC_TIMEOUT_SECONDS),
     ]
+    if context.mutation_deadline is not None:
+        # A wall-clock time, since the wrapper is another process: stop with time to dump.
+        left = context.mutation_deadline - time.monotonic() - _COSMIC_STOP_MARGIN
+        argv.append(f"{time.time() + max(0.0, left):.0f}")
+    return argv
 
 
 def _parse_cosmic(text: str) -> ParseResult:

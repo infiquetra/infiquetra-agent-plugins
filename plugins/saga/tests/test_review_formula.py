@@ -52,7 +52,7 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 EXPECTED_ROWS: dict[str, tuple[str, str | None, bool]] = {
     "testing.uncovered-branch": ("blocks", "coverage-gap", False),
     "testing.surviving-mutant": ("blocks", "surviving-mutant", False),
-    "testing.test-passes-before-change": ("blocks", "test-passes-before-change", False),
+    "testing.test-passes-before-change": ("fix-later", "test-passes-before-change", False),
     "testing.test-skipped-in-ci": ("blocks", "test-skipped-in-ci", False),
     "testing.accepts-broken-code": ("blocks", None, False),
     "testing.escapes-sandbox": ("blocks", None, False),
@@ -208,7 +208,8 @@ def test_reason_excuses_only_its_own_testing_row() -> None:
     """Each new testing kind clears its own row, and neither kind clears the other."""
     pre = "testing.test-passes-before-change"
     skipped = "testing.test-skipped-in-ci"
-    assert severity(tool_finding(pre)) == "blocks"
+    # A lead for the reviewer: it fixes later on its own and never blocks.
+    assert severity(tool_finding(pre)) == "fix-later"
     excused = F.outcome(
         tool_finding(pre), builder_records=[reason("rf:1", "test-passes-before-change")]
     )
@@ -216,7 +217,7 @@ def test_reason_excuses_only_its_own_testing_row() -> None:
     assert "excused" in excused["severity_basis"]["modifiers"]
     assert severity(
         tool_finding(pre), builder_records=[reason("rf:1", "test-skipped-in-ci")]
-    ) == "blocks"
+    ) == "fix-later"
     assert severity(tool_finding(skipped)) == "blocks"
     cleared = F.outcome(
         tool_finding(skipped), builder_records=[reason("rf:1", "test-skipped-in-ci")]
@@ -228,7 +229,7 @@ def test_reason_excuses_only_its_own_testing_row() -> None:
     ) == "blocks"
     assert severity(
         tool_finding(pre), builder_records=[reason("rf:other", "test-passes-before-change")]
-    ) == "blocks"
+    ) == "fix-later"
 
 
 @pytest.mark.parametrize("row", FIXED_ROWS)
