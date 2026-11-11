@@ -160,8 +160,14 @@ event client (2), kind names (1), preview (1).
   result that names another machine rather than guessing (D12).
 - **G9. The window's `tab.new` result is undocumented.** Only `terminal` is common to both
   placements, so the port reads only `terminal`, and keeps `tab` and `space` as information.
-- **G10. No readiness flag.** Old Herdr published `interactive_ready`; hc publishes the status
-  word. Ready means idle or done.
+- **G10. No readiness flag, and silence is ambiguous.** Old Herdr published `interactive_ready`;
+  hc publishes the status word, and ready means idle or done. An agent that reports a status says
+  nothing until it is past its startup screens: Claude stays silent while its folder-trust question
+  is open. hc cannot tell that silence from an agent that never reports one, and `hc send`
+  presses Enter, which answers an open question with its highlighted default. The first port read
+  silence after the readiness window as "does not report readiness" and sent anyway; the smoke
+  test of 2026-11-10 (terminals t9t and t9v on the Studio) answered Claude's trust question
+  "No, exit" that way, twice, and Claude quit. Decision D17 replaces that reading.
 
 ---
 
@@ -197,7 +203,8 @@ Each one changes how Orchestrate behaves, so each takes the conservative side.
   person's draft is open, and a timeout is a stop saying the line may or may not have arrived.
 - **D8. The long-task file handoff applies when the session reports no status**, hc's form of
   "does not report readiness", which is when old Herdr's prompt door refused and the pane fallback
-  used the handoff.
+  used the handoff. Since D17 this applies only to a vendor confirmed never to report a status,
+  and none is confirmed today.
 - **D9. An old Herdr id reads as `unknown`, never `gone`.** A run started under old Herdr and read
   after the move keeps its units running rather than settling or reaping them on missing data.
 - **D10. `wait` uses one `hc wait` per running unit.** The event socket client
@@ -221,6 +228,19 @@ Each one changes how Orchestrate behaves, so each takes the conservative side.
   open PR #310 (`fix/agent-launcher-herdr-app`) rewrites `SKILL.md` with its own proof. Editing
   them here would force a second proof that conflicts with #310's. A follow-up after #310 merges
   updates both documents and re-runs the proof once.
+- **D17. A session that reports no status is not sent anything** (added after the smoke test,
+  G10). After the readiness window, a session whose vendor is not confirmed silent and that still
+  reports no status is "not ready": nothing is sent, nothing is closed, the launch stops with
+  "<task> has not reported a status after 30 s; a startup question such as folder trust may be
+  open: read it with `hc read tN`", and the receipt records `status_reported: false`,
+  `readiness: false` and `prompt_delivered: false`, so the retry door can deliver once the
+  question is answered. `PaneWriter` holds every later write to the same rule. Only a vendor
+  confirmed never to report a status (`VENDORS_WITHOUT_STATUS`, empty today) may be sent a line
+  without one, and only after `hc read` shows no selection menu (a `❯` numbered choice, or
+  "Enter to confirm" / "Enter to select"); a screen that cannot be read refuses too. Claude Code,
+  Codex, Antigravity and Muse were each seen reporting a status on a live Studio terminal on
+  2026-11-10. Grok and OpenCode were not seen live (OpenCode's binary carries the status escape),
+  so they are held to the not-ready rule until one of their sessions is watched.
 - **D16. No version bump here.** The repository bumps versions only in a release pull request
   (`chore(release)`), so both changelogs carry the change under `[Unreleased]`, marked breaking.
   The release must make both major versions and raise Orchestrate's Claude adapter floor for
@@ -252,10 +272,21 @@ Each one changes how Orchestrate behaves, so each takes the conservative side.
 
 ---
 
-## Live smoke test (not run; needs Jeff's go-ahead)
+## Live smoke test
 
-Nothing here starts a real session. The first live check, run by Jeff or on his say-so from a
-Herdr terminal on the Studio, in a scratch repository:
+Jeff approved it on 2026-11-10 and the team lead ran it from PR #312 with
+`ORCHESTRATE_AGENT_LAUNCHER` pointed at the launcher from `feat/launcher-no-old-herdr`. S1 and S3
+passed. S2 failed twice: in a new scratch folder Claude opened its folder-trust question and
+reported no status, `await_ready` spent its 30 s, and the prompt's Enter answered the question
+"No, exit", so Claude quit and the receipt said `prompt_delivered: false` (terminals t9t and t9v).
+D17 fixes it. Re-run S2 twice: once in a new folder, expecting the stop "hc-smoke has not reported
+a status after 30 s; a startup question such as folder trust may be open: read it with
+`hc read tN`", the tab left open and the receipt showing `status_reported: false`; then answer the
+question in the tab and run `launcher.py redeliver --receipt-json receipt.json` with the same
+flags, expecting the reply and `prompt_delivered: true`. Then a folder Claude already trusts,
+expecting S2 as written.
+
+Steps, from a Herdr terminal on the Studio, in a scratch repository:
 
 - S1. `python3 launcher.py preview --vendor claude --task hc-smoke --cwd <scratch repo>`: expect
   `backend=herdr-app` and the folder.

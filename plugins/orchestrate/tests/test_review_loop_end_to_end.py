@@ -86,8 +86,10 @@ def _install_hc_transport(tmp_path: Path, monkeypatch: Any) -> Path:
             "hidden_finished": 0,
         }
     )
+    # ``hc get`` names the terminal it describes, as the real one does; a record without an
+    # address is read as "hc cannot describe it", which refuses the send.
     get_json = json.dumps(
-        {"state": "live", "status": {"app": "claude-code", "state": "idle"}}
+        {"address": "%s", "state": "live", "status": {"app": "claude-code", "state": "idle"}}
     )
     executable.write_text(
         "#!/bin/sh\n"
@@ -95,7 +97,7 @@ def _install_hc_transport(tmp_path: Path, monkeypatch: Any) -> Path:
         'if [ "$1" = "ls" ]; then\n'
         f"  printf '%s\\n' '{ls_json}'\n"
         'elif [ "$1" = "get" ]; then\n'
-        f"  printf '%s\\n' '{get_json}'\n"
+        f"  printf '{get_json}\\n' \"$2\"\n"
         'elif [ "$1" = "read" ]; then\n'
         "  printf '%s\\n' '──────────────' '❯ ' '──────────────'\n"
         "fi\n"

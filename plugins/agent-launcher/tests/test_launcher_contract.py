@@ -1877,8 +1877,9 @@ def _prepare_resend_launch(
     """Drive the real PaneWriter send and the resend loop, stubbing only the herdr core boundary.
 
     Whether the terminal reports a status word selects how the line is sent (D8): an agent that
-    reports one gets the line whole, one that never has gets the file-handoff form. Both go
-    through the one door, ``hc send``. Returns the unit, every recorded command, the lines sent,
+    reports one gets the line whole; a vendor confirmed never to report one (marked so here) gets
+    the file-handoff form once its screen shows no menu. Both go through the one door,
+    ``hc send``. Returns the unit, every recorded command, the lines sent,
     and the guard calls made by the counting wrapper around the real guard.
     """
     recorded: list[list[str]] = []
@@ -1909,6 +1910,10 @@ def _prepare_resend_launch(
     monkeypatch.setattr(launcher, "guard_pane_before_write", counting_guard)
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: False)
     monkeypatch.setattr(launcher, "reports_no_status", lambda _pane: not reports_status)
+    if not reports_status:
+        # A send to a session that reports no status is allowed only for a vendor confirmed
+        # never to report one; these probes mark claude as one to reach the handoff path.
+        monkeypatch.setattr(launcher, "VENDORS_WITHOUT_STATUS", frozenset({"claude"}))
     monkeypatch.setattr(
         launcher,
         "agent_row",
@@ -4611,13 +4616,18 @@ def test_a_blocked_send_is_a_named_stop_that_is_not_retried_or_forced(
 def test_the_prompt_door_hands_a_long_task_over_as_a_file_when_no_status_is_reported(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """D8: the file handoff applies when the session reports no status, which is when old
-    Herdr's prompt door refused and the pane fallback used it."""
+    """D8: the file handoff applies to a session that reports no status, for a vendor confirmed
+    never to report one, which is when old Herdr's prompt door refused and the pane fallback
+    used it."""
     sent: list[str] = []
     monkeypatch.setattr(launcher, "TASK_DIR", tmp_path / "tasks")
     monkeypatch.setattr(
-        launcher, "run", lambda cmd, **_k: (sent.append(cmd[3]), _done(cmd))[1]
+        launcher,
+        "run",
+        lambda cmd, **_k: (sent.append(cmd[3]) if _is_send(cmd) else None, _done(cmd))[1],
     )
+    # Only a vendor confirmed never to report a status is sent a line without one.
+    monkeypatch.setattr(launcher, "VENDORS_WITHOUT_STATUS", frozenset({"codex"}))
     unit = launcher.LaunchRequest(
         name="worker", vendor="codex", worktree=str(tmp_path), launch_receipt={"owned": True}
     )
@@ -4634,6 +4644,153 @@ def test_the_prompt_door_hands_a_long_task_over_as_a_file_when_no_status_is_repo
     launcher.PaneWriter(unit, "t5", wrote_before=False).write(long_task)
     assert sent == [long_task]
     assert "prompted without a status" not in unit.note
+
+
+# Claude's folder-trust question as plain text. Reconstructed, not captured: the smoke test's
+# terminals (t9t, t9v on the Studio, 2026-11-10) were removed before the screen was saved.
+CLAUDE_TRUST_QUESTION = """\
+╭──────────────────────────────────────────────────────────────╮
+│ Do you trust the files in this folder?                       │
+│                                                              │
+│ /private/tmp/hc-smoke                                        │
+│                                                              │
+│ ❯ 1. Yes, proceed                                            │
+│   2. No, exit                                                │
+│                                                              │
+│ Enter to confirm · Esc to exit                               │
+╰──────────────────────────────────────────────────────────────╯
+"""
+
+
+def _silent_core(
+    sent: list[list[str]], closed: list[list[str]], *, screen: str = "", read_rc: int = 0
+) -> Any:
+    """herdr core with one fresh terminal, ``t5``, whose program has not reported a status."""
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        if _is_send(cmd):
+            sent.append(cmd)
+            return _done(cmd)
+        if cmd[:2] in (["hc", "kill"], ["hc", "rm"]):
+            closed.append(cmd)
+            return _done(cmd)
+        if cmd[:2] == ["hc", "ls"]:
+            return _done(cmd, 0, '{"terminals": [], "machines": [], "hidden_finished": 0}')
+        if cmd[:2] == ["hc", "wait"]:
+            timed_out = {"children": [], "ended": False, "reason": "timeout", "status": None,
+                         "terminal": "t5", "turn": 0}
+            return _done(cmd, 0, json.dumps(timed_out))
+        if cmd[:2] == ["hc", "get"]:
+            silent = {"address": "t5", "state": "live", "labels": {}, "status": None}
+            return _done(cmd, 0, json.dumps(silent))
+        if cmd[:2] == ["hc", "read"]:
+            return _done(cmd, read_rc, screen)
+        if cmd[:1] == ["agents"]:
+            return _done(cmd, 0, json.dumps(_wrapper_json("t5")) + "\n")
+        raise AssertionError(f"unexpected call: {cmd}")
+
+    return fake_run
+
+
+def test_no_vendor_is_confirmed_silent_today(launcher: ModuleType) -> None:
+    """Claude, Codex, Antigravity and Muse report a status (read off live terminals on the
+    Studio, 2026-11-10); Grok and OpenCode were not seen. None is confirmed silent."""
+    assert launcher.VENDORS_WITHOUT_STATUS == frozenset()
+
+
+def test_a_session_silent_through_the_readiness_window_is_not_ready_and_nothing_is_sent(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The smoke-test failure: Claude says nothing while its folder-trust question is open, and a
+    send's Enter answered it "No, exit". Silence after the window is "not ready": nothing is
+    sent, nothing is closed, and the receipt and the stop say why."""
+    sent: list[list[str]] = []
+    closed: list[list[str]] = []
+    monkeypatch.setattr(launcher, "run", _silent_core(sent, closed, screen=CLAUDE_TRUST_QUESTION))
+    monkeypatch.setattr(launcher, "launcher", lambda: "agents")
+    unit = launcher.LaunchRequest(
+        name="hc-smoke", vendor="claude", task="Reply with the word ready.", worktree="/tmp/wt"
+    )
+    with pytest.raises(SystemExit) as stop:
+        launcher.launch(unit)
+    message = str(stop.value)
+    assert message.startswith("hc-smoke has not reported a status after 30 s;")
+    assert "a startup question such as folder trust may be open" in message
+    assert "read it with `hc read t5`" in message
+    assert sent == [] and closed == []
+    assert unit.status == launcher.PROMPT_UNDELIVERED
+    assert unit.launch_receipt["owned"] is True
+    assert unit.launch_receipt["status_reported"] is False
+    assert unit.launch_receipt["readiness"] is False
+    assert unit.launch_receipt["prompt_delivered"] is False
+    assert "not ready: no status after the readiness window, nothing sent" in unit.note
+
+
+@pytest.mark.parametrize("door", ["prompt", "pane"])
+def test_the_door_refuses_a_silent_session_of_a_vendor_not_confirmed_silent(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch, door: str
+) -> None:
+    """Every later write is held to the same rule: no status, no Enter."""
+    sent: list[list[str]] = []
+    monkeypatch.setattr(launcher, "run", _silent_core(sent, []))
+    unit = launcher.LaunchRequest(name="worker", vendor="codex", launch_receipt={"owned": True})
+    with pytest.raises(SystemExit, match="worker has not reported a status; a startup question"):
+        launcher.PaneWriter(unit, "t5", wrote_before=False).write("/saga:work x", door=door)
+    assert sent == []
+
+
+def test_a_confirmed_silent_vendor_is_not_sent_into_a_selection_menu(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[list[str]] = []
+    monkeypatch.setattr(launcher, "run", _silent_core(sent, [], screen=CLAUDE_TRUST_QUESTION))
+    monkeypatch.setattr(launcher, "VENDORS_WITHOUT_STATUS", frozenset({"codex"}))
+    unit = launcher.LaunchRequest(name="worker", vendor="codex", launch_receipt={"owned": True})
+    with pytest.raises(SystemExit, match="t5 shows a selection menu"):
+        launcher.PaneWriter(unit, "t5", wrote_before=False).write("/saga:work x")
+    assert sent == []
+
+
+def test_a_confirmed_silent_vendor_is_refused_when_its_screen_cannot_be_read(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[list[str]] = []
+    monkeypatch.setattr(launcher, "run", _silent_core(sent, [], read_rc=1))
+    monkeypatch.setattr(launcher, "VENDORS_WITHOUT_STATUS", frozenset({"codex"}))
+    unit = launcher.LaunchRequest(name="worker", vendor="codex", launch_receipt={"owned": True})
+    with pytest.raises(SystemExit, match="its screen could not be read"):
+        launcher.PaneWriter(unit, "t5", wrote_before=False).write("/saga:work x")
+    assert sent == []
+
+
+def test_a_confirmed_silent_vendor_with_a_plain_screen_is_sent_the_line(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[list[str]] = []
+    monkeypatch.setattr(launcher, "run", _silent_core(sent, [], screen="> \n"))
+    monkeypatch.setattr(launcher, "VENDORS_WITHOUT_STATUS", frozenset({"codex"}))
+    unit = launcher.LaunchRequest(name="worker", vendor="codex", launch_receipt={"owned": True})
+    launcher.PaneWriter(unit, "t5", wrote_before=False).write("/saga:work x")
+    assert [cmd[3] for cmd in sent] == ["/saga:work x"]
+
+
+@pytest.mark.parametrize(
+    ("screen", "is_menu"),
+    [
+        (CLAUDE_TRUST_QUESTION, True),
+        ("  ❯ 2. No, exit\n", True),
+        ("Approve the MCP servers in .mcp.json?\n❯ Use this server\nEnter to confirm\n", True),
+        ("Pick a theme\nEnter to select\n", True),
+        ("\x1b[1m❯ 1. Dark mode\x1b[0m\n", True),
+        ("❯ \n", False),
+        ("❯ fix the failing test in 2. the parser\n", False),
+        ("› Ask Codex to do anything\n", False),
+        ("", False),
+    ],
+)
+def test_startup_menu_on_screen(launcher: ModuleType, screen: str, is_menu: bool) -> None:
+    """A ``❯`` numbered choice or a menu's key hint is a menu; a composer, empty or not, is not."""
+    assert launcher.startup_menu_on_screen(screen) is is_menu
 
 
 def test_reports_no_status_reads_hc_get(

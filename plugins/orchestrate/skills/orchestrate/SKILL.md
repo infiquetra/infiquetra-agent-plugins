@@ -386,9 +386,13 @@ perform. A working directory or workspace that disagrees with the plan closes th
 session and fails the unit before its task is submitted.
 
 An agent not listed launches with no model flags. Every line reaches a session through one door,
-`hc send`, which pastes and presses Enter; to a session that has never reported a status, a task
-too long to paste as an instruction is handed over as a file. A session that is blocked (asking a
-person something) refuses the send, and Orchestrate never forces it.
+`hc send`, which pastes and presses Enter. A session that is blocked (asking a person something)
+refuses the send, and Orchestrate never forces it. A session that has reported no status at all
+is not sent anything either: Claude, Codex, Antigravity and Muse say nothing until they are past
+their startup screens, so silence after the 30-second readiness window means a question such as
+folder trust may be open, and an Enter would answer it with its default. The unit fails with
+"<unit> has not reported a status after 30 s ... read it with `hc read tN`" and its tab is left
+open; answer the question there, then redeliver by hand with `launcher.py redeliver`.
 
 `hc read` returns plain text, so the input-box guard cannot tell a placeholder an agent draws from
 text a person typed: any text it finds in the box is a staged-input stop. Codex shows a placeholder

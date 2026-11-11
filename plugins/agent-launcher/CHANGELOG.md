@@ -39,8 +39,17 @@ Herdr call and the decisions below, is `docs/plans/2026-11-10-orchestrate-hc-por
 - A blocked session refuses a send (hc exit 9) and the launcher never forces it.
 - `PANE_WRITE_SECONDS` is 90 (was 30): `hc send` holds a send for up to 60 seconds while a
   person's draft is open.
-- The long-task file handoff applies when the session has never reported a status, hc's form of an
-  agent that does not report readiness.
+- A session that reports no status is not sent anything. Claude, Codex, Antigravity and Muse
+  report one once they are past their startup screens, so silence after the 30-second readiness
+  window means "not ready" (Claude says nothing while its folder-trust question is open, and a
+  send's Enter would answer it with its default). The launch stops with "<task> has not reported a
+  status after 30 s; a startup question such as folder trust may be open: read it with
+  `hc read tN`", leaves the session open, and records `status_reported: false` and
+  `prompt_delivered: false` in the receipt; every later write is held to the same rule. Only a
+  vendor confirmed never to report a status (`VENDORS_WITHOUT_STATUS`, none today) is sent a line
+  without one, after its screen shows no selection menu, and a long task to it is handed over as a
+  file. Found by the live smoke test of 2026-11-10, where a prompt answered Claude's trust
+  question "No, exit".
 - `roster.py` requires `HC_TERMINAL_ID` instead of `HERDR_ENV`, waits on each seat's terminal with
   `hc wait`, reads status with `hc get` and a blocked screen with `hc read`, and records the
   workspace from the receipt's `space`.
