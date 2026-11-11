@@ -430,11 +430,11 @@ class BlockedRefusalTests(DeliverTestBase):
             "Approve the deploy",
         )
 
-    def test_only_an_idle_agent_is_typed_into(self) -> None:
-        # Every status other than exactly idle, and no status at all, holds
-        # the transcript: an idle agent raises no dialog on its own, so the
+    def test_only_a_settled_agent_is_typed_into(self) -> None:
+        # Every status other than idle or done, and no status at all, holds
+        # the transcript: a settled agent raises no dialog on its own, so the
         # window in which typed keys could answer one stays small.
-        for agent_status in ("working", "done", "error", "unknown", "thinking", None):
+        for agent_status in ("working", "error", "unknown", "thinking", None):
             with self.subTest(agent_status=agent_status):
                 self._refused_path().unlink(missing_ok=True)
                 spawn = _HcSpawnSeam([_hc_get_result(agent_status)])
@@ -444,11 +444,21 @@ class BlockedRefusalTests(DeliverTestBase):
                 self.assertNotIsInstance(caught.exception, deliver.DeliveryUncertain)
                 self.assertEqual(len(spawn.calls), 1, "nothing was typed")
                 self.assertEqual(spoken, [deliver.BUSY_REFUSAL_PHRASE])
-                self.assertIn("not idle", str(caught.exception))
+                self.assertIn("not idle or done", str(caught.exception))
                 self.assertEqual(
                     self._refused_path().read_text(encoding="utf-8"), "Hello there"
                 )
-        self.assertEqual(deliver.TYPABLE_STATUSES, ("idle",))
+        self.assertEqual(deliver.TYPABLE_STATUSES, ("idle", "done"))
+
+    def test_a_done_agent_is_typed_into(self) -> None:
+        # done is a turn that finished while nobody watched: as settled as
+        # idle, and the usual state when the operator answers by voice.
+        spawn = _HcSpawnSeam(
+            [_hc_get_result("done"), _keys_result("done"), _hc_get_result("idle")]
+        )
+        deliver.deliver("Hello there", spawn=spawn)
+        self.assertEqual([command[1] for command, _ in spawn.calls], ["get", "keys", "get"])
+        self.assertFalse(self._refused_path().exists())
 
 
 class AfterTypingTests(DeliverTestBase):

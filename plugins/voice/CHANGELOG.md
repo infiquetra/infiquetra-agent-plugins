@@ -28,7 +28,7 @@ were unreachable from 0.4.1.
   refusal is spoken; `d` discards it. Spoken questions cannot be delivered until herdr
   core can paste text without Enter. A failed `hc keys` call also holds the transcript.
 
-- Delivery types only into an agent whose status is exactly `idle`; any other status,
+- Delivery types only into an agent whose status is `idle` or `done`; any other status,
   or none, holds the transcript with a spoken refusal. After typing, voice compares the
   status and turn `hc keys` reported, and a fresh `hc get`, with the idle read; if
   anything changed it says the transcript may have reached a prompt and never presses

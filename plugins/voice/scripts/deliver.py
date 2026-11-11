@@ -9,10 +9,11 @@ Delivery is a two-step sequence against herdr core (``hc``), the program
 that runs the bound agent's terminal:
 
 1. ``hc get <terminal> --json`` re-reads the bound terminal at send time.
-   It must still be live, and its status word must be exactly ``idle``:
-   an idle agent is waiting for input and raises no dialog on its own.
-   ``blocked``, ``working``, ``done``, ``error``, any other word, or no
-   status at all holds the transcript instead. The call runs under the
+   It must still be live, and its status word must be ``idle`` or
+   ``done`` (a turn that finished while nobody watched): a settled agent
+   is waiting for input and raises no dialog on its own. ``blocked``,
+   ``working``, ``error``, any other word, or no status at all holds the
+   transcript instead. The call runs under the
    10-second deadline pinned for bounded helper calls (KTD3a).
 2. ``hc keys <terminal> <key>...`` types the transcript, whitespace-
    normalized to a single line, one key per character (``space`` for a
@@ -20,7 +21,7 @@ that runs the bound agent's terminal:
    unsubmitted, editable delivery R16 requires.
 3. The status is checked again: the status and turn ``hc keys`` reports
    for the moment its keys went in, and a fresh ``hc get``. If either is
-   not ``idle``, or the turn moved, the transcript may have reached a
+   not ``idle`` or ``done``, or the turn moved, the transcript may have reached a
    prompt instead of the input box. Voice says so, out loud and in the
    pane, and never presses Enter; it cannot take the keys back.
 
@@ -55,7 +56,7 @@ about three seconds of quiet from the person before it presses anything,
 and has no guard of its own (``hc send`` refuses a blocked program, but it
 submits). If the agent raises a menu or a permission dialog in that
 window, single characters of the transcript (a ``1``, a ``y``) can answer
-it. That race is the residual: narrowed by typing only into an idle agent,
+it. That race is the residual: narrowed by typing only into a settled agent,
 detected after the fact by step 3, and closed only when herdr core gives
 ``terminal.keys`` a guard that refuses unless the program is idle.
 
@@ -113,12 +114,15 @@ BLOCKED_REFUSAL_PHRASE = (
     "The bound session is blocked on a prompt; not delivering that."
 )
 
-#: The only status words delivery types into. Everything else holds the
-#: transcript: a program waiting for input raises no dialog on its own.
-TYPABLE_STATUSES = (herdr_core.STATUS_IDLE,)
+#: The only status words delivery types into: a settled turn waiting for
+#: input, which raises no dialog on its own. ``done`` is what a Claude
+#: session reports after its turn while nobody views its terminal, which is
+#: the usual state when the operator answers by voice. Everything else holds
+#: the transcript.
+TYPABLE_STATUSES = (herdr_core.STATUS_IDLE, herdr_core.STATUS_DONE)
 
-#: The short fixed phrase spoken when the bound agent is not idle.
-BUSY_REFUSAL_PHRASE = "The bound session is not idle; not delivering that."
+#: The short fixed phrase spoken when the bound agent is not settled.
+BUSY_REFUSAL_PHRASE = "The bound session is busy; not delivering that."
 
 #: The short fixed phrase spoken when the agent changed while keys went in.
 UNCERTAIN_DELIVERY_PHRASE = (
@@ -214,7 +218,7 @@ def deliver(
         speak_text(BUSY_REFUSAL_PHRASE)
         shown = repr(status) if status is not None else "not reporting a status"
         raise DeliveryRefusal(
-            f"the bound agent {agent_name!r} is {shown}, not idle; nothing was "
+            f"the bound agent {agent_name!r} is {shown}, not idle or done; nothing was "
             "typed — the transcript is held for explicit use or discard"
         )
     try:
@@ -361,7 +365,7 @@ def _change_while_typing(
 
     Compares the status and turn ``hc keys`` reported for the moment its
     keys went in, then a fresh ``hc get``, against the idle record read
-    before typing. A status that is not idle (a blocked one names its
+    before typing. A status that is not idle or done (a blocked one names its
     question when the program gave one), a turn that moved, or a terminal
     that can no longer be read all count as a change.
     """

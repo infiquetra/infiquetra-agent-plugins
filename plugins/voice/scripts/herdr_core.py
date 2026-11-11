@@ -49,6 +49,7 @@ __all__ = [
     "SESSION_LABEL",
     "STATUS_BLOCKED",
     "STATUS_IDLE",
+    "STATUS_DONE",
     "STATE_LIVE",
     "get_terminal",
     "label_session",
@@ -73,6 +74,10 @@ STATUS_BLOCKED = "blocked"
 
 #: The status word of a program that is waiting for input and doing nothing.
 STATUS_IDLE = "idle"
+
+#: The status word of a program that finished its turn while nobody watched
+#: its terminal. It is as settled as ``idle``; looking at it turns it idle.
+STATUS_DONE = "done"
 
 #: A terminal whose program is still running. The other state is
 #: ``finished``.

@@ -32,8 +32,8 @@ Press `d` to discard it; `u` would only refuse it again, because the
 characters do not change. Until herdr core can paste text without Enter,
 spoken questions cannot be delivered.
 
-Voice types only into an agent that reports exactly `idle`; otherwise it says
-so and holds the transcript (`u` retries once the agent is idle). If the agent
+Voice types only into an agent that reports `idle` or `done`; otherwise it
+says so and holds the transcript (`u` retries once the agent is settled). If the agent
 changed while the keys went in, voice says the transcript may have reached a
 prompt: look at the session before pressing Enter.
 

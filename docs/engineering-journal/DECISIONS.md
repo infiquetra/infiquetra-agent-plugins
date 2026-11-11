@@ -11,7 +11,9 @@ core 0.1.20 showed `hc keys` types exactly are mapped: letters, digits, spaces a
 `` . , ' - ; / = ` [ ] ``. A transcript with any other character (a question mark, an
 exclamation mark, a colon, quotes, anything outside ASCII), or one starting with `/`,
 is held whole for the operator's explicit use or discard and never partly typed.
-Typing happens only when the agent reports exactly `idle`, and the status and turn are
+Typing happens only when the agent reports `idle` or `done` (a finished turn nobody has
+looked at yet, which `hc ls` showed for several Claude sessions on 2026-11-10), and the
+status and turn are
 checked again after the keys go in; a change is reported as "the transcript may have
 reached a prompt", never followed by Enter. herdr core does not know which Claude session runs in
 a terminal, so the voice Claude adapter's SessionStart hook runs `hc label

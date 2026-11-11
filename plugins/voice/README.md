@@ -180,17 +180,18 @@ transcript is held in the Voice pane, where `d` discards it (`u` would only
 refuse it again). In practice every spoken question is held until herdr core
 can paste text without Enter.
 
-Delivery types only into an agent whose status is exactly `idle`: a program
-waiting for input raises no dialog on its own. `blocked` holds the transcript
-with the blocked refusal; `working`, `done`, `error`, any other word, or no
-status holds it with a "not idle" refusal. Both are spoken, and `u` retries
+Delivery types only into an agent whose status is `idle` or `done` (a turn that
+finished while nobody watched its terminal, the usual state when you answer by
+voice): a settled program waiting for input raises no dialog on its own.
+`blocked` holds the transcript with the blocked refusal; `working`, `error`,
+any other word, or no status holds it with a "busy" refusal. Both are spoken, and `u` retries
 once the agent is idle again.
 
 **Residual window.** `hc keys` has no guard of its own and waits for about
 three seconds of quiet from the person before it presses anything. If the agent
 raises a menu or a permission dialog between voice's status read and the keys,
 single characters of the transcript (a `1`, a `y`) can answer it. Voice narrows
-the window by typing only into an idle agent, and detects it afterwards: it
+the window by typing only into a settled agent, and detects it afterwards: it
 compares the status and turn `hc keys` reports for the moment its keys went in,
 and a fresh `hc get`, with the idle read. If anything changed, voice says, out
 loud and in the pane, that the transcript may have reached a prompt and the
