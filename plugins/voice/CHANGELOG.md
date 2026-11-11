@@ -34,6 +34,11 @@ were unreachable from 0.4.1.
   anything changed it says the transcript may have reached a prompt and never presses
   Enter. The window between the status read and the keys remains (see the README).
 
+- Text a program reports through herdr core (a status question, a terminal name, an
+  error message) loses every control character and is capped at 120 characters before
+  voice shows it, so no planted escape sequence reaches the operator's terminal. `voice
+  bind` refuses a session label that holds control characters.
+
 - The Auralis bridge identity comes from herdr core: `HC_TERMINAL_ID`, `hc get`, and the
   terminal's `voice.agent-session` label. The terminal address is both `terminal_id` and
   `pane_id`. It is resolved only while Auralis has published its bridge discovery file,

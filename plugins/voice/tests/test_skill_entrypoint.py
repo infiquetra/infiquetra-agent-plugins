@@ -337,6 +337,25 @@ class CliBindTests(unittest.TestCase):
                 self.assertIn("voice.agent-session", stderr)
                 self.assertIsNone(payload)
 
+    def test_bind_stores_only_printable_text_from_the_terminal_name(self) -> None:
+        exit_code, payload, _, stdout, _ = self._bind(
+            self._record(name="review\x1b]52;c;ZXZpbA==\x07\x9b2J")
+        )
+        self.assertEqual(exit_code, 0)
+        for character in ("\x1b", "\x07", "\x9b"):
+            self.assertNotIn(character, payload["agent"])
+            self.assertNotIn(character, stdout)
+        self.assertTrue(payload["agent"].startswith("review"))
+
+    def test_bind_refuses_a_session_label_with_control_characters(self) -> None:
+        exit_code, payload, _, _, stderr = self._bind(
+            self._record(labels={"voice.agent-session": "abc\x1b[2Jdef"})
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertIn("control characters", stderr)
+        self.assertNotIn("\x1b", stderr)
+        self.assertIsNone(payload)
+
     def test_bind_refuses_an_incomplete_record_by_name(self) -> None:
         incomplete = self._record()
         del incomplete["address"]

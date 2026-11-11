@@ -485,6 +485,18 @@ class AfterTypingTests(DeliverTestBase):
         self.assertIn("Allow Bash: rm -rf build?", message)
         self.assertEqual(len(calls), 3)
 
+    def test_a_planted_escape_sequence_in_the_question_is_stripped(self) -> None:
+        # The question is the program's own text; it must not reach the
+        # operator's terminal able to move the cursor or set the clipboard.
+        planted = "Allow?\x1b]52;c;ZXZpbA==\x07\x1b[2J\x9b1;1H" + "z" * 400
+        message, _, _ = self._deliver_expecting_uncertain(
+            [_hc_get_result(), _keys_result(), _hc_get_result("blocked", msg=planted)]
+        )
+        for character in ("\x1b", "\x07", "\x9b"):
+            self.assertNotIn(character, message)
+        self.assertIn("(Allow?", message)
+        self.assertNotIn("z" * 200, message, "the question is capped")
+
     def test_a_turn_that_moved_is_reported(self) -> None:
         for results in (
             [_hc_get_result(turn=3), _keys_result(turn=4)],

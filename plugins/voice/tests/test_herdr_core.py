@@ -216,6 +216,52 @@ class KeyNameTests(unittest.TestCase):
             self.assertNotIn(name, keys)
 
 
+#: Every character a terminal acts on: C0 controls (ESC, BEL, NUL ...), DEL
+#: and the C1 range, which includes the single-byte CSI and OSC introducers.
+_CONTROLS = [chr(code) for code in (*range(0x20), 0x7F, *range(0x80, 0xA0))]
+
+
+class PrintableTests(unittest.TestCase):
+    """Program-supplied text never reaches the operator's terminal raw."""
+
+    def test_every_control_character_is_removed(self) -> None:
+        cleaned = herdr_core.printable("a" + "".join(_CONTROLS) + "b")
+        self.assertEqual(cleaned, "a b")
+        for character in _CONTROLS:
+            self.assertNotIn(character, cleaned)
+
+    def test_escape_sequences_lose_their_introducers(self) -> None:
+        planted = "Allow\x1b]52;c;ZXZpbA==\x07 Bash \x9b2J\x1b[2Jrm?"
+        cleaned = herdr_core.printable(planted)
+        self.assertNotIn("\x1b", cleaned)
+        self.assertNotIn("\x07", cleaned)
+        self.assertNotIn("\x9b", cleaned)
+        self.assertTrue(cleaned.startswith("Allow"))
+
+    def test_ordinary_text_and_non_ascii_letters_are_kept(self) -> None:
+        self.assertEqual(herdr_core.printable("  Allow  café\tbuild?\n"), "Allow café build?")
+
+    def test_long_text_is_capped_with_an_ellipsis(self) -> None:
+        cleaned = herdr_core.printable("x" * 500)
+        self.assertEqual(len(cleaned), herdr_core.DISPLAY_LIMIT)
+        self.assertTrue(cleaned.endswith("…"))
+        self.assertEqual(herdr_core.DISPLAY_LIMIT, 120)
+
+    def test_herdr_core_error_messages_are_cleaned(self) -> None:
+        for stderr in (
+            json.dumps({"error": {"kind": "x", "message": "bad\x1b[2J" + "y" * 300}}),
+            "plain failure\x1b]0;title\x07",
+        ):
+            with self.subTest(stderr=stderr[:30]):
+                run = _RunSeam(subprocess.CalledProcessError(1, ["hc"], "", stderr))
+                with self.assertRaises(herdr_core.CoreRefusal) as caught:
+                    herdr_core.get_terminal("t7", timeout=2.0, run_process=run, hc="hc")
+                reason = caught.exception.reason
+                for character in _CONTROLS:
+                    self.assertNotIn(character, reason)
+                self.assertLess(len(reason), herdr_core.DISPLAY_LIMIT + 60)
+
+
 class RecordReadingTests(unittest.TestCase):
     def test_status_word_reads_the_reported_state(self) -> None:
         self.assertEqual(

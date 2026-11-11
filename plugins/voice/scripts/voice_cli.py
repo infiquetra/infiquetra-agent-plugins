@@ -75,8 +75,16 @@ def _bind(target: str) -> int:
             "plugin enabled in that Claude session? Its SessionStart hook writes "
             "the label: restart or resume that session, then bind again"
         )
+    if herdr_core.printable(session_id, limit=len(session_id)) != session_id:
+        return refuse(
+            f"terminal {address}'s {herdr_core.SESSION_LABEL} label holds control "
+            "characters or spacing a Claude session id never has"
+        )
+    # The terminal's name is set by whoever started it; the pane shows it on
+    # every redraw, so keep only printable text.
     name = record.get("name")
-    agent = name.strip() if isinstance(name, str) and name.strip() else address
+    shown = herdr_core.printable(name) if isinstance(name, str) else ""
+    agent = shown or address
     written = binding.write_binding(agent, session_id, address)
     print(
         f"bound agent {written.agent} · session {written.session_id} · "

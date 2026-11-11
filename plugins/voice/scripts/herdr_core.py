@@ -58,6 +58,8 @@ __all__ = [
     "turn_of",
     "session_of",
     "is_live",
+    "printable",
+    "DISPLAY_LIMIT",
     "is_other_machine",
 ]
 
@@ -75,6 +77,9 @@ STATUS_IDLE = "idle"
 #: A terminal whose program is still running. The other state is
 #: ``finished``.
 STATE_LIVE = "live"
+
+#: The most characters of program-supplied text voice shows the operator.
+DISPLAY_LIMIT = 120
 
 #: How ``hc keys`` names the space bar.
 _SPACE_KEY = "space"
@@ -240,6 +245,33 @@ def session_of(record: dict) -> str | None:
     return value
 
 
+def printable(text: str, limit: int = DISPLAY_LIMIT) -> str:
+    """``text`` made safe to show in a terminal: no control characters, capped.
+
+    Text that a program reports through herdr core (a status message, a
+    terminal name, an error) reaches the operator's terminal. Removing every
+    C0 control character (below 0x20, line breaks and ESC included), DEL
+    (0x7f) and every C1 control character (0x80 to 0x9f) means no escape
+    sequence survives to move the cursor, rewrite the screen, or set the
+    clipboard. Whitespace runs collapse to one space, and text longer than
+    ``limit`` is cut with an ellipsis.
+    """
+    kept = "".join(
+        " " if character in "\t\n\r" else character
+        for character in text
+        if character in "\t\n\r"
+        or not (
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or 0x80 <= ord(character) <= 0x9F
+        )
+    )
+    kept = " ".join(kept.split())
+    if len(kept) > limit:
+        kept = kept[: limit - 1].rstrip() + "…"
+    return kept
+
+
 def is_live(record: dict) -> bool:
     """Whether the terminal's program is still running."""
     return record.get("state") == STATE_LIVE
@@ -291,16 +323,14 @@ def _error_message(stderr: object) -> str | None:
     try:
         payload = json.loads(stderr)
     except ValueError:
-        return stderr.strip().splitlines()[-1][:200]
+        return printable(stderr.strip().splitlines()[-1]) or None
     if not isinstance(payload, dict):
         return None
     error = payload.get("error")
     if not isinstance(error, dict):
         return None
-    message = error.get("message")
-    if isinstance(message, str) and message.strip():
-        return message.strip()
-    kind = error.get("kind")
-    if isinstance(kind, str) and kind.strip():
-        return kind.strip()
+    for field in ("message", "kind"):
+        value = error.get(field)
+        if isinstance(value, str) and printable(value):
+            return printable(value)
     return None

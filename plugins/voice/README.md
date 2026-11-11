@@ -149,6 +149,12 @@ with standard input closed and a deadline:
 | `hc get <terminal> --json` | `voice bind`, delivery, and the Auralis bridge identity | Read a terminal: its address, whether it is live, its status word (`idle`, `working`, `done`, `blocked`, `error`), and its labels |
 | `hc keys <terminal> <key>...` | Delivery | Type the transcript one key per character (`space` for a space, `shift+<letter>` for a capital), never Enter |
 
+Text a program reports through herdr core (a status question, a terminal
+name, an error message) is shown only after `herdr_core.printable` removes every
+control character (C0, DEL and C1, so no escape sequence survives) and caps it
+at 120 characters. `voice bind` refuses a session label that holds control
+characters.
+
 `voice bind <terminal>` takes a terminal's name or address (`t7`). It refuses a
 terminal on another machine (`mini/t3`): voice records and plays audio on this
 machine, and the Stop hook reads this machine's binding. It refuses a finished

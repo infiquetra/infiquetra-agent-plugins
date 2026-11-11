@@ -382,8 +382,10 @@ def _change_while_typing(
         reported = after.get("status")
         question = reported.get("msg") if isinstance(reported, dict) else None
         asked = ""
-        if isinstance(question, str) and question.strip():
-            asked = f" ({question.strip()})"
+        if isinstance(question, str) and herdr_core.printable(question):
+            # The program wrote this text; strip anything that could act as a
+            # terminal escape sequence before the operator sees it.
+            asked = f" ({herdr_core.printable(question)})"
         return f"its status is now {status!r}{asked}"
     if herdr_core.turn_of(after) != turn:
         return "its turn moved while the keys went in"
