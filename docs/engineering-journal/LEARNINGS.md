@@ -32,8 +32,8 @@ the question with its highlighted "No, exit". Claude quit, twice. The fix is `VE
 (`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`), proved by
 `test_a_session_silent_through_the_readiness_window_is_not_ready_and_nothing_is_sent`.
 
-**Mechanism.** Claude, Codex, Antigravity and Muse report a status word only once they are past
-their startup screens, so "no status yet" and "never reports a status" look identical from hc.
+**Mechanism.** Claude, Codex, Antigravity, Muse and OpenCode report a status word only once they
+are past their startup screens, so "no status yet" and "never reports a status" look identical from hc.
 `hc send` pastes and presses Enter whatever is on screen; on a selection menu (folder trust, an MCP
 server approval, a theme or login picker) that Enter picks the default.
 
