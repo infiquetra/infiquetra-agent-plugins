@@ -110,6 +110,11 @@
 
 ### Fixed
 
+- **The reviewer answers each testing lead.** `prepare` turns up to 8 two-runs tests and 8
+  surviving mutants into where-to-look items asking `testing.accepts-broken-code`, located at the
+  test or the mutated line; more is recorded as `lead-cap`. The prompt tells the reviewer to answer
+  each with a traced finding when it is the change's purpose test or line, otherwise `cleared`.
+
 - **Mutation results are a repeatable lead.** `testing.surviving-mutant` now fixes later, and the
   reviewer prompt tells the reviewer to escalate a survivor on the line the change exists for as
   `testing.accepts-broken-code`. cosmic-ray runs a fixed number of changed-line mutants, spread one

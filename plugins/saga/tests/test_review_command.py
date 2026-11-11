@@ -4198,3 +4198,153 @@ def test_the_python_environment_never_writes_bytecode_into_the_packet(tmp_path: 
         )
         assert ran.returncode == 0, ran.stderr
     assert sorted(path.relative_to(site).as_posix() for path in site.rglob("*")) == before
+
+
+_LEAD_APP = (
+    "def parse_header(text):\n"
+    "    if text.startswith('#'):\n"
+    "        return text[1:]\n"
+    "    return text\n"
+)
+_LEAD_NAMES = ["parse_header_strips_marker", "unrelated_cleanup", *[f"extra_{n}" for n in range(9)]]
+_LEAD_TESTS = "".join(f"def test_{name}():\n    assert True\n\n\n" for name in _LEAD_NAMES)
+
+
+def _lead_change(tmp: Path) -> tuple[Path, str, str, Any]:
+    repo = tmp / "repo"
+    _init(repo)
+    (repo / "app.py").write_text("def parse_header(text):\n    return text\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "app.py").write_text(_LEAD_APP, encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_app.py").write_text(_LEAD_TESTS, encoding="utf-8")
+    head = _commit(repo, "head")
+    return repo, base, head, C.review_diff.read(repo, base, head)
+
+
+def _lead_finding(row: str, ref: str, location: dict[str, Any], statement: str) -> dict[str, Any]:
+    return {
+        "kind": "finding", "lens": "testing", "language": "python", "statement": statement,
+        "rule": {"row": row, "ref": ref}, "location": location,
+        "source": {"kind": "tool", "name": "review-checks", "version": "1.0.0"},
+    }
+
+
+def _two_runs_finding(name: str) -> dict[str, Any]:
+    node = f"tests/test_app.py::test_{name}"
+    return _lead_finding(
+        "testing.test-passes-before-change", node,
+        {"scope": "whole-project", "file": "tests/test_app.py", "anchor": node},
+        "The new test passes on the code before the change.",
+    )
+
+
+def _mutant_finding(line: int, operator: str) -> dict[str, Any]:
+    return _lead_finding(
+        "testing.surviving-mutant", "surviving-mutant",
+        {"scope": "lines", "file": "app.py", "anchor": f"app.py:{line}",
+         "lines": {"start": line, "end": line}, "function": None},
+        f"A mutant survived ({operator}).",
+    )
+
+
+def test_testing_leads_become_where_to_look_items_at_the_test_and_the_mutated_line(
+    tmp_path: Path,
+) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    findings = [_two_runs_finding("parse_header_strips_marker"), _mutant_finding(2, "core/Not")]
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    assert degraded == []
+    test_item, mutant_item = items
+    assert test_item["classifier"] == {"name": "two-runs", "model": "review-checks 1.0.0"}
+    assert test_item["questions"] == [{"id": "testing.accepts-broken-code", "probability": 1}]
+    assert test_item["location"] == {
+        "scope": "lines", "file": "tests/test_app.py", "lines": {"start": 1, "end": 2},
+        "function": "test_parse_header_strips_marker",
+        "anchor": "two-runs:tests/test_app.py::test_parse_header_strips_marker",
+    }
+    assert mutant_item["location"] == {
+        "scope": "lines", "file": "app.py", "lines": {"start": 2, "end": 2},
+        "function": "parse_header", "anchor": "surviving-mutant:core/Not:2",
+    }
+    for item in items:
+        assert item["lens"] == "testing" and item["degraded"] is False
+        assert item["kind"] == "where_to_look" and item["schema"] == R.SCHEMA
+
+
+def test_testing_leads_are_capped_and_ranked_by_words_shared_with_the_change(
+    tmp_path: Path,
+) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    names = ["unrelated_cleanup", *[f"extra_{n}" for n in range(9)], "parse_header_strips_marker"]
+    findings = [_two_runs_finding(name) for name in names]
+    findings += [_mutant_finding(line, f"core/Op{n}") for n in range(5) for line in (2, 3)]
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    tests = [item for item in items if item["classifier"]["name"] == "two-runs"]
+    mutants = [item for item in items if item["classifier"]["name"] == "surviving-mutant"]
+    assert len(tests) == C.LEAD_CAP == 8 and len(mutants) == 8
+    # The test whose name shares words with the edited function comes first.
+    assert tests[0]["location"]["function"] == "test_parse_header_strips_marker"
+    assert [(entry["tool"], entry["reason"], entry["detail"]) for entry in degraded] == [
+        ("two-runs", "lead-cap", "listed 8 of 11 leads as where-to-look items"),
+        ("surviving-mutant", "lead-cap", "listed 8 of 10 leads as where-to-look items"),
+    ]
+    again, again_degraded = C._lead_items(
+        list(reversed(findings)), change, C.review_tools.subprocess_runner, repo, head,
+    )
+    assert json.dumps(again, sort_keys=True) == json.dumps(items, sort_keys=True)
+    assert again_degraded == degraded
+
+
+def test_no_testing_leads_means_no_items(tmp_path: Path) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    other = _lead_finding("testing.uncovered-branch", "x", {"scope": "lines", "file": "app.py",
+                          "anchor": "a", "lines": {"start": 1, "end": 1}, "function": None}, "s")
+    assert C._lead_items([other], change, C.review_tools.subprocess_runner, repo, head) == ([], [])
+
+
+def test_a_lead_item_repeated_by_the_sweep_is_kept_once(tmp_path: Path) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    items, _degraded = C._lead_items(
+        [_mutant_finding(2, "core/Not"), _mutant_finding(2, "core/Not")], change,
+        C.review_tools.subprocess_runner, repo, head,
+    )
+    assert len(items) == 1
+    merged = C._merge_where_items(items, [dict(items[0])], [])
+    assert merged == items
+
+
+def test_prepare_writes_the_lead_items_into_the_packet_the_same_way_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two builds from the same inputs give the same packet bytes, lead items included."""
+    repo, base, head, _change = _lead_change(tmp_path)
+    finding = T.Hit(
+        rule_id="tests/test_app.py::test_parse_header_strips_marker", path="tests/test_app.py",
+        statement="The new test passes on the code before the change.",
+        anchor="tests/test_app.py::test_parse_header_strips_marker", whole_project=True,
+        row="testing.test-passes-before-change", language="python",
+    )
+    adapter = T.Adapter(
+        id="two-runs", tool="review-checks", invoke=lambda _context: ["stub", "scan"],
+        parse=lambda _text: T.ParseResult((finding,)), default_version="1.0.0",
+        rows=("testing.test-passes-before-change",), lens="testing", comparison="lines",
+    )
+    packets = []
+    for name in ("first", "second"):
+        home = tmp_path / f"home-{name}"
+        home.mkdir()
+        out = tmp_path / name
+        code, err = _main([
+            "prepare", "--repo", str(repo), "--base", base, "--head", head,
+            "--profile", str(_profile(tmp_path / f"outside-{name}")),
+            "--builder-record", str(_builder(tmp_path / f"builder-{name}.json")),
+            "--out", str(out), "--home", str(home),
+        ], adapters=[adapter], runner=_Runner())
+        assert code == 0, err
+        packets.append({path.relative_to(out).as_posix(): path.read_bytes()
+                        for path in sorted(out.rglob("*")) if path.is_file()})
+    assert packets[0] == packets[1]
+    where = json.loads(packets[0]["where-to-look.json"])
+    assert [item["classifier"]["name"] for item in where if item["lens"] == "testing"].count(
+        "two-runs") == 1

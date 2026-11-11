@@ -504,6 +504,8 @@ def _prepare(
             repo, base, head, args, calibration, home, ask,
         )
         degraded.extend(sweep_degraded)
+        leads, lead_degraded = _lead_items(findings, change, runner, repo, head)
+        degraded.extend(lead_degraded)
         gaps = [entry for entry in degraded if entry.get("reason") in _GAP_REASONS]
         for line in _cache_notices(degraded, home):
             print(f"warning: {line}", file=sys.stderr)
@@ -511,7 +513,7 @@ def _prepare(
         # machine-specific-value check) to this file; they join the sweep's items, not replaced.
         scripted = _read_json(staging / "where-to-look.json", "where-to-look")
         where = _merge_where_items(
-            scripted if isinstance(scripted, list) else [],
+            [*(scripted if isinstance(scripted, list) else []), *leads],
             items,
             [_gap_item(entry) for entry in gaps],
         )
@@ -755,6 +757,168 @@ def _merge_where_items(
 
 #: Degraded reasons that become a check for the reviewer to answer by hand.
 _GAP_REASONS = frozenset({"missing", "known-gap"})
+
+#: The testing leads that become where-to-look items, each with its cap per packet. A lead is a
+#: tool result that fixes later on its own; as an item, the reviewer must say whether it shows that
+#: no test checks what the change adds or fixes.
+ROW_TWO_RUNS = "testing.test-passes-before-change"
+ROW_MUTANT = "testing.surviving-mutant"
+LEAD_CAP = 8
+LEAD_QUESTION = "testing.accepts-broken-code"
+_WORD = re.compile(r"[a-z0-9]+")
+_OPERATOR = re.compile(r"\(([^()]+)\)\.?$")
+
+
+def _words(text: str) -> set[str]:
+    return {word for word in _WORD.findall(text.lower()) if len(word) >= 3 and word != "test"}
+
+
+def _head_text(runner: Process, repo: Path, head: str, path: str, cache: dict[str, str | None]
+               ) -> str | None:
+    if path not in cache:
+        shown = _git(runner, repo, ["show", f"{head}:{path}"])
+        cache[path] = shown.stdout if shown.code == 0 else None
+    return cache[path]
+
+
+def _python_def(text: str | None, name: str) -> tuple[int, int] | None:
+    """The first and last line of the function *name* defines in *text*, or ``None``."""
+    import ast  # noqa: PLC0415
+
+    if text is None:
+        return None
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return node.lineno, getattr(node, "end_lineno", None) or node.lineno
+    return None
+
+
+def _python_function_at(text: str | None, line: int) -> str | None:
+    import ast  # noqa: PLC0415
+
+    if text is None:
+        return None
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+    best: tuple[int, str] | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            end = getattr(node, "end_lineno", None) or node.lineno
+            if node.lineno <= line <= end and (best is None or end - node.lineno < best[0]):
+                best = (end - node.lineno, node.name)
+    return None if best is None else best[1]
+
+
+def _lead_item(lens: str, language: str, location: dict[str, Any], name: str, model: str
+               ) -> dict[str, Any]:
+    return {
+        "kind": "where_to_look",
+        "schema": review_records.SCHEMA,
+        "lens": lens,
+        "language": language,
+        "degraded": False,
+        "questions": [{"id": LEAD_QUESTION, "probability": 1}],
+        "classifier": {"name": name, "model": model},
+        "location": location,
+    }
+
+
+def _model(finding: Mapping[str, Any]) -> str:
+    source = finding.get("source") if isinstance(finding.get("source"), Mapping) else {}
+    return f"{source.get('name') or 'tool'} {source.get('version') or 'not-recorded'}"
+
+
+def _lead_items(
+    findings: Sequence[Any],
+    change: review_diff.Change,
+    runner: Process,
+    repo: Path,
+    head: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Where-to-look items for the testing leads, and a degraded entry for each capped kind.
+
+    Two-runs lists new tests that pass before the change; mutation testing lists mutants on
+    changed lines no test killed. Each becomes an item at the test or the mutated line, so the
+    reviewer must say whether it shows that nothing checks what the change adds or fixes. At most
+    ``LEAD_CAP`` of each: tests whose names share the most words with the changed files and the
+    functions the change edits come first, then by test id; mutants by file, line and operator.
+    """
+    cache: dict[str, str | None] = {}
+    changed_words: set[str] = set()
+    for item in change.files:
+        if item.status not in {"added", "modified", "renamed"}:
+            continue
+        if not review_tools.is_python_test_file(item.path):
+            changed_words |= _words(Path(item.path).stem)
+        if item.path.endswith(".py") and not review_tools.is_python_test_file(item.path):
+            text = _head_text(runner, repo, head, item.path, cache)
+            for line in sorted(item.lines):
+                function = _python_function_at(text, line)
+                if function:
+                    changed_words |= _words(function)
+    tests: list[tuple[int, str, dict[str, Any]]] = []
+    mutants: list[tuple[str, int, str, dict[str, Any]]] = []
+    for finding in findings:
+        if not isinstance(finding, Mapping) or not isinstance(finding.get("rule"), Mapping):
+            continue
+        row = finding["rule"].get("row")
+        location = finding.get("location") if isinstance(finding.get("location"), Mapping) else {}
+        path = str(location.get("file") or "")
+        if not path or path == ".":
+            continue
+        language = str(finding.get("language") or "none")
+        if row == ROW_TWO_RUNS:
+            node = str(finding["rule"].get("ref") or location.get("anchor") or "")
+            name = node.split("::")[-1].split("[", 1)[0]
+            span = (_python_def(_head_text(runner, repo, head, path, cache), name)
+                    if path.endswith(".py") and name else None)
+            where: dict[str, Any] = (
+                {"scope": "lines", "file": path, "lines": {"start": span[0], "end": span[1]},
+                 "function": name, "anchor": f"two-runs:{node}"}
+                if span else {"scope": "whole-project", "file": path, "anchor": f"two-runs:{node}"}
+            )
+            score = len(_words(name) & changed_words)
+            tests.append((-score, node, _lead_item("testing", language, where, "two-runs",
+                                                   _model(finding))))
+        elif row == ROW_MUTANT:
+            lines = location.get("lines") if isinstance(location.get("lines"), Mapping) else {}
+            line = lines.get("start")
+            if not isinstance(line, int):
+                continue
+            match = _OPERATOR.search(str(finding.get("statement") or ""))
+            operator = match.group(1) if match else "unknown-operator"
+            text = _head_text(runner, repo, head, path, cache) if path.endswith(".py") else None
+            where = {"scope": "lines", "file": path, "lines": {"start": line, "end": line},
+                     "function": _python_function_at(text, line),
+                     "anchor": f"surviving-mutant:{operator}:{line}"}
+            mutants.append((path, line, operator, _lead_item(
+                "testing", language, where, "surviving-mutant", _model(finding))))
+    items: list[dict[str, Any]] = []
+    degraded: list[dict[str, Any]] = []
+    for kind, row, ranked in (
+        ("two-runs", ROW_TWO_RUNS, [entry[-1] for entry in sorted(tests, key=lambda e: e[:2])]),
+        ("surviving-mutant", ROW_MUTANT,
+         [entry[-1] for entry in sorted(mutants, key=lambda e: e[:3])]),
+    ):
+        unique: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in ranked:
+            key = json.dumps(item["location"], sort_keys=True)
+            if key not in seen:
+                seen.add(key)
+                unique.append(item)
+        items.extend(unique[:LEAD_CAP])
+        if len(unique) > LEAD_CAP:
+            entry = _degraded("testing", "none", row, kind, "lead-cap")
+            entry["detail"] = f"listed {LEAD_CAP} of {len(unique)} leads as where-to-look items"
+            degraded.append(entry)
+    return items, degraded
 
 #: The rule pack whose local cache the security scanner reads, and the reasons it gives up with.
 _RULE_PACK = "p/security-audit"

@@ -156,7 +156,10 @@ The reviewer escalates one meant to check what the change adds or fixes as
 `testing.accepts-broken-code`, with `traced` evidence naming the test and the two-runs result.
 `testing.surviving-mutant` is a lead too: survivors on changed lines are as common on clean changes
 as on defective ones. The reviewer escalates a survivor on a line that belongs to the behaviour the
-change exists to add or fix, the same way, naming the mutant.
+change exists to add or fix, the same way, naming the mutant. `prepare` turns up to 8 leads of each
+row into scripted where-to-look items (classifier `two-runs` or `surviving-mutant`, question
+`testing.accepts-broken-code`, probability 1), so the reviewer answers each one; more than 8 is
+recorded as the degraded reason `lead-cap` with a `detail` naming how many were listed.
 
 ### Judged findings
 

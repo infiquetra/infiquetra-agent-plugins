@@ -2,6 +2,20 @@
 
 ## 2026-11-11
 
+### A reviewer judges what it must answer, not what a prompt section mentions
+
+**Evidence.** With the two-runs leads only in the packet's findings and a prompt section describing
+how to escalate them, a measured reviewer left every lead as fix later, the planted one included,
+and never cited `testing.accepts-broken-code`. Items in `where-to-look.json` must each be answered,
+so `prepare` now turns the testing leads into scripted items (`review_command._lead_items`); test
+`test_testing_leads_become_where_to_look_items_at_the_test_and_the_mutated_line`.
+
+**Mechanism.** The answer contract checks every where-to-look item and nothing else; guidance about
+other packet contents competes with the item list for the reviewer's attention and loses.
+
+**Generalizable rule.** When a reviewer must judge something, make it an item the answer contract
+requires, not a paragraph of advice.
+
 ### A stable order is not a representative sample
 
 **Evidence.** The first mutant budget took the first ten changed-line mutants sorted by file, line

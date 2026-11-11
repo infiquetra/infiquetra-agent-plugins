@@ -2,6 +2,25 @@
 
 ## 2026-11-11
 
+### Testing leads are scripted where-to-look items, eight of each per packet
+
+**Decision.** `prepare` builds one where-to-look item per two-runs test (at the test function) and
+per surviving mutant (at the mutated line, operator in the anchor), with question
+`testing.accepts-broken-code` at probability 1, beside the other scripted items. At most 8 of each:
+tests whose names share the most words with the changed files and edited functions first, then by
+id; mutants by file, line and operator. More is the degraded reason `lead-cap` with a detail.
+
+**Rejected alternatives.** Leaving the leads in `findings.json` with prompt guidance: measured, the
+reviewer never escalated one. No cap: a change that adds many regression tests would crowd the
+item list. Reusing the sweep's cap: scripted items are facts and are never dropped by it.
+
+**Rationale.** The answer contract makes the reviewer answer each item, which is the judgment these
+leads need.
+
+**Revisit when.** Reviews answer lead items mechanically, or the cap leaves out the purpose test.
+
+---
+
 ### Mutation testing is a deterministic lead with a fixed mutant budget
 
 **Decision.** `testing.surviving-mutant` fixes later for every language, keeps its builder excuse,

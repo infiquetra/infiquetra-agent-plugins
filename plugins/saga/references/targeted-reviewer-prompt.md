@@ -280,35 +280,36 @@ bare `#[should_panic]`, or a loose assertion that would still fail on the plausi
 ### New tests that already pass before the change
 
 Saga runs each test the change adds or edits on the code before the change, with the new tests
-copied in. Its deterministic results (`findings.json`) list every such test that passes both before
-and after the change, on row `testing.test-passes-before-change`. That row is a lead, not a block:
-many such tests rightly pin behaviour the change keeps.
+copied in. Every such test that passes both before and after the change is on row
+`testing.test-passes-before-change` in `findings.json`, and up to 8 of them are where-to-look items
+with classifier `two-runs` and question `testing.accepts-broken-code`, located at the test. The row
+is a lead, not a block: many such tests rightly pin behaviour the change keeps. Answer each item
+like any other: decide from the test's name, its assertions and the change's purpose whether the
+test is meant to check what the change adds or fixes.
 
-For each test it lists, decide from the test's name, its assertions and the change's purpose
-whether the test is meant to check what the change adds or fixes.
-
-- If it is, the test cannot be checking it: it passes without the change. Cite
-  `testing.accepts-broken-code` with `traced` evidence and `introduced: true`. The `proof.steps`
-  name the test, give saga's two-runs result (it passes before the change and after it), and say
-  why that test is the one that checks the change's purpose.
+- If it is, the test cannot be checking it: it passes without the change. Answer the item with a
+  `testing.accepts-broken-code` finding, `traced` evidence and `introduced: true`. The
+  `proof.steps` name the test, give saga's two-runs result (it passes before the change and after
+  it), and say why that test is the one that checks the change's purpose.
 - If it pins behaviour the change keeps, such as an existing path that still works or a fallback
-  that still applies, leave the lead alone. It needs no finding of yours.
+  that still applies, answer the item `cleared`, with that as the reason, and leave the lead alone.
 
 ### Surviving mutants on the change's lines
 
-Saga also lists mutants on lines the change added or edited that no test killed, on row
-`testing.surviving-mutant` in `findings.json`, each with its file, line and operator. That row is a
-lead, not a block: survivors on changed lines are as common on sound changes as on broken ones.
+Saga also runs mutants on lines the change added or edited. Each one no test killed is on row
+`testing.surviving-mutant` in `findings.json`, and up to 8 are where-to-look items with classifier
+`surviving-mutant` and question `testing.accepts-broken-code`, located at the mutated line, the
+operator in the item's anchor. The row is a lead, not a block: survivors on changed lines are as
+common on sound changes as on broken ones. For each item, decide whether the mutated line belongs
+to the behaviour the change exists to add or fix, such as the new branch, the fixed condition or
+the new error path.
 
-For each, decide whether the mutated line belongs to the behaviour the change exists to add or fix,
-such as the new branch, the fixed condition or the new error path.
-
-- If it does, the mutant shows no test checks that behaviour. Cite `testing.accepts-broken-code`
-  with `traced` evidence and `introduced: true`. The `proof.steps` name the mutant (file, line,
-  operator), say that the change's tests still pass with it, and say why that line is the change's
-  purpose.
-- If the line is incidental, such as logging, formatting or a default the change only moved, leave
-  the lead alone.
+- If it does, the mutant shows no test checks that behaviour. Answer the item with a
+  `testing.accepts-broken-code` finding, `traced` evidence and `introduced: true`. The
+  `proof.steps` name the mutant (file, line, operator), say that the change's tests still pass with
+  it, and say why that line is the change's purpose.
+- If the line is incidental, such as logging, formatting or a default the change only moved, answer
+  the item `cleared`, with that as the reason, and leave the lead alone.
 
 ## Disputes
 

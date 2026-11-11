@@ -146,6 +146,8 @@ def test_prompt_tells_the_reviewer_how_to_judge_a_two_runs_lead() -> None:
     assert "passes before the change and after it" in text
     assert "pin behaviour the change keeps" in text or "pins behaviour the change keeps" in text
     assert "leave the lead alone" in text
+    assert "where-to-look items with classifier `two-runs`" in text
+    assert "answer the item `cleared`" in text and "Answer the item with a" in text
 
 
 def test_prompt_tells_the_reviewer_how_to_judge_a_surviving_mutant_lead() -> None:
@@ -155,6 +157,8 @@ def test_prompt_tells_the_reviewer_how_to_judge_a_surviving_mutant_lead() -> Non
     assert "testing.accepts-broken-code" in text and "`traced`" in text
     assert "(file, line, operator)" in text and "still pass with it" in text
     assert "incidental" in text and "leave the lead alone" in text
+    assert "where-to-look items with classifier `surviving-mutant`" in text
+    assert "answer the item `cleared`" in text and "Answer the item with a" in text
 
 
 def test_prompt_requires_a_sandboxed_reproduction_with_test_command_and_output() -> None:

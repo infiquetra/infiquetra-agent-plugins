@@ -354,7 +354,8 @@ The family draft describes the tool card map: exact codes take precedence over f
 Issue 155 adds five checks in `scripts/review_checks.py`. The runner starts the plugin's copy of
 that script. The commit under review does not configure these checks. `where-to-look.json` carries
 the unanswered machine-specific items, beside the sweep's items; `prepare` merges them and no longer
-replaces the scripted items with the sweep's. A confirmed machine-specific finding stays fix later.
+replaces the scripted items with the sweep's. `prepare` also adds up to 8 two-runs leads and 8
+surviving-mutant leads as items of their own (see `review-command.md`). A confirmed machine-specific finding stays fix later.
 When the relocated test command fails, `architecture-maintainability.relocated-run-fails` blocks in
 the same outcome file.
 
