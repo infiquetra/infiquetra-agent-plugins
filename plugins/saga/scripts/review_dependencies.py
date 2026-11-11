@@ -21,7 +21,9 @@ lines, resolved as of the head's commit time. pytest is added when nothing decla
 holds no interpreter and no console scripts. A package without a wheel is recorded as missing, and
 every reason recorded is a fixed word, never uv's output. The reviewer and the re-run each write
 their own small environment whose ``bin`` holds only ``python3`` and ``python`` and whose
-``site-packages`` is the packet's folder, read-only, and give it to sandboxed commands only.
+``site-packages`` is the packet's folder, read-only, and give it to sandboxed commands. Prepare
+builds the same environment once the fetch is done and hands it to the scripted testing checks,
+which run the change's tests with it unconfined, as they already ran those tests.
 
 Run as a script, this module is that watcher: ``review_dependencies.py --limit N --seconds S
 --watch PATH ... -- cargo ...``.

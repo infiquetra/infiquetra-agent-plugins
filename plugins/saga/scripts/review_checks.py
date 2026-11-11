@@ -21,11 +21,12 @@ import tempfile
 import traceback
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import review_dependencies
 import review_diff
 import review_formula
 import review_tools
@@ -235,18 +236,25 @@ def _detached(repo: Path, revision: str) -> Iterator[Path]:
 
 
 def _run_argv(
-    argv: Sequence[str], cwd: Path, timeout: int, *, untrusted: bool = True
+    argv: Sequence[str],
+    cwd: Path,
+    timeout: int,
+    *,
+    untrusted: bool = True,
+    extra_env: Mapping[str, str] | None = None,
 ) -> tuple[str, int] | str:
     """Run one argument vector. A missing program or a timeout is that reason, not a hit.
 
     A command that runs code from the change under review (its test suite) gets the review-tools
     runner's allow-listed environment, with a fresh ``HOME`` and temporary directory, never the
-    operator's. Only saga's own trusted commands, such as ``gh``, keep the full environment.
+    operator's, plus *extra_env* (the packet's Python environment on ``PATH``). Only saga's own
+    trusted commands, such as ``gh``, keep the full environment.
     """
     env: dict[str, str] | None = None
     temps: list[Path] = []
     if untrusted:
         env, temps = review_tools._relocated_env()
+        env.update(extra_env or {})
     try:
         proc = subprocess.run(  # nosec B603
             list(argv),
@@ -267,15 +275,28 @@ def _run_argv(
     return proc.stdout or "", proc.returncode
 
 
-def _classify(command: str) -> tuple[str, list[str]] | None:
+def _classify(
+    command: str, python_env: Path | None = None,
+) -> tuple[str, list[str]] | None:
+    """The kind of test runner and the words to append its listing and selection options to.
+
+    pytest is recognised by :func:`review_tools.pytest_command`, behind ``uv run`` or a
+    ``bash -c`` wrapper too. With *python_env*, pytest runs with that environment's interpreter,
+    the one the reviewer's re-runs get, so the tests import the change's installed dependencies.
+    Anything not recognised is ``None``: options are never appended to an unknown program.
+    """
+    parsed = review_tools.pytest_command(command)
+    if parsed is not None:
+        launcher, arguments = parsed
+        if python_env is not None:
+            return "pytest", review_tools.python_env_argv(python_env, arguments)
+        return "pytest", [*launcher, *arguments]
     try:
         tokens = shlex.split(command)
     except ValueError:
         return None
     if not tokens:
         return None
-    if "pytest" in tokens:
-        return "pytest", tokens
     base = Path(tokens[0]).name
     if base == "cargo" and "test" in tokens:
         return "cargo", tokens
@@ -329,8 +350,14 @@ def _parse_ids(kind: str, stdout: str) -> list[str] | None:
     return found
 
 
-def _list_ids(kind: str, tokens: Sequence[str], cwd: Path, timeout: int) -> list[str] | str:
-    result = _run_argv(_list_argv(kind, tokens), cwd, timeout)
+def _list_ids(
+    kind: str,
+    tokens: Sequence[str],
+    cwd: Path,
+    timeout: int,
+    extra_env: Mapping[str, str] | None = None,
+) -> list[str] | str:
+    result = _run_argv(_list_argv(kind, tokens), cwd, timeout, extra_env=extra_env)
     if isinstance(result, str):
         return result
     stdout, code = result
@@ -406,35 +433,54 @@ def _copy_tests(
         shutil.copy2(source, dest, follow_symlinks=False)
 
 
+def _python_env(path: Path | None) -> Path | None:
+    """*path* when it is a saga-written environment with an interpreter, else ``None``."""
+    if path is None or not (path / "bin" / "python3").exists():
+        return None
+    return path
+
+
 def two_runs(
     root: Path,
     base: str,
     commands: Sequence[tuple[str, str]],
     *,
     command_timeout: int = COMMAND_TIMEOUT,
+    python_env: Path | None = None,
 ) -> dict[str, Any]:
-    """A new test that passes at head and on the base tree, with the head's tests copied in."""
+    """A new test that passes at head and on the base tree, with the head's tests copied in.
+
+    *python_env* is the packet's Python environment. pytest commands list and run the tests with
+    its interpreter, and with it first on ``PATH``, at head and on the base tree alike.
+    """
     change = review_diff.read(root, base, "HEAD")
     hits: list[dict[str, Any]] = []
     gaps: list[dict[str, str]] = []
+    shim = _python_env(python_env)
     for pair_language, command in commands:
-        classified = _classify(command)
+        classified = _classify(command, shim)
         if classified is None:
             gaps.append(_gap("no-test-list", ROW_BEFORE))
             continue
         kind, tokens = classified
-        head_ids = _list_ids(kind, tokens, root, command_timeout)
+        extra: dict[str, str] | None = None
+        if kind == "pytest" and shim is not None:
+            path = os.environ.get("PATH", "")
+            extra = review_dependencies.python_shim_env(shim, path)
+        head_ids = _list_ids(kind, tokens, root, command_timeout, extra)
         if isinstance(head_ids, str):
             reason = head_ids if head_ids in {"missing", "timeout"} else "no-test-list"
             gaps.append(_gap(reason, ROW_BEFORE))
             continue
-        try:
-            detached = _detached(root, base)
-        except RuntimeError:
-            gaps.append(_gap("no-test-list", ROW_BEFORE))
-            continue
-        with detached as base_root:
-            base_ids = _list_ids(kind, tokens, base_root, command_timeout)
+        with ExitStack() as stack:
+            # Entering the checkout is what runs ``git worktree add``, so a failure to make the
+            # old version's checkout is caught here, as a gap, and never escapes the check.
+            try:
+                base_root = stack.enter_context(_detached(root, base))
+            except (RuntimeError, OSError):
+                gaps.append(_gap("no-test-list", ROW_BEFORE))
+                continue
+            base_ids = _list_ids(kind, tokens, base_root, command_timeout, extra)
             if isinstance(base_ids, str):
                 reason = base_ids if base_ids in {"missing", "timeout"} else "no-test-list"
                 gaps.append(_gap(reason, ROW_BEFORE))
@@ -443,7 +489,9 @@ def two_runs(
             passing: list[str] = []
             failed = False
             for node in fresh:
-                result = _run_argv(_select_argv(kind, tokens, node), root, command_timeout)
+                result = _run_argv(
+                    _select_argv(kind, tokens, node), root, command_timeout, extra_env=extra,
+                )
                 if isinstance(result, str):
                     gaps.append(_reason_gap(result, ROW_BEFORE, "no-test-list"))
                     failed = True
@@ -455,7 +503,10 @@ def two_runs(
             _copy_tests(root, base_root, change, kind, passing)
             confirmed: list[str] = []
             for node in passing:
-                result = _run_argv(_select_argv(kind, tokens, node), base_root, command_timeout)
+                result = _run_argv(
+                    _select_argv(kind, tokens, node), base_root, command_timeout,
+                    extra_env=extra,
+                )
                 if isinstance(result, str):
                     gaps.append(_reason_gap(result, ROW_BEFORE, "no-test-list"))
                     confirmed = []
@@ -1329,9 +1380,10 @@ def _commands_arg(context: ScanContext) -> str:
 
 
 def _invoke_two_runs(context: ScanContext) -> list[str]:
-    return _invoke(
-        context, "two-runs", ["--base", context.base, "--commands", _commands_arg(context)]
-    )
+    extra = ["--base", context.base, "--commands", _commands_arg(context)]
+    if context.python_env is not None:
+        extra += ["--python-env", str(context.python_env)]
+    return _invoke(context, "two-runs", extra)
 
 
 def _invoke_ci(context: ScanContext) -> list[str]:
@@ -1436,6 +1488,8 @@ def _parser() -> argparse.ArgumentParser:
         command = sub.add_parser(name)
         command.add_argument("--base", required=True)
         command.add_argument("--commands", required=True)
+        if name == "two-runs":
+            command.add_argument("--python-env", default=None)
     machine = sub.add_parser("machine-values")
     machine.add_argument("--base", required=True)
     machine.add_argument("--user", required=True)
@@ -1459,7 +1513,10 @@ def main(argv: list[str] | None = None) -> int:
     command = str(parsed.command or "")
     try:
         if command == "two-runs":
-            payload = two_runs(root, parsed.base, _pairs(parsed.commands))
+            payload = two_runs(
+                root, parsed.base, _pairs(parsed.commands),
+                python_env=Path(parsed.python_env) if parsed.python_env else None,
+            )
         elif command == "ci-skips":
             payload = ci_skips(root, parsed.base, _pairs(parsed.commands))
         elif command == "machine-values":

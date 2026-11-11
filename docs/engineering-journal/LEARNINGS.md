@@ -1,5 +1,34 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-11
+
+### A check that runs the change's tests must run them where its dependencies are installed
+
+**Evidence.** In a measured review run of a Python project, the two-runs check
+(`testing.test-passes-before-change`) degraded with `no-test-list` and the cosmic-ray check
+(`testing.surviving-mutant`) degraded with `cap` on every Python version, so planted test defects
+were never looked at. Prepare fetched the head's dependencies only after the tools had run
+(`plugins/saga/scripts/review_command.py`, `_prepare`), and only the reviewer's re-runs used them
+(`_offline_dependencies`). The fix fetches first and passes that environment on
+`ScanContext.python_env` (`plugins/saga/scripts/review_tools.py`); two-runs and cosmic-ray then run
+pytest as its `bin/python3 -m pytest` (`review_checks.py` `two_runs`, `review_adapters_python.py`
+`_cosmic_test_argv`). Tests: `test_tests_that_import_a_locked_dependency_need_the_python_environment`,
+`test_prepare_hands_the_tools_the_python_environment_the_re_runs_get`.
+
+**Mechanism.** A profile's test command such as `uv run --no-sync pytest -q` runs pytest from the
+project's own `.venv`, which in a fresh review worktree is empty, or from whichever `pytest` is on
+`PATH`, whose interpreter lacks the project's packages. Collection fails, the listing exits
+non-zero, and the check reads that as "no test list". Inside cosmic-ray, `uv run --with` puts its
+own environment first on `PATH`, so even a bare `python3` misses the packages; the baseline fails,
+and the wrapper reported every stop as `unfinished`, which the runner recorded as `cap` although
+the 900 second cap was never reached. A `bash -c '... python -m pytest ...'` command was not
+recognised at all, because "pytest" was not a separate word.
+
+**Generalizable rule.** A check that executes the code under review needs the same dependency
+environment as every other place that executes it, and a launcher it cannot see through (`uv run`,
+`bash -c`) has to be parsed and replaced by that environment's interpreter, not trusted; and a
+degraded reason must name what actually stopped the run, never a catch-all.
+
 ## 2026-11-10
 
 ### Ambient ~/workspace/infiquetra/infiquetra-sdlc checkouts mask vendored project-mapping changes in local tests

@@ -466,13 +466,23 @@ def _prepare(
     staging = Path(tempfile.mkdtemp(prefix="saga-review-packet-"))
     try:
         _probe_calibration(calibration, profile)
-        code = review_tools.run(
-            repo, base, head, given_profile, staging, home, builder_path,
-            adapters=list(adapters) if adapters is not None else None,
-            runner=runner,
-            framework=False,
-            diagnostics_directory=args.diagnostics_directory,
-        )
+        # Issue 262: fetched once here, read-only and offline for the reviewer and the re-run.
+        # Fetched before the tools run, so the scripted testing checks (the two runs of a new
+        # test, the mutation run) run the change's tests over the same Python environment the
+        # reviewer's re-runs get, instead of one without the change's dependencies.
+        _write_json(staging / review_dependencies.FILE, review_dependencies.fetch(
+            runner, repo, head, staging,
+            lambda dest: _export_head(runner, repo, head, dest),
+        ))
+        with _offline_dependencies(staging) as offline:
+            code = review_tools.run(
+                repo, base, head, given_profile, staging, home, builder_path,
+                adapters=list(adapters) if adapters is not None else None,
+                runner=runner,
+                framework=False,
+                diagnostics_directory=args.diagnostics_directory,
+                python_env=offline.python if offline is not None else None,
+            )
         if code != 0:
             raise CommandFailure(code, "")
         findings = _read_json(staging / "findings.json", "findings")
@@ -520,11 +530,6 @@ def _prepare(
         except review_formula.FormulaError as exc:
             raise CommandFailure(2, str(exc)) from exc
         files = [{"path": item.path, "status": item.status} for item in change.files]
-        # Issue 262: fetched once here, read-only and offline for the reviewer and the re-run.
-        _write_json(staging / review_dependencies.FILE, review_dependencies.fetch(
-            runner, repo, head, staging,
-            lambda dest: _export_head(runner, repo, head, dest),
-        ))
         _write_json(staging / "change.json", {
             "repo": str(repo.resolve()), "base": base, "head": head, "files": files,
             "changed_lines": changed,

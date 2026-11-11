@@ -308,7 +308,7 @@ def main(argv):
     if argv[1] == "init":
         with open(argv[3], "w", encoding="utf-8") as handle:
             handle.write("stub-session")
-        return 0
+        return int(os.environ.get("STUB_INIT_EXIT", "0"))
     if argv[1] == "exec":
         if os.environ.get("STUB_EXECUTE") == "1":
             with open(argv[2], "rb") as handle:
@@ -1140,16 +1140,23 @@ def test_cosmic_ray_module_path_lists_every_changed_python_file(tmp_path: Path) 
     assert "keep.py" not in toml
 
 
-def test_cosmic_ray_unfinished_is_reason_cap(tmp_path: Path) -> None:
+@pytest.mark.parametrize("reason", [None, "mutant-abnormal", "something-new"])
+def test_cosmic_ray_unfinished_mutants_are_reason_mutant_abnormal_never_cap(
+    tmp_path: Path, reason: str | None,
+) -> None:
+    """Only the runner's shared 900 second cap is ``cap``. A session whose mutants ended
+    abnormally keeps its survivors, degraded, under its own reason."""
     repo, base, head = _changed(tmp_path)
-    payload = json.dumps({"unfinished": True, "survivors": [{"path": "app.py", "line": 1}]})
+    body: dict[str, Any] = {"unfinished": True, "survivors": [{"path": "app.py", "line": 1}]}
+    if reason is not None:
+        body["reason"] = reason
     output = tmp_path / "out"
     code = _run(
         repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
-        output, tmp_path / "home", [_adapter("cosmic-ray")], _Calls(base, payload),
+        output, tmp_path / "home", [_adapter("cosmic-ray")], _Calls(base, json.dumps(body)),
     )
     assert code == 0
-    assert "cap" in _reasons(output)
+    assert _reasons(output) == ["mutant-abnormal"]
     finding = _read(output, "findings.json")[0]
     assert finding["degraded"] is True
     assert _severity(output, "surviving-mutant") == "fix-later"
@@ -1636,6 +1643,7 @@ def test_cosmic_ray_errored_mutant_marks_the_run_unfinished(
     config = _wrapper_config(tmp_path / "cosmic-ray.toml", f"{sys.executable} -c pass")
     out = _run_wrapper(config, tmp_path, env)
     assert out["unfinished"] is True
+    assert out["reason"] == "mutant-abnormal"
     assert out["survivors"] == [{"path": "app.py", "line": 2}]
 
 
@@ -1652,6 +1660,7 @@ def test_cosmic_ray_failing_baseline_marks_the_run_unfinished(tmp_path: Path) ->
     )
     out = _run_wrapper(red, tmp_path, env)
     assert out["unfinished"] is True
+    assert out["reason"] == "baseline-failed"
     assert out["survivors"] == []
     assert not record.exists()
     pid_file = tmp_path / "grandchild.pid"
@@ -1674,6 +1683,7 @@ def test_cosmic_ray_failing_baseline_marks_the_run_unfinished(tmp_path: Path) ->
     )
     out = _run_wrapper(slow, tmp_path, env, "1")
     assert out["unfinished"] is True
+    assert out["reason"] == "baseline-timeout"
     assert out["survivors"] == []
     assert not record.exists()
     grand_pid = int(pid_file.read_text(encoding="utf-8").strip())
@@ -1704,6 +1714,7 @@ def test_cosmic_ray_passing_baseline_runs_the_stages_in_order(tmp_path: Path) ->
     config = _wrapper_config(tmp_path / "cosmic-ray.toml", f"{sys.executable} -c pass")
     out = _run_wrapper(config, tmp_path, env)
     assert out["unfinished"] is False
+    assert "reason" not in out
     assert out["survivors"] == []
     assert record.read_text(encoding="utf-8").splitlines() == [
         "init", "filter --config", "exec", "dump",
@@ -1718,6 +1729,7 @@ def test_cosmic_ray_dump_failure_marks_the_run_unfinished(tmp_path: Path) -> Non
     config = _wrapper_config(tmp_path / "cosmic-ray.toml", f"{sys.executable} -c pass")
     out = _run_wrapper(config, tmp_path, env)
     assert out["unfinished"] is True
+    assert out["reason"] == "mutant-abnormal"
 
 
 def test_cosmic_ray_test_command_resolves_bare_python(tmp_path: Path) -> None:
@@ -1932,3 +1944,105 @@ def test_pytest_runs_differing_only_in_duration_record_identical_bytes(
     assert _read(outputs[0], "findings.json")
     for name in ("findings.json", "degraded.json", "outcomes.json"):
         assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+
+
+@pytest.mark.parametrize("stage", ["STUB_INIT_EXIT", "STUB_FILTER_EXIT", "unreadable-config"])
+def test_cosmic_ray_session_that_cannot_start_is_reason_init_failed(
+    tmp_path: Path, stage: str,
+) -> None:
+    stub_dir = tmp_path / "stub"
+    stub_dir.mkdir()
+    _write_cosmic_stub(stub_dir / "cosmic-ray")
+    record = tmp_path / "record.txt"
+    extra = {} if stage == "unreadable-config" else {stage: "1"}
+    env = _wrapper_env(
+        stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE), STUB_RECORD=str(record), **extra,
+    )
+    config = _wrapper_config(tmp_path / "cosmic-ray.toml", f"{sys.executable} -c pass")
+    if stage == "unreadable-config":
+        config.write_text("[other]\n", encoding="utf-8")
+    out = _run_wrapper(config, tmp_path, env)
+    assert out == {"unfinished": True, "survivors": [], "reason": "init-failed"}
+    if stage != "unreadable-config":
+        assert "exec" not in record.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.parametrize("reason", ["baseline-failed", "baseline-timeout", "init-failed"])
+def test_cosmic_ray_that_ran_no_mutant_records_its_own_reason_not_cap(
+    tmp_path: Path, reason: str,
+) -> None:
+    repo, base, head = _changed(tmp_path)
+    payload = json.dumps({"unfinished": True, "survivors": [], "reason": reason})
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json", "python -m pytest -q"),
+        output, tmp_path / "home", [_adapter("cosmic-ray")], _Calls(base, payload),
+    )
+    assert code == 0
+    degraded = _read(output, "degraded.json")
+    assert [(item["lens"], item["tool"], item["reason"]) for item in degraded] == [
+        ("testing", "cosmic-ray", reason),
+    ]
+    assert _read(output, "findings.json") == []
+
+
+def test_cosmic_ray_parse_maps_each_wrapper_reason() -> None:
+    survivors = [{"path": "app.py", "line": 1}]
+    for reason in ("baseline-failed", "baseline-timeout", "init-failed"):
+        parsed = P._parse_cosmic(json.dumps(
+            {"unfinished": True, "survivors": [], "reason": reason}))
+        assert parsed.gap == (reason, "testing.surviving-mutant")
+        assert parsed.hits == ()
+    parsed = P._parse_cosmic(json.dumps(
+        {"unfinished": True, "survivors": survivors, "reason": "mutant-abnormal"}))
+    assert parsed.unfinished and parsed.unfinished_reason == "mutant-abnormal"
+    assert len(parsed.hits) == 1
+    parsed = P._parse_cosmic(json.dumps({"unfinished": False, "survivors": survivors}))
+    assert not parsed.unfinished and parsed.gap is None
+
+
+@pytest.mark.parametrize("command", [
+    "uv run --no-sync pytest -q",
+    "bash -c 'python -m pytest -q'",
+    "pytest -q -p randomly",
+])
+def test_cosmic_ray_runs_pytest_with_the_python_environment_s_interpreter(
+    tmp_path: Path, command: str,
+) -> None:
+    """With the packet's environment, the baseline and every mutant run pytest with its
+    interpreter, by path: ``uv run`` puts its own environment, the one holding cosmic-ray,
+    first on ``PATH``, so a bare ``python3`` would not see the change's dependencies."""
+    import tomllib
+
+    kept = tmp_path / "kept-cosmic-ray.toml"
+    repo, base, head = _changed(tmp_path)
+    env = tmp_path / "env"
+    payload = json.dumps({"unfinished": False, "survivors": []})
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json", command),
+        tmp_path / "out", tmp_path / "home", [_adapter("cosmic-ray")],
+        _Calls(base, payload, keep=kept), python_env=env,
+    )
+    assert code == 0
+    with open(kept, "rb") as handle:
+        written = tomllib.load(handle)["cosmic-ray"]["test-command"]
+    assert shlex.split(written) == [
+        str(env / "bin" / "python3"), "-m", "pytest", "-q", "-p", "no:randomly",
+    ]
+
+
+def test_cosmic_ray_without_a_python_environment_keeps_the_command(tmp_path: Path) -> None:
+    import tomllib
+
+    kept = tmp_path / "kept-cosmic-ray.toml"
+    repo, base, head = _changed(tmp_path)
+    payload = json.dumps({"unfinished": False, "survivors": []})
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json", "uv run --no-sync pytest -q"),
+        tmp_path / "out", tmp_path / "home", [_adapter("cosmic-ray")],
+        _Calls(base, payload, keep=kept),
+    )
+    assert code == 0
+    with open(kept, "rb") as handle:
+        written = tomllib.load(handle)["cosmic-ray"]["test-command"]
+    assert written == "uv run --no-sync pytest -q -p no:randomly"

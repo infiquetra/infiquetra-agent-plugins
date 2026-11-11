@@ -6,6 +6,8 @@ import importlib.util
 import socket
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -228,3 +230,152 @@ def test_the_run_subcommand_records_the_check_without_a_run_record(
         assert (output / name).is_file()
     H.valid(output)
     assert ALREADY in _refs(output)
+
+
+# A Python project whose tests import a dependency the operator's interpreter does not have.
+DEP_APP_BASE = "import extdep\n\n\ndef add(a, b):\n    return a - b + extdep.ZERO\n"
+DEP_APP_HEAD = "import extdep\n\n\ndef add(a, b):\n    return a + b + extdep.ZERO\n"
+
+
+def _dep_files(app: str, sample: str | None = None) -> dict[str, str]:
+    files = {"pytest.ini": INI, "app.py": app, "tests/test_keep.py": KEEP}
+    if sample is not None:
+        files["tests/test_sample.py"] = sample
+    return files
+
+
+def _python_env(tmp: Path) -> Path:
+    """A saga-written environment over a ``site-packages`` that holds ``extdep``.
+
+    The packet's real folder holds pytest too; here a ``.pth`` line adds this interpreter's own
+    ``site-packages`` for pytest, while ``extdep`` exists only in the environment.
+    """
+    deps = H.load("review_dependencies")
+    site = tmp / "packet-site"
+    (site / "extdep").mkdir(parents=True)
+    (site / "extdep" / "__init__.py").write_text("ZERO = 0\n", encoding="utf-8")
+    (site / "pytest-home.pth").write_text(
+        str(Path(pytest.__file__).resolve().parents[1]) + "\n", encoding="utf-8",
+    )
+    version = deps.interpreter_version(sys.executable)
+    assert version is not None
+    shim = deps.write_python_shim(
+        tmp / "env", deps.PythonDependencies(site=site, version=version), sys.executable,
+    )
+    assert shim is not None
+    return shim
+
+
+@pytest.mark.parametrize("command", [
+    "pytest -q",
+    "py.test",
+    "/usr/local/bin/pytest -q",
+    "python -m pytest -q",
+    "python3 -m pytest -q",
+    "python3.12 -m pytest -q",
+    f"{sys.executable} -m pytest -q",
+    "uv run pytest -q",
+    "uv run --no-sync pytest -q",
+    "uv run --no-sync --with pytest-cov --group test python -m pytest -q",
+    "uv run -- pytest -q",
+    "bash -c 'python -m pytest -q'",
+    "bash -lc 'uv run --no-sync pytest -q tests'",
+    "sh -c \"python3 -m pytest -k 'a or b'\"",
+    "/bin/bash -e -c 'pytest -q'",
+])
+def test_pytest_commands_are_recognised_behind_their_launchers(command: str) -> None:
+    classified = H.C._classify(command)
+    assert classified is not None
+    kind, tokens = classified
+    assert kind == "pytest"
+    assert Path(tokens[0]).name not in {"bash", "sh"}
+    assert {"pytest", "py.test"} & {Path(token).name for token in tokens}
+
+
+@pytest.mark.parametrize("command", [
+    "echo ok",
+    "make test",
+    "tox -e pytest",
+    "uv run tox -e pytest",
+    "uv run mystery pytest",
+    "python -c pytest",
+    "bash -c 'cd tests && python -m pytest'",
+    "bash -c 'python -m pytest $ARGS'",
+    "bash -c 'python -m pytest tests/*'",
+    "bash -c 'FOO=1 python -m pytest'",
+    "bash -c 'python -m pytest' name extra",
+    "bash -c 'make test'",
+    "bash --norc -c 'pytest'",
+    "zsh -c 'pytest'",
+    "pytest 'unclosed",
+])
+def test_commands_that_cannot_be_read_safely_stay_refused(command: str) -> None:
+    assert H.C._classify(command) is None
+
+
+def test_a_shell_wrapper_runs_its_inner_command_with_the_listing_options() -> None:
+    classified = H.C._classify("bash -c 'uv run --no-sync python -m pytest -q tests'")
+    assert classified == ("pytest", [
+        "uv", "run", "--no-sync", "python", "-m", "pytest", "-q", "tests",
+    ])
+    kind, tokens = classified
+    assert H.C._list_argv(kind, tokens)[-1] == "--collect-only"
+
+
+def test_with_a_python_environment_pytest_runs_with_its_interpreter(tmp_path: Path) -> None:
+    env = tmp_path / "env"
+    classified = H.C._classify("bash -c 'uv run --no-sync pytest -q tests'", env)
+    assert classified == ("pytest", [str(env / "bin" / "python3"), "-m", "pytest", "-q", "tests"])
+    assert H.C._classify("cargo test", env) == ("cargo", ["cargo", "test"])
+
+
+def test_tests_that_import_a_locked_dependency_need_the_python_environment(
+    tmp_path: Path,
+) -> None:
+    repo, base, _head = H.make_repo(
+        tmp_path, _dep_files(DEP_APP_BASE), _dep_files(DEP_APP_HEAD, SAMPLE),
+    )
+    # The command a uv project's profile names. Without the packet's environment the tests
+    # cannot import ``extdep``, so nothing can be listed.
+    command = "uv run --no-sync pytest -q"
+    without = H.C.two_runs(repo, base, [("python", command)])
+    assert without["hits"] == []
+    assert without["gaps"] and without["gaps"][0]["row"] == "testing.test-passes-before-change"
+    shim = _python_env(tmp_path)
+    payload = H.C.two_runs(repo, base, [("python", command)], python_env=shim)
+    assert payload["gaps"] == []
+    assert [hit["anchor"] for hit in payload["hits"]] == [ALREADY]
+
+
+def test_the_runner_hands_two_runs_the_python_environment(tmp_path: Path) -> None:
+    repo, base, head = H.make_repo(
+        tmp_path, _dep_files(DEP_APP_BASE), _dep_files(DEP_APP_HEAD, SAMPLE),
+    )
+    shim = _python_env(tmp_path)
+    output = tmp_path / "out"
+    home = tmp_path / "home"
+    home.mkdir()
+    code = H.T.run(
+        repo, base, head, H.profile(tmp_path / "profile.json", "uv run --no-sync pytest -q"),
+        output, home=home, adapters=[H.adapter("two-runs")], framework=False, python_env=shim,
+    )
+    assert code == 0
+    assert _review_gaps(output) == []
+    assert ALREADY in _refs(output)
+
+
+def test_a_failed_old_version_checkout_is_a_gap_not_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base, _sha = H.make_repo(tmp_path, _base(), _head(SAMPLE))
+
+    @contextmanager
+    def refuse(_repo: Path, _revision: str) -> Iterator[Path]:
+        raise RuntimeError("git worktree add failed")
+        yield _repo  # pragma: no cover - never reached
+
+    monkeypatch.setattr(H.C, "_detached", refuse)
+    payload = H.C.two_runs(repo, base, [("python", H.PYTEST)])
+    assert payload == {"hits": [], "where_to_look": [], "gaps": [{
+        "reason": "no-test-list", "row": "testing.test-passes-before-change",
+    }]}

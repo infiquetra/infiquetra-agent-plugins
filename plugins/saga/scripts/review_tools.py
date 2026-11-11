@@ -290,6 +290,10 @@ class ScanContext:
     #: Which tree this scan reads: ``head``, or ``base`` for a base-and-head comparison's first
     #: scan. It names the scan's folders under ``scratch`` so the two never share one.
     scan: str = "head"
+    #: The saga-written Python environment over the packet's installed packages, the one the
+    #: reviewer's re-runs get (``review_command._offline_dependencies``), or ``None`` when prepare
+    #: has none. Adapters that run the change's Python tests run them with its interpreter.
+    python_env: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -320,6 +324,10 @@ class Hit:
 class ParseResult:
     hits: tuple[Hit, ...] = ()
     unfinished: bool = False
+    #: Why a mutation run is unfinished, recorded on ``testing.surviving-mutant``. ``cap`` is the
+    #: shared mutation cap; a tool that knows a narrower reason (a mutant that ended abnormally)
+    #: sets it, so a run that stopped early is never reported as one that ran out of time.
+    unfinished_reason: str = "cap"
     problems: tuple[str, ...] = ()
     items: tuple[Mapping[str, Any], ...] = ()
     gaps: tuple[tuple[str, str], ...] = ()
@@ -1117,10 +1125,13 @@ def run(
     *,
     framework: bool = True,
     diagnostics_directory: Path | str | None = None,
+    python_env: Path | str | None = None,
 ) -> int:
     """Write the record files, including where-to-look items.
 
     Exit 0 when they are written, including all-degraded. The command does not take a run record.
+    *python_env* is the saga-written Python environment over the packet's packages, handed to
+    every adapter on ``ScanContext.python_env``.
     """
     try:
         return _run(
@@ -1131,6 +1142,7 @@ def run(
             runner or subprocess_runner,
             framework,
             Path(diagnostics_directory) if diagnostics_directory is not None else None,
+            Path(python_env) if python_env is not None else None,
         )
     except RunnerFailure as exc:
         print(str(exc), file=sys.stderr)
@@ -1149,6 +1161,7 @@ def _run(
     process: Process,
     framework: bool,
     diagnostics_directory: Path | None = None,
+    python_env: Path | None = None,
 ) -> int:
     base_sha = _require_sha(repo, base)
     head_sha = _require_sha(repo, head)
@@ -1195,7 +1208,7 @@ def _run(
                             adapter, repo, base_sha, head_sha, head_root, change, home, profile,
                             process, tool_env, deadline, degraded, items, base_markers,
                             head_markers, head_languages,
-                            diagnostics_directory, rule_sources,
+                            diagnostics_directory, rule_sources, python_env,
                         )
                         if _mutation_past_deadline(adapter, deadline):
                             del degraded[degraded_start:]
@@ -1536,6 +1549,7 @@ def _run_adapter(
     head_languages: frozenset[str] | None = None,
     diagnostics_directory: Path | None = None,
     rule_sources: dict[str, dict[str, Any]] | None = None,
+    python_env: Path | None = None,
 ) -> list[Hit]:
     if _markers_removed(adapter, base_markers, head_markers):
         degraded.append(
@@ -1630,6 +1644,7 @@ def _run_adapter(
                 head=head_sha,
                 scratch=scratch,
                 diagnostics_directory=diagnostics_directory,
+                python_env=python_env,
             )
             if comparison == "base-head":
                 hits, digests = _base_and_head(
@@ -1784,10 +1799,11 @@ def _once(
         degraded.append(_degraded(adapter, row, reason))
         return (), {}
     if parsed.unfinished:
-        degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
+        degraded.append(_degraded(adapter, "testing.surviving-mutant", parsed.unfinished_reason))
         parsed = ParseResult(
             tuple(replace(hit, degraded=True) for hit in parsed.hits),
             unfinished=True,
+            unfinished_reason=parsed.unfinished_reason,
             problems=parsed.problems,
             items=parsed.items,
             gaps=parsed.gaps,
@@ -2017,7 +2033,7 @@ def _scan_root(
         _stable_hit(_relative_hit(hit, context.root), context.root) for hit in parsed.hits
     )
     if parsed.unfinished:
-        degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
+        degraded.append(_degraded(adapter, "testing.surviving-mutant", parsed.unfinished_reason))
         hits = tuple(replace(hit, degraded=True) for hit in hits)
     _absorb(adapter, parsed, label, degraded, items)
     return hits, digest, None, True
@@ -3067,6 +3083,101 @@ def _scan_commands(profile: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
         if not any(command == functional for _language, command in pairs):
             pairs.append(("none", functional))
     return tuple(pairs)
+
+
+_PYTHON_NAME = re.compile(r"python(?:\d+(?:\.\d+)?)?")
+_PYTEST_NAMES = frozenset({"pytest", "py.test"})
+#: ``uv run`` options that take a value as the next word. Any other word before the launcher that
+#: is not an option means the command is not one this parser can read safely.
+_UV_RUN_VALUE_FLAGS = frozenset({
+    "--with", "--with-editable", "--with-requirements", "--python", "-p", "--group",
+    "--only-group", "--no-group", "--extra", "--no-extra", "--package", "--env-file",
+    "--directory", "--project", "--index", "--default-index", "--index-url", "-i",
+    "--extra-index-url", "--find-links", "-f", "--cache-dir", "--config-file",
+})
+_SHELLS = frozenset({"bash", "sh"})
+#: Characters a shell would expand or treat as syntax. A ``-c`` command holding any of them is
+#: not a single simple command, so running its words without the shell could differ.
+_SHELL_SYNTAX = frozenset("$`*?[]~(){}<>|;&!#\\\n")
+
+
+def _pytest_launcher(tokens: Sequence[str]) -> int | None:
+    """How many leading words launch pytest (``pytest``, ``python -m pytest``), or ``None``."""
+    if tokens and Path(tokens[0]).name in _PYTEST_NAMES:
+        return 1
+    if (len(tokens) >= 3 and _PYTHON_NAME.fullmatch(Path(tokens[0]).name)
+            and tokens[1] == "-m" and tokens[2] == "pytest"):
+        return 3
+    return None
+
+
+def _shell_inner(tokens: Sequence[str]) -> list[str] | None:
+    """The words of ``bash -c '<one simple command>'`` (or ``sh``), or ``None``."""
+    if len(tokens) < 3 or Path(tokens[0]).name not in _SHELLS:
+        return None
+    index = 1
+    while index < len(tokens) - 1 and tokens[index].startswith("-") and "c" not in tokens[index]:
+        index += 1
+    flag = tokens[index]
+    if not (flag.startswith("-") and not flag.startswith("--") and flag.endswith("c")):
+        return None
+    # ``bash -c 'cmd' name args`` sets $0 and $@: words after the command are refused.
+    if index + 2 != len(tokens):
+        return None
+    inner = tokens[index + 1]
+    if any(char in _SHELL_SYNTAX for char in inner):
+        return None
+    try:
+        words = shlex.split(inner)
+    except ValueError:
+        return None
+    if not words or "=" in words[0]:
+        return None
+    return words
+
+
+def pytest_command(command: str) -> tuple[list[str], list[str]] | None:
+    """``(launcher, arguments)`` when *command* runs pytest, else ``None``.
+
+    Read: ``pytest``, ``python -m pytest`` (any ``python``, ``python3`` or ``python3.N``, by name
+    or path), either one after ``uv run`` and its options, and any of those as the one simple
+    command of ``bash -c`` or ``sh -c``. Running ``launcher + arguments`` runs what the command
+    runs; a shell wrapper is dropped, which is safe because its command holds no shell syntax.
+    Anything else is refused, so a caller never appends pytest's options to a program that is
+    not pytest.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    inner = _shell_inner(tokens)
+    if inner is not None:
+        tokens = inner
+    if not tokens:
+        return None
+    count = _pytest_launcher(tokens)
+    if count is not None:
+        return list(tokens[:count]), list(tokens[count:])
+    if Path(tokens[0]).name != "uv" or len(tokens) < 3 or tokens[1] != "run":
+        return None
+    index = 2
+    while index < len(tokens):
+        word = tokens[index]
+        if word == "--":
+            index += 1
+            break
+        if not word.startswith("-"):
+            break
+        index += 2 if word in _UV_RUN_VALUE_FLAGS else 1
+    count = _pytest_launcher(tokens[index:])
+    if count is None:
+        return None
+    return list(tokens[:index + count]), list(tokens[index + count:])
+
+
+def python_env_argv(python_env: Path, arguments: Sequence[str]) -> list[str]:
+    """pytest with *arguments*, run by the interpreter of the saga-written environment."""
+    return [str(python_env / "bin" / "python3"), "-m", "pytest", *arguments]
 
 
 def _relocated_commands(profile: Mapping[str, Any]) -> list[tuple[str, str]]:

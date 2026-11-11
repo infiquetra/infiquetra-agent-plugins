@@ -1,5 +1,42 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-11
+
+### Prepare's testing checks use the reviewer's Python environment, through the packet's interpreter
+
+**Decision.** `prepare` fetches the head's dependencies before the tools run, builds the
+saga-written Python environment with the existing `_offline_dependencies` (the one the reviewer's
+re-runs get), and hands only its path to the tools on `ScanContext.python_env`. two-runs and
+cosmic-ray recognise a pytest command (`pytest`, `python -m pytest`, behind `uv run` and its
+options, or as the one simple command of `bash -c`/`sh -c`), keep its pytest options, and run it as
+`<environment>/bin/python3 -m pytest`. A command they cannot read safely is still refused. The
+cosmic-ray wrapper reports `baseline-failed`, `baseline-timeout`, `init-failed` (each a gap on
+`testing.surviving-mutant`) or `mutant-abnormal` (survivors kept, degraded); `cap` is left for the
+shared 900 second cap. The reason field was already free text in the degraded-entry schema, so no
+schema change was needed; `ParseResult.unfinished_reason` carries the narrower reason to the runner.
+
+**Rejected alternatives.** Running the profile command unchanged with the environment's `bin`
+first on `PATH`: `uv run` uses the project's own `.venv` and ignores `VIRTUAL_ENV`, and inside
+cosmic-ray's `uv run --with` its own environment comes first, so neither would see the packages.
+Letting `uv run` sync the project: that needs the network and builds packages, which the offline
+packet exists to avoid. A second, prepare-only dependency environment: two environments would drift
+apart, and the reviewer's re-runs are the reference behaviour. Confining the checks the way the
+re-runs are confined: they already ran the change's tests unconfined with a relocated environment,
+and the hash-pinned packages add no capability the change's own test code lacks; confining them is
+a separate piece of work.
+
+**Rationale.** The checks existed but never ran on a typical uv project, so planted defects in
+tests went unseen. Reusing the re-run environment makes prepare, the reviewer and the re-runs see
+one set of packages. Mapping a recognised command onto the environment's interpreter is the only
+way that works for both plain pytest and launchers that choose their own environment.
+
+**Revisit when.** A project's tests need its own package installed (a `src` layout without a
+pytest `pythonpath` setting), a profile needs a launcher this parser refuses, the Python install
+leaves packages out because no prebuilt wheel in the lockfile matches the operator's interpreter,
+or the two-runs check's 120 second limit starts cutting off real suites.
+
+---
+
 ## 2026-11-10
 
 ### Resolve active project boards dynamically from project-mappings.json

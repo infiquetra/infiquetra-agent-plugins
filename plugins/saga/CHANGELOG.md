@@ -110,6 +110,16 @@
 
 ### Fixed
 
+- **The two-runs and cosmic-ray testing checks run with the packet's Python dependencies.**
+  `prepare` now fetches the head's dependencies before the tools run and hands them the same
+  saga-written Python environment the reviewer's re-runs get. A pytest command, also behind
+  `uv run` or as the one command of `bash -c`/`sh -c`, runs as that environment's
+  `bin/python3 -m pytest`; before, the tests could not import the project's packages, two-runs
+  degraded with `no-test-list` and cosmic-ray with `cap`. cosmic-ray now reports why a session
+  stopped: `baseline-failed`, `baseline-timeout`, `init-failed` or `mutant-abnormal`; `cap` means
+  only the shared 900 second cap. A two-runs check whose old-version checkout fails records
+  `no-test-list` instead of raising.
+
 - **The semgrep security rules can now run.** The security row compared the digest of the local
   `~/.saga/semgrep-rules/p--security-audit` cache with a placeholder, because the pack's licence
   forbids shipping it, so every review degraded with `rule-cache-missing` whatever the machine held.

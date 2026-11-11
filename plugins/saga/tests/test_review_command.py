@@ -4081,3 +4081,72 @@ def test_node_a_confined_rerun_resolves_commonjs_and_esm_and_writes_its_own_temp
             assert ran.code == 0, ran.stderr
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_prepare_hands_the_tools_the_python_environment_the_re_runs_get(tmp_path: Path) -> None:
+    """The scripted testing checks run the change's tests in prepare. They get the same
+    saga-written environment over the packet's packages as the reviewer's re-runs, so a test that
+    imports a locked dependency can be listed and run at all."""
+    repo, base, head = _python_change(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    seen: list[Any] = []
+    imported: list[str] = []
+
+    def invoke(context: Any) -> list[str]:
+        seen.append(context.python_env)
+        if context.python_env is not None:
+            ran = subprocess.run(
+                [str(context.python_env / "bin" / "python3"), "-c",
+                 "import inertdep; print(inertdep.two())"],
+                capture_output=True, text=True, timeout=60, check=False,
+            )
+            imported.append(ran.stdout.strip())
+        return ["stub", "scan"]
+
+    adapter = T.Adapter(
+        id="stub", tool="stub", invoke=invoke, parse=lambda _text: T.ParseResult(),
+        default_version="1.0.0", rows=("security.scanner-high",), lens="security",
+        comparison="lines",
+    )
+    out = tmp_path / "packet"
+    code, err = _main([
+        "prepare", "--repo", str(repo), "--base", base, "--head", head,
+        "--profile", str(_profile(tmp_path / "outside")),
+        "--builder-record", str(_builder(tmp_path / "builder.json")),
+        "--out", str(out), "--home", str(home),
+    ], adapters=[adapter], runner=_UvRunner(exported=_UV.EXPORTED, compiled=_UV.PYTEST))
+    assert code == 0, err
+    assert seen and seen[0] is not None
+    assert imported == ["2"]
+    # The environment is saga's temporary one, gone once the tools have run; the packet keeps
+    # only the packages.
+    assert not seen[0].exists()
+    assert (out / "dependencies" / "python" / "site-packages" / "inertdep").is_dir()
+
+
+def test_prepare_without_python_dependencies_hands_the_tools_no_environment(
+    tmp_path: Path,
+) -> None:
+    repo, base, head = _repo(tmp_path, function=False)
+    seen: list[Any] = []
+
+    def invoke(context: Any) -> list[str]:
+        seen.append(context.python_env)
+        return ["stub", "scan"]
+
+    adapter = T.Adapter(
+        id="stub", tool="stub", invoke=invoke, parse=lambda _text: T.ParseResult(),
+        default_version="1.0.0", rows=("security.scanner-high",), lens="security",
+        comparison="lines",
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    code, err = _main([
+        "prepare", "--repo", str(repo), "--base", base, "--head", head,
+        "--profile", str(_profile(tmp_path / "outside")),
+        "--builder-record", str(_builder(tmp_path / "builder.json")),
+        "--out", str(tmp_path / "packet"), "--home", str(home),
+    ], adapters=[adapter], runner=_Runner())
+    assert code == 0, err
+    assert seen == [None]

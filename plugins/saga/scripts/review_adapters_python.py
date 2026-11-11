@@ -114,11 +114,17 @@ raise SystemExit(proc.returncode)
 # wrapper's baseline bound are the same value (issue 227). A suite slower than
 # this fails the baseline instead of timing out per mutant into all-killed.
 _COSMIC_TIMEOUT_SECONDS = 300
+#: The wrapper's reasons for a session that ran no mutant: the row is a gap with that reason.
+_COSMIC_NO_RUN = frozenset({"baseline-failed", "baseline-timeout", "init-failed"})
+#: Every reason the wrapper writes. ``cap`` is not one: only the runner's shared cap is ``cap``.
+_COSMIC_REASONS = _COSMIC_NO_RUN | {"mutant-abnormal"}
 
 # Runs one cosmic-ray session: baseline first, then init, exec, dump. Reads the
 # 8.7.0 dump as [work_item, result] arrays. Anything it cannot prove clean is
-# unfinished. argv[2] overrides the baseline budget; tests use that, production
-# passes _COSMIC_TIMEOUT_SECONDS.
+# unfinished, with the reason it stopped: baseline-failed, baseline-timeout,
+# init-failed or mutant-abnormal. Only the runner's shared cap is ever ``cap``.
+# argv[2] overrides the baseline budget; tests use that, production passes
+# _COSMIC_TIMEOUT_SECONDS.
 _COSMIC_WRAPPER = r"""
 import json, os, shlex, signal, subprocess, sys, tomllib
 config = sys.argv[1]
@@ -128,16 +134,19 @@ except (IndexError, ValueError):
     budget = 300.0
 if not budget > 0:
     budget = 300.0
-def _done(unfinished, survivors):
-    print(json.dumps({"unfinished": unfinished, "survivors": survivors}))
+def _done(unfinished, survivors, reason=None):
+    payload = {"unfinished": unfinished, "survivors": survivors}
+    if unfinished:
+        payload["reason"] = reason or "mutant-abnormal"
+    print(json.dumps(payload))
     raise SystemExit(0)
 try:
     with open(config, "rb") as handle:
         test_command = tomllib.load(handle)["cosmic-ray"]["test-command"]
 except (OSError, ValueError, KeyError):
-    _done(True, [])
+    _done(True, [], "init-failed")
 if not isinstance(test_command, str):
-    _done(True, [])
+    _done(True, [], "init-failed")
 try:
     proc = subprocess.Popen(
         shlex.split(test_command),
@@ -145,7 +154,7 @@ try:
         text=True, start_new_session=True,
     )
 except (OSError, ValueError):
-    _done(True, [])
+    _done(True, [], "baseline-failed")
 try:
     proc.communicate(timeout=budget)
 except subprocess.TimeoutExpired:
@@ -154,19 +163,19 @@ except subprocess.TimeoutExpired:
     except (AttributeError, OSError):
         proc.kill()
     proc.communicate()
-    _done(True, [])
+    _done(True, [], "baseline-timeout")
 if proc.returncode != 0:
-    _done(True, [])
+    _done(True, [], "baseline-failed")
 session = config + ".sqlite"
 init = subprocess.run(["cosmic-ray", "init", config, session], capture_output=True, text=True)
 if init.returncode != 0:
-    _done(True, [])
+    _done(True, [], "init-failed")
 # Skip every mutant off the change's lines; init alone queues whole files.
 scoped = subprocess.run(
     ["cr-filter-git", session, "--config", config], capture_output=True, text=True
 )
 if scoped.returncode != 0:
-    _done(True, [])
+    _done(True, [], "init-failed")
 ran = subprocess.run(["cosmic-ray", "exec", config, session], capture_output=True, text=True)
 dump = subprocess.run(
     ["cosmic-ray", "dump", session], capture_output=True, text=True
@@ -214,7 +223,7 @@ for line in (dump.stdout or "").splitlines():
         survivors.append({"path": str(path), "line": number})
     elif lowered != "killed":
         unfinished = True
-_done(unfinished, survivors)
+_done(unfinished, survivors, "mutant-abnormal")
 """
 
 
@@ -638,11 +647,28 @@ def _parse_import_linter(text: str) -> ParseResult:
     return ParseResult(tuple(hits))
 
 
+def _cosmic_test_argv(context: ScanContext, command: str) -> list[str]:
+    """The baseline's and every mutant's test command.
+
+    With the packet's Python environment, a command that runs pytest runs it with that
+    environment's interpreter, by path, so the tests import the change's installed dependencies
+    and not ``uv run``'s temporary environment (the one that holds cosmic-ray). Any other command
+    runs as before.
+    """
+    parsed = review_tools.pytest_command(command) if context.python_env is not None else None
+    if parsed is not None and context.python_env is not None:
+        _launcher, arguments = parsed
+        return review_tools.python_env_argv(
+            context.python_env, [*_strip_randomly(arguments), "-p", "no:randomly"],
+        )
+    return _resolve_python_head([*_strip_randomly(shlex.split(command)), "-p", "no:randomly"])
+
+
 def _invoke_cosmic(context: ScanContext) -> list[str]:
     command = context.test_command.strip()
     if not command:
         raise ToolGap("known-gap", "testing.surviving-mutant")
-    parts = _resolve_python_head([*_strip_randomly(shlex.split(command)), "-p", "no:randomly"])
+    parts = _cosmic_test_argv(context, command)
     modules = _changed_python(context)
     if not modules:
         return []
@@ -695,7 +721,15 @@ def _parse_cosmic(text: str) -> ParseResult:
             end=start,
             row="testing.surviving-mutant",
         ))
-    return ParseResult(tuple(hits), unfinished=bool(data.get("unfinished")))
+    unfinished = bool(data.get("unfinished"))
+    reason = data.get("reason")
+    if unfinished and reason in _COSMIC_NO_RUN:
+        # Nothing was mutated: the row has no answer at all, for this reason.
+        return ParseResult(gap=(str(reason), "testing.surviving-mutant"))
+    if unfinished:
+        known = reason if reason in _COSMIC_REASONS else "mutant-abnormal"
+        return ParseResult(tuple(hits), unfinished=True, unfinished_reason=known)
+    return ParseResult(tuple(hits))
 
 
 def _pytest_argv(context: ScanContext, package: str, extra: list[str]) -> list[str]:
