@@ -4797,7 +4797,8 @@ def _silent_core(
 
 def test_no_vendor_is_confirmed_silent_today(launcher: ModuleType) -> None:
     """Claude, Codex, Antigravity and Muse report a status (read off live terminals on the
-    Studio, 2026-11-10); Grok and OpenCode were not seen. None is confirmed silent."""
+    Studio, 2026-11-10), and so does OpenCode (the smoke test's S4); Grok was not seen. None is
+    confirmed silent."""
     assert launcher.VENDORS_WITHOUT_STATUS == frozenset()
 
 
@@ -5322,12 +5323,40 @@ def test_a_placeholder_with_anything_else_in_the_box_still_stops(
         ("claude", "Ask Codex to do anything", False),
         ("grok", "Ask Codex to do anything", False),
         ("codex", "", False),
+        ("opencode", 'Ask anything\u2026 "Fix broken tests"', True),
+        ("opencode", 'Ask anything\u2026 "What is the tech stack of this project?"', True),
+        ("opencode", 'Run a command\u2026 "git status"', True),
+        ("opencode", "Ask anything, / for commands, @ for context", True),
+        ("opencode", 'Ask anything... "Fix broken tests"', False),
+        ("opencode", 'Ask anything\u2026 "Fix broken tests" in the parser', False),
+        ("opencode", 'Ask anything\u2026 "Fix the login bug"', False),
     ],
 )
 def test_known_placeholder_matches_the_whole_box_for_its_own_vendor_only(
     launcher: ModuleType, vendor: str, box: str, known: bool
 ) -> None:
     assert (launcher.known_placeholder(vendor, box) == box) is known
+
+
+def test_a_later_write_to_opencode_with_its_placeholder_on_screen_is_sent(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The parser has no marker for OpenCode's input box, so the guard reads it as
+    ``unsupported_vendor``: an inconclusive inspection, noted, and the write goes in. OpenCode's
+    placeholder (as the smoke test's S4 saw it) never stops a write."""
+    screen = '┃  Ask anything\u2026 "Fix broken tests"\n┃  Build  Muse Spark 1.3 Contributor'
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return _done(cmd, 0, screen)
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    monkeypatch.setattr(launcher, "reports_no_status", lambda _pane: False)
+    unit = launcher.LaunchRequest(name="oc", vendor="opencode", launch_receipt={"owned": True})
+    launcher.PaneWriter(unit, "t5", wrote_before=True).write("/plan x")
+    assert [c[3] for c in calls if _is_send(c)] == ["/plan x"]
+    assert unit.launch_receipt["input_box"] == "unsupported_vendor"
 
 
 def test_redeliver_cli_into_codex_showing_its_placeholder_takes_its_flags_from_the_receipt(

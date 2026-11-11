@@ -156,11 +156,12 @@ event client (2), kind names (1), preview (1).
 - **G3. `hc ls` rows carry no name and no labels.** The tab name is the second half of `where`;
   labels need `hc get`.
 - **G4. One door.** hc has no separate "prompt the agent" and "type into the pane" calls; `hc send`
-  is both. Whether OpenCode's `/variants` picker opens from a pasted line is unverified (smoke
-  test S4).
+  is both. S4 confirmed OpenCode's `/variants` picker opens from a pasted line: the launch opened
+  it, read it, and refused "requested variant 'high' is not among the 1 options the live picker
+  offered", which is right for the default model (Muse Spark 1.3 Contributor, one variant).
 - **G5. Tagged sends.** From inside an agent's terminal, `hc send` wraps text in an `<hc from=…>`
   tag, which would stop a leading `/saga:…` command from being read as a command (D5).
-- **G6. Kind names differ** and two of them (Grok, OpenCode) were not seen live (see Facts).
+- **G6. Kind names differ.** Grok's was not seen live; OpenCode's (`opencode`) was, in S4.
 - **G7. No workspace close in hc.** Workspaces are the window's (`herdr-app do space.close`).
 - **G8. Another machine.** `agents --app-machine X` runs X's own launcher, whose result names a
   bare `tN` on X. Orchestrate starts every unit on this machine today, so the port refuses a
@@ -199,7 +200,12 @@ Each one changes how Orchestrate behaves, so each takes the conservative side.
   session) and "Ask a follow-up question" (the string beside it); it does not rotate. Claude Code
   2.1.322 draws `Try "<example>"`, rotating among eight examples: four fixed, matched exactly, and
   four naming a file from the project's git history, matched by their template with the file as one
-  token. Anything else, including a placeholder with typed text beside it, stays a stop. Found
+  token. OpenCode v2.2.7 draws `Ask anything… "<example>"` (three examples), `Run a command…
+  "<example>"` in shell mode (three more) and "Ask anything, / for commands, @ for context"; they
+  are listed, but the parser has no marker for OpenCode's box, so the guard reads OpenCode as
+  `unsupported_vendor` and never stops an OpenCode write on staged input (a later write to an
+  OpenCode unit is sent with a note). Anything else, including a placeholder with typed text
+  beside it, stays a stop. Found
   by the smoke-test re-run: a `redeliver` into a Codex session showing "› Ask Codex to do
   anything" refused as staged input (24 chars), which would have stopped every redeliver, resend
   and routed repair to a Codex unit. Rejected: reading every non-empty plain box as
@@ -262,8 +268,9 @@ Each one changes how Orchestrate behaves, so each takes the conservative side.
   without one, and only after `hc read` shows no selection menu (a `❯` numbered choice, or
   "Enter to confirm" / "Enter to select"); a screen that cannot be read refuses too. Claude Code,
   Codex, Antigravity and Muse were each seen reporting a status on a live Studio terminal on
-  2026-11-10. Grok and OpenCode were not seen live (OpenCode's binary carries the status escape),
-  so they are held to the not-ready rule until one of their sessions is watched.
+  2026-11-10, and OpenCode v2.2.x in the smoke test's S4 (`{"app": "opencode", "state":
+  "idle"}`). Grok was not seen live, so it is held to the not-ready rule until one of its
+  sessions is watched.
 - **D18. The workspace is checked by id, never by name** (added after the smoke test, G11). The
   terminal's `herdr.space` label is compared with the `space` id in the launcher's result; when
   the result names none, with the id of the one workspace of that name on this machine from

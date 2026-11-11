@@ -29,7 +29,7 @@ Herdr call and the decisions below, is `docs/plans/2026-11-10-orchestrate-hc-por
 - `launcher.py preview` and `launch` refuse unless the dry run reports `backend=herdr-app`, so
   nothing silently lands in old Herdr. `confirm_preview` now takes the requested workspace name.
 - The identity preflight reads the agent's own name for itself from hc (`claude-code`, `codex`,
-  `antigravity`, `muse`, and the console's names for Grok and OpenCode). Before an agent reports,
+  `antigravity`, `muse` and `opencode`, and the console's name for Grok). Before an agent reports,
   hc shows a shell or a version string instead: that stops an unowned session, as before, and is
   recorded as an unconfirmed kind for a session the launch created.
 - The workspace is checked by id: the terminal's `herdr.space` label against the `space` in the
@@ -44,8 +44,11 @@ Herdr call and the decisions below, is `docs/plans/2026-11-10-orchestrate-hc-por
 - The input-box guard reads plain text, because `hc read` has no styled form. Any text in the box
   is a staged-input stop, except a placeholder the vendor itself draws in an empty box, matched
   against the whole box: Codex 0.167.1's "Ask Codex to do anything" and "Ask a follow-up
-  question", and Claude Code 2.1.322's `Try "<example>"` hints, all read from the installed
-  binaries. The receipt records the match as `input_box_placeholder`. The placeholder with any
+  question", Claude Code 2.1.322's `Try "<example>"` hints, and OpenCode v2.2.7's
+  `Ask anything… "<example>"` and shell-mode hints, all read from the installed binaries (the
+  parser has no marker for OpenCode's box, so OpenCode writes are sent with an
+  `unsupported_vendor` note and never stop on staged input). The receipt records the match as
+  `input_box_placeholder`. The placeholder with any
   typed text beside it is still a stop. Found by the smoke test: a redeliver into a Codex session
   refused its own placeholder as staged input.
 - `launcher.py redeliver` takes `--vendor`, `--task`, `--cwd` and `--workspace` from the receipt

@@ -1059,6 +1059,26 @@ CLAUDE_PLACEHOLDER_TEMPLATES = re.compile(
 )
 KNOWN_PLACEHOLDERS["claude"] = frozenset(f'Try "{text}"' for text in CLAUDE_PLACEHOLDER_EXAMPLES)
 
+# OpenCode v2.2.7 (``strings`` on ~/.opencode/bin/opencode): ``Ask anything… "<example>"``, rotating
+# among three examples, ``Run a command… "<example>"`` in shell mode, rotating among three more,
+# and "Ask anything, / for commands, @ for context" in its other prompt. The ellipsis is U+2026.
+# The composer parser has no marker for OpenCode's box (``COMPOSER_GLYPH_BY_VENDOR``), so the guard
+# reads OpenCode as ``unsupported_vendor`` and sends with a note -- it never stops an OpenCode
+# write on staged input today. These strings are listed so they apply once the parser finds the box.
+OPENCODE_PLACEHOLDER_EXAMPLES = (
+    "Fix a TODO in the codebase",
+    "What is the tech stack of this project?",
+    "Fix broken tests",
+)
+OPENCODE_SHELL_PLACEHOLDER_EXAMPLES = ("ls -la", "git status", "pwd")
+KNOWN_PLACEHOLDERS["opencode"] = frozenset(
+    {
+        *(f'Ask anything\u2026 "{text}"' for text in OPENCODE_PLACEHOLDER_EXAMPLES),
+        *(f'Run a command\u2026 "{text}"' for text in OPENCODE_SHELL_PLACEHOLDER_EXAMPLES),
+        "Ask anything, / for commands, @ for context",
+    }
+)
+
 
 def known_placeholder(vendor: str, box: str | None) -> str | None:
     """``box`` when its whole content is a placeholder ``vendor`` draws in an empty input box."""
@@ -2066,13 +2086,14 @@ def pane_text(unit: Any, text: str) -> str:
 #
 # Every other vendor's silence means "not ready yet", never "does not report readiness". Claude
 # Code, Codex, Antigravity and Muse all report one: read off live terminals on the Studio on
-# 2026-11-10 (``hc get``: ``status.app`` claude-code, codex, antigravity, muse). An agent that
+# 2026-11-10 (``hc get``: ``status.app`` claude-code, codex, antigravity, muse). OpenCode v2.2.x
+# does too: the smoke test's S4 read ``{"app": "opencode", "state": "idle"}`` from ``hc get``. An agent that
 # reports says nothing until it is past its startup screens -- Claude stays silent through its
 # folder-trust question -- and ``hc send`` presses Enter, which answers such a question with its
 # highlighted default. The live smoke test of 2026-11-10 did exactly that: a prompt sent after 30 s
 # of silence answered Claude's trust question "No, exit" and Claude quit (terminals t9t and t9v).
-# No vendor is confirmed silent: Grok and OpenCode were not seen live (OpenCode's binary carries
-# the OSC 7501 sequence). Add one here only after watching a ready session of it stay silent.
+# No vendor is confirmed silent; Grok has not been seen live either way. Add one here only after
+# watching a ready session of it stay silent.
 VENDORS_WITHOUT_STATUS: frozenset[str] = frozenset()
 
 # What a selection menu shows on a plain-text screen: a numbered choice under the ``❯`` cursor
