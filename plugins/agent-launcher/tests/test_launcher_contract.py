@@ -1421,7 +1421,7 @@ def _preflight_stubs(
             "agent": vendor,
         },
     )
-    monkeypatch.setattr(launcher, "session_workspace_name", lambda pane_id: None)
+    monkeypatch.setattr(launcher, "session_space", lambda pane_id: (None, None))
     monkeypatch.setattr(launcher, "verify_unit_account", lambda *a, **k: (None, "none"))
     monkeypatch.setattr(
         launcher, "close_run_session", lambda unit: closed.append(unit.tab_id or "")
@@ -1552,7 +1552,7 @@ def _account_preflight_stubs(
             "agent": "claude",
         },
     )
-    monkeypatch.setattr(launcher, "session_workspace_name", lambda pane_id: None)
+    monkeypatch.setattr(launcher, "session_space", lambda pane_id: (None, None))
     monkeypatch.setattr(launcher, "close_run_session", lambda unit: None)
 
 
@@ -2309,7 +2309,7 @@ def test_redeliver_admits_a_transcript_older_than_the_retry(
     monkeypatch.setattr(launcher, "await_ready", lambda *_a, **_k: True)
     monkeypatch.setattr(launcher, "took_the_task", lambda *_a, **_k: True)
     monkeypatch.setattr(launcher, "reports_no_status", lambda _pane: False)
-    monkeypatch.setattr(launcher, "session_workspace_name", lambda *_a, **_k: None)
+    monkeypatch.setattr(launcher, "session_space", lambda *_a, **_k: (None, None))
     monkeypatch.setattr(
         launcher,
         "agent_row",
@@ -3626,7 +3626,7 @@ def test_herdr_readback_receipt_separates_confirmed_from_requested(
             "agent": "codex",
         },
     )
-    monkeypatch.setattr(launcher, "session_workspace_name", lambda pane_id: "review")
+    monkeypatch.setattr(launcher, "session_space", lambda pane_id: ("sp1", "review"))
     monkeypatch.setattr(launcher, "verify_unit_account", lambda *a, **k: (None, "none"))
     unit = launcher.LaunchRequest(
         name="reviewer",
@@ -3637,6 +3637,7 @@ def test_herdr_readback_receipt_separates_confirmed_from_requested(
         effort="xhigh",
         pane_id="t5",
         tab_id="t5",
+        launch_receipt={"space": "sp1"},
     )
     receipt = launcher.verify_unit_preflight(unit, "t5", ready=True)
     assert "pane" in receipt["confirmed_against_herdr"]
@@ -3922,26 +3923,126 @@ def test_a_known_kind_of_another_vendor_closes_an_owned_session_and_stops(
     assert closed == ["t5"]
 
 
-def test_the_workspace_check_reads_the_name_hc_shows_for_the_terminal(
+def _space_terminal(where: str | None, space: str | None, asked: str | None = None) -> str:
+    """``hc get`` for a terminal with the given ``where``/``herdr.space`` labels (real shape)."""
+    labels: dict[str, str] = {}
+    if where is not None:
+        labels["where"] = where
+    if space is not None:
+        labels["herdr.space"] = space
+    if asked is not None:
+        labels["herdr-console.space-name"] = asked
+    return json.dumps(
+        {
+            "address": "t5",
+            "state": "live",
+            "cwd": "/repo/wt",
+            "labels": labels,
+            "status": {"app": "codex", "state": "idle"},
+            "name": None,
+        }
+    )
+
+
+def _workspace_core(
+    monkeypatch: pytest.MonkeyPatch, launcher: ModuleType, record: str, app_ls: str | None = None
+) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[:2] == ["hc", "get"]:
+            return _done(cmd, 0, record)
+        if cmd[:2] == ["herdr-app", "ls"] and app_ls is not None:
+            return _done(cmd, 0, app_ls)
+        return _done(cmd, 1, "", "no window")
+
+    monkeypatch.setattr(launcher, "run", fake_run)
+    return calls
+
+
+def test_a_new_terminal_still_showing_its_folder_name_is_not_a_workspace_mismatch(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The requested workspace NAME is compared with the name half of the window's ``where``
-    label; a terminal nothing has named yet is unconfirmed, not a mismatch."""
+    """The smoke-test race (2026-11-10): within about 3 s of a --no-focus launch the window
+    writes ``where`` as "<folder> / 1", and the seat-board mod renames it from the labels a few
+    seconds later. The check compares the ``herdr.space`` label with the ``space`` the launcher's
+    result named, so a name read in that gap is display text, never a mismatch."""
     _kind_row(monkeypatch, launcher, "codex")
-    unit = _kind_unit(launcher, owned=True)
-    unit.workspace = "Review"
-    monkeypatch.setattr(launcher, "session_workspace_name", lambda pane_id: "Review")
-    confirmed, _unconfirmed, _cwd, _ready = launcher.verify_unit_identity(unit, "t5", ready=True)
-    assert "workspace" in confirmed
-    monkeypatch.setattr(launcher, "session_workspace_name", lambda pane_id: None)
-    confirmed, unconfirmed, _cwd, _ready = launcher.verify_unit_identity(unit, "t5", ready=True)
-    assert "workspace" not in confirmed and "workspace" in unconfirmed
+    _workspace_core(monkeypatch, launcher, _space_terminal("hc-smoke-repo / 1", "sp7", "HC Smoke"))
     closed: list[Any] = []
     monkeypatch.setattr(launcher, "close_run_session", lambda unit: closed.append(unit.tab_id))
-    monkeypatch.setattr(launcher, "session_workspace_name", lambda pane_id: "Elsewhere")
-    with pytest.raises(SystemExit, match="'Elsewhere' does not match requested workspace"):
+    unit = _kind_unit(launcher, owned=True)
+    unit.workspace = "HC Smoke"
+    unit.launch_receipt = {"owned": True, "space": "sp7"}
+    confirmed, _unconfirmed, _kind, _ready = launcher.verify_unit_identity(unit, "t5", ready=True)
+    assert "workspace" in confirmed
+    assert closed == []
+    assert unit.launch_receipt["workspace_shown"] == "hc-smoke-repo"
+
+
+def test_a_terminal_in_another_workspace_id_is_closed_and_stopped(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _kind_row(monkeypatch, launcher, "codex")
+    _workspace_core(monkeypatch, launcher, _space_terminal("HC Smoke / unit", "sp9"))
+    closed: list[Any] = []
+    monkeypatch.setattr(launcher, "close_run_session", lambda unit: closed.append(unit.tab_id))
+    unit = _kind_unit(launcher, owned=True)
+    unit.workspace = "HC Smoke"
+    unit.launch_receipt = {"owned": True, "space": "studio/sp7"}
+    with pytest.raises(SystemExit, match="workspace id 'sp9' .*not 'sp7'"):
         launcher.verify_unit_identity(unit, "t5", ready=True)
     assert closed == ["t5"]
+
+
+def test_a_terminal_without_a_space_label_yet_leaves_the_workspace_unconfirmed(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _kind_row(monkeypatch, launcher, "codex")
+    _workspace_core(monkeypatch, launcher, _space_terminal(None, None, "HC Smoke"))
+    unit = _kind_unit(launcher, owned=True)
+    unit.workspace = "HC Smoke"
+    unit.launch_receipt = {"owned": True, "space": "sp7"}
+    confirmed, unconfirmed, _kind, _ready = launcher.verify_unit_identity(unit, "t5", ready=True)
+    assert "workspace" not in confirmed and "workspace" in unconfirmed
+    assert unit.launch_receipt["workspace_shown"] == "HC Smoke"
+
+
+def test_with_no_space_in_the_result_the_joined_workspace_id_comes_from_the_window(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launch that joined a workspace and whose result named no ``space``: the id of the one
+    workspace of that name on this machine, from ``herdr-app ls``. Two of that name, or another
+    machine's, give no id, and the workspace stays unconfirmed."""
+    _kind_row(monkeypatch, launcher, "codex")
+    one = json.dumps(
+        {
+            "spaces": [
+                {"id": "sp7", "name": "HC Smoke", "machine": None},
+                {"id": "mini/sp8", "name": "HC Smoke", "machine": "mini"},
+                {"id": "sp9", "name": "Other", "machine": None},
+            ]
+        }
+    )
+    calls = _workspace_core(monkeypatch, launcher, _space_terminal("x / 1", "sp7"), app_ls=one)
+    unit = _kind_unit(launcher, owned=True)
+    unit.workspace = "HC Smoke"
+    unit.launch_receipt = {"owned": True}
+    confirmed, _unconfirmed, _kind, _ready = launcher.verify_unit_identity(unit, "t5", ready=True)
+    assert "workspace" in confirmed
+    assert ["herdr-app", "ls"] in calls
+    two = json.dumps(
+        {
+            "spaces": [
+                {"id": "sp7", "name": "HC Smoke", "machine": None},
+                {"id": "sp6", "name": "HC Smoke", "machine": None},
+            ]
+        }
+    )
+    _workspace_core(monkeypatch, launcher, _space_terminal("x / 1", "sp7"), app_ls=two)
+    confirmed, unconfirmed, _kind, _ready = launcher.verify_unit_identity(unit, "t5", ready=True)
+    assert "workspace" not in confirmed and "workspace" in unconfirmed
 
 
 def test_failed_launch_persists_tab_id_for_close(
@@ -4449,7 +4550,8 @@ def test_session_workspace_name_asks_hc_get_with_a_bound(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Issue 1002 F116, moved to its hc form: the call that names a session's workspace carries
-    a timeout. ``workspace_id_for_name`` is gone -- the name is on the terminal's own label."""
+    a timeout. ``workspace_id_for_name`` is gone; the name is display text from the terminal's
+    own label, and the workspace check compares ids (``session_space``)."""
     seen: list[tuple[list[str], object]] = []
 
     def fake_run(cmd: list[str], **k: object) -> subprocess.CompletedProcess[str]:
@@ -4796,12 +4898,20 @@ def test_startup_menu_on_screen(launcher: ModuleType, screen: str, is_menu: bool
 def test_reports_no_status_reads_hc_get(
     launcher: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """``hc get`` prints the Status record (``{app, state, ...}``), null until the program
+    reports. A bare word is the ``hc ls``/``hc wait`` shape and is not read from ``hc get``."""
     answers = {
         "t5": _live_terminal("t5"),
         "t6": json.dumps({"address": "t6", "state": "live", "labels": {}, "status": None}),
         "t7": json.dumps(
-            {"address": "t7", "state": "live", "labels": {}, "status": {"app": "zsh"}}
+            {
+                "address": "t7",
+                "state": "live",
+                "labels": {},
+                "status": {"app": "codex", "state": "blocked", "kind": "permission"},
+            }
         ),
+        "t8": json.dumps({"address": "t8", "state": "live", "labels": {}, "status": "idle"}),
     }
     monkeypatch.setattr(
         launcher,
@@ -4810,8 +4920,21 @@ def test_reports_no_status_reads_hc_get(
     )
     assert launcher.reports_no_status("t5") is False
     assert launcher.reports_no_status("t6") is True
-    assert launcher.reports_no_status("t7") is True
+    assert launcher.reports_no_status("t7") is False
+    assert launcher.reports_no_status("t8") is True
     assert launcher.reports_no_status("t99") is True
+
+
+def test_each_status_reader_takes_only_its_own_commands_shape(launcher: ModuleType) -> None:
+    get_record = {"status": {"app": "claude-code", "state": "idle"}}
+    assert launcher.get_status_word(get_record) == "idle"
+    assert launcher.get_status_app(get_record) == "claude-code"
+    assert launcher.get_status_word({"status": None}) is None
+    assert launcher.get_status_word({"status": "idle"}) is None
+    assert launcher.get_status_word(None) is None
+    assert launcher.row_status_word("idle") == "idle"
+    assert launcher.row_status_word({"app": "claude-code", "state": "idle"}) is None
+    assert launcher.row_status_word(None) is None
 
 
 @pytest.mark.parametrize("door", ["prompt", "pane"])
@@ -4946,7 +5069,8 @@ def test_live_agents_reads_hc_ls_and_normalises_each_row(
                 "turn": 3,
                 "where": "Workspace / unit-name",
             },
-            {"address": "t6", "agent": "zsh", "cwd": "/repo", "state": "live", "status": None},
+            # A terminal whose program never reported: ``hc ls`` leaves ``status`` out.
+            {"address": "t6", "agent": "zsh", "cwd": "/repo", "state": "live", "turn": 0},
         ],
         "machines": [],
         "hidden_finished": 0,

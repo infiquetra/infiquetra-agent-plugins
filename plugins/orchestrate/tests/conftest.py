@@ -1,7 +1,7 @@
 """Package-local pytest fixtures for Orchestrate.
 
 The upstream repository shadowed ``herdr`` from a root ``conftest.py``. This
-package repeats that shadow, and adds herdr core's ``hc`` to it, so a test that
+package repeats that shadow, and adds ``hc`` and ``herdr-app`` to it, so a test that
 reaches the operator's live Herdr -- where ``hc send`` types into a terminal and
 ``hc kill`` ends one -- fails here instead. It also pins the two companions:
 
@@ -64,7 +64,7 @@ def _pin_companions_and_shadow_herdr(tmp_path_factory: pytest.TempPathFactory) -
     os.environ["ORCHESTRATE_RUN_RECORD"] = str(RUN_RECORD_SCRIPT)
     os.environ.pop("CLAUDE_PLUGIN_ROOT", None)
     shim_dir = tmp_path_factory.mktemp("no-host-herdr")
-    for name in ("herdr", "hc"):
+    for name in ("herdr", "hc", "herdr-app"):
         shim = shim_dir / name
         shim.write_text(_SHADOW_HERDR)
         shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

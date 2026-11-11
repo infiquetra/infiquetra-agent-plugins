@@ -162,10 +162,33 @@ def hc_terminal(address: str | None, *, timeout: float = 20) -> dict[str, Any] |
     return payload if isinstance(payload, dict) and payload.get("address") else None
 
 
-def hc_status_word(status: Any) -> str | None:
-    """The status word from either shape hc prints: ``"idle"`` in a list row, ``{state}`` in get."""
-    word = status.get("state") if isinstance(status, Mapping) else status
-    return str(word) if word else None
+# hc prints a terminal's status in two shapes, by command (read live, hc 0.1.20, 2026-11-10):
+#   ``hc get <t> --json``     ``"status": {"app": "claude-code", "state": "idle"}`` -- the API's
+#                             Status record (app, state, kind, msg, progress); ``null`` until the
+#                             program has reported anything.
+#   ``hc ls --json`` rows     ``"status": "idle"`` -- the word alone; absent until it reports.
+#   ``hc wait <t> --json``    ``"status": "idle"`` -- the word alone (WaitResult).
+# Each reader below takes exactly one shape, so a record of the other shape reads as "no status"
+# rather than being half-understood.
+
+
+def get_status_word(terminal: Mapping[str, Any] | None) -> str | None:
+    """``status.state`` from an ``hc get`` record, or None while the program has reported none."""
+    status = terminal.get("status") if terminal else None
+    word = status.get("state") if isinstance(status, Mapping) else None
+    return str(word) if isinstance(word, str) and word else None
+
+
+def get_status_app(terminal: Mapping[str, Any] | None) -> str | None:
+    """``status.app`` from an ``hc get`` record: the agent's own name for itself, or None."""
+    status = terminal.get("status") if terminal else None
+    app = status.get("app") if isinstance(status, Mapping) else None
+    return str(app) if isinstance(app, str) and app else None
+
+
+def row_status_word(status: Any) -> str | None:
+    """The status word from an ``hc ls`` row or an ``hc wait`` result, or None when absent."""
+    return status if isinstance(status, str) and status else None
 
 
 def hc_rows(*, finished: bool = False, timeout: float = 20) -> list[dict[str, Any]] | None:
@@ -818,7 +841,7 @@ def await_ready(unit: Any, seconds: float = LAUNCH_SETTLE_SECONDS) -> bool:
     ahead, which is still later than sending the instant the tab appears.
     """
     result = hc_wait(unit.pane_id, seconds)
-    return result is not None and result.get("status") in READY_STATUSES
+    return result is not None and row_status_word(result.get("status")) in READY_STATUSES
 
 
 # The statuses under which a session has not started anything. ``took_the_task`` and the
@@ -1249,8 +1272,65 @@ def workspace_name_of(terminal: Mapping[str, Any] | None) -> str | None:
 
 
 def session_workspace_name(pane_id: str | None) -> str | None:
-    """The workspace name hc's record of this terminal carries, or None while none does."""
+    """The workspace name hc's record of this terminal carries, or None while none does.
+
+    Display text only, never the workspace check: the name moves while the window adopts a new
+    terminal (see ``verify_unit_identity``).
+    """
     return workspace_name_of(hc_terminal(pane_id))
+
+
+# The label that ties a terminal to its Herdr app workspace ("space"): the space's id, written when
+# the session is placed -- by agent-app on a core placement, by the window on a window placement.
+SPACE_ID_LABEL = "herdr.space"
+
+
+def bare_space_id(value: Any) -> str | None:
+    """A space id without the ``machine/`` prefix the window shows; labels carry the bare id."""
+    if isinstance(value, Mapping):
+        value = value.get("id")
+    if not value:
+        return None
+    return str(value).rsplit("/", 1)[-1] or None
+
+
+def session_space(pane_id: str | None) -> tuple[str | None, str | None]:
+    """This terminal's workspace id (its ``herdr.space`` label) and the name it is shown under.
+
+    One ``hc get``. The id is what the workspace check compares; the name is display text.
+    """
+    terminal = hc_terminal(pane_id)
+    labels = terminal.get("labels") if terminal else None
+    space = labels.get(SPACE_ID_LABEL) if isinstance(labels, Mapping) else None
+    return bare_space_id(space), workspace_name_of(terminal)
+
+
+def named_space_id(name: str | None) -> str | None:
+    """The id of this machine's one Herdr app workspace called ``name``, from the window.
+
+    Read with ``herdr-app ls`` (read-only), and only when the launcher's result named no space.
+    None when no window answers, no workspace has the name, or more than one does.
+    """
+    if not name:
+        return None
+    payload = hc_json(run(["herdr-app", "ls"], check=False, timeout=10))
+    spaces = payload.get("spaces") if isinstance(payload, dict) else None
+    if not isinstance(spaces, list):
+        return None
+    ids = [
+        bare_space_id(space.get("id"))
+        for space in spaces
+        if isinstance(space, Mapping) and space.get("name") == name and not space.get("machine")
+    ]
+    return ids[0] if len(ids) == 1 else None
+
+
+def expected_space_id(unit: Any) -> str | None:
+    """The workspace id this launch was placed in: the ``space`` in the launcher's result, else
+    the id of the named workspace it joined."""
+    receipt = getattr(unit, "launch_receipt", None)
+    recorded = receipt.get("space") if isinstance(receipt, dict) else None
+    return bare_space_id(recorded) or named_space_id(getattr(unit, "workspace", None))
 
 
 def claude_transcript_roots() -> tuple[Path, Path]:
@@ -1497,17 +1577,28 @@ def verify_unit_identity(
     else:
         unconfirmed.append("working_directory")
 
-    reported_workspace = session_workspace_name(pane_id) if unit.workspace else None
-    if unit.workspace and reported_workspace:
-        if reported_workspace != unit.workspace:
-            close_run_session(unit)
-            raise SystemExit(
-                f"{unit.name}: session workspace {reported_workspace!r} does not match "
-                f"requested workspace {unit.workspace!r}"
-            )
-        confirmed.append("workspace")
-    elif unit.workspace:
-        unconfirmed.append("workspace")
+    # The workspace is checked by id, never by name. A new terminal's shown name moves: on a
+    # --no-focus launch the core places it with only ``herdr.space`` and the asked-for name as a
+    # label, the window then writes ``where`` as "<folder> / 1" within about 3 s, and the
+    # seat-board mod renames it from the labels a few seconds later (measured 2026-11-10). A name
+    # read in that gap is a mismatch that is not one. The ``herdr.space`` label is written at
+    # placement and does not move, and the launcher's result names the same space.
+    if unit.workspace:
+        reported_space, shown = session_space(pane_id)
+        expected = expected_space_id(unit)
+        if isinstance(unit.launch_receipt, dict) and shown:
+            unit.launch_receipt["workspace_shown"] = shown
+        if expected and reported_space:
+            if reported_space != expected:
+                close_run_session(unit)
+                raise SystemExit(
+                    f"{unit.name}: session is in workspace id {reported_space!r} (shown as "
+                    f"{shown!r}), not {expected!r}, the workspace the launcher placed it in for "
+                    f"{unit.workspace!r}"
+                )
+            confirmed.append("workspace")
+        else:
+            unconfirmed.append("workspace")
 
     observed_ready = bool(row.get("interactive_ready")) if ready is None else bool(ready)
     confirmed.append("readiness")
@@ -1956,8 +2047,7 @@ def reports_no_status(pane_id: str) -> bool:
     A terminal hc cannot describe counts as reporting none, which refuses the send rather than
     risking an Enter into a question nobody has read.
     """
-    terminal = hc_terminal(pane_id)
-    return terminal is None or hc_status_word(terminal.get("status")) is None
+    return get_status_word(hc_terminal(pane_id)) is None
 
 
 def no_status_message(unit: Any, pane_id: str, seconds: float | None = None) -> str:
@@ -2114,7 +2204,7 @@ def session_row(row: Mapping[str, Any]) -> dict[str, Any]:
     """
     where = str(row.get("where") or "")
     space, separator, tab = where.partition(" / ")
-    word = hc_status_word(row.get("status"))
+    word = row_status_word(row.get("status"))
     app = row.get("agent")
     return {
         "pane_id": str(row.get("address")),

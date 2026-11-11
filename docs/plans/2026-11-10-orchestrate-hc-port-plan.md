@@ -35,9 +35,16 @@ herdr-app 0.1.15), not recalled.
 - `hc ls --json` returns `{terminals, machines, hidden_finished}`. Each terminal row carries
   `address`, `agent`, `cwd`, `state`, `status`, `turn` and `where`. Rows from other machines carry a
   `machine/` prefix on the address. Rows carry no name and no labels; `hc get <t> --json` has both.
-- `hc get <t> --json` returns the full terminal: `status` is `{app, state}` where `app` is the
-  agent's own name for itself and `state` is one of idle, working, done, blocked, error; `labels`
-  includes the window's `where` ("Workspace / tab") and `herdr.space` once a window has placed it.
+- **The status has two shapes, by command.** `hc get <t> --json` prints the API's Status record,
+  `"status": {"app": "claude-code", "state": "idle"}` (also `kind`, `msg`, `progress`), where `app`
+  is the agent's own name for itself and `state` is one of idle, working, done, blocked, error; it
+  is `null` until the program reports anything. `hc ls --json` rows and `hc wait --json` print the
+  bare word, `"status": "idle"`, and an `hc ls` row leaves `status` out until the program reports.
+  The port reads each source with its own reader (`get_status_word`, `row_status_word`), so a
+  record of the other shape reads as "no status" rather than half-understood.
+- `hc get` `labels` carry `herdr.space` (the workspace id, written when the session is placed) and,
+  once a window shows the terminal, `where` ("Workspace / tab"); a session agent-app placed in the
+  core also carries `herdr-console.space-name`, the name it asked for.
 - The agent names hc reports are `claude-code`, `codex`, `antigravity` and `muse` (observed live).
   `grok`/`grok-build`, `opencode` and `cursor-agent` come from the console's own table
   (infiquetra-herdr-console `cli/herdr-ops/herdr_ops/session_telemetry.py`), not from a live row.
@@ -84,9 +91,9 @@ herdr-app 0.1.15), not recalled.
 | 6 | `read_pane` :784 | `herdr pane read --source recent-unwrapped`, then `visible` | read screen and history | `hc read <t> --lines N` |
 | 7 | `pane_input_inspection` :801 | `herdr pane read --source visible --format ansi` | read the styled screen | `hc read <t> --lines 0`, plain text (gap G1) |
 | 8 | `close_run_session` :1007 | `herdr tab close <tab>`, then `herdr tab list` | close what this run made | `hc kill <t>`, then `hc rm <t>` |
-| 9 | `workspace_id_for_name` :1056 | `herdr workspace list` | workspace name to id | none needed: the `where` label names the workspace |
+| 9 | `workspace_id_for_name` :1056 | `herdr workspace list` | workspace name to id | the launcher's result `space`, else `herdr-app ls` by name (D18) |
 | 10 | `pane_account_label` :1144 | `herdr pane read --source visible` | read the statusline | `hc read <t> --lines 0` |
-| 11 | `verify_unit_identity` :1270 | kind, cwd, workspace from the list row | check identity | `hc get <t> --json`: `status.app`, `cwd`, `labels.where` |
+| 11 | `verify_unit_identity` :1270 | kind, cwd, workspace from the list row | check identity | `hc ls` row: `agent`, `cwd`; `hc get`: label `herdr.space` against the result's `space` (D18) |
 | 12 | `_record_create_timeout` :1449 | `herdr tab list` | reconcile after a timeout | `hc ls --all --json`, new addresses in the unit's folder |
 | 13 | `launch` :1534 | wrapper JSON `tab_id`, `pane_id`, `agent_name`, `reused` | read the receipt | agent-app JSON `terminal`, `tab`, `space`, `created_space` |
 | 14 | `PaneWriter` `type_into_pane` :1722 | `herdr pane run <pane> <line>` | type a line | `hc send <t> <line>` |
@@ -168,6 +175,14 @@ event client (2), kind names (1), preview (1).
   silence after the readiness window as "does not report readiness" and sent anyway; the smoke
   test of 2026-11-10 (terminals t9t and t9v on the Studio) answered Claude's trust question
   "No, exit" that way, twice, and Claude quit. Decision D17 replaces that reading.
+- **G11. A new terminal's workspace name moves for several seconds.** Measured by the team lead on
+  a probe, 2026-11-10: a `--no-focus` launch places the session in herdr core with labels
+  `herdr.space=<id>` and `herdr-console.space-name=HC Smoke` and no `where`; within about 3 s the
+  window adopts it and writes `where` = "<folder name> / 1"; a few seconds later the seat-board mod
+  renames the workspace and tab from the labels and `where` becomes "HC Smoke / <tab>". The first
+  port compared the requested name with `where` and read it in that gap: the smoke test's next
+  launch failed with "session workspace 'hc-smoke-repo' does not match requested workspace
+  'HC Smoke'" and closed its owned session. Decision D18 replaces the check.
 
 ---
 
@@ -241,6 +256,14 @@ Each one changes how Orchestrate behaves, so each takes the conservative side.
   Codex, Antigravity and Muse were each seen reporting a status on a live Studio terminal on
   2026-11-10. Grok and OpenCode were not seen live (OpenCode's binary carries the status escape),
   so they are held to the not-ready rule until one of their sessions is watched.
+- **D18. The workspace is checked by id, never by name** (added after the smoke test, G11). The
+  terminal's `herdr.space` label is compared with the `space` id in the launcher's result; when
+  the result names none, with the id of the one workspace of that name on this machine from
+  `herdr-app ls` (read-only; two of the name, or none, give no id). Both ids are written at
+  placement and do not move. A mismatch still closes the run-owned session and stops; a terminal
+  with no `herdr.space` label yet, or no expected id, leaves the workspace unconfirmed. The name
+  (`where`, else `herdr-console.space-name`) is kept in the receipt as `workspace_shown`, display
+  text only.
 - **D16. No version bump here.** The repository bumps versions only in a release pull request
   (`chore(release)`), so both changelogs carry the change under `[Unreleased]`, marked breaking.
   The release must make both major versions and raise Orchestrate's Claude adapter floor for
@@ -285,6 +308,12 @@ a status after 30 s; a startup question such as folder trust may be open: read i
 question in the tab and run `launcher.py redeliver --receipt-json receipt.json` with the same
 flags, expecting the reply and `prompt_delivered: true`. Then a folder Claude already trusts,
 expecting S2 as written.
+
+The trusted-folder run then found G11: the launch failed with "session workspace 'hc-smoke-repo'
+does not match requested workspace 'HC Smoke'" and closed its own session, because the check read
+the window's `where` label before the rename. D18 fixes it; that re-run should confirm
+`workspace` in `confirmed_against_herdr`, with `workspace_shown` holding whichever name the window
+showed at that moment.
 
 Steps, from a Herdr terminal on the Studio, in a scratch repository:
 
