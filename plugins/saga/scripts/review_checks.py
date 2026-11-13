@@ -625,7 +625,7 @@ def _node_report(kind: str, arguments: list[str], cwd: Path, files: list[str], t
         return "missing"
     argv = [str(binary), *(["run"] if kind == "vitest" else []), *arguments]
     if kind == "vitest":
-        argv += ["--reporter=json", "--maxWorkers=1", "--sequence.seed=0",
+        argv += ["--no-file-parallelism", "--reporter=json", "--maxWorkers=1", "--sequence.seed=0",
                  "--cache=false", "--configLoader=runner"]
     else:
         argv += ["--json", "--reporters=default", "--runInBand", "--no-cache", "--seed=0",
@@ -647,6 +647,11 @@ def _node_report(kind: str, arguments: list[str], cwd: Path, files: list[str], t
             payload = report.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
             payload = ""
+        if (kind == "vitest" and not payload and code != 0
+                and review_node_projects.unsupported_file_parallelism(stdout + "\n" + stderr)):
+            if diagnostics is not None:
+                review_diagnostics.write_failure_tail(diagnostics, "two-runs", step, code, stdout, stderr)
+            return "unsupported-file-parallelism"
     try:
         data = json.loads(payload)
         suites = data["testResults"]

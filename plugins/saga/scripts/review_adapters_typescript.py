@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+import review_node_projects
 import review_tools
 from review_tools import Adapter, Hit, ParseResult, RulePin, ScanContext, ToolGap
 
@@ -735,6 +736,7 @@ def _invoke_vitest_shuffle(context: ScanContext) -> list[str]:
     return [
         "vitest", "run", "--sequence.shuffle",
         "--sequence.seed", str(_shuffle_seed(context)),
+        "--no-file-parallelism",
     ]
 
 
@@ -747,6 +749,8 @@ def _parse_vitest_shuffle(text: str) -> ParseResult:
     failed = any(
         int(count) > 0 for count in _VITEST_SUMMARY.findall(plain)
     ) or "Failed Tests" in plain
+    if not failed and review_node_projects.unsupported_file_parallelism(plain):
+        return ParseResult((), gap=("unsupported-file-parallelism", "testing.flaky-order-or-network"))
     failures: dict[tuple[str, str | None], None] = {}
     for match in _VITEST_FAIL.finditer(plain):
         path, case = match.group(1), match.group(2)
@@ -783,7 +787,7 @@ def _invoke_jest_shuffle(context: ScanContext) -> list[str]:
     _stage_first_base(context, (".swcrc", ".swcrc.json"))
     staged = _stage_first_base(context, _JEST_CONFIGS)
     _refuse_relative_imports(staged, "testing.flaky-order-or-network")
-    argv = ["jest", "--randomize", "--seed", str(_shuffle_seed(context)), "--showSeed"]
+    argv = ["jest", "--randomize", "--seed", str(_shuffle_seed(context)), "--showSeed", "--runInBand"]
     if staged is None:
         package = _base_json(context, "package.json")
         key = package.get("jest")

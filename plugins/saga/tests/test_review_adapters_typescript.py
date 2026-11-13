@@ -924,6 +924,7 @@ def test_vitest_shuffle_failure_carries_seed_and_flags(
     assert argv[:4] == ["vitest", "run", "--sequence.shuffle", "--sequence.seed"]
     assert "--reporter" not in argv
     assert argv[4] == "4242"
+    assert "--no-file-parallelism" in argv
     findings = _read(output, "findings.json")
     assert len(findings) == 1
     assert findings[0]["rule"]["ref"] == "shuffle-failure"
@@ -947,6 +948,33 @@ def test_vitest_shuffle_with_no_tests_is_a_gap(tmp_path: Path) -> None:
     degraded = _degraded(output, "vitest")
     assert len(degraded) == 1
     assert degraded[0]["reason"] == "no-tests-ran"
+
+
+def test_vitest_shuffle_rejected_serial_option_is_a_gap_not_a_failed_prepare(tmp_path: Path) -> None:
+    repo, _source = _runner_repo(tmp_path, "vitest")
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, "", stderr="CACError: Unknown option `--fileParallelism`\n",
+                    code=1, versions={"vitest": "1.0.4"})
+    assert _run(repo, base, head, _profile(tmp_path / "profile.json"), output,
+                tmp_path / "home", [_adapter("vitest-shuffle")], runner) == 0
+    _valid(output)
+    assert _read(output, "findings.json") == []
+    assert {item["reason"] for item in _degraded(output, "vitest")} == {
+        "version-mismatch", "unsupported-file-parallelism"}
+    runs = [argv for argv in runner.calls if "--version" not in argv]
+    assert len(runs) == 1 and "--no-file-parallelism" in runs[0]
+
+
+def test_vitest_assertion_about_an_unknown_option_is_still_a_failure() -> None:
+    result = A._parse_vitest_shuffle(
+        " FAIL  example.test.js > validates options\n"
+        "CACError: Unknown option `--fileParallelism`\n"
+        " Test Files  1 failed (1)\n Tests  1 failed (1)\n")
+    assert result.gap is None
+    assert [hit.rule_id for hit in result.hits] == ["shuffle-failure"]
 
 
 def test_jest_shuffle_failure_carries_seed_and_flags(
@@ -975,6 +1003,7 @@ def test_jest_shuffle_failure_carries_seed_and_flags(
     assert len(runs) == 1
     argv = runs[0]
     assert argv[1:5] == ["--randomize", "--seed", "4242", "--showSeed"]
+    assert "--runInBand" in argv
     assert "--json" not in argv
     assert "--config" not in argv
     findings = _read(output, "findings.json")

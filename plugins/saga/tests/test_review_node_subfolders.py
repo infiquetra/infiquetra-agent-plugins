@@ -43,6 +43,8 @@ _STUB = '''#!__PYTHON__
 import json, pathlib, re, sys, time
 cwd = pathlib.Path.cwd()
 args = sys.argv[1:]
+kind = pathlib.Path(sys.argv[0]).name
+assert ('--no-file-parallelism' if kind == 'vitest' else '--runInBand') in args
 files = [arg for arg in args if '.test.' in arg and (cwd / arg).is_file()]
 pattern = args[args.index('--testNamePattern') + 1] if '--testNamePattern' in args else None
 suites = []
@@ -55,7 +57,6 @@ for file in files:
         cases.append({'fullName': name, 'status': status, 'duration': time.time()})
     suites.append({'name': str(cwd / file), 'assertionResults': list(reversed(cases)), 'status': 'passed'})
 payload = json.dumps({'testResults': suites, 'startTime': time.time()})
-kind = pathlib.Path(sys.argv[0]).name
 config = cwd / ('vitest.config.mjs' if kind == 'vitest' else 'jest.config.cjs')
 output = None
 if config.is_file():
@@ -133,10 +134,12 @@ def test_node_report_requires_its_own_file_and_cleans_it_after_failure(
         assert report.parent.is_dir() and not report.exists()
         assert f"--outputFile={report}" in argv
         if kind == "vitest":
+            assert "--no-file-parallelism" in argv
             assert "--reporter=json" in argv
             assert argv.index(f"--outputFile.json={report}") < argv.index(f"--outputFile={report}")
         else:
             assert "--json" in argv and "--reporters=default" in argv
+            assert "--runInBand" in argv
         reports.append(report)
         if failure == "timeout":
             return "timeout"
@@ -149,6 +152,20 @@ def test_node_report_requires_its_own_file_and_cleans_it_after_failure(
     assert H.C._node_report(kind, [], tmp_path, [], 10, None, "head-listing-run") == (
         "timeout" if failure == "timeout" else "no-test-list")
     assert reports and not reports[0].parent.exists()
+
+
+def test_node_report_preserves_cases_when_a_test_prints_a_startup_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    H.executable(tmp_path / "node_modules/.bin/vitest", "#!/bin/sh\nexit 0\n")
+    def capture(argv: list[str], cwd: Path, timeout: int) -> Any:
+        report = Path(next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--outputFile.json=")))
+        report.write_text(json.dumps({"testResults": [{"name": "new.test.js", "assertionResults": [
+            {"fullName": "passes", "status": "passed"}, {"fullName": "fails", "status": "failed"}]}]}))
+        return "", "CACError: Unknown option `--fileParallelism`\n", 1
+    monkeypatch.setattr(H.C, "_run_capture", capture)
+    assert H.C._node_report("vitest", [], tmp_path, ["new.test.js"], 10, None, "head-listing-run") == {
+        "new.test.js::fails": "failed", "new.test.js::passes": "passed"}
 
 
 @pytest.mark.parametrize("kind", ["vitest", "jest"])
@@ -167,13 +184,36 @@ def test_prepare_command_discovery_and_packet_dependencies_reach_two_runs(tmp_pa
 
 
 @pytest.mark.parametrize("kind", ["vitest", "jest"])
-def test_modified_node_test_excludes_cases_that_already_existed(tmp_path: Path, kind: str) -> None:
+def test_modified_node_test_excludes_cases_that_already_existed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
     repo, base, _, modules = _repo(tmp_path, kind)
     H.write(repo, {"web/old.test.ts": "existing\nalso-new\n"})
     H.commit(repo, "edit test")
     (repo / "web/node_modules").symlink_to(modules)
+    capture = H.C._run_capture
+    calls: list[list[str]] = []
+    def observed(argv: list[str], cwd: Path, timeout: int) -> Any:
+        calls.append(argv)
+        return capture(argv, cwd, timeout)
+    monkeypatch.setattr(H.C, "_run_capture", observed)
     found = H.C.two_runs(repo, base, [("typescript", f"cd web && {kind}" + (" run" if kind == "vitest" else ""))])
     assert {hit["rule_id"] for hit in found["hits"]} == {"web/new.test.ts::already", "web/old.test.ts::also-new"}
+    assert len(calls) == 3  # head listing, base listing, then the copied tests on base
+    assert all(("--no-file-parallelism" if kind == "vitest" else "--runInBand") in argv for argv in calls)
+
+
+def test_old_vitest_records_a_serial_gap_and_other_commands_still_run(tmp_path: Path) -> None:
+    repo, base, _, modules = _repo(tmp_path, "vitest")
+    H.executable(modules / ".bin/vitest", "#!" + sys.executable + "\n"
+        "import sys\nassert '--no-file-parallelism' in sys.argv\n"
+        "print('CACError: Unknown option `--fileParallelism`', file=sys.stderr)\nsys.exit(1)\n")
+    H.executable(modules / ".bin/jest", _STUB.replace("__PYTHON__", sys.executable))
+    (repo / "web/node_modules").symlink_to(modules)
+    found = H.C.two_runs(repo, base, [("typescript", "cd web && vitest run"),
+                                    ("typescript", "cd web && jest")])
+    assert found["gaps"] == [{"reason": "unsupported-file-parallelism", "row": H.C.ROW_BEFORE}]
+    assert [hit["rule_id"] for hit in found["hits"]] == ["web/new.test.ts::already"]
 
 
 @pytest.mark.skipif(os.environ.get("SAGA_TEST_LIVE_NPM") != "1", reason="opt-in (SAGA_TEST_LIVE_NPM=1): needs npm and network")
@@ -274,6 +314,13 @@ def test_two_prepares_of_subfolder_commit_produce_identical_complete_packets(
             H.write(cwd, {f"node_modules/{kind}/package.json": json.dumps({"name": kind, "version": "1.0.0"}),
                           "node_modules/.package-lock.json": str(len(installs))})
             return H.T.ProcessResult(0, "")
+        if Path(argv[0]).name == kind:
+            if "--version" in argv:
+                return H.T.ProcessResult(0, "4.1.11\n" if kind == "vitest" else "30.5.2\n")
+            assert ("--no-file-parallelism" if kind == "vitest" else "--runInBand") in argv
+            fixture = Path(__file__).parent / "fixtures/review_tools" / f"{kind}-shuffle-run-{len(installs)}.txt"
+            text = fixture.read_text().replace("@ROOT@", str(cwd))
+            return H.T.ProcessResult(1, text if kind == "vitest" else "", text if kind == "jest" else "")
         if Path(argv[0]).name == "stryker":
             if "--version" in argv:
                 return H.T.ProcessResult(0, "10.0.0\n")
@@ -295,7 +342,7 @@ def test_two_prepares_of_subfolder_commit_produce_identical_complete_packets(
             code = C.main(["prepare", "--repo", str(repo), "--base", base, "--head", head,
                 "--profile", str(profile), "--builder-record", str(builder), "--out", str(out),
                 "--home", str(home), "--bank", str(tmp_path / "no-bank.json")],
-                adapters=[H.adapter("two-runs"), next(a for a in A.ADAPTERS if a.id == "stryker")],
+                adapters=[H.adapter("two-runs"), *(a for a in A.ADAPTERS if a.id in {"stryker", kind + "-shuffle"})],
                 runner=runner)
             assert code == 0
             packets.append(out)
@@ -305,6 +352,8 @@ def test_two_prepares_of_subfolder_commit_produce_identical_complete_packets(
                     (os.readlink(p) if p.is_symlink() else p.read_bytes())
                     for p in folder.rglob("*") if p.is_file() or p.is_symlink()}
         assert content(packets[0]) == content(packets[1])
+        findings = json.loads((packets[0] / "findings.json").read_text())
+        assert len([item for item in findings if item["rule"]["ref"] == "shuffle-failure"]) == 2
         items = json.loads((packets[0] / "where-to-look.json").read_text())
         assert {item["classifier"]["name"] for item in items} >= {"two-runs", "surviving-mutant"}
         assert len([item for item in items if item["classifier"]["name"] == "two-runs"]) == 1

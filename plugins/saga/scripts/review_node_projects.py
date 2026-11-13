@@ -49,6 +49,14 @@ def is_test_file(path: str) -> bool:
         or bool({"test", "tests", "__tests__"} & set(item.parts[:-1])))
 
 
+def unsupported_file_parallelism(text: str) -> bool:
+    """Recognise Vitest's startup rejection, independently of its configured version pin."""
+    return bool(re.search(
+        r"(?m)^CACError: Unknown option [`'\"]--(?:no-)?(?:fileParallelism|file-parallelism)[`'\"]\s*$",
+        text,
+    ))
+
+
 def _words(command: str) -> list[str] | None:
     try:
         words = shlex.split(command)

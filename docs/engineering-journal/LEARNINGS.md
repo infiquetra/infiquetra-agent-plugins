@@ -2,6 +2,21 @@
 
 ## 2026-11-13
 
+### A fixed shuffle seed does not fix worker scheduling
+
+**Evidence.** Node runner argument tests now require Vitest's `--no-file-parallelism` or
+Jest's `--runInBand` in random-order runs and every two-runs invocation. Synthetic complete
+subfolder prepares retain shuffle failures and compare every packet byte while transcript
+timings and arrival order vary. An older Vitest startup rejection records a scoped gap and
+allows other checks to continue.
+
+**Mechanism.** A shuffle seed controls test order but does not serialize separate file workers.
+Feature rejection must be read from the installed runner, since its version can differ from
+the review profile's pin. Falling back to parallel execution would discard the intended control.
+
+**Generalizable rule.** Control scheduling as well as the random seed when collecting evidence.
+Keep residual timer races visible; a confirming pass must not erase an observed failure.
+
 ### Own the structured report destination as well as its format
 
 **Evidence.** Synthetic subfolder fixtures configure Vitest's JSON output as both a string

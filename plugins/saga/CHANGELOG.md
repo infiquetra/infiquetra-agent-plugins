@@ -18,6 +18,10 @@
 
 ### Fixed
 
+- Saga's Vitest and Jest random-order and two-runs checks disable file parallelism.
+  Vitest versions that reject the serial option record `unsupported-file-parallelism`
+  without failing prepare or silently running files in parallel. Flaky failures stay visible.
+
 - Node installs accept tracked in-repository `.tgz` and `.tar.gz` dependency archives only
   after Saga verifies their lock integrity against the bytes. Symlinks, escaping paths,
   untracked files, missing hashes and mismatches are refused before the manager starts.
