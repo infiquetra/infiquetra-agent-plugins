@@ -2619,7 +2619,7 @@ def test_cosmic_baseline_never_reads_node_ids_from_failure_messages(
     stub_dir = tmp_path / 'stub'
     stub_dir.mkdir()
     _write_cosmic_stub(stub_dir / 'cosmic-ray')
-    env = _wrapper_env(stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE))
+    env = _wrapper_env(stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE), TMPDIR=str(tmp_path))
     (tmp_path / 'test_brackets.py').write_text(
         'import pytest\n'
         f'@pytest.mark.parametrize("value", [0, 1], ids=[{parameter_id!r}, "good"])\n'

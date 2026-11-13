@@ -898,11 +898,13 @@ def _native_code(text: str, language: str) -> str:
                 closing = ('"' + hashes if language == "rust"
                            else match.group(2) + hashes)
                 raw = bool(hashes) or opening.startswith("r")
+                escape = "\\" + hashes if language == "swift" else (None if raw else "\\")
                 while index < len(text):
                     if text.startswith(closing, index):
                         index += len(closing)
                         break
-                    index += 2 if not raw and text[index] == "\\" else 1
+                    index += (len(escape) + 1 if escape and text.startswith(escape, index)
+                              else 1)
         else:
             index += 1
             continue

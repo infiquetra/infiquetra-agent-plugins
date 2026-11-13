@@ -11,7 +11,8 @@
 - Mutation baseline isolation reads failing pytest identities from a temporary JUnit XML report,
   preserving parameter identifiers even when failure messages also contain `] - `.
 
-- Native testing leads ignore comments and string literals, locate multiline signatures, and use
+- Native testing leads ignore comments and string literals (including escaped Swift raw-string
+  delimiters), locate multiline signatures, and use
   Rust module paths or Swift type names to disambiguate test names. Ambiguous tests remain
   unlocated.
 

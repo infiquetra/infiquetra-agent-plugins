@@ -19,6 +19,8 @@ text. If an identity cannot be reconstructed safely, keep the failed-baseline re
 
 **Evidence.** Small Rust and Swift fixtures reproduced false matches in comments and literals,
 missed multiline signatures, and collisions between modules or classes sharing a test name.
+A further Swift fixture caught an escaped raw-string delimiter exposing a false definition;
+escape handling now follows the string delimiter as well.
 Lookup now masks comments and literals while retaining line offsets, then follows lexical
 module/type scopes and Rust file modules. Ambiguous definitions remain unlocated.
 

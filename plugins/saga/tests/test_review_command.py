@@ -4579,6 +4579,8 @@ def test_unlocated_lead_scope_survives_prepare_and_finish(tmp_path: Path, row: s
      'fn test_ok() {}\n', 3),
     ('swift', 'tests/AppTests.swift', 'testOK()',
      'let text = \"\"\"\nfunc testOK() {}\n\"\"\"\nfunc testOK() {}\n', 4),
+    ('swift', 'tests/AppTests.swift', 'testOK()',
+     'let text = #"escaped \\#"# func testOK() {}"#\nfunc testOK() {}\n', 2),
     ('rust', 'src/lib.rs', 'second::test_ok',
      'mod first { fn test_ok() {} }\nmod second { fn test_ok() {} }\n', 2),
     ('swift', 'tests/AppTests.swift', 'Package.Second/testOK',
