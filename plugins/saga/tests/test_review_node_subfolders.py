@@ -151,12 +151,30 @@ def test_live_node_two_runs_with_locked_subfolder_dependencies(tmp_path: Path, k
 
 
 @pytest.mark.parametrize("kind", ["vitest", "jest"])
+@pytest.mark.parametrize("vendored", [False, True])
 def test_two_prepares_of_subfolder_commit_produce_identical_complete_packets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, vendored: bool,
 ) -> None:
     C = H.load("review_command")
     A = H.load("review_adapters_typescript")
     repo, base, head, _ = _repo(tmp_path, kind)
+    if vendored:
+        # The manager is synthetic here; the separate offline npm test installs a real
+        # archive. This fixture exercises verified file inputs through complete prepare.
+        import base64
+        import hashlib
+        data = b"inert vendored archive fixture\n"
+        target = repo / "web/vendor/vendored.tgz"
+        target.parent.mkdir()
+        target.write_bytes(data)
+        manifest = json.loads((repo / "web/package.json").read_text())
+        manifest["dependencies"] = {"vendored": "file:vendor/vendored.tgz"}
+        (repo / "web/package.json").write_text(json.dumps(manifest))
+        (repo / "web/package-lock.json").write_text(json.dumps({"lockfileVersion": 3,
+            "packages": {"": {}, "node_modules/vendored": {"version": "1.0.0",
+                "resolved": "file:vendor/vendored.tgz",
+                "integrity": "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode()}}}))
+        head = H.commit(repo, "vendored dependency")
     profile = H.profile(tmp_path / "profile.json", "echo no-root-project")
     builder = tmp_path / "builder.json"
     builder.write_text(json.dumps({"kind": "builder_record", "schema": H.R.SCHEMA,

@@ -1,5 +1,30 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-13
+
+### Authenticate tracked local dependency archives before invoking a Node manager
+
+**Decision.** Node lock readers may admit a relative `file:` archive only when its normalised
+path stays inside the head repository, every path component is free of symlinks, the target is
+a tracked regular file, and its bytes match the lock's supported integrity hash. Walk components
+before normalising so a symlink cannot be hidden by `..`. Reuse one verifier across npm,
+shrinkwrap, pnpm, Yarn classic and Bun. A manifest file dependency must name an archive already
+verified from the lock. Hashing observes the existing install byte and time limits; manager
+scripts, fresh home, registry and network settings retain their existing controls.
+
+**Rejected alternatives.** Trusting manager-side integrity checks; admitting every `file:`
+source; accepting an untracked export artifact; treating Yarn's resolved checksum fragment as
+an integrity field; admitting local directories under the archive rule.
+
+**Rationale.** The committed file and lock hash provide a bounded byte input that Saga can
+check before any package manager reads it. Local directories require a separate content and
+link policy because a lock does not provide an equivalent archive hash for them.
+
+**Revisit when.** A supported lock format changes how it represents archives or integrity,
+or a separately designed directory snapshot policy is needed.
+
+---
+
 ## 2026-11-12
 
 ### Node two-runs compares structured case reports and bypasses package lifecycle hooks

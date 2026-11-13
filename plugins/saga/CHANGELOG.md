@@ -15,7 +15,12 @@
   delimiters), locate multiline signatures, and use
   Rust module paths or Swift type names to disambiguate test names. Ambiguous tests remain
   unlocated.
+
 ### Fixed
+
+- Node installs accept tracked in-repository `.tgz` and `.tar.gz` dependency archives only
+  after Saga verifies their lock integrity against the bytes. Symlinks, escaping paths,
+  untracked files, missing hashes and mismatches are refused before the manager starts.
 
 - TypeScript projects below a repository with no root `package.json` now receive locked
   dependencies for up to four changed projects. Prepare and re-runs link each project's own

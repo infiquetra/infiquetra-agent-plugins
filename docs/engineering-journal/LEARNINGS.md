@@ -142,6 +142,7 @@ it dropped.
 
 **Generalizable rule.** Before downgrading a deterministic result to reviewer advice, guarantee
 its delivery or keep a conservative, visible fallback. Ambiguous definitions are gaps, not guesses.
+
 ### A testing lead needs both its real file and its mutation operator
 
 **Evidence.** Lead items skip findings whose file is `.` and deduplicate mutants by file, line
