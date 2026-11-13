@@ -139,7 +139,8 @@
 
 - **Testing results cannot disappear from reviewer leads.** Rust and Swift two-runs results
   locate unique test definitions in changed head files, including Rust inline tests. An
-  unlocated result records `unlocated-lead` and restores blocking severity for its testing row,
+  unlocated result records `unlocated-lead` with exact finding identifiers and restores blocking
+  severity only for those findings; entries are counted once per testing row and language,
   so a result the reviewer cannot be shown never silently fixes later. Results beyond the item
   cap stay fix-later and are recorded as `lead-cap` with the count: they repeat the signal the
   reviewer is already answering, and a mutation tool with a narrow test scope can leave many

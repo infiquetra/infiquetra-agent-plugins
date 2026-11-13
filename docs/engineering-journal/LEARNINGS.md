@@ -1,5 +1,21 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-13
+
+### A degraded lead must retain its finding identity through recomputation
+
+**Evidence.** Mixed located and unlocated testing results reproduced row-wide escalation across
+languages. Prepare-to-finish regressions now verify that clearing located items leaves those
+findings advisory while only the unlocated findings retain blocking severity. Builder excusal
+and per-language enforcement still apply. Each row and language records one counted degraded
+entry containing the sorted finding identifiers, accepted by the existing record validators.
+
+**Mechanism.** Reconstructing severity from a row identifier discarded the finer scope of the
+original failure to locate a result. Finish recomputed that same overbroad consequence.
+
+**Generalizable rule.** Persist the identities affected by degradation at the handoff boundary;
+recomputation must apply the consequence to that same scope.
+
 ## 2026-11-12
 
 ### Recomputed severity must reach every published outcome view

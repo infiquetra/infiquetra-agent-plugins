@@ -918,6 +918,11 @@ def _lead_items(
                 if function:
                     changed_words |= _words(function)
     degraded: list[dict[str, Any]] = []
+    unlocated: dict[tuple[str, str, str], list[str]] = {}
+
+    def record_unlocated(finding: Mapping[str, Any], row: str, language: str, tool: str) -> None:
+        unlocated.setdefault((row, language, tool), []).append(str(finding.get("id") or ""))
+
     tests: list[tuple[int, str, dict[str, Any]]] = []
     mutants: list[tuple[str, int, str, dict[str, Any]]] = []
     for finding in findings:
@@ -940,8 +945,7 @@ def _lead_items(
             if native is not None:
                 path, name, span = native
             if not path or path == ".":
-                degraded.append(_degraded("testing", language, str(row), "two-runs",
-                                          "unlocated-lead"))
+                record_unlocated(finding, str(row), language, "two-runs")
                 continue
             where: dict[str, Any] = (
                 {"scope": "lines", "file": path, "lines": {"start": span[0], "end": span[1]},
@@ -955,8 +959,7 @@ def _lead_items(
             lines = location.get("lines") if isinstance(location.get("lines"), Mapping) else {}
             line = lines.get("start")
             if not path or path == "." or not isinstance(line, int) or line < 1:
-                degraded.append(_degraded("testing", language, str(row), "surviving-mutant",
-                                          "unlocated-lead"))
+                record_unlocated(finding, str(row), language, "surviving-mutant")
                 continue
             operator = _mutant_operator(str(finding.get("statement") or ""))
             text = _head_text(runner, repo, head, path, cache) if path.endswith(".py") else None
@@ -965,6 +968,10 @@ def _lead_items(
                      "anchor": f"surviving-mutant:{operator}:{line}"}
             mutants.append((path, line, operator, _lead_item(
                 "testing", language, where, "surviving-mutant", _model(finding))))
+    for (row, language, tool), ids in sorted(unlocated.items()):
+        entry = _degraded("testing", language, row, tool, "unlocated-lead")
+        entry.update(count=len(ids), finding_ids=sorted(ids))
+        degraded.append(entry)
     items: list[dict[str, Any]] = []
     for kind, row, ranked in (
         ("two-runs", ROW_TWO_RUNS, [entry[-1] for entry in sorted(tests, key=lambda e: e[:2])]),

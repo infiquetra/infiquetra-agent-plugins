@@ -4481,3 +4481,85 @@ def test_prepare_publishes_the_blocking_fallback_in_both_outcome_files(tmp_path:
         packets.append({path.relative_to(out).as_posix(): path.read_bytes()
                         for path in out.rglob('*') if path.is_file()})
     assert packets[0] == packets[1]
+
+
+@pytest.mark.parametrize('row', [C.ROW_TWO_RUNS, C.ROW_MUTANT])
+def test_unlocated_lead_fallback_is_scoped_to_each_finding(tmp_path: Path, row: str) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    located = _two_runs_finding('parse_header_strips_marker') if row == C.ROW_TWO_RUNS else _mutant_finding(2, 'core/Not')
+    located['id'] = 'located'
+    missing = []
+    for language in ('python', 'rust'):
+        for n in range(2):
+            finding = _lead_finding(row, f'missing-{language}-{n}',
+                                    {'scope': 'whole-project', 'file': '.', 'anchor': 'missing'},
+                                    'Unlocated testing result.')
+            finding.update(id=f'missing-{language}-{n}', language=language)
+            missing.append(finding)
+    findings = [located, *missing]
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    result = C.review_formula.compute({'findings': findings, 'degraded_inputs': degraded,
+                                      'may_block': {'testing': {'python': True, 'rust': False}}})
+    computed = {finding['id']: finding for finding in result['findings']}
+    assert len(items) == 1
+    assert computed['located']['severity'] == 'fix-later'
+    assert len(degraded) == 2
+    for entry in degraded:
+        assert entry['count'] == 2
+        assert entry['finding_ids'] == [f"missing-{entry['language']}-{n}" for n in range(2)]
+    for finding in missing:
+        assert computed[finding['id']]['severity'] == 'blocks'
+        assert computed[finding['id']]['enforced'] is (finding['language'] == 'python')
+    for lens_grade in result['lens_grades']:
+        assert R.validate(lens_grade) == []
+    # The fallback follows ordinary builder excusal and calibration rules.
+    builder = {'reasons': [{'kind': row.split('.', 1)[1], 'finding_id': missing[0]['id'],
+                            'text': 'This result is expected.'}]}
+    excused = C.review_formula.compute({'findings': findings, 'degraded_inputs': degraded,
+                                       'builder_records': [builder]})
+    assert next(f for f in excused['findings'] if f['id'] == missing[0]['id'])['severity'] == 'note'
+    assert not excused['merge']['blocking']
+    assert C._lead_items(list(reversed(findings)), change, C.review_tools.subprocess_runner,
+                         repo, head) == (items, degraded)
+
+
+@pytest.mark.parametrize('row', [C.ROW_TWO_RUNS, C.ROW_MUTANT])
+def test_unlocated_lead_scope_survives_prepare_and_finish(tmp_path: Path, row: str) -> None:
+    repo, base, head, _change = _lead_change(tmp_path)
+    hits = (
+        T.Hit(rule_id='tests/test_app.py::test_parse_header_strips_marker', path='tests/test_app.py',
+              statement='Located testing result.', anchor='located', whole_project=False,
+              row=row, language='python', start=1, end=1),
+        T.Hit(rule_id='missing', path='.', statement='Unlocated testing result.', anchor='missing',
+              whole_project=True, row=row, language='rust'),
+    )
+    adapter = T.Adapter(id='two-runs', tool='review-checks',
+                        invoke=lambda _context: ['stub', 'scan'],
+                        parse=lambda _text: T.ParseResult(hits), default_version='1.0.0',
+                        rows=(row,), lens='testing', comparison='lines')
+    home = tmp_path / 'home'
+    home.mkdir()
+    packet = tmp_path / 'packet'
+    code, err = _main([
+        'prepare', '--repo', str(repo), '--base', base, '--head', head,
+        '--profile', str(_profile(tmp_path / 'outside')),
+        '--builder-record', str(_builder(tmp_path / 'builder.json')),
+        '--out', str(packet), '--home', str(home),
+    ], adapters=[adapter], runner=_Runner())
+    assert code == 0, err
+    prepared = _read(packet / 'grades.json')
+    assert {f['language']: f['severity'] for f in prepared['findings']} == {
+        'python': 'fix-later', 'rust': 'blocks'}
+    assert _read(packet / 'outcomes.json') == prepared
+    where = _read(packet / 'where-to-look.json')
+    answers = [{'index': n, 'file': item['location']['file'],
+                'answer': {'kind': 'cleared', 'reason': 'The test pins intended behavior.'}}
+               for n, item in enumerate(where)]
+    scratch, changes = _scratch(tmp_path, with_test=False)
+    code, err = _finish(packet, [(_answer([], answers), _result(scratch, changes))],
+                        home, _Runner())
+    assert code == 0, err
+    run = _read(packet / 'review-run.json')
+    assert {f['language']: f['severity'] for f in run['findings']} == {
+        'python': 'fix-later', 'rust': 'blocks'}
+    assert run['merge']['allowed'] is True
