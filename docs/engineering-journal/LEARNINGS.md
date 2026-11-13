@@ -2,6 +2,18 @@
 
 ## 2026-11-12
 
+### Dependency hygiene applies to fallback commands too
+
+**Evidence.** Direct fallback-command tests reproduced missing bytecode suppression both with
+and without a packet shim. The fallback now embeds the same shim environment, or explicit
+bytecode suppression when there is no shim. A documentation assertion also caught the stale
+50-file description of the implemented 10-file mutation-test selection bound.
+
+**Mechanism.** An early return bypassed environment construction for unrecognized test commands.
+
+**Generalizable rule.** Check fallback paths against the same input-hygiene contract as the
+recognized path; bind documented numerical bounds to their executable owner when practical.
+
 ### Test collection failures and qualified identities must survive normalization
 
 **Evidence.** A copied `conftest.py` importing a head-only helper reproduced a base-run exit code

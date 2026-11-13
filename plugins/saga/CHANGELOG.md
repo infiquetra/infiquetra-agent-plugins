@@ -110,6 +110,10 @@
 
 ### Fixed
 
+- **cosmic-ray fallback commands suppress bytecode too.** Unrecognized test commands carry
+  `PYTHONDONTWRITEBYTECODE=1` and the packet shim environment when available. The earlier
+  changelog description now states the implemented bound of 10 test files.
+
 - **Two-runs names import failures and locates class methods correctly.** A pytest configuration
   import failure records `conftest-import-failed` without claiming tests ran. Python test locations
   resolve every class qualifier, so identically named methods in different classes stay distinct.
@@ -154,7 +158,7 @@
   both checks failed. Two-runs now lists only the test files the change added or edited, with the
   command's options, and runs the new tests in one batch per version; the default collection
   (globs expanded) is a fallback with its own reason, `no-test-list-default-collection`.
-  cosmic-ray names the change's test files that mention a mutated module (or the tree's, up to 50)
+  cosmic-ray names the change's test files that mention a mutated module (or the tree's, up to 10)
   and records `no-tests-for-change` when there are none; it no longer mutates test files. A
   baseline that fails is rerun once without the tests that failed before any mutation.
 

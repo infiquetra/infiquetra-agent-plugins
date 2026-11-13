@@ -2531,3 +2531,20 @@ def test_cosmic_test_processes_restore_the_packet_environment(tmp_path: Path) ->
     assert assigned['VIRTUAL_ENV'] == str(shim)
     assert assigned['PATH'].split(os.pathsep)[0] == str(shim / 'bin')
     assert assigned['PYTHONDONTWRITEBYTECODE'] == '1'
+
+
+@pytest.mark.parametrize('with_shim', [False, True])
+def test_cosmic_fallback_also_suppresses_bytecode(tmp_path: Path, with_shim: bool) -> None:
+    shim = tmp_path / 'shim' if with_shim else None
+    context = T.ScanContext(tmp_path, tmp_path, tmp_path, python_env=shim)
+    words = P._cosmic_test_argv(context, 'custom-test-runner', ['app.py'])
+    assert words[0] == 'env'
+    assert 'PYTHONDONTWRITEBYTECODE=1' in words
+    if shim is not None:
+        assert f'VIRTUAL_ENV={shim}' in words
+        assert any(word.startswith(f'PATH={shim}/bin{os.pathsep}') for word in words)
+
+
+def test_cosmic_changelog_test_file_bound_matches_the_implementation() -> None:
+    changelog = (SCRIPTS.parent / 'CHANGELOG.md').read_text(encoding='utf-8')
+    assert f"(or the tree's, up to {P._COSMIC_MAX_TEST_FILES})" in changelog

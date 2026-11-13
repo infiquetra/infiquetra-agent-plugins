@@ -952,7 +952,10 @@ def _cosmic_test_argv(context: ScanContext, command: str, modules: list[str]) ->
     """
     read = review_tools.read_pytest_command(command)
     if read is None:
-        return _resolve_python_head([*_strip_randomly(shlex.split(command)), "-p", "no:randomly"])
+        argv = _resolve_python_head([*_strip_randomly(shlex.split(command)), "-p", "no:randomly"])
+        environment = (review_dependencies.python_shim_env(context.python_env)
+                       if context.python_env is not None else {"PYTHONDONTWRITEBYTECODE": "1"})
+        return ["env", *[f"{name}={value}" for name, value in environment.items()], *argv]
     tests = _cosmic_tests(context, modules)
     if not tests:
         raise ToolGap("no-tests-for-change", "testing.surviving-mutant")
