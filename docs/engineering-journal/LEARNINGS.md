@@ -2,6 +2,21 @@
 
 ## 2026-11-12
 
+### Mutation baselines need exhaustive failures and an explicit worker environment
+
+**Evidence.** Regression suites with two failing tests under `-x` or `--exitfirst`, a failing
+parameter id containing ` - `, an already spent budget and a packet shim reproduced the review
+findings. The wrapper now removes fail-fast for baseline discovery, preserves the parameter id,
+stops with `cap` when the shared budget expires and embeds the shim environment in each test
+command. These tests run the wrapper and real pytest without requiring a global cosmic-ray.
+
+**Mechanism.** A baseline that exits early names only some failures; truncating a parameter id
+can exclude its passing siblings. The tool installer's environment reaches every subprocess
+unless the test command restores the packet's executable search path and virtual environment.
+
+**Generalizable rule.** Make baseline selection exhaustive before narrowing, preserve full test
+identities, and apply dependency isolation at the worker boundary as well as the parent process.
+
 ### Mutation statement formats carry different identities
 
 **Evidence.** Cross-language lead tests reproduced collapsed TypeScript, Dart and Swift survivors

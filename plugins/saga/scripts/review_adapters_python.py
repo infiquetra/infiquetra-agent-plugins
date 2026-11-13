@@ -19,6 +19,7 @@ from pathlib import Path
 
 import yaml
 
+import review_dependencies
 import review_tools
 from review_tools import Adapter, Hit, ParseResult, ScanContext, ToolGap
 
@@ -182,6 +183,9 @@ except (OSError, ValueError, KeyError):
 if not isinstance(test_command, str):
     _done(True, [], "init-failed")
 def _baseline(command):
+    left = _left()
+    if left is not None and left <= 0:
+        return "cap", "", ""
     try:
         proc = subprocess.Popen(
             shlex.split(command),
@@ -192,14 +196,15 @@ def _baseline(command):
         return "failed", "", ""
     left = _left()
     try:
-        out, err = proc.communicate(timeout=budget if left is None else max(1.0, min(budget, left)))
+        out, err = proc.communicate(timeout=budget if left is None else max(0.0, min(budget, left)))
     except subprocess.TimeoutExpired:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except (AttributeError, OSError):
             proc.kill()
         out, err = proc.communicate()
-        return "timeout", out, err
+        reason = "cap" if left is not None and left <= budget else "timeout"
+        return reason, out, err
     return ("passed" if proc.returncode == 0 else "failed"), out, err
 def _without_failures(command, out):
     # pytest's summary names each failing test (FAILED id - why) and each file or test that
@@ -209,7 +214,11 @@ def _without_failures(command, out):
     for line in (out or "").splitlines():
         for word in ("FAILED ", "ERROR "):
             if line.startswith(word):
-                node = line[len(word):].split(" - ", 1)[0].strip()
+                summary = line[len(word):]
+                # Parameter ids may contain " - "; the separator follows the closing bracket.
+                first = summary.split(" - ", 1)[0]
+                end = summary.rfind("] - ") if "[" in first else -1
+                node = (summary[:end + 1] if end >= 0 else first).strip()
                 if node:
                     flags.append("--deselect=" + node if "::" in node else "--ignore=" + node)
     if not flags or len(flags) > 200:
@@ -222,12 +231,16 @@ def _rewrite(command):
              else line for line in lines]
     with open(config, "w", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
+# A profile may request fail-fast, but the baseline must name every pre-existing failure.
+words = shlex.split(test_command)
+if "pytest" in words:
+    test_command = shlex.join([word for word in words if word not in {"-x", "--exitfirst"}])
 started = time.time()
 state, out, err = _baseline(test_command)
 sys.stderr.write(f"baseline: {state} after {time.time() - started:.0f} seconds\n")
-if state == "timeout":
+if state in {"timeout", "cap"}:
     _tail(out, err)
-    _done(True, [], "baseline-timeout")
+    _done(True, [], "cap" if state == "cap" else "baseline-timeout")
 if state == "failed":
     narrowed = _without_failures(test_command, out)
     if narrowed is None:
@@ -238,7 +251,8 @@ if state == "failed":
     sys.stderr.write(f"narrowed baseline: {state} after {time.time() - started:.0f} seconds\n")
     if state != "passed":
         _tail(out, err, again_out, again_err)
-        _done(True, [], "baseline-timeout" if state == "timeout" else "baseline-failed")
+        reason = {"cap": "cap", "timeout": "baseline-timeout"}.get(state, "baseline-failed")
+        _done(True, [], reason)
     sys.stderr.write("baseline: left out the tests that failed before any mutation\n")
     _tail(out)
     test_command = narrowed
@@ -952,7 +966,8 @@ def _cosmic_test_argv(context: ScanContext, command: str, modules: list[str]) ->
     # and whatever they start inherit it, and the packet stays as the fetch wrote it.
     assigned = [f"{name}={value}" for name, value in read.env]
     if context.python_env is not None:
-        assigned.append("PYTHONDONTWRITEBYTECODE=1")
+        assigned.extend(f"{name}={value}" for name, value in
+                        review_dependencies.python_shim_env(context.python_env).items())
     return ["env", *assigned, *argv] if assigned else argv
 
 

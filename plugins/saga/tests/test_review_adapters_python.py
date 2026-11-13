@@ -2047,7 +2047,8 @@ def test_cosmic_ray_runs_pytest_with_the_python_environment_s_interpreter(
     with open(kept, "rb") as handle:
         written = tomllib.load(handle)["cosmic-ray"]["test-command"]
     assert shlex.split(written) == [
-        "env", "PYTHONDONTWRITEBYTECODE=1",
+        "env", *[f"{name}={value}" for name, value in
+                 P.review_dependencies.python_shim_env(env).items()],
         str(env / "bin" / "python3"), "-m", "pytest", "-q", "-p", "no:randomly",
         "tests/test_app.py",
     ]
@@ -2092,7 +2093,8 @@ def test_cosmic_ray_keeps_the_command_s_assignments_with_the_environment_s_inter
     with open(kept, "rb") as handle:
         written = tomllib.load(handle)["cosmic-ray"]["test-command"]
     assert shlex.split(written) == [
-        "env", "PYTHONPATH=tests", "PYTHONDONTWRITEBYTECODE=1",
+        "env", "PYTHONPATH=tests", *[f"{name}={value}" for name, value in
+                                      P.review_dependencies.python_shim_env(env).items()],
         str(env / "bin" / "python3"), "-m", "pytest", "-q",
         "--import-mode=importlib", "-p", "no:randomly", "tests/test_app.py",
     ]
@@ -2463,3 +2465,69 @@ def test_cosmic_ray_budget_detail_names_the_lines_and_files_it_covered(tmp_path:
     assert entry["detail"] == (
         "ran 10 of 300 mutants on changed lines, covering 10 of 120 changed lines in 4 of 4 files"
     )
+
+
+@pytest.mark.parametrize('flag', ['-x', '--exitfirst'])
+def test_cosmic_baseline_collects_all_failures_despite_profile_failfast(tmp_path: Path, flag: str) -> None:
+    stub_dir = tmp_path / 'stub'
+    stub_dir.mkdir()
+    _write_cosmic_stub(stub_dir / 'cosmic-ray')
+    env = _wrapper_env(stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE))
+    (tmp_path / 'test_baseline.py').write_text(
+        'def test_bad_one():\n    assert False\n'
+        'def test_bad_two():\n    assert False\n'
+        'def test_good():\n    assert True\n', encoding='utf-8')
+    config = _wrapper_config(tmp_path / 'cosmic-ray.toml',
+                             f'{sys.executable} -m pytest -q -p no:randomly {flag} test_baseline.py')
+    out = _run_wrapper(config, tmp_path, env)
+    assert out['unfinished'] is False
+    command = config.read_text(encoding='utf-8')
+    assert '--deselect=test_baseline.py::test_bad_one' in command
+    assert '--deselect=test_baseline.py::test_bad_two' in command
+
+
+def test_cosmic_baseline_keeps_spaces_and_hyphens_in_parameter_ids(tmp_path: Path) -> None:
+    stub_dir = tmp_path / 'stub'
+    stub_dir.mkdir()
+    _write_cosmic_stub(stub_dir / 'cosmic-ray')
+    env = _wrapper_env(stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE))
+    (tmp_path / 'test_params.py').write_text(
+        'import pytest\n@pytest.mark.parametrize("value", [0, 1], ids=["a - b", "a"])\n'
+        'def test_param(value):\n    assert value\n', encoding='utf-8')
+    config = _wrapper_config(tmp_path / 'cosmic-ray.toml',
+                             f'{sys.executable} -m pytest -q -p no:randomly test_params.py')
+    out = _run_wrapper(config, tmp_path, env)
+    assert out['unfinished'] is False
+    assert '--deselect=test_params.py::test_param[a - b]' in config.read_text(encoding='utf-8')
+
+
+def test_cosmic_spent_budget_never_starts_the_baseline(tmp_path: Path) -> None:
+    stub_dir = tmp_path / 'stub'
+    stub_dir.mkdir()
+    _write_cosmic_stub(stub_dir / 'cosmic-ray')
+    env = _wrapper_env(stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE))
+    script = tmp_path / 'slow.py'
+    script.write_text('from pathlib import Path\nimport time\n'
+                      'Path("started").touch()\ntime.sleep(1.5)\n', encoding='utf-8')
+    config = _wrapper_config(tmp_path / 'cosmic-ray.toml', f'{sys.executable} {script}')
+    assert _run_wrapper(config, tmp_path, env, '300', '1') == {
+        'unfinished': True, 'survivors': [], 'reason': 'cap'}
+    assert not (tmp_path / 'started').exists()
+
+
+def test_cosmic_test_processes_restore_the_packet_environment(tmp_path: Path) -> None:
+    import tomllib
+
+    kept = tmp_path / 'kept.toml'
+    repo, base, head = _cosmic_changed(tmp_path)
+    shim = tmp_path / 'shim'
+    assert _run(repo, base, head, _profile(tmp_path / 'profile.json', 'python -m pytest -q'),
+                tmp_path / 'out', tmp_path / 'home', [_adapter('cosmic-ray')],
+                _Calls(base, json.dumps({'unfinished': False, 'survivors': []}), keep=kept),
+                python_env=shim) == 0
+    with kept.open('rb') as handle:
+        words = shlex.split(tomllib.load(handle)['cosmic-ray']['test-command'])
+    assigned = dict(word.split('=', 1) for word in words[1:] if '=' in word)
+    assert assigned['VIRTUAL_ENV'] == str(shim)
+    assert assigned['PATH'].split(os.pathsep)[0] == str(shim / 'bin')
+    assert assigned['PYTHONDONTWRITEBYTECODE'] == '1'

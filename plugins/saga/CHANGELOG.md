@@ -110,6 +110,11 @@
 
 ### Fixed
 
+- **cosmic-ray baselines preserve the test environment and failure identities.** Baselines
+  remove profile fail-fast flags so all failing tests can be excluded, preserve parameter ids
+  containing ` - `, and report a spent shared budget as `cap` before starting tests. Baselines,
+  mutants and child processes receive the packet shim's executable path and virtual environment.
+
 - **Surviving-mutant anchors understand every supported tool.** StrykerJS, Muter, mutate4dart
   and cosmic-ray retain their mutator names; cargo-mutants replacement descriptions and unknown
   statement forms use a stable statement digest. Distinct survivors on one line stay distinct.
