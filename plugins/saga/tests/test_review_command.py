@@ -4388,15 +4388,16 @@ def test_unlocated_testing_leads_stay_blocking_with_a_degraded_reason(tmp_path: 
     assert result['findings'][0]['enforced'] is True
 
 
-def test_capped_testing_leads_stay_blocking(tmp_path: Path) -> None:
+def test_capped_testing_leads_stay_fix_later(tmp_path: Path) -> None:
     repo, _base, head, change = _lead_change(tmp_path)
     findings = [_two_runs_finding(f'extra_{n}') for n in range(C.LEAD_CAP + 1)]
     for n, finding in enumerate(findings):
         finding['id'] = str(n)
     items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
     assert len(items) == C.LEAD_CAP
+    assert [entry['reason'] for entry in degraded] == ['lead-cap']
     result = C.review_formula.compute({'findings': findings, 'degraded_inputs': degraded})
-    assert all(finding['severity'] == 'blocks' for finding in result['findings'])
+    assert all(finding['severity'] == 'fix-later' for finding in result['findings'])
 
 
 

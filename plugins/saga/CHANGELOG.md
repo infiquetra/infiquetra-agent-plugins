@@ -118,7 +118,7 @@
   Swift, TypeScript and Dart lead tests cover locations and distinct survivor anchors. A live
   test uses the production uv cosmic-ray invocation, checks packet-only dependencies in mutants
   and child interpreters, compares two results and verifies packet dependencies remain unchanged.
-  The command references describe the blocking fallback for omitted leads.
+  The command references describe the blocking fallback for unlocated leads.
 
 - **cosmic-ray fallback commands suppress bytecode too.** Unrecognized test commands carry
   `PYTHONDONTWRITEBYTECODE=1` and the packet shim environment when available. The earlier
@@ -138,9 +138,12 @@
   statement forms use a stable statement digest. Distinct survivors on one line stay distinct.
 
 - **Testing results cannot disappear from reviewer leads.** Rust and Swift two-runs results
-  locate unique test definitions in changed head files, including Rust inline tests. Unlocated
-  results and results beyond the item cap record a reason and restore blocking severity for
-  the affected testing row, so omitted leads cannot silently fix later.
+  locate unique test definitions in changed head files, including Rust inline tests. An
+  unlocated result records `unlocated-lead` and restores blocking severity for its testing row,
+  so a result the reviewer cannot be shown never silently fixes later. Results beyond the item
+  cap stay fix-later and are recorded as `lead-cap` with the count: they repeat the signal the
+  reviewer is already answering, and a mutation tool with a narrow test scope can leave many
+  survivors on a clean change.
 
 - **The reviewer answers each testing lead.** `prepare` turns up to 8 two-runs tests and 8
   surviving mutants into where-to-look items asking `testing.accepts-broken-code`, located at the

@@ -89,11 +89,13 @@ use a stable digest of the full statement when the producer supplies no mutator 
 **Evidence.** Rust and Swift two-runs results carried a project location that lead conversion
 skipped. Regression tests in `test_review_command.py` reproduce both missing items and omitted
 results at the item cap. Prepare now searches changed native source files for a unique test
-function; unlocated results and capped leads record degradation and restore blocking severity
-for their testing row at prepare and finish.
+function; an unlocated result records degradation and restores blocking severity for its
+testing row at prepare and finish. Results past the item cap stay advisory with a recorded count,
+because they repeat a signal the reviewer is already answering.
 
 **Mechanism.** A global severity downgrade applies even when a language cannot supply a location
-or an item budget drops the result. A cap on reviewer work must preserve the unreviewed evidence.
+or an item budget drops the result. A cap on reviewer work must leave a visible count of what
+it dropped.
 
 **Generalizable rule.** Before downgrading a deterministic result to reviewer advice, guarantee
 its delivery or keep a conservative, visible fallback. Ambiguous definitions are gaps, not guesses.

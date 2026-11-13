@@ -654,7 +654,7 @@ def compute(inputs: Mapping[str, Any]) -> dict[str, Any]:
     *inputs* holds ``findings`` and ``measurements`` in their input form, ``builder_records``,
     ``may_block`` (``{lens: {language: bool}}``; absent means every lens reports only) and
     ``degraded_inputs`` (``[{lens, language, input, tool, reason}]``, a re-run reason may add
-    ``exit_code`` and ``output_tail``; omitted testing leads restore their row's blocking
+    ``exit_code`` and ``output_tail``; an unlocated testing lead restores its row's blocking
     severity) and ``changed_lines``
     (``{path: [[start, end], ...]}``; absent means no finding is capped as pre-existing).
     Everything returned is sorted, so the same inputs in any order give the same output.
@@ -663,13 +663,15 @@ def compute(inputs: Mapping[str, Any]) -> dict[str, Any]:
     may_block = dict(inputs.get("may_block") or {})
     changed = inputs.get("changed_lines")
     changed_ranges(changed)  # refuse a malformed value once, before any finding is computed
-    # A lead only fixes later when the reviewer can answer it. If location or the item cap
-    # omitted any result, conservatively keep that entire testing row blocking, at prepare and
-    # finish alike. Other tool degradation never changes a finding's severity.
+    # A lead only fixes later when the reviewer can answer it. If any result could not be
+    # located, conservatively keep that entire testing row blocking, at prepare and finish alike.
+    # Results past the item cap stay fix-later: they repeat the signal the reviewer is already
+    # answering, and a mutation tool with a narrow test scope can leave many survivors on a clean
+    # change. Other tool degradation never changes a finding's severity.
     required_lead_rows = frozenset(
         str(entry.get("input")) for entry in inputs.get("degraded_inputs") or []
         if entry.get("input") in {"testing.test-passes-before-change", "testing.surviving-mutant"}
-        and entry.get("reason") in {"unlocated-lead", "lead-cap"}
+        and entry.get("reason") == "unlocated-lead"
     )
     findings: list[dict[str, Any]] = []
     for finding in inputs.get("findings") or []:
