@@ -184,8 +184,9 @@ def test_two_prepares_of_subfolder_commit_produce_identical_complete_packets(
             report = cwd / "reports/mutation/mutation.json"
             report.parent.mkdir(parents=True)
             report.write_text(json.dumps({"time": len(installs), "files": {"app.ts": {"mutants": [{
-                "id": str(len(installs)), "mutatorName": "BooleanLiteral", "status": "Survived",
-                "location": {"start": {"line": 1}, "end": {"line": 1}}}]}}}))
+                "id": str(len(installs)), "mutatorName": operator, "status": "Survived",
+                "location": {"start": {"line": 1}, "end": {"line": 1}}}
+                for operator in ("BooleanLiteral", "ConditionalExpression")]}}}))
             return H.T.ProcessResult(0, "")
         proc = subprocess.run(argv, cwd=cwd, env=kwargs.get("env"), capture_output=True, text=True,
                               timeout=kwargs["timeout"])
@@ -210,6 +211,9 @@ def test_two_prepares_of_subfolder_commit_produce_identical_complete_packets(
         items = json.loads((packets[0] / "where-to-look.json").read_text())
         assert {item["classifier"]["name"] for item in items} >= {"two-runs", "surviving-mutant"}
         assert len([item for item in items if item["classifier"]["name"] == "two-runs"]) == 1
+        mutants = [item for item in items if item["classifier"]["name"] == "surviving-mutant"]
+        assert {item["location"]["anchor"] for item in mutants} == {
+            "surviving-mutant:BooleanLiteral:1", "surviving-mutant:ConditionalExpression:1"}
     finally:
         for packet in packets:
             C.review_dependencies_node.unseal(packet / "dependencies/node")
@@ -308,3 +312,8 @@ def test_literal_coverage_script_and_package_separator_resolve_to_the_runner(tmp
     (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": "vitest run --coverage"}}))
     assert P.test_command("npm test -- --silent", tmp_path) == (
         "vitest", ["--coverage", "--silent"], ".")
+
+
+@pytest.mark.parametrize("kind", ["vitest", "jest"])
+def test_node_case_ids_keep_the_real_test_file_in_shared_path_lookup(kind: str) -> None:
+    assert H.C._test_path(kind, "web/new.test.ts::suite new case") == "web/new.test.ts"

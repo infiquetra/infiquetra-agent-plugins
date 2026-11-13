@@ -412,7 +412,7 @@ def _pytest_error(kind: str, code: int, stdout: str, stderr: str) -> str:
 
 
 def _test_path(kind: str, node_id: str) -> str:
-    if kind != "pytest":
+    if kind not in {"pytest", "vitest", "jest"}:
         return "."
     return node_id.split("::", 1)[0] or "."
 
@@ -569,7 +569,7 @@ def two_runs(
                 gaps.append(_gap(found, ROW_BEFORE))
                 continue
             for node in found:
-                path = node.split("::", 1)[0]
+                path = _test_path(kind, node)
                 hits.append(_hit(rule_id=node, path=path,
                     statement="The new test passes on the code before the change.",
                     anchor=node, row=ROW_BEFORE, language="typescript"))

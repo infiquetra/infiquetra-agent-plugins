@@ -142,6 +142,19 @@ it dropped.
 
 **Generalizable rule.** Before downgrading a deterministic result to reviewer advice, guarantee
 its delivery or keep a conservative, visible fallback. Ambiguous definitions are gaps, not guesses.
+### A testing lead needs both its real file and its mutation operator
+
+**Evidence.** Lead items skip findings whose file is `.` and deduplicate mutants by file, line
+and operator. The shared test-path helper previously returned `.` for every runner except
+pytest. The operator reader recognised only cosmic-ray's parenthesised operator, so distinct
+Stryker mutations on one line collapsed to `unknown-operator`. Node case identities now retain
+`file::fullName`, and the shared lead builder reads Stryker's own mutator statement. The packet
+regression retains two distinct same-line mutation items for both Vitest and Jest projects.
+
+**Generalizable rule.** Test the identity fields consumed by the final lead builder, including
+same-location evidence that must remain distinct.
+
+
 ### Mutation exclusions must leave the tests in Stryker's sandbox
 
 **Evidence.** New live subfolder Vitest and Jest fixtures initially reported no tests despite
