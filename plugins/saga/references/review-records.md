@@ -108,8 +108,8 @@ excuses it or a rule that reproduction makes it block. Tool adapters and our own
 | Row | Base outcome | Excused by a builder reason of kind | Blocks when reproduced |
 |---|---|---|---|
 | `testing.uncovered-branch` | blocks | `coverage-gap` | |
-| `testing.surviving-mutant` | blocks | `surviving-mutant` | |
-| `testing.test-passes-before-change` | blocks | `test-passes-before-change` | |
+| `testing.surviving-mutant` | fix later | `surviving-mutant` | |
+| `testing.test-passes-before-change` | fix later | `test-passes-before-change` | |
 | `testing.test-skipped-in-ci` | blocks | `test-skipped-in-ci` | |
 | `testing.accepts-broken-code` | blocks | | |
 | `testing.escapes-sandbox` | blocks | | |
@@ -145,9 +145,21 @@ excuses it or a rule that reproduction makes it block. Tool adapters and our own
 | `<lens>.dispute`, for each lens | fix later, flagged for merge confirmation | | |
 
 The reviewer may cite `testing.accepts-broken-code` for a serious newly added or weakened
-test that passes broken behavior, and `testing.escapes-sandbox` for a test that writes outside
+test that passes broken behavior, a test that no longer exercises what it names, or a change
+whose purpose no test checks, and `testing.escapes-sandbox` for a test that writes outside
 its temporary area or depends on real home-directory or machine state. Both need a trace or
 reproduction to escape the unreproduced cap and remain subject to the other caps.
+
+`testing.test-passes-before-change` is a lead, not a block: saga's two-runs check lists a new test
+that passes on the code before the change, and such a test often pins behaviour the change keeps.
+The reviewer escalates one meant to check what the change adds or fixes as
+`testing.accepts-broken-code`, with `traced` evidence naming the test and the two-runs result.
+`testing.surviving-mutant` is a lead too: survivors on changed lines are as common on clean changes
+as on defective ones. The reviewer escalates a survivor on a line that belongs to the behaviour the
+change exists to add or fix, the same way, naming the mutant. `prepare` turns up to 8 leads of each
+row into scripted where-to-look items (classifier `two-runs` or `surviving-mutant`, question
+`testing.accepts-broken-code`, probability 1), so the reviewer answers each one; more than 8 is
+recorded as the degraded reason `lead-cap` with a `detail` naming how many were listed.
 
 ### Judged findings
 

@@ -39,7 +39,7 @@ An adapter is a frozen object. `invoke` builds an argument vector and does not r
 | `level_map` | Tool level to a row id, when the hit does not already name a row. |
 | `rules` | A pack plus sha256, or a path. A profile rules list replaces this; it does not merge. |
 | `gap_path` | While this path is missing or empty, the run records a known gap and does not scan. |
-| `mutation` | Shares the 900 second cap. An unfinished result is reason `cap` on `testing.surviving-mutant`. |
+| `mutation` | Shares the 900 second cap. A run stopped by that cap is reason `cap` on `testing.surviving-mutant`; a tool that reports a narrower reason for an unfinished run (cosmic-ray's `mutant-abnormal`) records that reason instead. |
 | `mode` | `report` or `fix`. `fix` writes no review record. |
 | `platforms` | Empty means every platform. Otherwise the current platform must be listed. |
 
@@ -233,19 +233,19 @@ c4c_gaps:
 
 ## TypeScript
 
-`tsc` is the type checker: base against head over the whole project, `correctness.type-error`, blocks. It runs against a staged config that extends the base tsconfig, never the head tree's. `eslint` takes its outcome from its own level on changed lines: severity 2 is `correctness.tool-error` and blocks, severity 1 is `correctness.tool-warning` and fixes later. `npm-audit` compares the lockfiles base against head; the severity words map per the fence (`critical` and `high` block, `moderate`, `low` and `info` fix later, anything unrated blocks). `stryker` keeps surviving mutants on changed lines, `testing.surviving-mutant`, blocks, sharing the 900 second mutation cap; its JSON report is read after the run. `vitest-shuffle` and `jest-shuffle` run the suites in random order on changed lines, `testing.flaky-order-or-network`, fix later; a run with no tests is reason `no-tests-ran`, never a pass. `knip` compares unused files, exports, types and dependencies base against head, `architecture-maintainability.complexity-dead-code-naming`, note. `dependency-cruiser` compares rule violations base against head per the fence (`error` blocks). `prettier` is fix mode: it reformats and writes no record. `typescript-no-network` is a known gap (see below). `vitest-coverage` and `jest-coverage` are data rows; C3 writes their fenced invocations into the profile test command.
+`tsc` is the type checker: base against head over the whole project, `correctness.type-error`, blocks. It runs against a staged config that extends the base tsconfig, never the head tree's. `eslint` takes its outcome from its own level on changed lines: severity 2 is `correctness.tool-error` and blocks, severity 1 is `correctness.tool-warning` and fixes later. `npm-audit` compares the lockfiles base against head; the severity words map per the fence (`critical` and `high` block, `moderate`, `low` and `info` fix later, anything unrated blocks). `stryker` keeps surviving mutants on changed lines, `testing.surviving-mutant`, fixes later (a lead the reviewer judges), sharing the 900 second mutation cap; its JSON report is read after the run. `vitest-shuffle` and `jest-shuffle` run the suites in random order on changed lines, `testing.flaky-order-or-network`, fix later; a run with no tests is reason `no-tests-ran`, never a pass. `knip` compares unused files, exports, types and dependencies base against head, `architecture-maintainability.complexity-dead-code-naming`, note. `dependency-cruiser` compares rule violations base against head per the fence (`error` blocks). `prettier` is fix mode: it reformats and writes no record. `typescript-no-network` is a known gap (see below). `vitest-coverage` and `jest-coverage` are data rows; C3 writes their fenced invocations into the profile test command.
 
 ## Dart
 
-`dart-analyze` is the type checker: base against head over the whole project. Errors are `correctness.type-error` and block; `warning` and `information` map per the fence. `mutate4dart` keeps surviving mutants on changed lines, `testing.surviving-mutant`, blocks, sharing the 900 second mutation cap. `dart-shuffle` runs the suite in random order on changed lines, `testing.flaky-order-or-network`, fix later; a run with no tests is reason `no-tests-ran`, never a pass. `dart-format` is fix mode: it reformats and writes no record. `dart-no-network` is a known gap (see below). `dart-coverage` is a data row; C3 writes its fenced invocation into the profile test command. A Flutter report carries no branch data, so the line fallback applies and the findings are degraded.
+`dart-analyze` is the type checker: base against head over the whole project. Errors are `correctness.type-error` and block; `warning` and `information` map per the fence. `mutate4dart` keeps surviving mutants on changed lines, `testing.surviving-mutant`, fixes later (a lead the reviewer judges), sharing the 900 second mutation cap. `dart-shuffle` runs the suite in random order on changed lines, `testing.flaky-order-or-network`, fix later; a run with no tests is reason `no-tests-ran`, never a pass. `dart-format` is fix mode: it reformats and writes no record. `dart-no-network` is a known gap (see below). `dart-coverage` is a data row; C3 writes its fenced invocation into the profile test command. A Flutter report carries no branch data, so the line fallback applies and the findings are degraded.
 
 ## Rust
 
-`cargo-check` is the type checker: base against head over the whole project, `correctness.type-error`, blocks. `clippy` takes its outcome from its own level on changed lines: `error` blocks, `warning` fixes later. `cargo-deny` compares advisories base against head over `Cargo.lock`; the CVSS bands map per the fence (unscored blocks, 7.0 and above blocks, below fixes later). `cargo-mutants` keeps missed mutants on changed lines, `testing.surviving-mutant`, blocks, sharing the 900 second mutation cap; its JSON report is read after the run. Exit 2 (a mutant survived) and exit 3 (a mutant timed out) are parsed like exit 0; exit 4, where the unmutated tree fails its own tests, is reason `baseline-failed` after one more run; a pass on that retry keeps its result and records `baseline-flaky` (the retry is clamped to the time left under the 900 second cap, and skipped when none is left). Each mutant's tests get a fixed `--timeout 180` instead of cargo-mutants' auto-set timeout, unless `.cargo/mutants.toml` sets `timeout_multiplier` or `minimum_test_timeout`. It runs `cargo test` unless the reviewed tree has `.config/nextest.toml` and cargo-nextest is installed, then `--test-tool nextest`; a `test_tool` in `.cargo/mutants.toml` is read by cargo-mutants itself. `cargo-machete` compares unused dependencies base against head, `architecture-maintainability.complexity-dead-code-naming`, note. `rustfmt` is fix mode: it reformats and writes no record. `rust-shuffle` and `rust-no-network` are known gaps (see below). `rust-coverage` is a data row; C3 writes its fenced invocation into the profile test command, with `--branch` on nightly only. A stable-toolchain report carries no branch data, so the line fallback applies and the findings are degraded.
+`cargo-check` is the type checker: base against head over the whole project, `correctness.type-error`, blocks. `clippy` takes its outcome from its own level on changed lines: `error` blocks, `warning` fixes later. `cargo-deny` compares advisories base against head over `Cargo.lock`; the CVSS bands map per the fence (unscored blocks, 7.0 and above blocks, below fixes later). `cargo-mutants` keeps missed mutants on changed lines, `testing.surviving-mutant`, fixes later (a lead the reviewer judges), sharing the 900 second mutation cap; its JSON report is read after the run. Exit 2 (a mutant survived) and exit 3 (a mutant timed out) are parsed like exit 0; exit 4, where the unmutated tree fails its own tests, is reason `baseline-failed` after one more run; a pass on that retry keeps its result and records `baseline-flaky` (the retry is clamped to the time left under the 900 second cap, and skipped when none is left). Each mutant's tests get a fixed `--timeout 180` instead of cargo-mutants' auto-set timeout, unless `.cargo/mutants.toml` sets `timeout_multiplier` or `minimum_test_timeout`. It runs `cargo test` unless the reviewed tree has `.config/nextest.toml` and cargo-nextest is installed, then `--test-tool nextest`; a `test_tool` in `.cargo/mutants.toml` is read by cargo-mutants itself. `cargo-machete` compares unused dependencies base against head, `architecture-maintainability.complexity-dead-code-naming`, note. `rustfmt` is fix mode: it reformats and writes no record. `rust-shuffle` and `rust-no-network` are known gaps (see below). `rust-coverage` is a data row; C3 writes its fenced invocation into the profile test command, with `--branch` on nightly only. A stable-toolchain report carries no branch data, so the line fallback applies and the findings are degraded.
 
 ## Swift
 
-`swift-compiler` is the type checker: base against head over the whole project, each tree in its own build directory, with strict concurrency on. Errors are `correctness.type-error` and block; warnings are `correctness.tool-warning` and fix later, except the strict-concurrency family, which blocks: a diagnostic whose id contains one of `Isolation`, `Sendable`, `Sending`, `Concurrency`, `DataRace` or `Actor`, or whose message contains one of `data race`, `data-race`, `sendable`, `sending`, `concurrent` or `isolation`. `swiftlint` takes its outcome from its own level on changed lines: `error` blocks, `warning` fixes later. `muter` keeps surviving mutants on changed lines, `testing.surviving-mutant`, blocks, sharing the 900 second mutation cap; it runs on macOS only. `swift-format` is fix mode: it reformats and writes no record. `swift-dependency-audit`, `swift-shuffle` and `swift-no-network` are known gaps (see below). `swift-coverage` is a data row; C3 writes its fenced invocation into the profile test command.
+`swift-compiler` is the type checker: base against head over the whole project, each tree in its own build directory, with strict concurrency on. Errors are `correctness.type-error` and block; warnings are `correctness.tool-warning` and fix later, except the strict-concurrency family, which blocks: a diagnostic whose id contains one of `Isolation`, `Sendable`, `Sending`, `Concurrency`, `DataRace` or `Actor`, or whose message contains one of `data race`, `data-race`, `sendable`, `sending`, `concurrent` or `isolation`. `swiftlint` takes its outcome from its own level on changed lines: `error` blocks, `warning` fixes later. `muter` keeps surviving mutants on changed lines, `testing.surviving-mutant`, fixes later (a lead the reviewer judges), sharing the 900 second mutation cap; it runs on macOS only. `swift-format` is fix mode: it reformats and writes no record. `swift-dependency-audit`, `swift-shuffle` and `swift-no-network` are known gaps (see below). `swift-coverage` is a data row; C3 writes its fenced invocation into the profile test command.
 
 ## Known gaps
 
@@ -301,7 +301,30 @@ The optional `review_tools` block is documented in `plugins/saga/references/repo
 
 ## Python, CDK, shell, workflows and Markdown
 
-Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fix` and the runner does not start it, so it writes no record. Settings come from the base commit or from a file the adapter writes under the runner home. A settings file in the reviewed tree is not an input. actionlint still reads `.github/actionlint.yaml` beside the workflows when `-config-file` points elsewhere, so it scans a copy of the workflows and that file is left out of the copy. ruff lint uses `--isolated`, `--ignore-noqa`, and `--select ALL`, plus an inline `--config` that ignores `S101` (use of `assert`) for test paths: `test_*.py`, `*_test.py`, `tests.py`, `conftest.py` and anything under a `tests` or `test` folder, each pattern anchored at the scan root. `--isolated` drops the reviewed repository's own per-file ignores, so the convention is passed on the command line. The `S` family (flake8-bandit) is a lead for a security look, not a proven correctness error: it is mapped to `security.scanner-medium-low`, the row bandit's own MEDIUM and LOW findings use, which fixes later and never blocks. ruff reports no severity, so none is claimed HIGH. mypy passes `--config-file` for the base commit's config and does not pass `--strict`. An error is `correctness.type-error` (blocks), except `import-not-found` and `import-untyped`, which use `correctness.tool-style` (note). A mypy note is level `style` (note). cdk-nag raises a known gap when a project has `cdk.json` and synthesis ran no validation plugin. A clean plugin report is not a gap. Reason `missing` is recorded when `cdk` itself is absent, for cdk-nag and for the checkov-cdk synth. The anchor keeps the logical resource id or the construct path, so the same rule on two resources stays two findings. A tree with no `cdk.json` does not degrade. Checkov blocks only the curated ids below. zizmor's copy command runs `--offline` and receives no GitHub token. lychee has no line number, so a broken link is a whole-project hit compared base against head. markdownlint-cli2 prints `path:line:col MDxxx/name message` with no severity word. cosmic-ray's module-path is the list of changed Python files.
+Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fix` and the runner does not start it, so it writes no record. Settings come from the base commit or from a file the adapter writes under the runner home. A settings file in the reviewed tree is not an input. actionlint still reads `.github/actionlint.yaml` beside the workflows when `-config-file` points elsewhere, so it scans a copy of the workflows and that file is left out of the copy. ruff lint uses `--isolated`, `--ignore-noqa`, and `--select ALL`, plus an inline `--config` that ignores `S101` (use of `assert`) for test paths: `test_*.py`, `*_test.py`, `tests.py`, `conftest.py` and anything under a `tests` or `test` folder, each pattern anchored at the scan root. `--isolated` drops the reviewed repository's own per-file ignores, so the convention is passed on the command line. The `S` family (flake8-bandit) is a lead for a security look, not a proven correctness error: it is mapped to `security.scanner-medium-low`, the row bandit's own MEDIUM and LOW findings use, which fixes later and never blocks. ruff reports no severity, so none is claimed HIGH. mypy passes `--config-file` for the base commit's config and does not pass `--strict`. An error is `correctness.type-error` (blocks), except `import-not-found` and `import-untyped`, which use `correctness.tool-style` (note). A mypy note is level `style` (note). cdk-nag raises a known gap when a project has `cdk.json` and synthesis ran no validation plugin. A clean plugin report is not a gap. Reason `missing` is recorded when `cdk` itself is absent, for cdk-nag and for the checkov-cdk synth. The anchor keeps the logical resource id or the construct path, so the same rule on two resources stays two findings. A tree with no `cdk.json` does not degrade. Checkov blocks only the curated ids below. zizmor's copy command runs `--offline` and receives no GitHub token. lychee has no line number, so a broken link is a whole-project hit compared base against head. markdownlint-cli2 prints `path:line:col MDxxx/name message` with no severity word. cosmic-ray's module-path is the list of changed Python files. Its wrapper reports why a session did not finish: `baseline-failed` (the unmutated tests fail or cannot start), `baseline-timeout` (they outlast the 300 second baseline bound), `init-failed` (the config, `cosmic-ray init` or `cr-filter-git` failed), each a gap on `testing.surviving-mutant` with no findings, and `mutant-abnormal` (a mutant's run or the dump did not end normally), which keeps the survivors it read as degraded findings. Only the shared 900 second cap is `cap`. When prepare has the packet's Python environment, a test command that runs pytest (see two-runs below) runs as that environment's `bin/python3 -m pytest` with the command's own pytest options (its
+paths dropped) and the test files named explicitly: every test file that mentions a mutated
+module, the change's own first and then the tree's, smallest first, up to 10 (a longer list is cut
+and the cut logged), so a mutant an existing test elsewhere kills is not reported as surviving;
+with none, the change's own test files; with no test file at all, the row is the gap
+`no-tests-for-change`. Test files are never mutated, and `cr-filter-git` skips every mutant whose
+lines the change did not add or edit. Each mutant's run stops at its first failing test (`-x`;
+the baseline removes `-x` and `--exitfirst` from profile commands, so every failing test is named).
+Of the changed-line mutants, at most 10 run, spread over the change and chosen the same way every time: one mutant per changed
+line (a second per line only once every line has one), lines inside control flow first (an `if`,
+`elif`, `else`, `except`, `return` or `raise` line, or the body of one), then lines in an order
+fixed by a hash of file and line, taken round-robin across the changed files. When the budget
+leaves some out, the degraded entry `mutant-budget` carries `detail` "ran N of M mutants on changed
+lines, covering L of T changed lines in F of G files", and the survivors found are still
+reported. A survivor's statement names its
+operator. The session also stops 60 seconds inside its share of the 900 second cap, a safety stop
+only: what finished by then depends on the clock, so it is reason `cap` and no survivor is
+reported. When the unmutated
+baseline fails, the wrapper reruns it once without the tests pytest's summary names (`FAILED` ids
+are deselected, `ERROR` files ignored, at most 200); if that passes, the mutants run the narrowed
+command, otherwise the reason is `baseline-failed`. The command runs behind
+`env NAME=value` for its assignments. A step that fails prints the last 40 lines of its output to
+the wrapper's stderr, which the runner keeps, with the rest of the console, in the private
+diagnostics folder (`cosmic-ray-initial-*`), never in the packet.
 
 | Adapter id | Comparison | Row the record cites | Computed severity |
 |---|---|---|---|
@@ -309,7 +332,7 @@ Issue 152 adds these adapters. A formatter (`ruff-format`, `shfmt`) is `mode: fi
 | `pip-audit` | base against head | `security.dependency-high` when no tool scores the advisory | blocks unless `scanner-false-positive`; the scored severity when osv-scanner has one |
 | `mypy` | base against head, type checker | `correctness.type-error` for an error; `correctness.tool-style` for a note or an import availability diagnostic | blocks; note |
 | `coverage` | one head report | `testing.uncovered-branch` | blocks, excused by `coverage-gap` |
-| `cosmic-ray` | lines | `testing.surviving-mutant` | blocks, excused by `surviving-mutant` |
+| `cosmic-ray` | lines | `testing.surviving-mutant` | fix later (a lead the reviewer judges), excused by `surviving-mutant` |
 | `pytest-randomly`, `pytest-socket` | lines | `testing.flaky-order-or-network` | fix later |
 | `vulture` | lines | `architecture-maintainability.complexity-dead-code-naming` | note |
 | `import-linter` | base against head | `architecture-maintainability.structural-check-fails` | blocks |
@@ -331,13 +354,45 @@ The family draft describes the tool card map: exact codes take precedence over f
 Issue 155 adds five checks in `scripts/review_checks.py`. The runner starts the plugin's copy of
 that script. The commit under review does not configure these checks. `where-to-look.json` carries
 the unanswered machine-specific items, beside the sweep's items; `prepare` merges them and no longer
-replaces the scripted items with the sweep's. A confirmed machine-specific finding stays fix later.
+replaces the scripted items with the sweep's. `prepare` also adds up to 8 two-runs leads and 8
+surviving-mutant leads as items of their own (see `review-command.md`). Rust and Swift leads
+locate unique test definitions in changed head source files. Unlocated leads record
+`unlocated-lead` once per testing row and language, with a `count` and the affected `finding_ids`.
+Only those unlocated findings regain blocking severity at prepare and finish, subject to normal
+builder excusal and per-language enforcement. Leads beyond the cap record `lead-cap`
+once per affected row and language, with that language's omitted `count`.
+Capped leads stay fix-later. A confirmed machine-specific finding stays fix later.
 When the relocated test command fails, `architecture-maintainability.relocated-run-fails` blocks in
 the same outcome file.
 
+`two-runs` reads a test command that runs pytest: `pytest`, `python -m pytest` (any `python`,
+`python3` or `python3.N`, by name or path, such as `.venv/bin/python`), either one after `uv run`
+and its options, each optionally after literal `NAME=value` assignments (no expansion; never
+`PATH`, `VIRTUAL_ENV` or `PYTHONHOME`), and any of those as the single simple command of `bash -c`
+or `sh -c` (no other shell syntax, variable or glob), which may end in `"$@"` with a `$0` name
+after it.
+Any other command, `cargo test` and `swift test` aside, is reason `no-test-list`. `prepare` fetches
+the head's dependencies before the tools run and hands the tools the same saga-written Python
+environment the reviewer's re-runs get (`ScanContext.python_env`); with it, `two-runs` lists and
+runs the tests, at head and on the old version, as that environment's `bin/python3 -m pytest`, with
+its `bin` first on `PATH` and the command's assignments set, whatever interpreter the command named
+(the review's checkout has no project `.venv`). An old version that cannot be checked out is reason
+`no-test-list`. A pytest command's own paths are dropped (its options stay): the listings name the
+test files the change added or edited, since only they can hold a new test, and a file the old
+version lacks counts as all new. The new tests then run in one pytest run at head and one on the
+old version, read from the `-rA` summary (on the old version the run names the tests' files and passes
+`--continue-on-collection-errors`, since a copied file may import what only the change adds); each listing may take 30 seconds, each run 240, and the
+whole check 600. Only when the change touched no test file does the command's default collection
+run, with its globs expanded relative to the project as a shell would, and a failure there is
+reason `no-test-list-default-collection`. A pytest configuration import failure is instead
+`conftest-import-failed`, without claiming any tests ran. A listing or run that fails keeps the last 40 lines of
+its output in
+`two-runs-<head|base>-<listing|run>-*/tail.txt` under the private `--diagnostics-directory`, never in the
+packet.
+
 | Adapter id | Comparison | Row | Computed severity |
 |---|---|---|---|
-| `two-runs` | lines, whole project | `testing.test-passes-before-change` | blocks, excused by `test-passes-before-change` |
+| `two-runs` | lines, whole project | `testing.test-passes-before-change` | fix later (a lead the reviewer judges), excused by `test-passes-before-change` |
 | `ci-skips` | lines, whole project | `testing.test-skipped-in-ci` | blocks, excused by `test-skipped-in-ci` |
 | `machine-values` | lines; items, not findings | `architecture-maintainability.machine-specific-value` | fix later. The item has no answer |
 | `changed-names` | lines, whole project | `correctness.unupdated-mention`; `correctness.unupdated-mention-in-document` for a document | blocks, excused by `unaffected`; fix later |

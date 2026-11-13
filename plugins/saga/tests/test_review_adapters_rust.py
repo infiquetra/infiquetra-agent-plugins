@@ -957,7 +957,7 @@ def _mutants_repo(tmp_path: Path) -> tuple[Path, Path]:
     return repo, source
 
 
-def test_mutants_survivor_on_changed_lines_blocks(tmp_path: Path) -> None:
+def test_mutants_survivor_on_changed_lines_is_a_lead(tmp_path: Path) -> None:
     repo, source = _mutants_repo(tmp_path)
     base = _commit(repo, "base")
     text = source.read_text(encoding="utf-8").splitlines(keepends=True)
@@ -978,7 +978,7 @@ def test_mutants_survivor_on_changed_lines_blocks(tmp_path: Path) -> None:
     assert len(findings) == 2
     assert {finding["rule"]["ref"] for finding in findings} == {"surviving-mutant"}
     assert findings[0]["location"]["file"] == "src/lib.rs"
-    assert _severity(output, "surviving-mutant") == "blocks"
+    assert _severity(output, "surviving-mutant") == "fix-later"
 
 
 def test_mutants_past_deadline_records_cap(
@@ -1935,7 +1935,7 @@ def test_live_mutants_reports_a_survivor(tmp_path: Path) -> None:
         tmp_path / "home", [_adapter("cargo-mutants")],
     ) == 0
     _valid(output)
-    assert _severity(output, "surviving-mutant") == "blocks"
+    assert _severity(output, "surviving-mutant") == "fix-later"
     assert _finding(output, "surviving-mutant")["location"]["file"] == "src/lib.rs"
 
 

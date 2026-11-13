@@ -290,6 +290,13 @@ class ScanContext:
     #: Which tree this scan reads: ``head``, or ``base`` for a base-and-head comparison's first
     #: scan. It names the scan's folders under ``scratch`` so the two never share one.
     scan: str = "head"
+    #: The saga-written Python environment over the packet's installed packages, the one the
+    #: reviewer's re-runs get (``review_command._offline_dependencies``), or ``None`` when prepare
+    #: has none. Adapters that run the change's Python tests run them with its interpreter.
+    python_env: Path | None = None
+    #: For a mutation adapter, the monotonic time its share of the mutation cap runs out. A tool
+    #: that can stop on its own before then, and report what it finished, reads it.
+    mutation_deadline: float | None = None
 
 
 @dataclass(frozen=True)
@@ -320,9 +327,16 @@ class Hit:
 class ParseResult:
     hits: tuple[Hit, ...] = ()
     unfinished: bool = False
+    #: Why a mutation run is unfinished, recorded on ``testing.surviving-mutant``. ``cap`` is the
+    #: shared mutation cap; a tool that knows a narrower reason (a mutant that ended abnormally)
+    #: sets it, so a run that stopped early is never reported as one that ran out of time.
+    unfinished_reason: str = "cap"
     problems: tuple[str, ...] = ()
     items: tuple[Mapping[str, Any], ...] = ()
     gaps: tuple[tuple[str, str], ...] = ()
+    #: ``(reason, detail)``: a short fixed-form detail the degraded entry for that gap carries,
+    #: such as how many mutants a budget left out.
+    gap_details: tuple[tuple[str, str], ...] = ()
     #: A parse-time degraded input as ``(reason, row)``. Set when the output
     #: proves the run cannot answer its row (a shuffle run that executed zero
     #: tests) instead of emitting findings.
@@ -1117,10 +1131,13 @@ def run(
     *,
     framework: bool = True,
     diagnostics_directory: Path | str | None = None,
+    python_env: Path | str | None = None,
 ) -> int:
     """Write the record files, including where-to-look items.
 
     Exit 0 when they are written, including all-degraded. The command does not take a run record.
+    *python_env* is the saga-written Python environment over the packet's packages, handed to
+    every adapter on ``ScanContext.python_env``.
     """
     try:
         return _run(
@@ -1131,6 +1148,7 @@ def run(
             runner or subprocess_runner,
             framework,
             Path(diagnostics_directory) if diagnostics_directory is not None else None,
+            Path(python_env) if python_env is not None else None,
         )
     except RunnerFailure as exc:
         print(str(exc), file=sys.stderr)
@@ -1149,6 +1167,7 @@ def _run(
     process: Process,
     framework: bool,
     diagnostics_directory: Path | None = None,
+    python_env: Path | None = None,
 ) -> int:
     base_sha = _require_sha(repo, base)
     head_sha = _require_sha(repo, head)
@@ -1195,7 +1214,7 @@ def _run(
                             adapter, repo, base_sha, head_sha, head_root, change, home, profile,
                             process, tool_env, deadline, degraded, items, base_markers,
                             head_markers, head_languages,
-                            diagnostics_directory, rule_sources,
+                            diagnostics_directory, rule_sources, python_env,
                         )
                         if _mutation_past_deadline(adapter, deadline):
                             del degraded[degraded_start:]
@@ -1536,6 +1555,7 @@ def _run_adapter(
     head_languages: frozenset[str] | None = None,
     diagnostics_directory: Path | None = None,
     rule_sources: dict[str, dict[str, Any]] | None = None,
+    python_env: Path | None = None,
 ) -> list[Hit]:
     if _markers_removed(adapter, base_markers, head_markers):
         degraded.append(
@@ -1630,6 +1650,8 @@ def _run_adapter(
                 head=head_sha,
                 scratch=scratch,
                 diagnostics_directory=diagnostics_directory,
+                python_env=python_env,
+                mutation_deadline=deadline if adapter.mutation else None,
             )
             if comparison == "base-head":
                 hits, digests = _base_and_head(
@@ -1784,10 +1806,12 @@ def _once(
         degraded.append(_degraded(adapter, row, reason))
         return (), {}
     if parsed.unfinished:
-        degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
+        degraded.append(_degraded(adapter, "testing.surviving-mutant", parsed.unfinished_reason))
         parsed = ParseResult(
             tuple(replace(hit, degraded=True) for hit in parsed.hits),
             unfinished=True,
+            unfinished_reason=parsed.unfinished_reason,
+            gap_details=parsed.gap_details,
             problems=parsed.problems,
             items=parsed.items,
             gaps=parsed.gaps,
@@ -1884,11 +1908,16 @@ def _retry(
     return result, parsed
 
 
+#: Adapters whose attempts keep their console output in the private diagnostics folder: the
+#: mutation runs, whose failing baseline is otherwise invisible.
+_DIAGNOSED = frozenset({"cargo-mutants", "cosmic-ray"})
+
+
 def _attempt_diagnostic(
     adapter: Adapter, context: ScanContext, label: str,
     attempt: Literal["initial", "retry"], deadline: float | None,
 ) -> review_diagnostics.Attempt | None:
-    if context.diagnostics_directory is None or adapter.id != "cargo-mutants":
+    if context.diagnostics_directory is None or adapter.id not in _DIAGNOSED:
         return None
     try:
         return review_diagnostics.Attempt.create(
@@ -2017,7 +2046,7 @@ def _scan_root(
         _stable_hit(_relative_hit(hit, context.root), context.root) for hit in parsed.hits
     )
     if parsed.unfinished:
-        degraded.append(_degraded(adapter, "testing.surviving-mutant", "cap"))
+        degraded.append(_degraded(adapter, "testing.surviving-mutant", parsed.unfinished_reason))
         hits = tuple(replace(hit, degraded=True) for hit in hits)
     _absorb(adapter, parsed, label, degraded, items)
     return hits, digest, None, True
@@ -2100,7 +2129,8 @@ def _capture(
         return result, problem, True
     finally:
         if diagnostic is not None and executed:
-            diagnostic.logs(scan.root)
+            if adapter.id == "cargo-mutants":
+                diagnostic.logs(scan.root)
         if report_dir is not None:
             shutil.rmtree(report_dir, ignore_errors=True)
 
@@ -2338,8 +2368,12 @@ def _absorb(
     items: list[Mapping[str, Any]],
 ) -> None:
     """Record gaps without dropping hits. Where-to-look items come from the head scan only."""
+    details = dict(parsed.gap_details)
     for reason, row in parsed.gaps:
-        degraded.append(_degraded(adapter, row, reason))
+        entry = _degraded(adapter, row, reason)
+        if reason in details:
+            entry["detail"] = details[reason]
+        degraded.append(entry)
     if label == "head":
         items.extend(parsed.items)
 
@@ -3067,6 +3101,236 @@ def _scan_commands(profile: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
         if not any(command == functional for _language, command in pairs):
             pairs.append(("none", functional))
     return tuple(pairs)
+
+
+_PYTHON_NAME = re.compile(r"python(?:\d+(?:\.\d+)?)?")
+_PYTEST_NAMES = frozenset({"pytest", "py.test"})
+#: ``uv run`` options that take a value as the next word. Any other word before the launcher that
+#: is not an option means the command is not one this parser can read safely.
+_UV_RUN_VALUE_FLAGS = frozenset({
+    "--with", "--with-editable", "--with-requirements", "--python", "-p", "--group",
+    "--only-group", "--no-group", "--extra", "--no-extra", "--package", "--env-file",
+    "--directory", "--project", "--index", "--default-index", "--index-url", "-i",
+    "--extra-index-url", "--find-links", "-f", "--cache-dir", "--config-file",
+})
+_SHELLS = frozenset({"bash", "sh"})
+#: Characters a shell would expand or treat as syntax. A ``-c`` command holding any of them is
+#: not a single simple command, so running its words without the shell could differ.
+_SHELL_SYNTAX = frozenset("$`*?[]~(){}<>|;&!#\\\n")
+
+
+def _pytest_launcher(tokens: Sequence[str]) -> int | None:
+    """How many leading words launch pytest (``pytest``, ``python -m pytest``), or ``None``."""
+    if tokens and Path(tokens[0]).name in _PYTEST_NAMES:
+        return 1
+    if (len(tokens) >= 3 and _PYTHON_NAME.fullmatch(Path(tokens[0]).name)
+            and tokens[1] == "-m" and tokens[2] == "pytest"):
+        return 3
+    return None
+
+
+#: ``"$@"`` (or ``$@``) closing a ``-c`` command: the words after the command's ``$0`` name.
+_ALL_ARGUMENTS = ('"$@"', "$@")
+_ASSIGNMENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", re.DOTALL)
+#: Names a leading assignment may not set: they choose the interpreter or the programs found, and
+#: saga sets them itself for the packet's Python environment.
+_RESERVED_ASSIGNMENTS = frozenset({
+    "PATH", "VIRTUAL_ENV", "PYTHONHOME", "PYTHONEXECUTABLE", "PYTHONSTARTUP",
+})
+#: Characters a shell would expand in an assignment's value.
+_VALUE_SYNTAX = frozenset("$`")
+
+
+@dataclass(frozen=True)
+class PytestCommand:
+    """A command that runs pytest, read into what to run it with."""
+
+    #: Leading ``NAME=value`` assignments, literal, in order.
+    env: tuple[tuple[str, str], ...]
+    #: The words that start pytest: ``pytest``, ``python -m pytest``, or either after ``uv run``.
+    launcher: tuple[str, ...]
+    #: pytest's own options and paths.
+    arguments: tuple[str, ...]
+
+
+def _shell_inner(tokens: Sequence[str]) -> list[str] | None:
+    """The words ``bash -c '<one simple command>'`` (or ``sh``) runs, or ``None``.
+
+    The command may end in ``"$@"`` with a ``$0`` name after it; the words after the name are
+    then its last arguments, as the shell would pass them.
+    """
+    if len(tokens) < 3 or Path(tokens[0]).name not in _SHELLS:
+        return None
+    index = 1
+    while index < len(tokens) - 1 and tokens[index].startswith("-") and "c" not in tokens[index]:
+        index += 1
+    flag = tokens[index]
+    if not (flag.startswith("-") and not flag.startswith("--") and flag.endswith("c")):
+        return None
+    if index + 1 >= len(tokens):
+        return None
+    inner = tokens[index + 1].strip()
+    rest = list(tokens[index + 2:])
+    passed: list[str] = []
+    ending = next((item for item in _ALL_ARGUMENTS if inner.endswith(" " + item)), None)
+    if ending is not None:
+        inner = inner[: -len(ending)].rstrip()
+        # ``$0`` is the first word after the command; ``"$@"`` is every word after that.
+        passed = rest[1:]
+    elif rest:
+        # ``bash -c 'cmd' name args`` without ``"$@"`` drops the arguments: refused.
+        return None
+    if any(char in _SHELL_SYNTAX for char in inner):
+        return None
+    try:
+        words = shlex.split(inner)
+    except ValueError:
+        return None
+    if not words:
+        return None
+    return [*words, *passed]
+
+
+def _leading_assignments(tokens: Sequence[str]) -> tuple[tuple[tuple[str, str], ...], int] | None:
+    """The literal ``NAME=value`` words that start *tokens*, and how many; ``None`` to refuse."""
+    found: list[tuple[str, str]] = []
+    for word in tokens:
+        match = _ASSIGNMENT.fullmatch(word)
+        if match is None:
+            break
+        name, value = match.group(1), match.group(2)
+        if name in _RESERVED_ASSIGNMENTS or any(char in _VALUE_SYNTAX for char in value):
+            return None
+        if value.startswith("~"):
+            return None
+        found.append((name, value))
+    return tuple(found), len(found)
+
+
+def read_pytest_command(command: str) -> PytestCommand | None:
+    """*command* read as a pytest run, or ``None`` when it is not one this reader can trust.
+
+    Read: ``pytest``, ``python -m pytest`` (any ``python``, ``python3`` or ``python3.N``, by name
+    or by path, such as ``.venv/bin/python``), either one after ``uv run`` and its options, each
+    optionally after literal ``NAME=value`` assignments, and any of those as the one simple
+    command of ``bash -c`` or ``sh -c``, which may end in ``"$@"``. Running ``launcher +
+    arguments`` with ``env`` added runs what the command runs; a shell wrapper is dropped, which
+    is safe because its command holds no shell syntax. Anything else is refused, so a caller
+    never appends pytest's options to a program that is not pytest.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    inner = _shell_inner(tokens)
+    if inner is not None:
+        tokens = inner
+    assigned = _leading_assignments(tokens)
+    if assigned is None:
+        return None
+    env, skip = assigned
+    tokens = tokens[skip:]
+    if not tokens:
+        return None
+    count = _pytest_launcher(tokens)
+    if count is not None:
+        return PytestCommand(env, tuple(tokens[:count]), tuple(tokens[count:]))
+    if Path(tokens[0]).name != "uv" or len(tokens) < 3 or tokens[1] != "run":
+        return None
+    index = 2
+    while index < len(tokens):
+        word = tokens[index]
+        if word == "--":
+            index += 1
+            break
+        if not word.startswith("-"):
+            break
+        index += 2 if word in _UV_RUN_VALUE_FLAGS else 1
+    count = _pytest_launcher(tokens[index:])
+    if count is None:
+        return None
+    return PytestCommand(
+        env, tuple(tokens[:index + count]), tuple(tokens[index + count:]),
+    )
+
+
+#: pytest options that take the next word as their value (when not written ``--name=value``).
+_PYTEST_VALUE_OPTIONS = frozenset({
+    "-k", "-m", "-p", "-c", "-o", "-W", "-n", "-r", "--rootdir", "--confcutdir", "--basetemp",
+    "--ignore", "--ignore-glob", "--deselect", "--import-mode", "--cov", "--cov-report",
+    "--cov-config", "--cov-fail-under", "--junitxml", "--junit-xml", "--junit-prefix",
+    "--log-level", "--log-cli-level", "--log-file", "--log-file-level", "--log-format",
+    "--tb", "--maxfail", "--durations", "--durations-min", "--timeout", "--override-ini",
+    "--config-file", "--capture", "--color", "--code-highlight", "--dist", "--numprocesses",
+    "--randomly-seed", "--show-capture", "--report-log", "--pastebin",
+})
+_GLOB = frozenset("*?[")
+
+
+def pytest_options(arguments: Sequence[str]) -> list[str]:
+    """pytest's options from *arguments*, without the paths and node ids it would collect.
+
+    A check that names the tests to run passes them itself, so a project's own default
+    collection (a directory glob the shell never expanded, a ``testpaths`` setting) cannot fail
+    the run. An option's value stays with it.
+    """
+    kept: list[str] = []
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--":
+            break
+        if word.startswith("-") and word != "-":
+            kept.append(word)
+            if word in _PYTEST_VALUE_OPTIONS and index + 1 < len(arguments):
+                kept.append(arguments[index + 1])
+                index += 2
+                continue
+        index += 1
+    return kept
+
+
+def is_python_test_file(path: str) -> bool:
+    """Whether pytest's default file pattern (``test_*.py``, ``*_test.py``) names *path*."""
+    name = Path(path).name
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
+
+
+def changed_test_files(change: review_diff.Change | None, root: Path) -> list[str]:
+    """The Python test files the change added or edited, that exist under *root*, sorted."""
+    if change is None:
+        return []
+    found = set()
+    for item in change.files:
+        if item.status not in {"added", "modified", "renamed"}:
+            continue
+        if not is_python_test_file(item.path):
+            continue
+        if Path(item.path).is_absolute() or ".." in Path(item.path).parts:
+            continue
+        if (root / item.path).is_file():
+            found.add(item.path)
+    return sorted(found)
+
+
+def expand_globs(arguments: Sequence[str], root: Path) -> list[str]:
+    """Expand each glob word, relative to *root*, as a shell would; one with no match stays."""
+    expanded: list[str] = []
+    for word in arguments:
+        if word.startswith("-") or not _GLOB & set(word) or Path(word).is_absolute():
+            expanded.append(word)
+            continue
+        matches = sorted(
+            path.relative_to(root).as_posix() for path in root.glob(word)
+            if _within_root(root, path)
+        )
+        expanded.extend(matches or [word])
+    return expanded
+
+
+def python_env_argv(python_env: Path, arguments: Sequence[str]) -> list[str]:
+    """pytest with *arguments*, run by the interpreter of the saga-written environment."""
+    return [str(python_env / "bin" / "python3"), "-m", "pytest", *arguments]
 
 
 def _relocated_commands(profile: Mapping[str, Any]) -> list[tuple[str, str]]:

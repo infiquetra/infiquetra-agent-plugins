@@ -13,11 +13,13 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import yaml
 
+import review_dependencies
 import review_tools
 from review_tools import Adapter, Hit, ParseResult, ScanContext, ToolGap
 
@@ -114,13 +116,28 @@ raise SystemExit(proc.returncode)
 # wrapper's baseline bound are the same value (issue 227). A suite slower than
 # this fails the baseline instead of timing out per mutant into all-killed.
 _COSMIC_TIMEOUT_SECONDS = 300
+#: The wrapper's reasons for a session that ran no mutant: the row is a gap with that reason.
+_COSMIC_NO_RUN = frozenset({"baseline-failed", "baseline-timeout", "init-failed", "cap"})
+#: Every reason the wrapper writes. ``cap`` is not one: only the runner's shared cap is ``cap``.
+_COSMIC_REASONS = _COSMIC_NO_RUN | {"mutant-abnormal"}
+#: The most changed-line mutants one review runs, in a stable order (see the DECISIONS entry of
+#: 2026-11-11 for how it was sized). The rest are recorded as reason ``mutant-budget``.
+COSMIC_MUTANT_BUDGET = 10
+#: Seconds the session keeps in hand under the shared cap, to interrupt cosmic-ray, dump what
+#: finished and return before the runner's own deadline.
+_COSMIC_STOP_MARGIN = 60
+#: The safety stop's distance when the runner gives no mutation deadline (a direct call).
+_COSMIC_STOP_NONE = 900
 
 # Runs one cosmic-ray session: baseline first, then init, exec, dump. Reads the
 # 8.7.0 dump as [work_item, result] arrays. Anything it cannot prove clean is
-# unfinished. argv[2] overrides the baseline budget; tests use that, production
-# passes _COSMIC_TIMEOUT_SECONDS.
+# unfinished, with the reason it stopped: baseline-failed, baseline-timeout,
+# init-failed or mutant-abnormal. Only the runner's shared cap is ever ``cap``.
+# argv[2] overrides the baseline budget; tests use that, production passes
+# _COSMIC_TIMEOUT_SECONDS.
 _COSMIC_WRAPPER = r"""
-import json, os, shlex, signal, subprocess, sys, tomllib
+import atexit, json, os, shlex, signal, subprocess, sys, tempfile, tomllib
+import xml.etree.ElementTree as ET
 config = sys.argv[1]
 try:
     budget = float(sys.argv[2])
@@ -128,50 +145,227 @@ except (IndexError, ValueError):
     budget = 300.0
 if not budget > 0:
     budget = 300.0
-def _done(unfinished, survivors):
-    print(json.dumps({"unfinished": unfinished, "survivors": survivors}))
+# argv[3], when given, is the wall-clock time (seconds since the epoch) by which the session must
+# have stopped and dumped what it finished: safely inside the runner's shared mutation cap.
+try:
+    stop_by = float(sys.argv[3])
+except (IndexError, ValueError):
+    stop_by = None
+# argv[4] and argv[5], when given, are the mutant budget and the program that applies it.
+try:
+    mutant_budget = int(sys.argv[4])
+    BUDGET = sys.argv[5]
+except (IndexError, ValueError):
+    mutant_budget = None
+counts = {}
+import time
+def _left():
+    return None if stop_by is None else stop_by - time.time()
+def _tail(*outputs):
+    # The end of a failed step's output, for the operator's private prepare diagnostics: the
+    # runner keeps this script's stderr there, never in the packet.
+    for text in outputs:
+        lines = (text or "").splitlines()[-40:]
+        if lines:
+            sys.stderr.write("\n".join(lines) + "\n")
+def _done(unfinished, survivors, reason=None):
+    payload = {"unfinished": unfinished, "survivors": survivors}
+    if counts:
+        payload["mutants"] = counts
+    if unfinished:
+        payload["reason"] = reason or "mutant-abnormal"
+    print(json.dumps(payload))
     raise SystemExit(0)
 try:
     with open(config, "rb") as handle:
         test_command = tomllib.load(handle)["cosmic-ray"]["test-command"]
 except (OSError, ValueError, KeyError):
-    _done(True, [])
+    _done(True, [], "init-failed")
 if not isinstance(test_command, str):
-    _done(True, [])
-try:
-    proc = subprocess.Popen(
-        shlex.split(test_command),
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, start_new_session=True,
-    )
-except (OSError, ValueError):
-    _done(True, [])
-try:
-    proc.communicate(timeout=budget)
-except subprocess.TimeoutExpired:
+    _done(True, [], "init-failed")
+# JUnit attributes carry identities separately from failure messages. The report is private
+# scratch, never part of the packet or the mutation command saved in the configuration.
+report_directory = tempfile.TemporaryDirectory(prefix="saga-baseline-")
+atexit.register(report_directory.cleanup)
+report_path = os.path.join(report_directory.name, "baseline.xml")
+def _baseline(command):
+    left = _left()
+    if left is not None and left <= 0:
+        return "cap", "", ""
+    argv = shlex.split(command)
+    if is_pytest:
+        argv.extend(["--junitxml=" + report_path, "-o", "junit_family=xunit1", "--junit-prefix="])
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (AttributeError, OSError):
-        proc.kill()
-    proc.communicate()
-    _done(True, [])
-if proc.returncode != 0:
-    _done(True, [])
+        os.unlink(report_path)
+    except FileNotFoundError:
+        pass
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
+        )
+    except (OSError, ValueError):
+        return "failed", "", ""
+    left = _left()
+    try:
+        out, err = proc.communicate(timeout=budget if left is None else max(0.0, min(budget, left)))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (AttributeError, OSError):
+            proc.kill()
+        out, err = proc.communicate()
+        reason = "cap" if left is not None and left <= budget else "timeout"
+        return reason, out, err
+    return ("passed" if proc.returncode == 0 else "failed"), out, err
+def _without_failures(command):
+    # Never parse the console summary: both parameter ids and messages may contain " - ".
+    if not is_pytest:
+        return None
+    try:
+        cases = ET.parse(report_path).getroot().iter("testcase")
+    except (OSError, ET.ParseError):
+        return None
+    flags = []
+    for case in cases:
+        if case.find("failure") is None and case.find("error") is None:
+            continue
+        path = case.get("file")
+        name = case.get("name")
+        classname = case.get("classname", "")
+        if not path or not name:
+            return None
+        module = path.replace("/", ".").removesuffix(".py")
+        if not classname:  # A collection error names the file, not a runnable test.
+            flags.append("--ignore=" + path)
+        elif classname == module or classname.startswith(module + "."):
+            classes = classname[len(module):].lstrip(".")
+            node = "::".join([path, *(classes.split(".") if classes else []), name])
+            flags.append("--deselect=" + node)
+        else:
+            # An imported or custom test whose XML identity cannot be reconstructed safely.
+            return None
+    if not flags or len(flags) > 200:
+        return None
+    return shlex.join([*shlex.split(command), *sorted(set(flags))])
+def _rewrite(command):
+    with open(config, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+    lines = [("test-command = " + json.dumps(command)) if line.startswith("test-command = ")
+             else line for line in lines]
+    with open(config, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+# A profile may request fail-fast, but the baseline must name every pre-existing failure.
+words = shlex.split(test_command)
+is_pytest = any(os.path.basename(word) in {"pytest", "py.test"} for word in words)
+if is_pytest:
+    test_command = shlex.join([word for word in words if word not in {"-x", "--exitfirst"}])
+started = time.time()
+state, out, err = _baseline(test_command)
+sys.stderr.write(f"baseline: {state} after {time.time() - started:.0f} seconds\n")
+if state in {"timeout", "cap"}:
+    _tail(out, err)
+    _done(True, [], "cap" if state == "cap" else "baseline-timeout")
+if state == "failed":
+    narrowed = _without_failures(test_command)
+    if narrowed is None:
+        _tail(out, err)
+        _done(True, [], "baseline-failed")
+    started = time.time()
+    state, again_out, again_err = _baseline(narrowed)
+    sys.stderr.write(f"narrowed baseline: {state} after {time.time() - started:.0f} seconds\n")
+    if state != "passed":
+        _tail(out, err, again_out, again_err)
+        reason = {"cap": "cap", "timeout": "baseline-timeout"}.get(state, "baseline-failed")
+        _done(True, [], reason)
+    sys.stderr.write("baseline: left out the tests that failed before any mutation\n")
+    _tail(out)
+    test_command = narrowed
+# A mutant is killed by its first failing test: pytest stops there (-x), so a killed mutant costs
+# a fraction of a full run. The baseline ran without it, so every failing test was named.
+words = shlex.split(test_command)
+if (any(os.path.basename(word) in {"pytest", "py.test"} for word in words)
+        and not {"-x", "--exitfirst"} & set(words)):
+    test_command = shlex.join([*words, "-x"])
+_rewrite(test_command)
 session = config + ".sqlite"
 init = subprocess.run(["cosmic-ray", "init", config, session], capture_output=True, text=True)
 if init.returncode != 0:
-    _done(True, [])
+    _tail(init.stdout, init.stderr)
+    _done(True, [], "init-failed")
 # Skip every mutant off the change's lines; init alone queues whole files.
 scoped = subprocess.run(
     ["cr-filter-git", session, "--config", config], capture_output=True, text=True
 )
 if scoped.returncode != 0:
-    _done(True, [])
-ran = subprocess.run(["cosmic-ray", "exec", config, session], capture_output=True, text=True)
+    _tail(scoped.stdout, scoped.stderr)
+    _done(True, [], "init-failed")
+# A fixed number of the changed-line mutants, in a stable order, so a repeat prepare runs the same
+# set: the rest are marked skipped. Run by the interpreter cosmic-ray's own script names, the one
+# that can import it.
+def _cosmic_python():
+    import shutil
+    found = shutil.which("cosmic-ray")
+    try:
+        with open(found or "", "rb") as handle:
+            first = handle.readline().decode("utf-8", "replace")
+    except OSError:
+        return sys.executable
+    words = first[2:].split() if first.startswith("#!") else []
+    return words[0] if words and os.path.isabs(words[0]) else sys.executable
+if mutant_budget is not None:
+    try:
+        budgeted = subprocess.run(
+            [_cosmic_python(), "-c", BUDGET, session, str(mutant_budget)],
+            capture_output=True, text=True,
+        )
+        counts = json.loads(budgeted.stdout)
+    except (OSError, json.JSONDecodeError):
+        budgeted, counts = None, {}
+    if (budgeted is None or budgeted.returncode != 0 or not isinstance(counts, dict)
+            or "changed" not in counts):
+        counts = {}
+        if budgeted is not None:
+            _tail(budgeted.stdout, budgeted.stderr)
+        _done(True, [], "init-failed")
+left = _left()
+if left is not None and left <= 0:
+    _done(True, [], "cap")
+runner = subprocess.Popen(
+    ["cosmic-ray", "exec", config, session],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+)
+stopped = False
+started = time.time()
+try:
+    ran_out, ran_err = runner.communicate(timeout=left)
+except subprocess.TimeoutExpired:
+    # Out of time, a safety stop only: interrupt the session (cosmic-ray restores the module it
+    # is mutating on an interrupt). What finished depends on the clock, so none of it is reported.
+    stopped = True
+    for sig, wait in ((signal.SIGINT, 10), (signal.SIGKILL, 10)):
+        try:
+            os.killpg(os.getpgid(runner.pid), sig)
+        except (AttributeError, OSError):
+            runner.kill()
+        try:
+            ran_out, ran_err = runner.communicate(timeout=wait)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    else:
+        ran_out, ran_err = "", ""
+    _tail(ran_out, ran_err)
+    _done(True, [], "cap")
+sys.stderr.write(f"mutants: {counts.get('run', 'all')} run in {time.time() - started:.0f} "
+                 "seconds\n")
 dump = subprocess.run(
     ["cosmic-ray", "dump", session], capture_output=True, text=True
 )
-unfinished = ran.returncode != 0 or dump.returncode != 0
+unfinished = stopped or runner.returncode != 0 or dump.returncode != 0
+if unfinished:
+    _tail(ran_out, ran_err, dump.stderr)
 survivors = []
 for line in (dump.stdout or "").splitlines():
     text = line.strip()
@@ -190,6 +384,7 @@ for line in (dump.stdout or "").splitlines():
         unfinished = True
         continue
     if result is None:
+        # Not run: the session stopped before this mutant, or it never started.
         unfinished = True
         continue
     if result.get("worker_outcome") == "skipped":
@@ -211,10 +406,101 @@ for line in (dump.stdout or "").splitlines():
         if not path or not isinstance(number, int) or isinstance(number, bool):
             unfinished = True
             continue
-        survivors.append({"path": str(path), "line": number})
+        survivor = {"path": str(path), "line": number}
+        if isinstance(first.get("operator_name"), str):
+            survivor["operator"] = first["operator_name"]
+        survivors.append(survivor)
     elif lowered != "killed":
         unfinished = True
-_done(unfinished, survivors)
+_done(unfinished, survivors, "mutant-abnormal")
+"""
+
+# Chooses which changed-line mutants a budget runs, spread over the change: one mutant per line,
+# lines inside control flow first (an if, elif, else, except or return line, or the body of one),
+# then lines in an order fixed by a hash of (file, line), taken round-robin across the files.
+# Plain Python, so the tests run it as is; _COSMIC_BUDGET runs it inside the cosmic-ray
+# environment against the session.
+_COSMIC_SELECT = r"""
+import hashlib
+_FLOW = ("if ", "if(", "elif ", "else:", "else ", "except", "return", "raise")
+def _flow_line(lines, number):
+    if not 1 <= number <= len(lines):
+        return False
+    text = lines[number - 1]
+    if text.strip().startswith(_FLOW):
+        return True
+    indent = len(text) - len(text.lstrip())
+    for earlier in range(number - 2, -1, -1):
+        above = lines[earlier]
+        if not above.strip():
+            continue
+        if len(above) - len(above.lstrip()) < indent:
+            return above.strip().startswith(_FLOW)
+    return False
+def select(candidates, budget, read):
+    # candidates: (file, line, column, operator, occurrence, job_id); read(file) -> list of lines.
+    # One mutant per line per round; a second round only when every line already has one.
+    per_line = {}
+    for item in sorted(candidates):
+        per_line.setdefault((item[0], item[1]), []).append(item)
+    files = {}
+    for (name, number) in per_line:
+        files.setdefault(name, []).append(number)
+    ordered = []
+    for name in sorted(files):
+        lines = read(name)
+        def order(number, name=name, lines=lines):
+            digest = hashlib.sha256(f"{name}:{number}".encode()).hexdigest()
+            return (not _flow_line(lines, number), digest)
+        ordered.append([(name, number) for number in sorted(files[name], key=order)])
+    chosen = []
+    depth = 0
+    while len(chosen) < budget and depth < max((len(v) for v in per_line.values()), default=0):
+        queues = [list(lines) for lines in ordered]
+        while len(chosen) < budget and any(queues):
+            for queue in queues:
+                while queue and len(chosen) < budget:
+                    key = queue.pop(0)
+                    if depth < len(per_line[key]):
+                        chosen.append(per_line[key][depth])
+                        break
+        depth += 1
+    return chosen, len(per_line), len(files)
+"""
+
+# Marks every changed-line mutant the budget does not choose skipped, and prints the counts.
+# Runs inside the cosmic-ray environment, from the scan's root.
+_COSMIC_BUDGET = _COSMIC_SELECT + r"""
+import json, sys
+from cosmic_ray.work_db import WorkDB, use_db
+from cosmic_ray.work_item import WorkerOutcome, WorkResult
+session, budget = sys.argv[1], int(sys.argv[2])
+def read(name):
+    try:
+        with open(name, encoding="utf-8", errors="replace") as handle:
+            return handle.read().splitlines()
+    except OSError:
+        return []
+with use_db(session, WorkDB.Mode.open) as db:
+    pending = list(db.pending_work_items)
+    candidates = []
+    for item in pending:
+        first = item.mutations[0]
+        candidates.append((str(first.module_path), int(first.start_pos[0]),
+                           int(first.start_pos[1]), first.operator_name, int(first.occurrence),
+                           item.job_id))
+    chosen, lines, files = select(candidates, budget, read)
+    keep = {item[5] for item in chosen}
+    over = [item.job_id for item in pending if item.job_id not in keep]
+    if over:
+        db.set_multiple_results(over, WorkResult(output="mutant budget",
+                                                 worker_outcome=WorkerOutcome.SKIPPED))
+print(json.dumps({
+    "changed": len(pending), "run": len(chosen),
+    "lines": lines, "files": files,
+    "covered_lines": len({(item[0], item[1]) for item in chosen}),
+    "covered_files": len({item[0] for item in chosen}),
+}))
 """
 
 
@@ -638,14 +924,93 @@ def _parse_import_linter(text: str) -> ParseResult:
     return ParseResult(tuple(hits))
 
 
+#: The most test files a mutation run names. The baseline and every mutant run them all, so the
+#: bound keeps one mutant's run short; when it cuts the list, the cut is logged.
+_COSMIC_MAX_TEST_FILES = 10
+
+
+def _mentions(path: Path, names: frozenset[str]) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(re.search(rf"\b{re.escape(name)}\b", text) for name in names)
+
+
+def _cosmic_tests(context: ScanContext, modules: list[str]) -> list[str]:
+    """The test files the baseline and every mutant run, named explicitly.
+
+    Every test file that mentions a mutated module, the change's own first and then the tree's,
+    smallest first, up to ``_COSMIC_MAX_TEST_FILES``: a mutant an existing test elsewhere kills
+    must not be reported as surviving. With none, the change's own test files. Naming them keeps a
+    project's default collection (a glob a shell never expanded, a ``testpaths`` setting) from
+    failing the baseline.
+    """
+    names = frozenset(Path(module).stem for module in modules)
+    changed = review_tools.changed_test_files(context.change, context.root)
+    own = [rel for rel in changed if _mentions(context.root / rel, names)]
+    others: list[tuple[int, str]] = []
+    for path in review_tools.scan_files(context.root):
+        rel = path.relative_to(context.root).as_posix()
+        if rel in own or not review_tools.is_python_test_file(rel) or not path.is_file():
+            continue
+        if _mentions(path, names):
+            others.append((path.stat().st_size, rel))
+    chosen = own + [rel for _size, rel in sorted(others)]
+    if not chosen:
+        return changed[:_COSMIC_MAX_TEST_FILES]
+    if len(chosen) > _COSMIC_MAX_TEST_FILES:
+        print(
+            f"cosmic-ray: {len(chosen)} test files mention the mutated modules; "
+            f"running the first {_COSMIC_MAX_TEST_FILES} (the change's own, then the smallest)",
+            file=sys.stderr,
+        )
+    return sorted(chosen[:_COSMIC_MAX_TEST_FILES])
+
+
+def _cosmic_test_argv(context: ScanContext, command: str, modules: list[str]) -> list[str]:
+    """The baseline's and every mutant's test command.
+
+    A command that runs pytest runs the tests :func:`_cosmic_tests` names, with the command's
+    own options. With the packet's Python environment it runs them with that environment's
+    interpreter, by path, so the tests import the change's installed dependencies and not
+    ``uv run``'s temporary environment (the one that holds cosmic-ray). No test file to name is
+    the gap ``no-tests-for-change``. Any other command runs as before.
+    """
+    read = review_tools.read_pytest_command(command)
+    if read is None:
+        argv = _resolve_python_head([*_strip_randomly(shlex.split(command)), "-p", "no:randomly"])
+        environment = (review_dependencies.python_shim_env(context.python_env)
+                       if context.python_env is not None else {"PYTHONDONTWRITEBYTECODE": "1"})
+        return ["env", *[f"{name}={value}" for name, value in environment.items()], *argv]
+    tests = _cosmic_tests(context, modules)
+    if not tests:
+        raise ToolGap("no-tests-for-change", "testing.surviving-mutant")
+    options = [*_strip_randomly(review_tools.pytest_options(read.arguments)), "-p", "no:randomly"]
+    if context.python_env is not None:
+        argv = review_tools.python_env_argv(context.python_env, [*options, *tests])
+    else:
+        argv = [*_resolve_python_head(list(read.launcher)), *options, *tests]
+    # The command's own ``NAME=value`` assignments (``PYTHONPATH=tests``) stay with it. Over the
+    # packet's packages no run writes bytecode: set in the command, so the baseline, every mutant
+    # and whatever they start inherit it, and the packet stays as the fetch wrote it.
+    assigned = [f"{name}={value}" for name, value in read.env]
+    if context.python_env is not None:
+        assigned.extend(f"{name}={value}" for name, value in
+                        review_dependencies.python_shim_env(context.python_env).items())
+    return ["env", *assigned, *argv] if assigned else argv
+
+
 def _invoke_cosmic(context: ScanContext) -> list[str]:
     command = context.test_command.strip()
     if not command:
         raise ToolGap("known-gap", "testing.surviving-mutant")
-    parts = _resolve_python_head([*_strip_randomly(shlex.split(command)), "-p", "no:randomly"])
-    modules = _changed_python(context)
+    # Test files are what the mutants are checked against, never mutated themselves.
+    modules = [rel for rel in _changed_python(context)
+               if not review_tools.is_python_test_file(rel)]
     if not modules:
         return []
+    parts = _cosmic_test_argv(context, command, modules)
     # The config, and the session database the wrapper writes beside it, live in the scan's own
     # folder. In the runner home the session database survived into the next prepare (issue 147).
     toml = review_tools.scan_folder(context, "cosmic-ray") / "cosmic-ray.toml"
@@ -666,10 +1031,15 @@ def _invoke_cosmic(context: ScanContext) -> list[str]:
         ]),
         encoding="utf-8",
     )
-    return [
+    argv = [
         "uv", "run", "--with", "cosmic-ray==8.7.0",
         sys.executable, "-c", _COSMIC_WRAPPER, str(toml), str(_COSMIC_TIMEOUT_SECONDS),
     ]
+    # A wall-clock time, since the wrapper is another process: a safety stop inside the cap.
+    left = (context.mutation_deadline - time.monotonic() - _COSMIC_STOP_MARGIN
+            if context.mutation_deadline is not None else float(_COSMIC_STOP_NONE))
+    argv += [f"{time.time() + max(0.0, left):.0f}", str(COSMIC_MUTANT_BUDGET), _COSMIC_BUDGET]
+    return argv
 
 
 def _parse_cosmic(text: str) -> ParseResult:
@@ -686,16 +1056,42 @@ def _parse_cosmic(text: str) -> ParseResult:
         line = item.get("line")
         start = int(line) if isinstance(line, int) else None
         path = _rel(str(item.get("path") or "."))
+        operator = item.get("operator")
+        named = f" ({operator})" if isinstance(operator, str) and operator else ""
         hits.append(Hit(
             rule_id="surviving-mutant",
             path=path,
-            statement="A mutant survived.",
+            statement=f"A mutant survived{named}.",
             anchor=f"{path}:{start or 0}",
             start=start,
             end=start,
             row="testing.surviving-mutant",
         ))
-    return ParseResult(tuple(hits), unfinished=bool(data.get("unfinished")))
+    unfinished = bool(data.get("unfinished"))
+    reason = data.get("reason")
+    if unfinished and reason in _COSMIC_NO_RUN:
+        # Nothing was mutated, or what ran depends on the clock: no answer, for this reason.
+        return ParseResult(gap=(str(reason), "testing.surviving-mutant"))
+    gaps: tuple[tuple[str, str], ...] = ()
+    details: tuple[tuple[str, str], ...] = ()
+    counts = data.get("mutants")
+    if isinstance(counts, dict):
+        changed, ran = counts.get("changed"), counts.get("run")
+        if isinstance(changed, int) and isinstance(ran, int) and changed > ran:
+            # Coverage was partial: the reviewer sees how much.
+            gaps = (("mutant-budget", "testing.surviving-mutant"),)
+            detail = f"ran {ran} of {changed} mutants on changed lines"
+            spread = [counts.get(key) for key in ("covered_lines", "lines", "covered_files",
+                                                   "files")]
+            if all(isinstance(value, int) for value in spread):
+                detail += (f", covering {spread[0]} of {spread[1]} changed lines in "
+                           f"{spread[2]} of {spread[3]} files")
+            details = (("mutant-budget", detail),)
+    if unfinished:
+        known = reason if reason in _COSMIC_REASONS else "mutant-abnormal"
+        return ParseResult(tuple(hits), unfinished=True, unfinished_reason=known, gaps=gaps,
+                           gap_details=details)
+    return ParseResult(tuple(hits), gaps=gaps, gap_details=details)
 
 
 def _pytest_argv(context: ScanContext, package: str, extra: list[str]) -> list[str]:

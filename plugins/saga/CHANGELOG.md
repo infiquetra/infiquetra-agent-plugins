@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Testing lead overflow records one `lead-cap` entry per affected row and language, with that
+  language's omitted count. The shared item cap and advisory severity are unchanged.
+
+- Review references now consistently describe `lead-cap` as advisory and limit the blocking
+  fallback to the exact unlocated findings.
+
+- Mutation baseline isolation reads failing pytest identities from a temporary JUnit XML report,
+  preserving parameter identifiers even when failure messages also contain `] - `.
+
+- Native testing leads ignore comments and string literals (including escaped Swift raw-string
+  delimiters), locate multiline signatures, and use
+  Rust module paths or Swift type names to disambiguate test names. Ambiguous tests remain
+  unlocated.
+
 ### Added
 
 - **Prepare installs a JavaScript or TypeScript head's npm packages into the packet.** A head with
@@ -109,6 +123,90 @@
   `reproduction_match.py`.
 
 ### Fixed
+
+- **Prepare keeps both outcome files consistent after lead conversion.** The packet's
+  `outcomes.json` now matches `grades.json`, including blocking fallback rows for unlocated
+  testing leads. Regression tests verify both severities and byte-identical repeated packets.
+
+- **Testing-lead regression coverage crosses languages and the live worker boundary.** Rust,
+  Swift, TypeScript and Dart lead tests cover locations and distinct survivor anchors. A live
+  test uses the production uv cosmic-ray invocation, checks packet-only dependencies in mutants
+  and child interpreters, compares two results and verifies packet dependencies remain unchanged.
+  The command references describe the blocking fallback for unlocated leads.
+
+- **cosmic-ray fallback commands suppress bytecode too.** Unrecognized test commands carry
+  `PYTHONDONTWRITEBYTECODE=1` and the packet shim environment when available. The earlier
+  changelog description now states the implemented bound of 10 test files.
+
+- **Two-runs names import failures and locates class methods correctly.** A pytest configuration
+  import failure records `conftest-import-failed` without claiming tests ran. Python test locations
+  resolve every class qualifier, so identically named methods in different classes stay distinct.
+
+- **cosmic-ray baselines preserve the test environment and failure identities.** Baselines
+  remove profile fail-fast flags so all failing tests can be excluded, preserve parameter ids
+  containing ` - `, and report a spent shared budget as `cap` before starting tests. Baselines,
+  mutants and child processes receive the packet shim's executable path and virtual environment.
+
+- **Surviving-mutant anchors understand every supported tool.** StrykerJS, Muter, mutate4dart
+  and cosmic-ray retain their mutator names; cargo-mutants replacement descriptions and unknown
+  statement forms use a stable statement digest. Distinct survivors on one line stay distinct.
+
+- **Testing results cannot disappear from reviewer leads.** Rust and Swift two-runs results
+  locate unique test definitions in changed head files, including Rust inline tests. An
+  unlocated result records `unlocated-lead` with exact finding identifiers and restores blocking
+  severity only for those findings; entries are counted once per testing row and language,
+  so a result the reviewer cannot be shown never silently fixes later. Results beyond the item
+  cap stay fix-later and are recorded as `lead-cap` with the count: they repeat the signal the
+  reviewer is already answering, and a mutation tool with a narrow test scope can leave many
+  survivors on a clean change.
+
+- **The reviewer answers each testing lead.** `prepare` turns up to 8 two-runs tests and 8
+  surviving mutants into where-to-look items asking `testing.accepts-broken-code`, located at the
+  test or the mutated line; more is recorded as `lead-cap`. The prompt tells the reviewer to answer
+  each with a traced finding when it is the change's purpose test or line, otherwise `cleared`.
+
+- **Mutation results are a repeatable lead.** `testing.surviving-mutant` now fixes later, and the
+  reviewer prompt tells the reviewer to escalate a survivor on the line the change exists for as
+  `testing.accepts-broken-code`. cosmic-ray runs a fixed number of changed-line mutants, spread one
+  per line across the change's files with control-flow lines first and chosen the same way every
+  time, instead of whatever finished before a time limit, records `mutant-budget` with how many it
+  left out, and its time limit is a safety stop reported as `cap` with no survivors. Runs over the
+  packet's Python environment no longer write bytecode into the packet.
+
+- **A new test that passes before the change is a lead, and mutation runs report partial
+  results.** `testing.test-passes-before-change` now fixes later instead of blocking: many such
+  tests pin behaviour the change keeps. The reviewer prompt tells the reviewer to escalate one meant
+  to check what the change adds or fixes as `testing.accepts-broken-code`, with traced evidence,
+  and widens that row to a change whose purpose no test checks and a test that no longer exercises
+  what it names. cosmic-ray runs every test file that
+  mentions a mutated module (up to 10, the cut logged) so tests elsewhere can kill a mutant.
+
+- **The testing checks name the change's test files.** A committed profile command such as
+  `python3 -m pytest plugins/*/tests` is run without a shell, so pytest got the glob literally and
+  both checks failed. Two-runs now lists only the test files the change added or edited, with the
+  command's options, and runs the new tests in one batch per version; the default collection
+  (globs expanded) is a fallback with its own reason, `no-test-list-default-collection`.
+  cosmic-ray names the change's test files that mention a mutated module (or the tree's, up to 10)
+  and records `no-tests-for-change` when there are none; it no longer mutates test files. A
+  baseline that fails is rerun once without the tests that failed before any mutation.
+
+- **A locked Python project installs for an interpreter its lock covers.** The fetch reads the
+  lock's (else the project's) `requires-python` and, when the operator's `python3` is outside it,
+  installs for an installed interpreter `uv python find` picks for it; the shared environment finds
+  that interpreter again by version. Before, a lock made for `<3.14` left its compiled packages
+  `install-failed` on Python 3.14. The two testing checks also read `NAME=value` assignments, a
+  `.venv/bin/python` launcher and a `bash -c '... "$@"' name` wrapper, and keep the end of a failed
+  listing's or baseline's output in the private prepare diagnostics folder.
+
+- **The two-runs and cosmic-ray testing checks run with the packet's Python dependencies.**
+  `prepare` now fetches the head's dependencies before the tools run and hands them the same
+  saga-written Python environment the reviewer's re-runs get. A pytest command, also behind
+  `uv run` or as the one command of `bash -c`/`sh -c`, runs as that environment's
+  `bin/python3 -m pytest`; before, the tests could not import the project's packages, two-runs
+  degraded with `no-test-list` and cosmic-ray with `cap`. cosmic-ray now reports why a session
+  stopped: `baseline-failed`, `baseline-timeout`, `init-failed` or `mutant-abnormal`; `cap` means
+  only the shared 900 second cap. A two-runs check whose old-version checkout fails records
+  `no-test-list` instead of raising.
 
 - **The semgrep security rules can now run.** The security row compared the digest of the local
   `~/.saga/semgrep-rules/p--security-audit` cache with a placeholder, because the pack's licence

@@ -495,7 +495,7 @@ def _mutant_repo(tmp_path: Path) -> tuple[Path, Path]:
     return repo, source
 
 
-def test_mutate4dart_survivor_on_changed_lines_blocks(tmp_path: Path) -> None:
+def test_mutate4dart_survivor_on_changed_lines_is_a_lead(tmp_path: Path) -> None:
     repo, source = _mutant_repo(tmp_path)
     base = _commit(repo, "base")
     text = source.read_text(encoding="utf-8").splitlines(keepends=True)
@@ -521,7 +521,7 @@ def test_mutate4dart_survivor_on_changed_lines_blocks(tmp_path: Path) -> None:
     assert {finding["rule"]["ref"] for finding in findings} == {"surviving-mutant"}
     assert findings[0]["location"]["file"] == "lib/add.dart"
     assert "arithmetic" in findings[0]["statement"]
-    assert _severity(output, "surviving-mutant") == "blocks"
+    assert _severity(output, "surviving-mutant") == "fix-later"
 
 
 def test_mutate4dart_past_deadline_records_cap(
@@ -996,7 +996,7 @@ def test_live_mutate4dart_reports_a_survivor(tmp_path: Path) -> None:
         tmp_path / "home", [_adapter("mutate4dart")],
     ) == 0
     _valid(output)
-    assert _severity(output, "surviving-mutant") == "blocks"
+    assert _severity(output, "surviving-mutant") == "fix-later"
     assert _finding(output, "surviving-mutant")["location"]["file"] == "lib/add.dart"
 
 

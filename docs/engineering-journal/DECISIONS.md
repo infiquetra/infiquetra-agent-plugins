@@ -1,5 +1,169 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-11
+
+### Testing leads are scripted where-to-look items, eight of each per packet
+
+**Decision.** `prepare` builds one where-to-look item per two-runs test (at the test function) and
+per surviving mutant (at the mutated line, operator in the anchor), with question
+`testing.accepts-broken-code` at probability 1, beside the other scripted items. At most 8 of each:
+tests whose names share the most words with the changed files and edited functions first, then by
+id; mutants by file, line and operator. More is the degraded reason `lead-cap` with a detail.
+
+**Rejected alternatives.** Leaving the leads in `findings.json` with prompt guidance: measured, the
+reviewer never escalated one. No cap: a change that adds many regression tests would crowd the
+item list. Reusing the sweep's cap: scripted items are facts and are never dropped by it.
+
+**Rationale.** The answer contract makes the reviewer answer each item, which is the judgment these
+leads need.
+
+**Revisit when.** Reviews answer lead items mechanically, or the cap leaves out the purpose test.
+
+---
+
+### Mutation testing is a deterministic lead with a fixed mutant budget
+
+**Decision.** `testing.surviving-mutant` fixes later for every language, keeps its builder excuse,
+and the reviewer escalates a survivor on the change's purpose line as
+`testing.accepts-broken-code` with traced evidence naming the mutant. cosmic-ray runs at most 10
+changed-line mutants, spread over the change: one per changed line (a second only once every line
+has one), lines inside control flow first, then lines ordered by a hash of file and line, taken
+round-robin across files. Sorting by file, line and operator was rejected: all 10 landed at the top
+of the alphabetically first file and said nothing about the branch the change adds. They run against
+at most 10 test files that mention a mutated module, and each mutant's run stops at its first
+failing test; `mutant-budget` records how many changed-line mutants were left out. The numbers come
+from a large real change (over 3,000 changed-line mutants): with 30 test files a single baseline
+took about 250 seconds and three mutants could not finish inside the cap; with 10 test files and
+`-x`, the baseline took about 170 seconds (and its rerun without failing tests 145), and 10 mutants
+took about 300 seconds, about 30 each, so the session finished in about 620 seconds, well inside
+the 900 second cap with room for slower machines.
+The time limit stays only as a safety stop 60 seconds inside the cap, reported as `cap` with no
+survivors. Runs over the packet's Python environment set `PYTHONDONTWRITEBYTECODE=1`.
+
+**Rejected alternatives.** Reporting the mutants that finished before a time limit (`partial-cap`):
+the set depends on machine load, so two prepares differ. Sampling mutants at random with a fixed
+seed: stable, but it spreads the budget over files instead of reading the change in order. A
+bytecode prefix folder: it also works, but turning writes off covers every child process with one
+variable and leaves nothing to clean.
+
+**Rationale.** A packet must be the same for the same change, and a survivor is evidence for the
+reviewer, not a verdict.
+
+**Revisit when.** A budgeted run regularly reaches the safety stop on ordinary changes, or reviews
+show the budget leaves the purpose lines of large changes unmutated.
+
+---
+
+### Two-runs is a reviewer lead; the reviewer escalates the purpose test
+
+**Decision.** `testing.test-passes-before-change` fixes later instead of blocking, keeps its builder
+excuse kind, and stays in the packet's deterministic findings. The reviewer prompt gains a section
+telling the reviewer, for each listed test, to cite `testing.accepts-broken-code` with traced
+evidence (the test, the two-runs result, why it is the change's purpose test) when the test is
+meant to check what the change adds or fixes, and to leave it alone when it pins kept behaviour.
+`testing.accepts-broken-code` also covers a change whose purpose no test checks and a test that no
+longer exercises what it names.
+
+**Rejected alternatives.** Keeping the row blocking with a builder excuse: every clean change that
+adds regression tests would need a builder reason per test. Porting the reviewer's own "undo the
+change and rerun its tests" step: in measurement the reviewer never ran it, and the two-runs check
+does the same work deterministically. Making each flagged test a where-to-look item: it would force
+an answer per test, crowding the list on changes that add many regression tests.
+
+**Rationale.** Whether a test that passes before the change is a defect depends on the change's
+purpose, which the reviewer judges and the check cannot.
+
+**Revisit when.** Reviews leave flagged purpose tests unescalated, or escalate tests that pin kept
+behaviour.
+
+---
+
+### The testing checks name the change's test files instead of the default collection
+
+**Decision.** For a pytest command, two-runs drops the command's own paths, keeps its options, and
+lists only the test files the change added or edited (a file the old version lacks counts as all
+new); the new tests run in one batched pytest run per version, read from the `-rA` summary, under
+a 600 second check limit. The default collection, with globs expanded relative to the project, runs
+only when the change touched no test file, and its failure is `no-test-list-default-collection`.
+cosmic-ray names the change's test files that mention a mutated module, else all its test files,
+else up to 50 test files in the tree that mention one, and records `no-tests-for-change` when there
+are none; test files are no longer mutated. A baseline that fails is rerun once without the tests
+pytest's summary names as failing, and the mutants use that narrowed command; the old-version run
+of two-runs names files and continues past a file that cannot be collected there.
+
+**Rejected alternatives.** Running the profile command through a shell: it would also run whatever
+else a committed command does, which the argument-list design avoids. Expanding globs only: it
+fixes this shape but keeps every quirk of a project's collection and runs the whole suite per
+mutant. Running each new test on its own, as before: a change that adds many tests ran out of time.
+
+**Rationale.** Only the change's test files can hold a new test, and the mutated modules are
+exercised by the tests that mention them; naming them makes both checks independent of the
+project's collection settings and bounded by the change's size.
+
+**Revisit when.** A project's tests reach a changed module only indirectly (no test file mentions
+it), or a single change's test files take longer than the batched run allows.
+
+---
+
+### Install a lock for an interpreter its requires-python covers
+
+**Decision.** The Python fetch reads `requires-python` from `uv.lock` (else `pyproject.toml`). When
+the operator's `python3` is outside it, `uv python find --no-project --no-config <requirement>`
+(downloads off) picks an installed interpreter, and the install and the recorded version use it.
+The environment the tools and the re-runs share finds the interpreter again by the recorded minor
+version (the operator's `python3` when it matches, else `uv python find <minor>`); the sandbox's
+read list already follows the environment's interpreter link, so it needs no change. A requirement
+saga cannot read, or no installed interpreter that fits, keeps the operator's `python3`, as before.
+
+**Rejected alternatives.** Recording the interpreter's path in `dependencies.json`: it would put a
+machine path into the packet the reviewer reads. Downloading an interpreter: prepare stays off the
+network beyond the package index. Allowing builds from source for the missing wheels: builds run
+the packages' code during the fetch, which the design forbids. Dropping `--require-hashes`: the
+hashes are what make the install trustworthy.
+
+**Rationale.** The lock's hashes cover exactly the interpreters its project admits, so choosing one
+of them is the smallest change that makes the hashed install succeed.
+
+**Revisit when.** A machine has no installed interpreter inside a project's `requires-python`, or a
+project's lock is restricted by `[tool.uv] environments` rather than `requires-python`.
+
+---
+
+### Prepare's testing checks use the reviewer's Python environment, through the packet's interpreter
+
+**Decision.** `prepare` fetches the head's dependencies before the tools run, builds the
+saga-written Python environment with the existing `_offline_dependencies` (the one the reviewer's
+re-runs get), and hands only its path to the tools on `ScanContext.python_env`. two-runs and
+cosmic-ray recognise a pytest command (`pytest`, `python -m pytest`, behind `uv run` and its
+options, or as the one simple command of `bash -c`/`sh -c`), keep its pytest options, and run it as
+`<environment>/bin/python3 -m pytest`. A command they cannot read safely is still refused. The
+cosmic-ray wrapper reports `baseline-failed`, `baseline-timeout`, `init-failed` (each a gap on
+`testing.surviving-mutant`) or `mutant-abnormal` (survivors kept, degraded); `cap` is left for the
+shared 900 second cap. The reason field was already free text in the degraded-entry schema, so no
+schema change was needed; `ParseResult.unfinished_reason` carries the narrower reason to the runner.
+
+**Rejected alternatives.** Running the profile command unchanged with the environment's `bin`
+first on `PATH`: `uv run` uses the project's own `.venv` and ignores `VIRTUAL_ENV`, and inside
+cosmic-ray's `uv run --with` its own environment comes first, so neither would see the packages.
+Letting `uv run` sync the project: that needs the network and builds packages, which the offline
+packet exists to avoid. A second, prepare-only dependency environment: two environments would drift
+apart, and the reviewer's re-runs are the reference behaviour. Confining the checks the way the
+re-runs are confined: they already ran the change's tests unconfined with a relocated environment,
+and the hash-pinned packages add no capability the change's own test code lacks; confining them is
+a separate piece of work.
+
+**Rationale.** The checks existed but never ran on a typical uv project, so planted defects in
+tests went unseen. Reusing the re-run environment makes prepare, the reviewer and the re-runs see
+one set of packages. Mapping a recognised command onto the environment's interpreter is the only
+way that works for both plain pytest and launchers that choose their own environment.
+
+**Revisit when.** A project's tests need its own package installed (a `src` layout without a
+pytest `pythonpath` setting), a profile needs a launcher this parser refuses, the Python install
+leaves packages out because no prebuilt wheel in the lockfile matches the operator's interpreter,
+or the two-runs check's 120 second limit starts cutting off real suites.
+
+---
+
 ## 2026-11-10
 
 ### Resolve active project boards dynamically from project-mappings.json

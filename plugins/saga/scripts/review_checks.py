@@ -21,11 +21,13 @@ import tempfile
 import traceback
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import review_dependencies
+import review_diagnostics
 import review_diff
 import review_formula
 import review_tools
@@ -235,18 +237,40 @@ def _detached(repo: Path, revision: str) -> Iterator[Path]:
 
 
 def _run_argv(
-    argv: Sequence[str], cwd: Path, timeout: int, *, untrusted: bool = True
+    argv: Sequence[str],
+    cwd: Path,
+    timeout: int,
+    *,
+    untrusted: bool = True,
+    extra_env: Mapping[str, str] | None = None,
 ) -> tuple[str, int] | str:
+    """``(stdout, exit code)`` of :func:`_run_capture`, or its reason."""
+    result = _run_capture(argv, cwd, timeout, untrusted=untrusted, extra_env=extra_env)
+    if isinstance(result, str):
+        return result
+    return result[0], result[2]
+
+
+def _run_capture(
+    argv: Sequence[str],
+    cwd: Path,
+    timeout: int,
+    *,
+    untrusted: bool = True,
+    extra_env: Mapping[str, str] | None = None,
+) -> tuple[str, str, int] | str:
     """Run one argument vector. A missing program or a timeout is that reason, not a hit.
 
     A command that runs code from the change under review (its test suite) gets the review-tools
     runner's allow-listed environment, with a fresh ``HOME`` and temporary directory, never the
-    operator's. Only saga's own trusted commands, such as ``gh``, keep the full environment.
+    operator's, plus *extra_env* (the packet's Python environment on ``PATH``). Only saga's own
+    trusted commands, such as ``gh``, keep the full environment.
     """
     env: dict[str, str] | None = None
     temps: list[Path] = []
     if untrusted:
         env, temps = review_tools._relocated_env()
+        env.update(extra_env or {})
     try:
         proc = subprocess.run(  # nosec B603
             list(argv),
@@ -264,23 +288,39 @@ def _run_argv(
     finally:
         for path in temps:
             shutil.rmtree(path, ignore_errors=True)
-    return proc.stdout or "", proc.returncode
+    return proc.stdout or "", proc.stderr or "", proc.returncode
 
 
-def _classify(command: str) -> tuple[str, list[str]] | None:
+def _classify(
+    command: str, python_env: Path | None = None,
+) -> tuple[str, list[str], dict[str, str]] | None:
+    """The kind of test runner, the words to append its listing and selection options to, and
+    the variables the command sets for it.
+
+    pytest is recognised by :func:`review_tools.read_pytest_command`: behind ``uv run``, after
+    literal ``NAME=value`` assignments, or as the one command of a ``bash -c`` wrapper. With
+    *python_env*, pytest runs with that environment's interpreter, the one the reviewer's re-runs
+    get, whatever interpreter the command named (a project ``.venv`` does not exist in the review's
+    checkout), so the tests import the change's installed dependencies. Anything not recognised
+    is ``None``: options are never appended to an unknown program.
+    """
+    read = review_tools.read_pytest_command(command)
+    if read is not None:
+        assigned = dict(read.env)
+        if python_env is not None:
+            return "pytest", review_tools.python_env_argv(python_env, read.arguments), assigned
+        return "pytest", [*read.launcher, *read.arguments], assigned
     try:
         tokens = shlex.split(command)
     except ValueError:
         return None
     if not tokens:
         return None
-    if "pytest" in tokens:
-        return "pytest", tokens
     base = Path(tokens[0]).name
     if base == "cargo" and "test" in tokens:
-        return "cargo", tokens
+        return "cargo", tokens, {}
     if base == "swift" and "test" in tokens:
-        return "swift", tokens
+        return "swift", tokens, {}
     return None
 
 
@@ -329,17 +369,41 @@ def _parse_ids(kind: str, stdout: str) -> list[str] | None:
     return found
 
 
-def _list_ids(kind: str, tokens: Sequence[str], cwd: Path, timeout: int) -> list[str] | str:
-    result = _run_argv(_list_argv(kind, tokens), cwd, timeout)
+def _list_ids(
+    kind: str,
+    tokens: Sequence[str],
+    cwd: Path,
+    timeout: int,
+    extra_env: Mapping[str, str] | None = None,
+    diagnostics: Path | None = None,
+    step: str = "listing",
+) -> list[str] | str:
+    """The test ids the runner lists in *cwd*, or the reason there are none.
+
+    A listing that fails keeps the end of its output in *diagnostics*, the private prepare
+    diagnostics folder, never in the packet.
+    """
+    result = _run_capture(_list_argv(kind, tokens), cwd, timeout, extra_env=extra_env)
     if isinstance(result, str):
         return result
-    stdout, code = result
-    if code != 0:
-        return "no-test-list"
-    parsed = _parse_ids(kind, stdout)
+    stdout, stderr, code = result
+    parsed = _parse_ids(kind, stdout) if code == 0 else None
     if parsed is None:
-        return "no-test-list"
+        if diagnostics is not None:
+            review_diagnostics.write_failure_tail(
+                diagnostics, "two-runs", step, code, stdout, stderr,
+            )
+        return _pytest_error(kind, code, stdout, stderr)
     return parsed
+
+
+def _pytest_error(kind: str, code: int, stdout: str, stderr: str) -> str:
+    if kind == "pytest" and code == 4 and (
+        "ImportError while loading conftest" in stdout + stderr
+        or "ConftestImportFailure" in stdout + stderr
+    ):
+        return "conftest-import-failed"
+    return "no-test-list"
 
 
 def _test_path(kind: str, node_id: str) -> str:
@@ -406,73 +470,243 @@ def _copy_tests(
         shutil.copy2(source, dest, follow_symlinks=False)
 
 
+def _python_env(path: Path | None) -> Path | None:
+    """*path* when it is a saga-written environment with an interpreter, else ``None``."""
+    if path is None or not (path / "bin" / "python3").exists():
+        return None
+    return path
+
+
+#: The two batched pytest runs (the new tests at head, then the passing ones on the old
+#: version) may each take this long; a listing keeps ``COMMAND_TIMEOUT``.
+RUN_TIMEOUT = 240
+#: The whole two-runs check: two listings and two batched runs, plus the old version's checkout.
+TWO_RUNS_TIMEOUT = 2 * COMMAND_TIMEOUT + 2 * RUN_TIMEOUT + 60
+_PASSED = "PASSED "
+
+
+def _pytest_parts(command: str, shim: Path | None) -> tuple[list[str], list[str]]:
+    """The pytest launcher (the environment's interpreter when there is one) and its options,
+    without the paths the command would collect by default."""
+    read = review_tools.read_pytest_command(command)
+    assert read is not None, "only called for a command _classify read as pytest"
+    launcher = (review_tools.python_env_argv(shim, []) if shim is not None
+                else list(read.launcher))
+    return launcher, review_tools.pytest_options(read.arguments)
+
+
+def _run_pytest_batch(
+    head: Sequence[str],
+    nodes: Sequence[str],
+    cwd: Path,
+    timeout: int,
+    extra_env: Mapping[str, str],
+    diagnostics: Path | None,
+    step: str,
+    *,
+    by_file: bool = False,
+) -> list[str] | str:
+    """The *nodes* that pass in one pytest run in *cwd*, read from its ``-rA`` summary.
+
+    With *by_file*, the run names the nodes' files and goes on past a file that cannot be
+    collected: on the old version a copied test file may import what only the change adds, and
+    its tests then simply do not pass there, while the other files still run.
+    """
+    targets = sorted({_test_path("pytest", node) for node in nodes}) if by_file else list(nodes)
+    flags = ["--continue-on-collection-errors"] if by_file else []
+    result = _run_capture([*head, "-rA", "-p", "no:randomly", *flags, *targets], cwd, timeout,
+                          extra_env=extra_env)
+    if isinstance(result, str):
+        return result
+    stdout, stderr, code = result
+    if code not in (0, 1):
+        if diagnostics is not None:
+            review_diagnostics.write_failure_tail(diagnostics, "two-runs", step, code, stdout,
+                                                  stderr)
+        return _pytest_error("pytest", code, stdout, stderr)
+    passed = {line[len(_PASSED):].strip() for line in stdout.splitlines()
+              if line.startswith(_PASSED)}
+    return [node for node in nodes if node in passed]
+
+
 def two_runs(
     root: Path,
     base: str,
     commands: Sequence[tuple[str, str]],
     *,
     command_timeout: int = COMMAND_TIMEOUT,
+    run_timeout: int = RUN_TIMEOUT,
+    python_env: Path | None = None,
+    diagnostics: Path | None = None,
 ) -> dict[str, Any]:
-    """A new test that passes at head and on the base tree, with the head's tests copied in."""
+    """A new test that passes at head and on the base tree, with the head's tests copied in.
+
+    *python_env* is the packet's Python environment. pytest commands list and run the tests with
+    its interpreter, and with it first on ``PATH``, at head and on the base tree alike. A pytest
+    command lists only the test files the change added or edited, named explicitly, since only
+    they can hold a new test; the project's default collection is used only when the change
+    touched no test file, and a failure then is reason ``no-test-list-default-collection``.
+    """
     change = review_diff.read(root, base, "HEAD")
     hits: list[dict[str, Any]] = []
     gaps: list[dict[str, str]] = []
+    shim = _python_env(python_env)
     for pair_language, command in commands:
-        classified = _classify(command)
+        classified = _classify(command, shim)
         if classified is None:
             gaps.append(_gap("no-test-list", ROW_BEFORE))
             continue
-        kind, tokens = classified
-        head_ids = _list_ids(kind, tokens, root, command_timeout)
-        if isinstance(head_ids, str):
-            reason = head_ids if head_ids in {"missing", "timeout"} else "no-test-list"
-            gaps.append(_gap(reason, ROW_BEFORE))
-            continue
-        try:
-            detached = _detached(root, base)
-        except RuntimeError:
-            gaps.append(_gap("no-test-list", ROW_BEFORE))
-            continue
-        with detached as base_root:
-            base_ids = _list_ids(kind, tokens, base_root, command_timeout)
-            if isinstance(base_ids, str):
-                reason = base_ids if base_ids in {"missing", "timeout"} else "no-test-list"
-                gaps.append(_gap(reason, ROW_BEFORE))
+        kind, tokens, assigned = classified
+        extra: dict[str, str] = dict(assigned)
+        if kind == "pytest" and shim is not None:
+            path = os.environ.get("PATH", "")
+            extra.update(review_dependencies.python_shim_env(shim, path))
+        if kind == "pytest":
+            found = _two_pytest_runs(
+                root, base, change, command, shim, extra, command_timeout, run_timeout,
+                diagnostics,
+            )
+            if isinstance(found, str):
+                gaps.append(_gap(found, ROW_BEFORE))
                 continue
-            fresh = [node for node in head_ids if node not in set(base_ids)]
-            passing: list[str] = []
-            failed = False
-            for node in fresh:
-                result = _run_argv(_select_argv(kind, tokens, node), root, command_timeout)
-                if isinstance(result, str):
-                    gaps.append(_reason_gap(result, ROW_BEFORE, "no-test-list"))
-                    failed = True
-                    break
-                if result[1] == 0:
-                    passing.append(node)
-            if failed or not passing:
+            confirmed = found
+        else:
+            listed = _two_listed_runs(root, base, change, kind, tokens, extra, command_timeout,
+                                      diagnostics)
+            if isinstance(listed, str):
+                gaps.append(_gap(listed, ROW_BEFORE))
                 continue
-            _copy_tests(root, base_root, change, kind, passing)
-            confirmed: list[str] = []
-            for node in passing:
-                result = _run_argv(_select_argv(kind, tokens, node), base_root, command_timeout)
-                if isinstance(result, str):
-                    gaps.append(_reason_gap(result, ROW_BEFORE, "no-test-list"))
-                    confirmed = []
-                    break
-                if result[1] == 0:
-                    confirmed.append(node)
-            for node in confirmed:
-                path = _test_path(kind, node)
-                hits.append(_hit(
-                    rule_id=node,
-                    path=path,
-                    statement="The new test passes on the code before the change.",
-                    anchor=node,
-                    row=ROW_BEFORE,
-                    language=_language(pair_language, path),
-                ))
+            confirmed = listed
+        for node in confirmed:
+            path = _test_path(kind, node)
+            hits.append(_hit(
+                rule_id=node,
+                path=path,
+                statement="The new test passes on the code before the change.",
+                anchor=node,
+                row=ROW_BEFORE,
+                language=_language(pair_language, path),
+            ))
     return {"hits": hits, "where_to_look": [], "gaps": gaps}
+
+
+def _failed(reason: str, fallback: str) -> str:
+    return reason if reason in {"missing", "timeout", "conftest-import-failed"} else fallback
+
+
+def _two_pytest_runs(
+    root: Path,
+    base: str,
+    change: review_diff.Change,
+    command: str,
+    shim: Path | None,
+    extra: Mapping[str, str],
+    command_timeout: int,
+    run_timeout: int,
+    diagnostics: Path | None,
+) -> list[str] | str:
+    """The new tests that pass at head and on the old version, or a gap reason."""
+    launcher, options = _pytest_parts(command, shim)
+    head_cmd = [*launcher, *options]
+    files = review_tools.changed_test_files(change, root)
+    unlisted = "no-test-list" if files else "no-test-list-default-collection"
+    if files:
+        head_ids = _list_ids("pytest", [*head_cmd, *files], root, command_timeout, extra,
+                             diagnostics, "head-listing")
+    else:
+        read = review_tools.read_pytest_command(command)
+        assert read is not None
+        default = [*launcher, *review_tools.expand_globs(read.arguments, root)]
+        head_ids = _list_ids("pytest", default, root, command_timeout, extra, diagnostics,
+                             "head-listing")
+    if isinstance(head_ids, str):
+        return _failed(head_ids, unlisted)
+    with ExitStack() as stack:
+        # Entering the checkout is what runs ``git worktree add``, so a failure to make the old
+        # version's checkout is caught here, as a gap, and never escapes the check.
+        try:
+            base_root = stack.enter_context(_detached(root, base))
+        except (RuntimeError, OSError):
+            return "no-test-list"
+        if files:
+            # A file the change added does not exist on the old version: its tests are all new.
+            present = [name for name in files if (base_root / name).is_file()]
+            base_ids: list[str] | str = (
+                _list_ids("pytest", [*head_cmd, *present], base_root, command_timeout, extra,
+                          diagnostics, "base-listing")
+                if present else []
+            )
+        else:
+            read = review_tools.read_pytest_command(command)
+            assert read is not None
+            default = [*launcher, *review_tools.expand_globs(read.arguments, base_root)]
+            base_ids = _list_ids("pytest", default, base_root, command_timeout, extra,
+                                 diagnostics, "base-listing")
+        if isinstance(base_ids, str):
+            return _failed(base_ids, unlisted)
+        known = set(base_ids)
+        fresh = [node for node in head_ids if node not in known]
+        if not fresh:
+            return []
+        passing = _run_pytest_batch(head_cmd, fresh, root, run_timeout, extra, diagnostics,
+                                    "head-run")
+        if isinstance(passing, str):
+            return _failed(passing, "no-test-list")
+        if not passing:
+            return []
+        _copy_tests(root, base_root, change, "pytest", passing)
+        confirmed = _run_pytest_batch(head_cmd, passing, base_root, run_timeout, extra,
+                                      diagnostics, "base-run", by_file=True)
+        if isinstance(confirmed, str):
+            return _failed(confirmed, "no-test-list")
+        return confirmed
+
+
+def _two_listed_runs(
+    root: Path,
+    base: str,
+    change: review_diff.Change,
+    kind: str,
+    tokens: Sequence[str],
+    extra: Mapping[str, str],
+    command_timeout: int,
+    diagnostics: Path | None,
+) -> list[str] | str:
+    """cargo and swift: list both versions, then run each new test on its own, twice."""
+    head_ids = _list_ids(kind, tokens, root, command_timeout, extra, diagnostics,
+                         "head-listing")
+    if isinstance(head_ids, str):
+        return _failed(head_ids, "no-test-list")
+    with ExitStack() as stack:
+        try:
+            base_root = stack.enter_context(_detached(root, base))
+        except (RuntimeError, OSError):
+            return "no-test-list"
+        base_ids = _list_ids(kind, tokens, base_root, command_timeout, extra, diagnostics,
+                             "base-listing")
+        if isinstance(base_ids, str):
+            return _failed(base_ids, "no-test-list")
+        known = set(base_ids)
+        passing: list[str] = []
+        for node in [node for node in head_ids if node not in known]:
+            result = _run_argv(_select_argv(kind, tokens, node), root, command_timeout,
+                               extra_env=extra)
+            if isinstance(result, str):
+                return _failed(result, "no-test-list")
+            if result[1] == 0:
+                passing.append(node)
+        if not passing:
+            return []
+        _copy_tests(root, base_root, change, kind, passing)
+        confirmed: list[str] = []
+        for node in passing:
+            result = _run_argv(_select_argv(kind, tokens, node), base_root, command_timeout,
+                               extra_env=extra)
+            if isinstance(result, str):
+                return _failed(result, "no-test-list")
+            if result[1] == 0:
+                confirmed.append(node)
+        return confirmed
 
 
 def _head_sha(root: Path) -> str:
@@ -699,18 +933,19 @@ def _collect_for_ci(
         if classified is None:
             gaps.append(_gap("no-test-list", ROW_BEFORE))
             continue
-        kind, tokens = classified
-        head_ids = _list_ids(kind, tokens, root, timeout)
+        kind, tokens, assigned = classified
+        head_ids = _list_ids(kind, tokens, root, timeout, assigned)
         if isinstance(head_ids, str):
             gaps.append(_reason_gap(head_ids, ROW_BEFORE, "no-test-list"))
             continue
-        try:
-            detached = _detached(root, base)
-        except RuntimeError:
-            gaps.append(_gap("no-test-list", ROW_BEFORE))
-            continue
-        with detached as base_root:
-            base_ids = _list_ids(kind, tokens, base_root, timeout)
+        with ExitStack() as stack:
+            # Entering the checkout runs ``git worktree add``; its failure is a gap here.
+            try:
+                base_root = stack.enter_context(_detached(root, base))
+            except (RuntimeError, OSError):
+                gaps.append(_gap("no-test-list", ROW_BEFORE))
+                continue
+            base_ids = _list_ids(kind, tokens, base_root, timeout, assigned)
         if isinstance(base_ids, str):
             gaps.append(_reason_gap(base_ids, ROW_BEFORE, "no-test-list"))
             continue
@@ -1329,9 +1564,12 @@ def _commands_arg(context: ScanContext) -> str:
 
 
 def _invoke_two_runs(context: ScanContext) -> list[str]:
-    return _invoke(
-        context, "two-runs", ["--base", context.base, "--commands", _commands_arg(context)]
-    )
+    extra = ["--base", context.base, "--commands", _commands_arg(context)]
+    if context.python_env is not None:
+        extra += ["--python-env", str(context.python_env)]
+    if context.diagnostics_directory is not None:
+        extra += ["--diagnostics-directory", str(context.diagnostics_directory)]
+    return _invoke(context, "two-runs", extra)
 
 
 def _invoke_ci(context: ScanContext) -> list[str]:
@@ -1368,6 +1606,7 @@ def _adapter(
     rows: tuple[str, ...],
     narrow: bool = False,
     ambient: bool = False,
+    timeout: int = 120,
 ) -> Adapter:
     return Adapter(
         id=check,
@@ -1378,7 +1617,7 @@ def _adapter(
         rows=rows,
         comparison=comparison,
         lens=lens,
-        timeout_seconds=120,
+        timeout_seconds=timeout,
         default_version=VERSION,
         version_argv=(sys.executable, _script(), "--version"),
         narrow_env=narrow,
@@ -1389,7 +1628,7 @@ def _adapter(
 ADAPTERS: tuple[Adapter, ...] = (
     _adapter(
         "two-runs", _invoke_two_runs, comparison="lines", lens="testing",
-        rows=(ROW_BEFORE,), narrow=True,
+        rows=(ROW_BEFORE,), narrow=True, timeout=TWO_RUNS_TIMEOUT,
     ),
     _adapter(
         "ci-skips", _invoke_ci, comparison="lines", lens="testing",
@@ -1436,6 +1675,9 @@ def _parser() -> argparse.ArgumentParser:
         command = sub.add_parser(name)
         command.add_argument("--base", required=True)
         command.add_argument("--commands", required=True)
+        if name == "two-runs":
+            command.add_argument("--python-env", default=None)
+            command.add_argument("--diagnostics-directory", default=None)
     machine = sub.add_parser("machine-values")
     machine.add_argument("--base", required=True)
     machine.add_argument("--user", required=True)
@@ -1459,7 +1701,12 @@ def main(argv: list[str] | None = None) -> int:
     command = str(parsed.command or "")
     try:
         if command == "two-runs":
-            payload = two_runs(root, parsed.base, _pairs(parsed.commands))
+            payload = two_runs(
+                root, parsed.base, _pairs(parsed.commands),
+                python_env=Path(parsed.python_env) if parsed.python_env else None,
+                diagnostics=(Path(parsed.diagnostics_directory)
+                             if parsed.diagnostics_directory else None),
+            )
         elif command == "ci-skips":
             payload = ci_skips(root, parsed.base, _pairs(parsed.commands))
         elif command == "machine-values":

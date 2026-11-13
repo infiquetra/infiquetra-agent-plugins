@@ -532,7 +532,7 @@ def _muter_changed_repo(tmp_path: Path) -> tuple[Path, str, str]:
     return repo, base, head
 
 
-def test_muter_survivors_map_into_repo_and_block(
+def test_muter_survivors_map_into_repo_as_leads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(A, "_platform", lambda: "darwin")
@@ -547,7 +547,7 @@ def test_muter_survivors_map_into_repo_and_block(
         tmp_path / "home", [_adapter("muter")], runner,
     ) == 0
     _valid(output)
-    assert _severity(output, "surviving-mutant") == "blocks"
+    assert _severity(output, "surviving-mutant") == "fix-later"
     finding = _finding(output, "surviving-mutant")
     assert finding["location"]["file"] in {
         "Sources/example.swift", "Sources/other.swift",
