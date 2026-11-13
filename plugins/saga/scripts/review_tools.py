@@ -39,6 +39,11 @@ import review_node_projects
 import review_node_reports
 import review_records
 
+# Adapters import ``review_tools`` to raise ToolGap. Keep that name bound to
+# this module during direct execution so their exceptions match our handler.
+if __name__ == "__main__":
+    sys.modules["review_tools"] = sys.modules[__name__]
+
 SCHEMA = "review_records.v1"
 TOOL_LIST = Path(__file__).resolve().parent.parent / "references" / "review-tools.yaml"
 
