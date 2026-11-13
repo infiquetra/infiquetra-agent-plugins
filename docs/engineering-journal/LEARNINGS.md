@@ -9,6 +9,8 @@ optional passing-test lines, warning placement and approximate-duration hints. T
 results now produce the same stored evidence digest and findings; a different failing set
 changes the digest. Complete subfolder prepares compare every packet byte. Missing, invalid
 or incomplete reports retain console findings and evidence with an explicit gap.
+Recognized relocated Node commands use the same result projection and visible fallback;
+unknown command execution remains unchanged.
 
 **Mechanism.** Reporter verbosity and output interleaving are presentation choices rather than
 test outcomes. Canonical evidence selects runner/version, seed, counts and sorted failure

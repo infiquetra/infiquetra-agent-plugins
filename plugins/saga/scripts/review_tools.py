@@ -35,6 +35,8 @@ import coverage_lines
 import review_diff
 import review_diagnostics
 import review_formula
+import review_node_projects
+import review_node_reports
 import review_records
 
 SCHEMA = "review_records.v1"
@@ -3433,6 +3435,56 @@ def _relocated_env() -> tuple[dict[str, str], list[Path]]:
     return env, [home_dir, tmp_dir]
 
 
+def _relocated_node_kind(command: str, argv: list[str], root: Path) -> tuple[str, list[str]] | None:
+    if not argv:
+        return None
+    program = Path(argv[0]).name
+    if program in {"vitest", "jest"}:
+        return program, argv[:1]
+    if program == "npx" and len(argv) > 1 and argv[1] in {"vitest", "jest"}:
+        return argv[1], argv[:2]
+    if program in {"npm", "pnpm", "yarn"}:
+        known = review_node_projects.test_command(command, root)
+        if known is not None:
+            kind, _arguments, folder = known
+            binary = root / folder / "node_modules/.bin" / kind
+            return kind, [str(binary) if binary.is_file() else kind]
+    return None
+
+
+def _relocated_node_result(
+    known: tuple[str, list[str]], argv: list[str], root: Path, work: Path, env: Mapping[str, str],
+    process: Process, language: str, degraded: list[dict[str, str]],
+) -> tuple[ProcessResult, str, str]:
+    kind, probe = known
+    with _scratch() as scratch:
+        report = scratch / "relocated-tests.json"
+        separator = ["--"] if Path(argv[0]).name in {"npm", "pnpm", "yarn"} and "--" not in argv else []
+        serial = "--no-file-parallelism" if kind == "vitest" else "--runInBand"
+        result = process([*argv, *separator, serial,
+            *review_node_reports.report_arguments(kind, report, console=True)],
+            cwd=work, env=env, timeout=120, shell=False)
+        version = "not-recorded"
+        if report.is_file() and not report.is_symlink():
+            try:
+                answer = process([*probe, "--version"], cwd=work, env=env, timeout=10, shell=False)
+                if answer.code == 0:
+                    version = _found_version(answer.stdout or answer.stderr or "") or version
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        record, reason = review_node_reports.read(report, kind, version, None, root)
+        if record is not None and result.code != 0 and record["tests"]["total"] and not record["failures"]:
+            record, reason = None, "incomplete-json-report"
+        if record is not None:
+            record["exit_code"] = result.code
+            if version == "not-recorded":
+                degraded.append(_gap("architecture-maintainability", language, _RELOCATED_ROW,
+                                     "relocated-test", "version-unreadable"))
+            return result, _scrub(review_node_reports.dumps(record)), version
+        degraded.append(_gap("architecture-maintainability", language, _RELOCATED_ROW,
+                             "relocated-test", str(reason)))
+        console = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        return result, stable_transcript(_scrub(_ANSI_ESCAPE.sub("", console), root)), version
 
 
 def _one_relocated(
@@ -3446,9 +3498,16 @@ def _one_relocated(
 ) -> Hit | None:
     argv = _rewrite_command(head_root, command)
     env, temps = _relocated_env()
+    known = _relocated_node_kind(command, argv, head_root)
+    evidence: str | None = None
+    version = "not-recorded"
     try:
         try:
-            result = process(argv, cwd=work, env=env, timeout=120, shell=False)
+            if known is not None:
+                result, evidence, version = _relocated_node_result(
+                    known, argv, head_root, work, env, process, language, degraded)
+            else:
+                result = process(argv, cwd=work, env=env, timeout=120, shell=False)
         except FileNotFoundError:
             degraded.append(_gap(
                 "architecture-maintainability", language, _RELOCATED_ROW,
@@ -3475,10 +3534,11 @@ def _one_relocated(
         row=_RELOCATED_ROW,
         language=language,
         raw_output=store_raw(
-            stable_transcript(_scrub(_ANSI_ESCAPE.sub("", result.stdout or ""))).encode(), home,
+            (evidence if evidence is not None else
+             stable_transcript(_scrub(_ANSI_ESCAPE.sub("", result.stdout or "")))).encode(), home,
         ),
         tool="relocated-test",
-        version="not-recorded",
+        version=version,
     )
 
 

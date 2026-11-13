@@ -20,8 +20,8 @@
 
 - Vitest and Jest random-order findings and their stored evidence now come from Saga-owned
   JSON reports. Canonical evidence retains runner versions, seeds, counts and sorted failure
-  messages while omitting console output and timing fields. Missing or invalid reports keep
-  console evidence with a gap.
+  messages while omitting console output and timing fields. Recognized relocated Node runs
+  use the same evidence format; missing or invalid reports keep console evidence with a gap.
 
 - Saga's Vitest and Jest random-order and two-runs checks disable file parallelism.
   Vitest versions that reject the serial option record `unsupported-file-parallelism`
