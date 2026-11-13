@@ -2,6 +2,19 @@
 
 ## 2026-11-13
 
+### Console failure messages are not an identity boundary
+
+**Evidence.** Real pytest fixtures with ` - ` and `] - ` in parameter identifiers and `] - `
+in failure messages reproduced corrupted deselection flags. The mutation wrapper now requests
+a temporary JUnit XML report for baseline runs and reconstructs identities from its separate
+file, class and test-name attributes. Class methods and collection failures are covered too.
+The report directory is cleaned up and its flags never reach the saved mutation command.
+
+**Mechanism.** Looking for the last apparent separator could consume part of a failure message.
+
+**Generalizable rule.** Read identities from structured runner output, independently of diagnostic
+text. If an identity cannot be reconstructed safely, keep the failed-baseline result.
+
 ### Native test lookup needs lexical context and qualified identity
 
 **Evidence.** Small Rust and Swift fixtures reproduced false matches in comments and literals,

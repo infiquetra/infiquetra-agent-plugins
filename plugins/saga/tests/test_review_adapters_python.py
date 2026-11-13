@@ -2220,24 +2220,20 @@ def test_cosmic_ray_baseline_leaves_out_tests_that_fail_before_any_mutation(
 ) -> None:
     """A test that fails on the unmutated tree (often because the review's checkout lacks a file
     it reads) cannot judge a mutant. The wrapper reruns the baseline without the tests pytest's
-    summary names, and the mutants then run that same narrowed command."""
+    JUnit report names, and the mutants then run that same narrowed command."""
     stub_dir = tmp_path / "stub"
     stub_dir.mkdir()
     _write_cosmic_stub(stub_dir / "cosmic-ray")
     record = tmp_path / "record.txt"
     env = _wrapper_env(stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE), STUB_RECORD=str(record))
-    script = tmp_path / "suite.py"
-    script.write_text(
-        "import sys\n"
-        "if '--deselect=tests/test_a.py::test_reads_a_file' in sys.argv and "
-        "'--ignore=tests/test_b.py' in sys.argv:\n"
-        "    raise SystemExit(0)\n"
-        "print('FAILED tests/test_a.py::test_reads_a_file - FileNotFoundError: gone')\n"
-        "print('ERROR tests/test_b.py - ImportError: nope')\n"
-        "raise SystemExit(1)\n",
-        encoding="utf-8",
-    )
-    config = _wrapper_config(tmp_path / "cosmic-ray.toml", f"{sys.executable} {script}")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_a.py").write_text(
+        "class TestReader:\n    def test_reads_a_file(self):\n        raise FileNotFoundError('gone')\n"
+        "def test_good():\n    assert True\n", encoding="utf-8")
+    (tmp_path / "tests/test_b.py").write_text("import missing_example_module\n", encoding="utf-8")
+    config = _wrapper_config(tmp_path / "cosmic-ray.toml",
+                             f"{sys.executable} -m pytest -q -p no:randomly "
+                             "--continue-on-collection-errors tests")
     argv = [sys.executable, "-c", P._COSMIC_WRAPPER, str(config)]
     proc = subprocess.run(argv, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=180)
     out = json.loads(proc.stdout)
@@ -2247,8 +2243,8 @@ def test_cosmic_ray_baseline_leaves_out_tests_that_fail_before_any_mutation(
 
     with open(config, "rb") as handle:
         narrowed = shlex.split(tomllib.load(handle)["cosmic-ray"]["test-command"])
-    assert narrowed[-2:] == [
-        "--deselect=tests/test_a.py::test_reads_a_file", "--ignore=tests/test_b.py",
+    assert [word for word in narrowed if word.startswith(("--deselect=", "--ignore="))] == [
+        "--deselect=tests/test_a.py::TestReader::test_reads_a_file", "--ignore=tests/test_b.py",
     ]
     assert "left out the tests that failed" in proc.stderr
 
@@ -2614,3 +2610,30 @@ def test_live_cosmic_packet_environment_reaches_mutants_and_child_interpreters(
     after = {path.relative_to(site).as_posix(): path.read_bytes()
              for path in site.rglob('*') if path.is_file()}
     assert before == after
+
+
+@pytest.mark.parametrize('parameter_id', ['a - b', 'a] - b', 'a'])
+def test_cosmic_baseline_never_reads_node_ids_from_failure_messages(
+    tmp_path: Path, parameter_id: str,
+) -> None:
+    stub_dir = tmp_path / 'stub'
+    stub_dir.mkdir()
+    _write_cosmic_stub(stub_dir / 'cosmic-ray')
+    env = _wrapper_env(stub_dir, (), STUB_DUMP=str(_COSMIC_FIXTURE))
+    (tmp_path / 'test_brackets.py').write_text(
+        'import pytest\n'
+        f'@pytest.mark.parametrize("value", [0, 1], ids=[{parameter_id!r}, "good"])\n'
+        'def test_param(value):\n'
+        '    if not value:\n'
+        '        raise AssertionError("bad [1] - [2] - test_brackets.py::test_other[wrong]")\n',
+        encoding='utf-8')
+    config = _wrapper_config(tmp_path / 'cosmic-ray.toml',
+                             f'{sys.executable} -m pytest -q -p no:randomly test_brackets.py')
+    out = _run_wrapper(config, tmp_path, env)
+    assert out['unfinished'] is False
+    import tomllib
+
+    command = shlex.split(tomllib.loads(config.read_text())['cosmic-ray']['test-command'])
+    assert [word for word in command if word.startswith('--deselect=')] == [
+        f'--deselect=test_brackets.py::test_param[{parameter_id}]']
+    assert not list(tmp_path.glob('saga-baseline-*'))

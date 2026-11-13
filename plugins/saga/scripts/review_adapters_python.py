@@ -136,7 +136,8 @@ _COSMIC_STOP_NONE = 900
 # argv[2] overrides the baseline budget; tests use that, production passes
 # _COSMIC_TIMEOUT_SECONDS.
 _COSMIC_WRAPPER = r"""
-import json, os, shlex, signal, subprocess, sys, tomllib
+import atexit, json, os, shlex, signal, subprocess, sys, tempfile, tomllib
+import xml.etree.ElementTree as ET
 config = sys.argv[1]
 try:
     budget = float(sys.argv[2])
@@ -182,13 +183,25 @@ except (OSError, ValueError, KeyError):
     _done(True, [], "init-failed")
 if not isinstance(test_command, str):
     _done(True, [], "init-failed")
+# JUnit attributes carry identities separately from failure messages. The report is private
+# scratch, never part of the packet or the mutation command saved in the configuration.
+report_directory = tempfile.TemporaryDirectory(prefix="saga-baseline-")
+atexit.register(report_directory.cleanup)
+report_path = os.path.join(report_directory.name, "baseline.xml")
 def _baseline(command):
     left = _left()
     if left is not None and left <= 0:
         return "cap", "", ""
+    argv = shlex.split(command)
+    if is_pytest:
+        argv.extend(["--junitxml=" + report_path, "-o", "junit_family=xunit1", "--junit-prefix="])
+    try:
+        os.unlink(report_path)
+    except FileNotFoundError:
+        pass
     try:
         proc = subprocess.Popen(
-            shlex.split(command),
+            argv,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, start_new_session=True,
         )
@@ -206,24 +219,36 @@ def _baseline(command):
         reason = "cap" if left is not None and left <= budget else "timeout"
         return reason, out, err
     return ("passed" if proc.returncode == 0 else "failed"), out, err
-def _without_failures(command, out):
-    # pytest's summary names each failing test (FAILED id - why) and each file or test that
-    # errored (ERROR id - why). A test that fails on the unmutated tree, often because the
-    # review's checkout lacks something the test reads, cannot judge a mutant: leave it out.
+def _without_failures(command):
+    # Never parse the console summary: both parameter ids and messages may contain " - ".
+    if not is_pytest:
+        return None
+    try:
+        cases = ET.parse(report_path).getroot().iter("testcase")
+    except (OSError, ET.ParseError):
+        return None
     flags = []
-    for line in (out or "").splitlines():
-        for word in ("FAILED ", "ERROR "):
-            if line.startswith(word):
-                summary = line[len(word):]
-                # Parameter ids may contain " - "; the separator follows the closing bracket.
-                first = summary.split(" - ", 1)[0]
-                end = summary.rfind("] - ") if "[" in first else -1
-                node = (summary[:end + 1] if end >= 0 else first).strip()
-                if node:
-                    flags.append("--deselect=" + node if "::" in node else "--ignore=" + node)
+    for case in cases:
+        if case.find("failure") is None and case.find("error") is None:
+            continue
+        path = case.get("file")
+        name = case.get("name")
+        classname = case.get("classname", "")
+        if not path or not name:
+            return None
+        module = path.replace("/", ".").removesuffix(".py")
+        if not classname:  # A collection error names the file, not a runnable test.
+            flags.append("--ignore=" + path)
+        elif classname == module or classname.startswith(module + "."):
+            classes = classname[len(module):].lstrip(".")
+            node = "::".join([path, *(classes.split(".") if classes else []), name])
+            flags.append("--deselect=" + node)
+        else:
+            # An imported or custom test whose XML identity cannot be reconstructed safely.
+            return None
     if not flags or len(flags) > 200:
         return None
-    return shlex.join([*shlex.split(command), *flags])
+    return shlex.join([*shlex.split(command), *sorted(set(flags))])
 def _rewrite(command):
     with open(config, encoding="utf-8") as handle:
         lines = handle.read().splitlines()
@@ -233,7 +258,8 @@ def _rewrite(command):
         handle.write("\n".join(lines) + "\n")
 # A profile may request fail-fast, but the baseline must name every pre-existing failure.
 words = shlex.split(test_command)
-if any(os.path.basename(word) in {"pytest", "py.test"} for word in words):
+is_pytest = any(os.path.basename(word) in {"pytest", "py.test"} for word in words)
+if is_pytest:
     test_command = shlex.join([word for word in words if word not in {"-x", "--exitfirst"}])
 started = time.time()
 state, out, err = _baseline(test_command)
@@ -242,7 +268,7 @@ if state in {"timeout", "cap"}:
     _tail(out, err)
     _done(True, [], "cap" if state == "cap" else "baseline-timeout")
 if state == "failed":
-    narrowed = _without_failures(test_command, out)
+    narrowed = _without_failures(test_command)
     if narrowed is None:
         _tail(out, err)
         _done(True, [], "baseline-failed")
