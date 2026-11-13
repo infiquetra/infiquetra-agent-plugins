@@ -4611,3 +4611,11 @@ def test_native_rust_lookup_uses_file_modules_and_keeps_ambiguity(tmp_path: Path
                                            f'src/{module}.rs', 'test_dup', (2, 2))
     assert C._native_test_location('test_dup', 'rust', change, C.review_tools.subprocess_runner,
                                    repo, head, {}) is None
+
+
+@pytest.mark.parametrize('document', ['review-command.md', 'review-tools.md'])
+def test_testing_lead_documentation_keeps_capped_results_advisory(document: str) -> None:
+    reference = (SCRIPTS.parent / 'references' / document).read_text(encoding='utf-8')
+    assert 'Capped leads stay fix-later.' in reference
+    assert '`unlocated-lead` or `lead-cap` restores blocking severity' not in reference
+    assert 'Either reason keeps the affected' not in reference

@@ -357,8 +357,10 @@ the unanswered machine-specific items, beside the sweep's items; `prepare` merge
 replaces the scripted items with the sweep's. `prepare` also adds up to 8 two-runs leads and 8
 surviving-mutant leads as items of their own (see `review-command.md`). Rust and Swift leads
 locate unique test definitions in changed head source files. Unlocated leads record
-`unlocated-lead`; leads beyond the cap record `lead-cap`. Either reason keeps the affected
-testing row blocking at prepare and finish. A confirmed machine-specific finding stays fix later.
+`unlocated-lead` once per testing row and language, with a `count` and the affected `finding_ids`.
+Only those unlocated findings regain blocking severity at prepare and finish, subject to normal
+builder excusal and per-language enforcement. Leads beyond the cap record `lead-cap`.
+Capped leads stay fix-later. A confirmed machine-specific finding stays fix later.
 When the relocated test command fails, `architecture-maintainability.relocated-run-fails` blocks in
 the same outcome file.
 

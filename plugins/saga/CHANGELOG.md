@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Review references now consistently describe `lead-cap` as advisory and limit the blocking
+  fallback to the exact unlocated findings.
+
 - Mutation baseline isolation reads failing pytest identities from a temporary JUnit XML report,
   preserving parameter identifiers even when failure messages also contain `] - `.
 
