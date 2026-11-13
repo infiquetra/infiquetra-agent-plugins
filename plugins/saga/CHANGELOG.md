@@ -15,6 +15,16 @@
   delimiters), locate multiline signatures, and use
   Rust module paths or Swift type names to disambiguate test names. Ambiguous tests remain
   unlocated.
+### Fixed
+
+- TypeScript projects below a repository with no root `package.json` now receive locked
+  dependencies for up to four changed projects. Prepare and re-runs link each project's own
+  packages, and TypeScript tools use that project's base configuration and relative paths.
+- Two-runs recognises Vitest and Jest, including literal package test scripts, discovers
+  subfolder test commands, and reports new passing cases that also pass on the old code.
+- Stryker keeps test files in its sandbox and excludes them only from mutation targets.
+  Mutation execution uses a deterministic ten-mutant budget across projects; report timing
+  and arrival order no longer change packet bytes.
 
 ### Added
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 from collections.abc import Iterable
@@ -31,7 +32,6 @@ def projects(root: Path, paths: Iterable[str]) -> list[str]:
         return ["."]
     folders = []
     # Do not follow links, including packet node_modules links.
-    import os
     for directory, dirs, files in os.walk(root):
         dirs[:] = sorted(d for d in dirs if d not in {"node_modules", ".git"}
                          and not (Path(directory) / d).is_symlink())
@@ -40,6 +40,13 @@ def projects(root: Path, paths: Iterable[str]) -> list[str]:
             if safe_folder(folder) and not (Path(directory) / "package.json").is_symlink():
                 folders.append(folder)
     return selected(folders, paths)[:MAX_PROJECTS]
+
+
+def is_test_file(path: str) -> bool:
+    item = Path(path)
+    return item.suffix in {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"} and (
+        ".test." in item.name or ".spec." in item.name
+        or bool({"test", "tests", "__tests__"} & set(item.parts[:-1])))
 
 
 def _words(command: str) -> list[str] | None:
@@ -108,7 +115,8 @@ def test_command(command: str, root: Path) -> tuple[str, list[str], str] | None:
         args = args[1:]
     # Recognised runner options only. Paths/default collection are replaced by changed test
     # files. Refusing everything else is safer than silently changing command semantics.
-    allowed = {"--globals", "--silent", "--runInBand", "--no-color", "--no-colors"}
+    allowed = {"--globals", "--silent", "--runInBand", "--no-color", "--no-colors",
+               "--coverage", "--passWithNoTests"}
     if any(arg not in allowed for arg in args):
         return None
     if kind == "vitest" and "--runInBand" in args:

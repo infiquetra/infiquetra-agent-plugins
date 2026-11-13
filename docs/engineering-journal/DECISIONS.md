@@ -2,6 +2,28 @@
 
 ## 2026-11-12
 
+### Node two-runs compares structured case reports and bypasses package lifecycle hooks
+
+**Decision.** Recognise literal Vitest and Jest commands, including supported package test
+scripts, and invoke the installed runner directly in the owning project. Run changed test files
+at head and existing versions at base to enumerate case identities and statuses. Copy only the
+changed test files and re-run newly passing cases on base. Jest lists files rather than cases,
+so its structured test run serves as both enumeration and observation. Discard report timing,
+console and assertion-order fields; duplicate case names are ambiguous and produce no lead.
+
+**Rejected alternatives.** Reading case names from console formatting; treating a file listing
+as a case listing; running package lifecycle hooks to obtain a test command; copying production
+files whose names merely contain `test`.
+
+**Rationale.** A reviewer lead needs a stable test identity and an observed pass on each version,
+using the same installed dependencies. A test that already existed or was skipped is no such
+lead.
+
+**Revisit when.** A supported runner exposes stable case-only collection, or measured projects
+need additional literal command options.
+
+---
+
 ### Saga installs up to four changed Node projects when there is no root manifest
 
 **Decision.** A changed file belongs to its nearest ancestor package manifest. Without a root

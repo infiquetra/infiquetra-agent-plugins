@@ -30,6 +30,7 @@ import review_dependencies
 import review_diagnostics
 import review_diff
 import review_formula
+import review_node_projects
 import review_tools
 from review_tools import (
     Adapter,
@@ -292,7 +293,7 @@ def _run_capture(
 
 
 def _classify(
-    command: str, python_env: Path | None = None,
+    command: str, python_env: Path | None = None, root: Path | None = None,
 ) -> tuple[str, list[str], dict[str, str]] | None:
     """The kind of test runner, the words to append its listing and selection options to, and
     the variables the command sets for it.
@@ -304,6 +305,10 @@ def _classify(
     checkout), so the tests import the change's installed dependencies. Anything not recognised
     is ``None``: options are never appended to an unknown program.
     """
+    node = review_node_projects.test_command(command, root or Path.cwd())
+    if node is not None:
+        kind, arguments, _folder = node
+        return kind, [kind, *arguments], {}
     read = review_tools.read_pytest_command(command)
     if read is not None:
         assigned = dict(read.env)
@@ -450,7 +455,10 @@ def _copy_tests(
     for item in change.files:
         if item.status not in {"added", "modified", "renamed"}:
             continue
-        if any(piece in item.path for piece in ("test", "tests", "spec")):
+        if kind in {"vitest", "jest"}:
+            if review_node_projects.is_test_file(item.path):
+                wanted.add(item.path)
+        elif any(piece in item.path for piece in ("test", "tests", "spec")):
             wanted.add(item.path)
         if kind == "pytest" and Path(item.path).name == "conftest.py":
             wanted.add(item.path)
@@ -552,6 +560,20 @@ def two_runs(
     gaps: list[dict[str, str]] = []
     shim = _python_env(python_env)
     for pair_language, command in commands:
+        node_command = review_node_projects.test_command(command, root)
+        if node_command is not None:
+            kind, arguments, folder = node_command
+            found = _two_node_runs(root, base, change, kind, arguments, folder, run_timeout,
+                                   diagnostics)
+            if isinstance(found, str):
+                gaps.append(_gap(found, ROW_BEFORE))
+                continue
+            for node in found:
+                path = node.split("::", 1)[0]
+                hits.append(_hit(rule_id=node, path=path,
+                    statement="The new test passes on the code before the change.",
+                    anchor=node, row=ROW_BEFORE, language="typescript"))
+            continue
         classified = _classify(command, shim)
         if classified is None:
             gaps.append(_gap("no-test-list", ROW_BEFORE))
@@ -588,6 +610,102 @@ def two_runs(
                 language=_language(pair_language, path),
             ))
     return {"hits": hits, "where_to_look": [], "gaps": gaps}
+
+
+def _node_report(kind: str, arguments: list[str], cwd: Path, files: list[str], timeout: int,
+                 diagnostics: Path | None, step: str,
+                 names: list[str] | None = None) -> dict[str, str] | str:
+    """A runner's case identities and statuses only; discard clocks, durations and console.
+
+    Jest lists files, not test cases. Its JSON run both enumerates cases and observes their
+    status. Vitest emits the same assertionResults schema, so neither path parses console text.
+    """
+    binary = cwd / "node_modules" / ".bin" / kind
+    if not binary.is_file():
+        return "missing"
+    argv = [str(binary), *(["run"] if kind == "vitest" else []), *arguments]
+    if kind == "vitest":
+        argv += ["--reporter=json", "--maxWorkers=1", "--sequence.seed=0",
+                 "--cache=false", "--configLoader=runner"]
+    else:
+        argv += ["--json", "--runInBand", "--no-cache", "--seed=0", "--runTestsByPath"]
+    if names:
+        argv += ["--testNamePattern", "^(?:" + "|".join(re.escape(n) for n in sorted(set(names))) + ")$"]
+    result = _run_capture([*argv, *files], cwd, timeout)
+    if isinstance(result, str):
+        return result
+    stdout, stderr, code = result
+    try:
+        data = json.loads(stdout)
+        suites = data["testResults"]
+        if code not in (0, 1) or not isinstance(suites, list) or (files and not suites):
+            raise ValueError("not a case report")
+        cases: dict[str, str] = {}
+        for suite in suites:
+            path = Path(suite["name"])
+            if path.is_absolute():
+                path = path.relative_to(cwd.resolve())
+            relative = path.as_posix()
+            if relative not in files:
+                continue
+            assertions = suite["assertionResults"]
+            if not assertions and suite.get("status") == "failed":
+                raise ValueError("collection failed")
+            for case in assertions:
+                name, status = case["fullName"], case["status"]
+                if not isinstance(name, str) or not isinstance(status, str):
+                    raise ValueError("invalid identity")
+                identity = f"{relative}::{name}"
+                # Duplicate names are ambiguous; never claim one of them passed twice.
+                cases[identity] = "ambiguous" if identity in cases else status
+        return dict(sorted(cases.items()))
+    except (ValueError, KeyError, TypeError):
+        if diagnostics is not None:
+            review_diagnostics.write_failure_tail(diagnostics, "two-runs", step, code, stdout, stderr)
+        return "no-test-list"
+
+
+def _two_node_runs(root: Path, base: str, change: review_diff.Change, kind: str,
+                   arguments: list[str], folder: str, timeout: int,
+                   diagnostics: Path | None) -> list[str] | str:
+    prefix = "" if folder == "." else folder + "/"
+    files = sorted(item.path[len(prefix):] for item in change.files
+                   if item.path.startswith(prefix) and item.status in {"added", "modified", "renamed"}
+                   and review_node_projects.is_test_file(item.path))
+    if not files:
+        return []
+    cwd = root / folder
+    head = _node_report(kind, arguments, cwd, files, timeout, diagnostics, "head-listing-run")
+    if isinstance(head, str):
+        return head
+    with ExitStack() as stack:
+        try:
+            base_root = stack.enter_context(_detached(root, base))
+        except (RuntimeError, OSError):
+            return "no-test-list"
+        old = base_root / folder
+        if not _inside(old, base_root):
+            return "no-test-list"
+        old.mkdir(parents=True, exist_ok=True)
+        import review_dependencies_node
+        modules = cwd / "node_modules"
+        if modules.is_dir():
+            review_dependencies_node.link_into(old, modules.resolve())
+        present = [file for file in files if (old / file).is_file()]
+        known = (_node_report(kind, arguments, old, present, timeout, diagnostics, "base-listing-run")
+                 if present else {})
+        if isinstance(known, str):
+            return known
+        passing = [node for node, status in head.items() if node not in known and status == "passed"]
+        if not passing:
+            return []
+        _copy_tests(root, base_root, change, kind, passing)
+        confirmed = _node_report(kind, arguments, old,
+            sorted({node.split("::", 1)[0] for node in passing}), timeout, diagnostics, "base-run",
+            [node.split("::", 1)[1] for node in passing])
+        if isinstance(confirmed, str):
+            return confirmed
+        return [prefix + node for node in passing if confirmed.get(node) == "passed"]
 
 
 def _failed(reason: str, fallback: str) -> str:
@@ -930,7 +1048,7 @@ def _collect_for_ci(
     gaps: list[dict[str, str]] = []
     for pair_language, command in commands:
         classified = _classify(command)
-        if classified is None:
+        if classified is None or classified[0] in {"vitest", "jest"}:
             gaps.append(_gap("no-test-list", ROW_BEFORE))
             continue
         kind, tokens, assigned = classified
@@ -1560,10 +1678,46 @@ def _invoke(context: ScanContext, check: str, extra: list[str]) -> list[str]:
 
 
 def _commands_arg(context: ScanContext) -> str:
-    return json.dumps([list(pair) for pair in context.commands])
+    commands = list(context.commands)
+    if context.change is not None:
+        for folder in review_node_projects.projects(context.root, (f.path for f in context.change.files)):
+            command = "npm test" if folder == "." else f"cd {shlex.quote(folder)} && npm test"
+            parsed = review_node_projects.test_command(command, context.root)
+            if parsed is not None and not any(
+                    review_node_projects.test_command(existing, context.root) == parsed
+                    for _, existing in commands):
+                commands.append(("typescript", command))
+    return json.dumps([list(pair) for pair in commands])
+
+
+def _stage_node_test_settings(context: ScanContext) -> None:
+    """The tools runner strips settings at every depth; restore Node's base test settings.
+
+    A test runner needs its transform and aliases as well as its dependencies. Use the same
+    base-only configuration and relative-import refusal as the TypeScript adapters.
+    """
+    if context.change is None:
+        return
+    import review_adapters_typescript as typescript
+    names = (*typescript._VITEST_CONFIGS, *typescript._JEST_CONFIGS,
+             *typescript._BABEL_CONFIGS, ".swcrc", ".swcrc.json", "tsconfig.json")
+    for folder in review_node_projects.projects(context.root, (f.path for f in context.change.files)):
+        prefix = "" if folder == "." else folder + "/"
+        with review_tools._staged_base_files(context.repo, context.base,
+                                             [prefix + name for name in names]) as staged:
+            for name, source in staged:
+                if source is None:
+                    continue
+                target = context.root / name
+                if target.is_symlink() or not _inside(target, context.root):
+                    raise review_tools.ToolGap("config-unresolved", ROW_BEFORE)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(source.read_bytes())
+                typescript._refuse_relative_imports(target, ROW_BEFORE)
 
 
 def _invoke_two_runs(context: ScanContext) -> list[str]:
+    _stage_node_test_settings(context)
     extra = ["--base", context.base, "--commands", _commands_arg(context)]
     if context.python_env is not None:
         extra += ["--python-env", str(context.python_env)]
