@@ -308,8 +308,8 @@ and the cut logged), so a mutant an existing test elsewhere kills is not reporte
 with none, the change's own test files; with no test file at all, the row is the gap
 `no-tests-for-change`. Test files are never mutated, and `cr-filter-git` skips every mutant whose
 lines the change did not add or edit. Each mutant's run stops at its first failing test (`-x`;
-the baseline runs without it, so every failing test is named). Of the changed-line mutants, at
-most 10 run, spread over the change and chosen the same way every time: one mutant per changed
+the baseline removes `-x` and `--exitfirst` from profile commands, so every failing test is named).
+Of the changed-line mutants, at most 10 run, spread over the change and chosen the same way every time: one mutant per changed
 line (a second per line only once every line has one), lines inside control flow first (an `if`,
 `elif`, `else`, `except`, `return` or `raise` line, or the body of one), then lines in an order
 fixed by a hash of file and line, taken round-robin across the changed files. When the budget
@@ -355,7 +355,10 @@ Issue 155 adds five checks in `scripts/review_checks.py`. The runner starts the 
 that script. The commit under review does not configure these checks. `where-to-look.json` carries
 the unanswered machine-specific items, beside the sweep's items; `prepare` merges them and no longer
 replaces the scripted items with the sweep's. `prepare` also adds up to 8 two-runs leads and 8
-surviving-mutant leads as items of their own (see `review-command.md`). A confirmed machine-specific finding stays fix later.
+surviving-mutant leads as items of their own (see `review-command.md`). Rust and Swift leads
+locate unique test definitions in changed head source files. Unlocated leads record
+`unlocated-lead`; leads beyond the cap record `lead-cap`. Either reason keeps the affected
+testing row blocking at prepare and finish. A confirmed machine-specific finding stays fix later.
 When the relocated test command fails, `architecture-maintainability.relocated-run-fails` blocks in
 the same outcome file.
 
@@ -378,7 +381,8 @@ old version, read from the `-rA` summary (on the old version the run names the t
 `--continue-on-collection-errors`, since a copied file may import what only the change adds); each listing may take 30 seconds, each run 240, and the
 whole check 600. Only when the change touched no test file does the command's default collection
 run, with its globs expanded relative to the project as a shell would, and a failure there is
-reason `no-test-list-default-collection`. A listing or run that fails keeps the last 40 lines of
+reason `no-test-list-default-collection`. A pytest configuration import failure is instead
+`conftest-import-failed`, without claiming any tests ran. A listing or run that fails keeps the last 40 lines of
 its output in
 `two-runs-<head|base>-<listing|run>-*/tail.txt` under the private `--diagnostics-directory`, never in the
 packet.

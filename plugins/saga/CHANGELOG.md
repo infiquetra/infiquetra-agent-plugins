@@ -110,6 +110,12 @@
 
 ### Fixed
 
+- **Testing-lead regression coverage crosses languages and the live worker boundary.** Rust,
+  Swift, TypeScript and Dart lead tests cover locations and distinct survivor anchors. A live
+  test uses the production uv cosmic-ray invocation, checks packet-only dependencies in mutants
+  and child interpreters, compares two results and verifies packet dependencies remain unchanged.
+  The command references describe the blocking fallback for omitted leads.
+
 - **cosmic-ray fallback commands suppress bytecode too.** Unrecognized test commands carry
   `PYTHONDONTWRITEBYTECODE=1` and the packet shim environment when available. The earlier
   changelog description now states the implemented bound of 10 test files.

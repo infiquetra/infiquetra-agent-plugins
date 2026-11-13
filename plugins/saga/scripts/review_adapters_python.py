@@ -233,7 +233,7 @@ def _rewrite(command):
         handle.write("\n".join(lines) + "\n")
 # A profile may request fail-fast, but the baseline must name every pre-existing failure.
 words = shlex.split(test_command)
-if "pytest" in words:
+if any(os.path.basename(word) in {"pytest", "py.test"} for word in words):
     test_command = shlex.join([word for word in words if word not in {"-x", "--exitfirst"}])
 started = time.time()
 state, out, err = _baseline(test_command)
@@ -259,7 +259,8 @@ if state == "failed":
 # A mutant is killed by its first failing test: pytest stops there (-x), so a killed mutant costs
 # a fraction of a full run. The baseline ran without it, so every failing test was named.
 words = shlex.split(test_command)
-if "pytest" in words and not {"-x", "--exitfirst"} & set(words):
+if (any(os.path.basename(word) in {"pytest", "py.test"} for word in words)
+        and not {"-x", "--exitfirst"} & set(words)):
     test_command = shlex.join([*words, "-x"])
 _rewrite(test_command)
 session = config + ".sqlite"

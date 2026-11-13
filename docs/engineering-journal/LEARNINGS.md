@@ -2,6 +2,23 @@
 
 ## 2026-11-12
 
+### A mutation worker needs an integration test through its real launcher
+
+**Evidence.** The live regression test
+`test_live_cosmic_packet_environment_reaches_mutants_and_child_interpreters` runs the production
+uv invocation without a global cosmic-ray installation. Its test imports a packet-only package,
+checks the packet shim environment, starts both bare Python interpreter names, runs two mutation
+sessions and compares their results and packet dependency bytes. The test passes with two
+survivors per run. Separate Rust, Swift, TypeScript and Dart lead tests cover the handoff boundary.
+The fail-fast regression also covers an absolute pytest launcher path; checking only the bare word
+`pytest` missed that supported command form.
+
+**Mechanism.** Stubbing uv verifies arguments but cannot expose uv's environment replacement or
+prove that a mutation worker and its children can import packet dependencies.
+
+**Generalizable rule.** Test dependency isolation through the actual tool launcher and worker
+boundary, and verify both repeated results and unchanged inputs.
+
 ### Dependency hygiene applies to fallback commands too
 
 **Evidence.** Direct fallback-command tests reproduced missing bytecode suppression both with

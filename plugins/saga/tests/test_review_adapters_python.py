@@ -1792,7 +1792,11 @@ def test_cosmic_ray_test_command_resolves_bare_python(tmp_path: Path) -> None:
         assert code == 0
         with open(kept, "rb") as handle:
             written = tomllib.load(handle)["cosmic-ray"]["test-command"]
-        assert written.split()[0] == head
+        words = shlex.split(written)
+        if command == "make test":
+            assert words[:3] == ["env", "PYTHONDONTWRITEBYTECODE=1", head]
+        else:
+            assert words[0] == head
 
 
 def test_cosmic_ray_worker_imports_pytest(tmp_path: Path) -> None:
@@ -2468,7 +2472,10 @@ def test_cosmic_ray_budget_detail_names_the_lines_and_files_it_covered(tmp_path:
 
 
 @pytest.mark.parametrize('flag', ['-x', '--exitfirst'])
-def test_cosmic_baseline_collects_all_failures_despite_profile_failfast(tmp_path: Path, flag: str) -> None:
+@pytest.mark.parametrize('absolute', [False, True])
+def test_cosmic_baseline_collects_all_failures_despite_profile_failfast(
+    tmp_path: Path, flag: str, absolute: bool,
+) -> None:
     stub_dir = tmp_path / 'stub'
     stub_dir.mkdir()
     _write_cosmic_stub(stub_dir / 'cosmic-ray')
@@ -2477,8 +2484,15 @@ def test_cosmic_baseline_collects_all_failures_despite_profile_failfast(tmp_path
         'def test_bad_one():\n    assert False\n'
         'def test_bad_two():\n    assert False\n'
         'def test_good():\n    assert True\n', encoding='utf-8')
+    launcher = f'{sys.executable} -m pytest'
+    if absolute:
+        executable = tmp_path / 'pytest'
+        executable.write_text(f'#!{sys.executable}\nimport pytest\n'
+                              'raise SystemExit(pytest.main())\n', encoding='utf-8')
+        executable.chmod(0o755)
+        launcher = str(executable)
     config = _wrapper_config(tmp_path / 'cosmic-ray.toml',
-                             f'{sys.executable} -m pytest -q -p no:randomly {flag} test_baseline.py')
+                             f'{launcher} -q -p no:randomly {flag} test_baseline.py')
     out = _run_wrapper(config, tmp_path, env)
     assert out['unfinished'] is False
     command = config.read_text(encoding='utf-8')
@@ -2548,3 +2562,55 @@ def test_cosmic_fallback_also_suppresses_bytecode(tmp_path: Path, with_shim: boo
 def test_cosmic_changelog_test_file_bound_matches_the_implementation() -> None:
     changelog = (SCRIPTS.parent / 'CHANGELOG.md').read_text(encoding='utf-8')
     assert f"(or the tree's, up to {P._COSMIC_MAX_TEST_FILES})" in changelog
+
+
+@pytest.mark.skipif(shutil.which('uv') is None, reason='uv is not installed')
+def test_live_cosmic_packet_environment_reaches_mutants_and_child_interpreters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use the production uv invocation, without requiring a global cosmic-ray installation."""
+    deps = P.review_dependencies
+    site = tmp_path / 'packet-site'
+    site.mkdir()
+    (site / 'packet_only_dep.py').write_text('VALUE = 37\n', encoding='utf-8')
+    (site / 'pytest-home.pth').write_text(str(Path(pytest.__file__).resolve().parents[1]) + '\n',
+                                        encoding='utf-8')
+    version = deps.interpreter_version(sys.executable)
+    assert version is not None
+    shim = deps.write_python_shim(tmp_path / 'shim', deps.PythonDependencies(site, version),
+                                  sys.executable)
+    assert shim is not None
+    test = (
+        'import os, subprocess\nimport app\nimport packet_only_dep\n'
+        'def test_environment():\n'
+        f'    assert os.environ["VIRTUAL_ENV"] == {str(shim)!r}\n'
+        f'    assert os.environ["PATH"].split(os.pathsep)[0] == {str(shim / "bin")!r}\n'
+        '    assert packet_only_dep.VALUE == 37\n'
+        '    for python in ("python", "python3"):\n'
+        '        subprocess.run([python, "-c", "import packet_only_dep; '
+        'assert packet_only_dep.VALUE == 37"], check=True)\n'
+    )
+    repo, base, head = _repo(
+        tmp_path, {'app.py': 'def add(a, b):\n    return a\n'},
+        {'app.py': 'def add(a, b):\n    return a + b\n', 'test_app.py': test})
+    before = {path.relative_to(site).as_posix(): path.read_bytes()
+              for path in site.rglob('*') if path.is_file()}
+    monkeypatch.setattr(P, 'COSMIC_MUTANT_BUDGET', 2)
+    results = []
+    for attempt in range(2):
+        context = T.ScanContext(repo, repo, tmp_path / 'home', base=base, head=head,
+                                test_command='python -m pytest -q', python_env=shim,
+                                change=T.review_diff.read(repo, base, head),
+                                scratch=tmp_path / f'scratch-{attempt}')
+        argv = P._invoke_cosmic(context)
+        proc = subprocess.run(argv, cwd=repo, capture_output=True, text=True, timeout=180)
+        assert proc.returncode == 0, proc.stderr[-2000:]
+        out = json.loads(proc.stdout)
+        assert out['unfinished'] is False, proc.stderr[-2000:]
+        assert out['mutants']['run'] == 2
+        assert len(out['survivors']) == 2
+        results.append(out)
+    assert results[0] == results[1]
+    after = {path.relative_to(site).as_posix(): path.read_bytes()
+             for path in site.rglob('*') if path.is_file()}
+    assert before == after
