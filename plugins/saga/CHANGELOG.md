@@ -110,6 +110,10 @@
 
 ### Fixed
 
+- **Prepare keeps both outcome files consistent after lead conversion.** The packet's
+  `outcomes.json` now matches `grades.json`, including blocking fallback rows for unlocated
+  testing leads. Regression tests verify both severities and byte-identical repeated packets.
+
 - **Testing-lead regression coverage crosses languages and the live worker boundary.** Rust,
   Swift, TypeScript and Dart lead tests cover locations and distinct survivor anchors. A live
   test uses the production uv cosmic-ray invocation, checks packet-only dependencies in mutants

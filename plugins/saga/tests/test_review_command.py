@@ -4451,3 +4451,32 @@ def test_two_runs_python_class_qualifier_selects_the_right_method(tmp_path: Path
                                     C.review_tools.subprocess_runner, repo, head)
     assert degraded == []
     assert items[0]['location']['lines'] == {'start': 6, 'end': 7}
+
+
+@pytest.mark.parametrize('row', [C.ROW_TWO_RUNS, C.ROW_MUTANT])
+def test_prepare_publishes_the_blocking_fallback_in_both_outcome_files(tmp_path: Path, row: str) -> None:
+    repo, base, head, _change = _lead_change(tmp_path)
+    hit = T.Hit(rule_id='unlocated', path='.', statement='Unlocated testing result.',
+                anchor='unlocated', whole_project=True, row=row, language='rust')
+    adapter = T.Adapter(id='two-runs' if row == C.ROW_TWO_RUNS else 'cosmic-ray',
+                        tool='review-checks', invoke=lambda _context: ['stub', 'scan'],
+                        parse=lambda _text: T.ParseResult((hit,)), default_version='1.0.0',
+                        rows=(row,), lens='testing', comparison='lines')
+    packets = []
+    for name in ('first', 'second'):
+        home = tmp_path / f'home-{name}'
+        home.mkdir()
+        out = tmp_path / name
+        code, err = _main([
+            'prepare', '--repo', str(repo), '--base', base, '--head', head,
+            '--profile', str(_profile(tmp_path / f'outside-{name}')),
+            '--builder-record', str(_builder(tmp_path / f'builder-{name}.json')),
+            '--out', str(out), '--home', str(home),
+        ], adapters=[adapter], runner=_Runner())
+        assert code == 0, err
+        assert any(entry['reason'] == 'unlocated-lead' for entry in _read(out / 'degraded.json'))
+        assert _read(out / 'grades.json')['findings'][0]['severity'] == 'blocks'
+        assert _read(out / 'outcomes.json')['findings'][0]['severity'] == 'blocks'
+        packets.append({path.relative_to(out).as_posix(): path.read_bytes()
+                        for path in out.rglob('*') if path.is_file()})
+    assert packets[0] == packets[1]

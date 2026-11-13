@@ -91,7 +91,8 @@ A packet's Dart cache stays read-only after prepare, so a plain `rm -rf` cannot 
 
 `flutter test` is not supported: the Flutter tool opens `<flutter>/bin/cache/lockfile` for writing on every run, and the SDK stays read-only.
 
-`review_tools.run` may also write `outcomes.json` in the same directory. The stored deterministic run, when `--issue` is set, passes `where_to_look` as `[]` because an unanswered item does not validate. Without `--issue` the run record is not opened.
+`review_tools.run` also writes `outcomes.json` in the same directory; `prepare` refreshes it to
+match `grades.json` after lead conversion, including the blocking fallback for omitted leads. The stored deterministic run, when `--issue` is set, passes `where_to_look` as `[]` because an unanswered item does not validate. Without `--issue` the run record is not opened.
 
 `finish` writes `<packet>/review-run.json` only after the answer check and, when `--issue` is set, only after the locked update that appends the review run and the usage entries together. A refused answer does not create that file, does not append a review cycle, and does not write usage.
 

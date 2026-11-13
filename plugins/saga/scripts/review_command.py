@@ -551,6 +551,9 @@ def _prepare(
         _write_json(staging / "may-block.json", reasons)
         _write_json(staging / "open-search-cap.json", {"cap": reviewer_answer.OPEN_SEARCH_CAP})
         _write_json(staging / "grades.json", grades)
+        # Lead conversion may restore a blocking row. Keep the tool runner's public outcomes
+        # consistent with the final prepare formula, including its omitted-lead degradation.
+        _write_json(staging / "outcomes.json", grades)
         _copy_check_modules(staging)
         if store is not None:
             try:

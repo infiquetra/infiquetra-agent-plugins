@@ -2,6 +2,19 @@
 
 ## 2026-11-12
 
+### Recomputed severity must reach every published outcome view
+
+**Evidence.** Prepare regressions for both omitted testing rows showed blocking severity in
+`grades.json` but stale advisory severity in `outcomes.json`, which the tool runner wrote before
+lead conversion. Prepare now refreshes both from its final formula result; the tests also compare
+all packet bytes across repeated prepares.
+
+**Mechanism.** A later handoff stage added degradation and recomputed grades, leaving an earlier
+published view of the same findings unchanged.
+
+**Generalizable rule.** When a later stage changes a finding's consequence, refresh every
+published outcome view from the same result before publishing the packet.
+
 ### A mutation worker needs an integration test through its real launcher
 
 **Evidence.** The live regression test
