@@ -10,7 +10,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -1046,7 +1045,7 @@ def test_stryker_survivor_on_changed_lines_is_a_lead(tmp_path: Path) -> None:
     assert len(runs) == 1
     argv = runs[0]
     assert "--testRunner" in argv and argv[argv.index("--testRunner") + 1] == "jest"
-    assert "--reporters" in argv and argv[argv.index("--reporters") + 1] == "json"
+    assert "--reporters" in argv and argv[argv.index("--reporters") + 1] == "json,saga-budget"
     assert "--mutate" in argv
     # Issue 147: the sandbox is removed even after a failure. It must stay in the worktree:
     # outside it Stryker finds no node_modules to link and every initial test run fails.
@@ -1856,7 +1855,7 @@ def test_stryker_mutates_only_the_changed_ranges(tmp_path: Path) -> None:
     mutate = [argv[index + 1] for index, item in enumerate(argv) if item == "--mutate"]
     assert mutate == ["src/example.js:2-2,src/example.js:4-4"]
     ignore = [argv[index + 1] for index, item in enumerate(argv) if item == "--ignorePatterns"]
-    assert ignore == [",".join(A._STRYKER_IGNORE)]
+    assert ignore == [], "test files must stay in Stryker's sandbox"
 
 
 def test_stryker_change_without_source_lines_records_nothing_to_mutate(tmp_path: Path) -> None:
@@ -1926,3 +1925,73 @@ def test_shuffle_runs_differing_in_timing_and_finish_order_record_identical_byte
     assert files == {"e.test.js", "f.test.js"}
     for name in ("findings.json", "degraded.json", "outcomes.json"):
         assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+
+
+@pytest.mark.parametrize("tool", ["tsc", "stryker", "eslint", "vitest-shuffle", "knip"])
+def test_typescript_tools_run_inside_changed_subfolder_and_stage_its_base_config(tmp_path: Path, tool: str) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "web/src").mkdir(parents=True)
+    (repo / "web/package.json").write_text(json.dumps({"devDependencies": {"vitest": "4.1.11"}}))
+    (repo / "web/package-lock.json").write_text('{"lockfileVersion": 3, "packages": {}}')
+    (repo / "web/tsconfig.json").write_text('{"compilerOptions":{"target":"ES2020"}}')
+    (repo / "web/vitest.config.mjs").write_text('export default { test: { globals: true } };\n')
+    (repo / "web/src/app.ts").write_text('export const value = 1;\n')
+    base = _commit(repo, "base")
+    (repo / "web/src/app.ts").write_text('export const value = 2;\n')
+    (repo / "web/vitest.config.mjs").write_text('export default { test: { exclude: ["**/*"] } };\n')
+    head = _commit(repo, "head")
+    # Installed packages are outside git and available only at the project's location.
+    (repo / "web/node_modules/vitest").mkdir(parents=True)
+    seen: list[tuple[list[str], Path]] = []
+    runner = _Calls(base, "", seen=seen, watch=("vitest.config.mjs",),
+                    files={"reports/mutation/mutation.json": json.dumps({"files": {}})})
+    out = tmp_path / "out"
+    assert _run(repo, base, head, _profile(tmp_path / "profile.json"), out,
+                tmp_path / "home", [_adapter(tool)], runner) == 0
+    runs = [(argv, cwd) for argv, cwd in seen if "--version" not in argv]
+    assert runs and all(cwd.name == "web" for _, cwd in runs)
+    if tool == "stryker":
+        argv = runs[0][0]
+        assert argv[argv.index("--testRunner") + 1] == "vitest"
+        assert argv[argv.index("--mutate") + 1] == "src/app.ts:1-1"
+        state = [state for argv, at_base, state in runner.snapshots if at_base is False][0]
+        assert "globals: true" in state["vitest.config.mjs"]
+    if tool == "tsc":
+        assert not _degraded(out, tool)
+
+
+def test_stryker_budget_selects_ten_spread_over_files_and_lines_independent_of_order(tmp_path: Path) -> None:
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    plugin = tmp_path / "budget.mjs"
+    plugin.write_text(A._STRYKER_BUDGET_PLUGIN.replace("__BUDGET__", "10"))
+    driver = tmp_path / "driver.mjs"
+    driver.write_text('''
+import { select } from './budget.mjs';
+const input = [];
+for (const file of ['a.ts','b.ts','c.ts']) for (let line=1; line<=12; line++)
+ for (const op of ['A','B','C']) input.push({plan:'Run',runOptions:{},mutant:{
+   fileName:process.cwd()+'/'+file, location:{start:{line,column:0},end:{line,column:1}},mutatorName:op,replacement:'x'}});
+function run(plans) {
+ const kept = [...select(plans,10)].map(p => [p.mutant.fileName,p.mutant.location.start.line,p.mutant.mutatorName]);
+ if (plans.filter(p=>p.plan==='EarlyResult' && p.mutant.status==='Ignored').length !== input.length-10) throw Error('unbounded');
+ return kept;
+}
+console.log(JSON.stringify([run(structuredClone(input)),run(structuredClone(input).reverse())]));
+''')
+    proc = subprocess.run(["node", str(driver)], cwd=tmp_path, capture_output=True, text=True, check=True)
+    first, second = json.loads(proc.stdout)
+    assert first == second and len(first) == 10
+    assert {Path(p).name for p, _, _ in first} == {"a.ts", "b.ts", "c.ts"}
+    assert len({(p, line) for p, line, _ in first}) == 10
+
+
+def test_stryker_report_order_and_volatile_values_do_not_change_survivor_ids_or_raw() -> None:
+    mutants = [{"mutatorName": "EqualityOperator", "replacement": value, "status": "Survived",
+                "location": {"start": {"line": line}, "end": {"line": line}}}
+               for line, value in [(2, "false"), (1, "true")]]
+    a = json.dumps({"files": {"src/app.ts": {"mutants": mutants}}, "time": 1})
+    b = json.dumps({"files": {"src/app.ts": {"mutants": list(reversed(mutants))}}, "time": 2})
+    assert A._parse_stryker(a) == A._parse_stryker(b)
+    assert _adapter("stryker").stable_raw(a) == _adapter("stryker").stable_raw(b)

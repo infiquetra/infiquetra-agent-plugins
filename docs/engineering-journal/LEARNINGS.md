@@ -142,6 +142,32 @@ it dropped.
 
 **Generalizable rule.** Before downgrading a deterministic result to reviewer advice, guarantee
 its delivery or keep a conservative, visible fallback. Ambiguous definitions are gaps, not guesses.
+### Mutation exclusions must leave the tests in Stryker's sandbox
+
+**Evidence.** New live subfolder Vitest and Jest fixtures initially reported no tests despite
+installed packages and staged configuration. The adapter passed `**/*.test.*` and `**/*.spec.*`
+to Stryker's `ignorePatterns`, which excludes files from the sandbox itself. Removing those
+patterns lets both real runners produce a surviving mutant. Test files are excluded from
+`mutate` instead; changed-line targets already exclude them.
+
+**Mechanism.** A tool's input-copy filter and its mutation-target filter have different meanings.
+Mocked report tests could not catch the distinction because they supplied a report without
+running the tests that would have produced it.
+
+**Generalizable rule.** Validate a mutation adapter with an actual named test file and its test
+runner, using the installed dependency layout that prepare creates.
+
+### Installing packages does not connect them to prepare's tools
+
+**Evidence.** Node packages were linked for reviewer re-runs, but `review_tools.run` received only
+the packet's Python environment. The project manifest lookup also stayed at the repository root,
+and prepare stripped runner configuration at every depth without restoring subfolder settings.
+The new complete-packet fixtures exercise dependency installation, inferred test commands, the
+two-runs subprocess and project-scoped mutation reports together, twice, and compare every byte.
+
+**Generalizable rule.** Test the complete producer-to-consumer path, including the working folder
+and configuration, before treating a packaged environment as usable by a check.
+
 
 ## 2026-11-11
 

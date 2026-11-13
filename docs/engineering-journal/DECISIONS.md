@@ -21,6 +21,29 @@ need a single install from an ancestor lockfile without a root manifest.
 
 ---
 
+### TypeScript scans use project-relative contexts and a shared ten-mutant sample
+
+**Decision.** Node project package folders are linked into each prepare and re-run checkout.
+TypeScript adapters run from the owning project, stage that project's base configuration,
+use project-relative mutation ranges, and translate findings back to repository paths.
+The ten-mutant budget is divided deterministically across selected projects. Within each
+project, a Stryker 10 reporter converts unselected run plans to `Ignored` before execution,
+taking one mutant per changed line before another, with hashed line order and round-robin
+file selection. Its report retains only stable mutation identities and statuses.
+
+**Rejected alternatives.** A clock-limited partial sample; spending all mutations on the first
+project; copying test files out of the mutation sandbox through `ignorePatterns`.
+
+**Rationale.** Packet identity must not depend on run duration, report arrival order, or scratch
+paths. The Stryker reporter event supplies all plans before mutation execution, which makes a
+fixed sample possible without replacing its test runner.
+
+**Revisit when.** A Stryker upgrade changes the mutable plan objects exposed by its reporter event,
+or measured reviews justify a different allocation across projects.
+
+---
+
+
 ## 2026-11-11
 
 ### Testing leads are scripted where-to-look items, eight of each per packet

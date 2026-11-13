@@ -297,6 +297,8 @@ class ScanContext:
     #: For a mutation adapter, the monotonic time its share of the mutation cap runs out. A tool
     #: that can stop on its own before then, and report what it finished, reads it.
     mutation_deadline: float | None = None
+    project: str = "."
+    mutation_budget: int = 10
 
 
 @dataclass(frozen=True)
@@ -1132,6 +1134,7 @@ def run(
     framework: bool = True,
     diagnostics_directory: Path | str | None = None,
     python_env: Path | str | None = None,
+    node_projects: tuple[tuple[str, Path], ...] = (),
 ) -> int:
     """Write the record files, including where-to-look items.
 
@@ -1149,6 +1152,7 @@ def run(
             framework,
             Path(diagnostics_directory) if diagnostics_directory is not None else None,
             Path(python_env) if python_env is not None else None,
+            node_projects,
         )
     except RunnerFailure as exc:
         print(str(exc), file=sys.stderr)
@@ -1168,6 +1172,7 @@ def _run(
     framework: bool,
     diagnostics_directory: Path | None = None,
     python_env: Path | None = None,
+    node_projects: tuple[tuple[str, Path], ...] = (),
 ) -> int:
     base_sha = _require_sha(repo, base)
     head_sha = _require_sha(repo, head)
@@ -1196,6 +1201,21 @@ def _run(
             degraded.extend(_allow_comments(head_root, change))
             for adapter in adapters:
                 _link_env(adapter, repo, head_root, head_sha, head_sha)
+            import review_dependencies_node
+            import review_node_projects
+            # Link each project's environment before tools run, including scripted checks.
+            folders = review_node_projects.projects(head_root, (f.path for f in change.files))
+            for project_folder in folders:
+                if project_folder != ".":
+                    for adapter in adapters:
+                        if "typescript" in adapter.languages:
+                            scoped = replace(adapter,
+                                env_dirs=tuple(f"{project_folder}/{p}" for p in adapter.env_dirs),
+                                lockfiles=tuple(f"{project_folder}/{p}" for p in adapter.lockfiles))
+                            _link_env(scoped, repo, head_root, head_sha, head_sha)
+            for project_folder, _modules in node_projects:
+                _remove_tree(head_root / project_folder / "node_modules")
+            review_dependencies_node.link_projects(head_root, node_projects)
             head_languages = run_languages(head_root)
             # What stands in the worktree now (the linked dependency folders, the stripped
             # settings files) is what every tool starts from; whatever a tool adds or edits
@@ -1556,7 +1576,30 @@ def _run_adapter(
     diagnostics_directory: Path | None = None,
     rule_sources: dict[str, dict[str, Any]] | None = None,
     python_env: Path | None = None,
+    project: str | None = None,
+    mutation_budget: int = 10,
 ) -> list[Hit]:
+    if project is None and "typescript" in adapter.languages:
+        import review_node_projects
+        folders = review_node_projects.projects(head_root, (f.path for f in change.files))
+        if folders and folders != ["."]:
+            project_hits: list[Hit] = []
+            for index, folder in enumerate(folders):
+                prefix = folder + "/"
+                scoped = review_diff.Change(tuple(
+                    replace(f, path=f.path[len(prefix):],
+                            old_path=(f.old_path[len(prefix):] if f.old_path and
+                                      f.old_path.startswith(prefix) else None))
+                    for f in change.files if f.path.startswith(prefix)))
+                found = _run_adapter(
+                    adapter, repo, base_sha, head_sha, head_root / folder, scoped, home,
+                    profile, process, env, deadline, degraded, items, base_markers,
+                    head_markers, head_languages, diagnostics_directory, rule_sources,
+                    python_env, folder, 10 // len(folders) + (index < 10 % len(folders)))
+                project_hits.extend(replace(hit, path=f"{folder}/{hit.path}" if hit.path != "." else folder)
+                            for hit in found)
+            return project_hits
+    project = project or "."
     if _markers_removed(adapter, base_markers, head_markers):
         degraded.append(
             _degraded(adapter, _primary_row(adapter), "language-markers-removed")
@@ -1634,7 +1677,9 @@ def _run_adapter(
         ran = version or adapter.default_version
         comparison = "base-head" if adapter.type_checker else adapter.comparison
         with (
-            _staged_base_files(repo, base_sha, adapter.base_files) as staged,
+            _staged_base_files(repo, base_sha, tuple(
+                name if project == "." else f"{project}/{name}"
+                for name in adapter.base_files)) as staged,
             _scratch() as scratch,
         ):
             context = ScanContext(
@@ -1645,12 +1690,15 @@ def _run_adapter(
                 base=base_sha,
                 test_command=_python_test_command(profile),
                 commands=_scan_commands(profile),
-                base_files=staged,
+                base_files=tuple((name if project == "." else name[len(project) + 1:], path)
+                                 for name, path in staged),
                 change=change,
                 head=head_sha,
                 scratch=scratch,
                 diagnostics_directory=diagnostics_directory,
                 python_env=python_env,
+                project=project,
+                mutation_budget=mutation_budget,
                 mutation_deadline=deadline if adapter.mutation else None,
             )
             if comparison == "base-head":
@@ -1944,6 +1992,8 @@ def _base_and_head(
     items: list[Mapping[str, Any]],
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
     settings = _settings_digest(adapter, rules_digest)
+    if context.project != ".":
+        settings = hashlib.sha256(f"{settings}:{context.project}".encode()).hexdigest()
     key = {"base": base_sha, "adapter": adapter.id, "version": version, "settings": settings}
     cached = _read_base_cache(context.home, adapter, version, base_sha, settings, key)
     if cached is None:
@@ -1951,8 +2001,20 @@ def _base_and_head(
             with _worktree(repo, base_sha) as base_root:
                 _strip_settings(base_root, only=_C4C_SETTINGS_NAMES)
                 _link_env(adapter, repo, base_root, base_sha, head_sha)
+                if context.project != ".":
+                    prefix = context.project + "/"
+                    scoped_adapter = replace(adapter,
+                        env_dirs=tuple(prefix + p for p in adapter.env_dirs),
+                        lockfiles=tuple(prefix + p for p in adapter.lockfiles))
+                    _link_env(scoped_adapter, repo, base_root, base_sha, head_sha)
+                # Use the same packet packages for base and head scans.
+                modules = context.root / "node_modules"
+                target = base_root / context.project
+                if modules.is_symlink() and target.is_dir():
+                    import review_dependencies_node
+                    review_dependencies_node.link_into(target, modules.resolve())
                 base_hits, base_digest, base_problem, base_ran = _scan_root(
-                    adapter, replace(context, repo=base_root, root=base_root, scan="base"),
+                    adapter, replace(context, repo=base_root, root=base_root / context.project, scan="base"),
                     process, env,
                     timeout, "base", degraded, items,
                 )

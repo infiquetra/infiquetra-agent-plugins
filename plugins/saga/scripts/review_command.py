@@ -210,6 +210,7 @@ class Offline:
     #: The packet's installed npm packages, linked at the re-run folder's root as
     #: ``node_modules``, read-only; ``None`` when there are none.
     node: Path | None = None
+    node_projects: tuple[tuple[str, Path], ...] = ()
     #: The packet's pub cache, when there is one; each re-run gets a writable pub cache in its
     #: own ``tmp`` folder that links to it (:func:`_dart_pub_cache`).
     dart: Path | None = None
@@ -231,14 +232,15 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
     # project's ``requires-python`` rather than the operator's ``python3``.
     python = review_dependencies.python_for(deps) if deps is not None else None
     modules = review_dependencies_node.node_modules(packet)
+    node_projects = review_dependencies_node.installed_projects(packet)
     dart = _offline_dart(packet)
-    if vendor is None and python is None and modules is None and dart is None:
+    if vendor is None and python is None and not node_projects and dart is None:
         yield None
         return
     temporary: list[Path] = []
     try:
         env: dict[str, str] = {}
-        reads: tuple[Path, ...] = (modules,) if modules is not None else ()
+        reads: tuple[Path, ...] = tuple(path for _, path in node_projects)
         toolchain: tuple[Path, ...] = ()
         path = os.environ.get("PATH", "")
         shim: Path | None = None
@@ -265,9 +267,9 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
                 path = env["PATH"]
                 toolchain += review_dependencies.python_toolchain(shim, deps)
         if vendor is None:
-            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim, node=modules,
+            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim, node=modules, node_projects=node_projects,
                            dart=dart_cache)
-                   if shim is not None or modules is not None or dart_cache is not None else None)
+                   if shim is not None or node_projects or dart_cache is not None else None)
             return
         home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
         temporary.append(home)
@@ -280,7 +282,7 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
             env["PATH"] = os.pathsep.join([str(shim_cargo.parent), path])
         yield Offline(env=env, reads=(*reads, vendor, home), cargo=shim_cargo,
                       toolchain=(*review_dependencies.toolchain_paths(cargo), *toolchain),
-                      rust=True, python=shim, node=modules, dart=dart_cache)
+                      rust=True, python=shim, node=modules, node_projects=node_projects, dart=dart_cache)
     finally:
         for folder in temporary:
             shutil.rmtree(folder, ignore_errors=True)
@@ -295,8 +297,10 @@ def _node_rerun(
     node's own install readable and its real ``bin`` first on ``PATH``, so a ``#!/usr/bin/env
     node`` script finds it even when the operator's ``node`` is a link under the denied home.
     Nothing from the packet goes on ``PATH``."""
-    if offline is not None and offline.node is not None:
-        review_dependencies_node.link_into(scratch, offline.node)
+    if offline is not None:
+        review_dependencies_node.link_projects(scratch, offline.node_projects)
+        if offline.node is not None:
+            review_dependencies_node.link_into(scratch, offline.node)
     if argv and review_dependencies_node.needs_node(str(argv[0])):
         path = env.get("PATH", "")
         real = review_dependencies_node.node_bin(path)
@@ -475,7 +479,7 @@ def _prepare(
         # reviewer's re-runs get, instead of one without the change's dependencies.
         _write_json(staging / review_dependencies.FILE, review_dependencies.fetch(
             runner, repo, head, staging,
-            lambda dest: _export_head(runner, repo, head, dest),
+            lambda dest: _export_head(runner, repo, head, dest), base=base,
         ))
         with _offline_dependencies(staging) as offline:
             code = review_tools.run(
@@ -485,6 +489,7 @@ def _prepare(
                 framework=False,
                 diagnostics_directory=args.diagnostics_directory,
                 python_env=offline.python if offline is not None else None,
+                node_projects=offline.node_projects if offline is not None else (),
             )
         if code != 0:
             raise CommandFailure(code, "")
@@ -582,7 +587,7 @@ def _prepare(
         _publish(staging, out)
     finally:
         # The packet's npm packages are sealed read-only; give their folders write back first.
-        review_dependencies_node.unseal(staging / review_dependencies_node.DIRECTORY)
+        review_dependencies_node.unseal(staging / "dependencies/node")
         # A Dart cache in the packet is read-only file by file; give write back first.
         review_dependencies_dart.unseal(staging / "dependencies" / "dart")
         shutil.rmtree(staging, ignore_errors=True)

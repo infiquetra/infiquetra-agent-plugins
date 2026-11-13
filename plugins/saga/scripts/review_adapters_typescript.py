@@ -14,7 +14,6 @@ from typing import Any
 
 import yaml
 
-import review_formula
 import review_tools
 from review_tools import Adapter, Hit, ParseResult, RulePin, ScanContext, ToolGap
 
@@ -559,6 +558,74 @@ def _stryker_targets(context: ScanContext) -> list[str] | None:
     return targets
 
 
+# Stryker 10's reporter event exposes mutable plan objects before execution. Convert plans
+# outside a fixed sample to honest Ignored results, without spending test time on them.
+# https://github.com/stryker-mutator/stryker-js/blob/master/packages/core/src/mutants/mutant-test-planner.ts
+_STRYKER_BUDGET_PLUGIN = r"""
+import { createHash } from 'node:crypto';
+import { relative } from 'node:path';
+export function select(plans, budget) {
+  const key = p => {
+    const m = p.mutant;
+    return JSON.stringify([relative(process.cwd(), m.fileName), m.location,
+                           m.mutatorName, m.replacement]);
+  };
+  const hash = text => createHash('sha256').update(text).digest('hex');
+  const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  const files = new Map();
+  for (const p of [...plans].filter(p => p.plan === 'Run').sort((a,b) => cmp(key(a),key(b)))) {
+    const file = relative(process.cwd(), p.mutant.fileName);
+    const line = p.mutant.location.start.line;
+    if (!files.has(file)) files.set(file, new Map());
+    const lines = files.get(file);
+    if (!lines.has(line)) lines.set(line, []);
+    lines.get(line).push(p);
+  }
+  const queues = [...files].sort(([a],[b]) => cmp(a,b)).map(([file, lines]) => {
+    const groups = [...lines].sort(([a],[b]) => cmp(hash(file+':'+a),hash(file+':'+b))).map(([,p]) => p);
+    const queue = [];
+    while (groups.some(g => g.length)) for (const g of groups) if (g.length) queue.push(g.shift());
+    return queue;
+  });
+  const keep = new Set();
+  while (keep.size < budget && queues.some(q => q.length))
+    for (const q of queues) if (q.length && keep.size < budget) keep.add(q.shift());
+  for (const p of plans) if (p.plan === 'Run' && !keep.has(p)) {
+    p.plan = 'EarlyResult';
+    p.mutant.status = 'Ignored';
+    p.mutant.statusReason = 'saga-mutant-budget';
+    delete p.runOptions;
+  }
+  return keep;
+}
+export const strykerPlugins = [{kind: 'Reporter', name: 'saga-budget', value: {
+  onMutationTestingPlanReady({mutantPlans}) { select(mutantPlans, __BUDGET__); }
+}}];
+"""
+
+
+def _stage_stryker_budget(context: ScanContext) -> Path:
+    target = review_tools.scan_folder(context, "stryker-budget") / "budget.mjs"
+    target.write_text(_STRYKER_BUDGET_PLUGIN.replace("__BUDGET__", str(context.mutation_budget)),
+                      encoding="utf-8")
+    return target
+
+
+def _stable_stryker(text: str) -> str:
+    """Only the data the survivor parser consumes, in stable file/operator order."""
+    try:
+        data = json.loads(text)
+        files = {}
+        for path, file in sorted(data.get("files", {}).items()):
+            mutants = [{key: mutant[key] for key in (
+                "mutatorName", "location", "status", "statusReason", "replacement") if key in mutant}
+                for mutant in file.get("mutants", [])]
+            files[path] = {"mutants": sorted(mutants, key=lambda m: json.dumps(m, sort_keys=True))}
+        return json.dumps({"files": files}, sort_keys=True, separators=(",", ":"))
+    except (ValueError, AttributeError, TypeError):
+        return text
+
+
 def _invoke_stryker(context: ScanContext) -> list[str]:
     if not _has_markers(context.root):
         return []
@@ -566,7 +633,16 @@ def _invoke_stryker(context: ScanContext) -> list[str]:
     if runner is None:
         raise ToolGap("not-configured", "testing.surviving-mutant")
     _stage_tsconfig(context)
-    argv = ["stryker", "run", "--testRunner", runner, "--reporters", "json"]
+    configs = _VITEST_CONFIGS if runner == "vitest" else _JEST_CONFIGS
+    test_config = _stage_first_base(context, configs)
+    _refuse_relative_imports(test_config, "testing.surviving-mutant")
+    if runner == "jest":
+        babel = _stage_first_base(context, _BABEL_CONFIGS)
+        _refuse_relative_imports(babel, "testing.surviving-mutant")
+        _stage_first_base(context, (".swcrc", ".swcrc.json"))
+    budget = _stage_stryker_budget(context)
+    argv = ["stryker", "run", "--testRunner", runner, "--reporters", "json,saga-budget",
+            "--appendPlugins", str(budget), "--concurrency", "1", "--force"]
     # The sandbox stays in its default place, ``.stryker-tmp`` in the worktree: StrykerJS links a
     # project's real ``node_modules`` folders into the sandbox, and from there it finds the
     # worktree's linked dependency folder; from any folder outside the worktree no parent has one,
@@ -581,15 +657,15 @@ def _invoke_stryker(context: ScanContext) -> list[str]:
         raise ToolGap("nothing-to-mutate", "testing.surviving-mutant")
     # StrykerJS 10 reads each of these flags as one comma-separated list, and a
     # repeated flag replaces the earlier one, so every value goes in one flag.
-    mutate = targets or (list(_STRYKER_MUTATE) if staged is None else [])
+    mutate = targets or ([*_STRYKER_MUTATE, *("!" + pattern for pattern in _STRYKER_IGNORE)]
+                         if staged is None else [])
     if mutate:
         argv.extend(["--mutate", ",".join(mutate)])
-    if staged is None:
-        argv.extend(["--ignorePatterns", ",".join(_STRYKER_IGNORE)])
     return argv
 
 
 def _parse_stryker(text: str) -> ParseResult:
+    text = _stable_stryker(text)
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -600,7 +676,7 @@ def _parse_stryker(text: str) -> ParseResult:
     if not isinstance(files, dict):
         raise ValueError("stryker report files must be an object")
     hits: list[Hit] = []
-    for path, entry in files.items():
+    for path, entry in sorted(files.items()):
         if not isinstance(entry, dict):
             continue
         seen: dict[str, int] = {}
@@ -631,7 +707,16 @@ def _parse_stryker(text: str) -> ParseResult:
                 end=end or start,
                 row="testing.surviving-mutant",
             ))
-    return ParseResult(tuple(hits))
+    skipped = sum(1 for file in files.values() if isinstance(file, dict)
+                  for mutant in file.get("mutants", [])
+                  if isinstance(mutant, dict) and mutant.get("statusReason") == "saga-mutant-budget")
+    abnormal = any(mutant.get("status") in {"Timeout", "RuntimeError"}
+                   for file in files.values() if isinstance(file, dict)
+                   for mutant in file.get("mutants", []) if isinstance(mutant, dict))
+    if abnormal:
+        return ParseResult((), gap=("mutant-abnormal", "testing.surviving-mutant"))
+    return ParseResult(tuple(hits), gaps=(("mutant-budget", "testing.surviving-mutant"),)
+                       if skipped else ())
 
 
 def _shuffle_seed(context: ScanContext) -> int:
@@ -1039,7 +1124,8 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             local_bins=tuple(str(item) for item in (row.get("local_bins") or ())),
             stable_raw=(
                 review_tools.stable_transcript if tool_id in _TRANSCRIPTS
-                else _stable_knip if tool_id == "knip" else None
+                else _stable_knip if tool_id == "knip"
+                else _stable_stryker if tool_id == "stryker" else None
             ),
         ))
     return built
