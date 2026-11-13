@@ -541,6 +541,7 @@ def outcome(
     builder_records: Sequence[Mapping[str, Any]] = (),
     may_block: Mapping[str, Any] | None = None,
     changed_lines: Mapping[str, Any] | None = None,
+    required_lead_rows: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """The computed fields for one input finding: severity, its basis, flags and enforcement.
 
@@ -571,6 +572,9 @@ def outcome(
 
     modifiers: list[str] = list(pick_modifiers)
     severity = row.outcome
+    if row_id in required_lead_rows:
+        severity = "blocks"
+        modifiers.append("unanswered-testing-lead")
     if row.blocks_when_reproduced and evidence == "reproduced":
         severity = "blocks"
         modifiers.append("reproduced")
@@ -650,7 +654,8 @@ def compute(inputs: Mapping[str, Any]) -> dict[str, Any]:
     *inputs* holds ``findings`` and ``measurements`` in their input form, ``builder_records``,
     ``may_block`` (``{lens: {language: bool}}``; absent means every lens reports only) and
     ``degraded_inputs`` (``[{lens, language, input, tool, reason}]``, a re-run reason may add
-    ``exit_code`` and ``output_tail``; none of them changes a grade) and ``changed_lines``
+    ``exit_code`` and ``output_tail``; omitted testing leads restore their row's blocking
+    severity) and ``changed_lines``
     (``{path: [[start, end], ...]}``; absent means no finding is capped as pre-existing).
     Everything returned is sorted, so the same inputs in any order give the same output.
     """
@@ -658,9 +663,18 @@ def compute(inputs: Mapping[str, Any]) -> dict[str, Any]:
     may_block = dict(inputs.get("may_block") or {})
     changed = inputs.get("changed_lines")
     changed_ranges(changed)  # refuse a malformed value once, before any finding is computed
+    # A lead only fixes later when the reviewer can answer it. If location or the item cap
+    # omitted any result, conservatively keep that entire testing row blocking, at prepare and
+    # finish alike. Other tool degradation never changes a finding's severity.
+    required_lead_rows = frozenset(
+        str(entry.get("input")) for entry in inputs.get("degraded_inputs") or []
+        if entry.get("input") in {"testing.test-passes-before-change", "testing.surviving-mutant"}
+        and entry.get("reason") in {"unlocated-lead", "lead-cap"}
+    )
     findings: list[dict[str, Any]] = []
     for finding in inputs.get("findings") or []:
-        findings.append({**finding, **outcome(finding, builder_records, may_block, changed)})
+        findings.append({**finding, **outcome(finding, builder_records, may_block, changed,
+                                                    required_lead_rows)})
     findings.sort(key=lambda item: (str(item.get("id")), _canonical(item)))
 
     measurements = []

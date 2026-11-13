@@ -1,5 +1,21 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-12
+
+### An advisory testing result requires a reviewer item or a blocking fallback
+
+**Evidence.** Rust and Swift two-runs results carried a project location that lead conversion
+skipped. Regression tests in `test_review_command.py` reproduce both missing items and omitted
+results at the item cap. Prepare now searches changed native source files for a unique test
+function; unlocated results and capped leads record degradation and restore blocking severity
+for their testing row at prepare and finish.
+
+**Mechanism.** A global severity downgrade applies even when a language cannot supply a location
+or an item budget drops the result. A cap on reviewer work must preserve the unreviewed evidence.
+
+**Generalizable rule.** Before downgrading a deterministic result to reviewer advice, guarantee
+its delivery or keep a conservative, visible fallback. Ambiguous definitions are gaps, not guesses.
+
 ## 2026-11-11
 
 ### A reviewer judges what it must answer, not what a prompt section mentions

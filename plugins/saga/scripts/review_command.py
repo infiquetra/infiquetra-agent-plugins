@@ -834,6 +834,32 @@ def _model(finding: Mapping[str, Any]) -> str:
     return f"{source.get('name') or 'tool'} {source.get('version') or 'not-recorded'}"
 
 
+def _native_test_location(
+    node: str, language: str, change: review_diff.Change, runner: Process,
+    repo: Path, head: str, cache: dict[str, str | None],
+) -> tuple[str, str, tuple[int, int]] | None:
+    """Locate a unique Rust/Swift test definition in the changed head files.
+
+    Rust unit tests can live in production modules. Ambiguous names remain unlocated rather
+    than pointing the reviewer at an arbitrary definition.
+    """
+    suffix, keyword = {"rust": (".rs", "fn"), "swift": (".swift", "func")}.get(
+        language, ("", ""))
+    if not suffix:
+        return None
+    name = node.rsplit("/", 1)[-1].rsplit("::", 1)[-1].removesuffix("()")
+    pattern = re.compile(r"\b" + keyword + r"\s+" + re.escape(name) + r"\s*[(<]")
+    found = []
+    for item in sorted(change.files, key=lambda item: item.path):
+        if item.status not in {"added", "modified", "renamed"} or not item.path.endswith(suffix):
+            continue
+        text = _head_text(runner, repo, head, item.path, cache)
+        for line, body in enumerate((text or "").splitlines(), 1):
+            if pattern.search(body):
+                found.append((item.path, name, (line, line)))
+    return found[0] if len(found) == 1 else None
+
+
 def _lead_items(
     findings: Sequence[Any],
     change: review_diff.Change,
@@ -862,6 +888,7 @@ def _lead_items(
                 function = _python_function_at(text, line)
                 if function:
                     changed_words |= _words(function)
+    degraded: list[dict[str, Any]] = []
     tests: list[tuple[int, str, dict[str, Any]]] = []
     mutants: list[tuple[str, int, str, dict[str, Any]]] = []
     for finding in findings:
@@ -870,14 +897,22 @@ def _lead_items(
         row = finding["rule"].get("row")
         location = finding.get("location") if isinstance(finding.get("location"), Mapping) else {}
         path = str(location.get("file") or "")
-        if not path or path == ".":
+        if row not in {ROW_TWO_RUNS, ROW_MUTANT}:
             continue
         language = str(finding.get("language") or "none")
         if row == ROW_TWO_RUNS:
             node = str(finding["rule"].get("ref") or location.get("anchor") or "")
             name = node.split("::")[-1].split("[", 1)[0]
+            native = (_native_test_location(node, language, change, runner, repo, head, cache)
+                      if language in {"rust", "swift"} else None)
             span = (_python_def(_head_text(runner, repo, head, path, cache), name)
                     if path.endswith(".py") and name else None)
+            if native is not None:
+                path, name, span = native
+            if not path or path == ".":
+                degraded.append(_degraded("testing", language, str(row), "two-runs",
+                                          "unlocated-lead"))
+                continue
             where: dict[str, Any] = (
                 {"scope": "lines", "file": path, "lines": {"start": span[0], "end": span[1]},
                  "function": name, "anchor": f"two-runs:{node}"}
@@ -889,7 +924,9 @@ def _lead_items(
         elif row == ROW_MUTANT:
             lines = location.get("lines") if isinstance(location.get("lines"), Mapping) else {}
             line = lines.get("start")
-            if not isinstance(line, int):
+            if not path or path == "." or not isinstance(line, int) or line < 1:
+                degraded.append(_degraded("testing", language, str(row), "surviving-mutant",
+                                          "unlocated-lead"))
                 continue
             match = _OPERATOR.search(str(finding.get("statement") or ""))
             operator = match.group(1) if match else "unknown-operator"
@@ -900,7 +937,6 @@ def _lead_items(
             mutants.append((path, line, operator, _lead_item(
                 "testing", language, where, "surviving-mutant", _model(finding))))
     items: list[dict[str, Any]] = []
-    degraded: list[dict[str, Any]] = []
     for kind, row, ranked in (
         ("two-runs", ROW_TWO_RUNS, [entry[-1] for entry in sorted(tests, key=lambda e: e[:2])]),
         ("surviving-mutant", ROW_MUTANT,

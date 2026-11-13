@@ -4348,3 +4348,53 @@ def test_prepare_writes_the_lead_items_into_the_packet_the_same_way_twice(
     where = json.loads(packets[0]["where-to-look.json"])
     assert [item["classifier"]["name"] for item in where if item["lens"] == "testing"].count(
         "two-runs") == 1
+
+
+@pytest.mark.parametrize(('language', 'path', 'node', 'source'), [
+    ('rust', 'src/lib.rs', 'tests::test_ok', '#[cfg(test)]\nmod tests {\n    #[test]\n    fn test_ok() { assert!(true); }\n}\n'),
+    ('swift', 'tests/AppTests.swift', 'AppTests.AppTests/testOK', 'import XCTest\nfinal class AppTests: XCTestCase {\n    func testOK() { XCTAssertTrue(true) }\n}\n'),
+])
+def test_native_two_runs_lead_finds_the_changed_test_definition(
+    tmp_path: Path, language: str, path: str, node: str, source: str,
+) -> None:
+    repo, base, _head, _change = _lead_change(tmp_path)
+    target = repo / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source, encoding='utf-8')
+    head = _commit(repo, 'native tests')
+    change = C.review_diff.read(repo, base, head)
+    finding = _lead_finding(C.ROW_TWO_RUNS, node,
+                            {'scope': 'whole-project', 'file': '.', 'anchor': node}, 'passes')
+    finding['language'] = language
+    items, degraded = C._lead_items([finding], change, C.review_tools.subprocess_runner, repo, head)
+    assert degraded == []
+    assert len(items) == 1
+    assert items[0]['location']['file'] == path
+    assert items[0]['location']['lines']['start'] == (4 if language == 'rust' else 3)
+
+
+@pytest.mark.parametrize('row', [C.ROW_TWO_RUNS, C.ROW_MUTANT])
+def test_unlocated_testing_leads_stay_blocking_with_a_degraded_reason(tmp_path: Path, row: str) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    finding = _lead_finding(row, 'unlocated', {'scope': 'whole-project', 'file': '.',
+                                             'anchor': 'unlocated'}, 'survived')
+    finding['id'] = 'unlocated'
+    items, degraded = C._lead_items([finding], change, C.review_tools.subprocess_runner, repo, head)
+    assert items == []
+    assert degraded[0]['reason'] == 'unlocated-lead'
+    result = C.review_formula.compute({'findings': [finding], 'degraded_inputs': degraded,
+                                      'may_block': {'testing': {'python': True}}})
+    assert result['findings'][0]['severity'] == 'blocks'
+    assert result['findings'][0]['enforced'] is True
+
+
+def test_capped_testing_leads_stay_blocking(tmp_path: Path) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    findings = [_two_runs_finding(f'extra_{n}') for n in range(C.LEAD_CAP + 1)]
+    for n, finding in enumerate(findings):
+        finding['id'] = str(n)
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    assert len(items) == C.LEAD_CAP
+    result = C.review_formula.compute({'findings': findings, 'degraded_inputs': degraded})
+    assert all(finding['severity'] == 'blocks' for finding in result['findings'])
+

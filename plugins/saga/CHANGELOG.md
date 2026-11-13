@@ -110,6 +110,11 @@
 
 ### Fixed
 
+- **Testing results cannot disappear from reviewer leads.** Rust and Swift two-runs results
+  locate unique test definitions in changed head files, including Rust inline tests. Unlocated
+  results and results beyond the item cap record a reason and restore blocking severity for
+  the affected testing row, so omitted leads cannot silently fix later.
+
 - **The reviewer answers each testing lead.** `prepare` turns up to 8 two-runs tests and 8
   surviving mutants into where-to-look items asking `testing.accepts-broken-code`, located at the
   test or the mutated line; more is recorded as `lead-cap`. The prompt tells the reviewer to answer
