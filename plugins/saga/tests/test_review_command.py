@@ -4619,3 +4619,22 @@ def test_testing_lead_documentation_keeps_capped_results_advisory(document: str)
     assert 'Capped leads stay fix-later.' in reference
     assert '`unlocated-lead` or `lead-cap` restores blocking severity' not in reference
     assert 'Either reason keeps the affected' not in reference
+
+
+@pytest.mark.parametrize('row', [C.ROW_TWO_RUNS, C.ROW_MUTANT])
+def test_lead_cap_counts_only_the_languages_that_overflow(tmp_path: Path, row: str) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    findings = [(_two_runs_finding(f'extra_{n:02}') if row == C.ROW_TWO_RUNS
+                 else _mutant_finding(2, f'core/Op{n:02}')) for n in range(C.LEAD_CAP + 4)]
+    for n, finding in enumerate(findings):
+        finding['id'] = f'lead-{n}'
+        finding['language'] = 'python' if n < C.LEAD_CAP else ('typescript' if n % 2 else 'dart')
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    assert len(items) == C.LEAD_CAP
+    assert [(entry['language'], entry['reason'], entry['count']) for entry in degraded] == [
+        ('dart', 'lead-cap', 2), ('typescript', 'lead-cap', 2)]
+    assert all(entry['input'] == row for entry in degraded)
+    computed = C.review_formula.compute({'findings': findings, 'degraded_inputs': degraded})
+    assert all(finding['severity'] == 'fix-later' for finding in computed['findings'])
+    assert C._lead_items(list(reversed(findings)), change, C.review_tools.subprocess_runner,
+                         repo, head) == (items, degraded)

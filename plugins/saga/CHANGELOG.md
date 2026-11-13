@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Testing lead overflow records one `lead-cap` entry per affected row and language, with that
+  language's omitted count. The shared item cap and advisory severity are unchanged.
+
 - Review references now consistently describe `lead-cap` as advisory and limit the blocking
   fallback to the exact unlocated findings.
 

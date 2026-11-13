@@ -359,7 +359,8 @@ surviving-mutant leads as items of their own (see `review-command.md`). Rust and
 locate unique test definitions in changed head source files. Unlocated leads record
 `unlocated-lead` once per testing row and language, with a `count` and the affected `finding_ids`.
 Only those unlocated findings regain blocking severity at prepare and finish, subject to normal
-builder excusal and per-language enforcement. Leads beyond the cap record `lead-cap`.
+builder excusal and per-language enforcement. Leads beyond the cap record `lead-cap`
+once per affected row and language, with that language's omitted `count`.
 Capped leads stay fix-later. A confirmed machine-specific finding stays fix later.
 When the relocated test command fails, `architecture-maintainability.relocated-run-fails` blocks in
 the same outcome file.

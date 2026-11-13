@@ -1072,8 +1072,10 @@ def _lead_items(
                 seen.add(key)
                 unique.append(item)
         items.extend(unique[:LEAD_CAP])
-        if len(unique) > LEAD_CAP:
-            entry = _degraded("testing", "none", row, kind, "lead-cap")
+        overflow = unique[LEAD_CAP:]
+        for language in sorted({item["language"] for item in overflow}):
+            entry = _degraded("testing", language, row, kind, "lead-cap")
+            entry["count"] = sum(item["language"] == language for item in overflow)
             entry["detail"] = f"listed {LEAD_CAP} of {len(unique)} leads as where-to-look items"
             degraded.append(entry)
     return items, degraded
