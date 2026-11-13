@@ -2,6 +2,24 @@
 
 ## 2026-11-13
 
+### Store test results independently of reporter presentation
+
+**Evidence.** Synthetic Vitest and Jest runs vary summary counts and timings in console text,
+optional passing-test lines, warning placement and approximate-duration hints. The same JSON
+results now produce the same stored evidence digest and findings; a different failing set
+changes the digest. Complete subfolder prepares compare every packet byte. Missing, invalid
+or incomplete reports retain console findings and evidence with an explicit gap.
+
+**Mechanism.** Reporter verbosity and output interleaving are presentation choices rather than
+test outcomes. Canonical evidence selects runner/version, seed, counts and sorted failure
+identities/messages from private JSON files. File counts come from per-file results: Vitest's
+suite summary also counts nested describe blocks. Failure-message content remains diagnostic;
+only terminal escapes and project/dependency or Saga scratch path prefixes are normalized.
+
+**Generalizable rule.** Hash a structured result projection rather than a scrubbed transcript.
+Preserve failure diagnostics and make a fallback visible instead of silently claiming stable
+structured evidence when a report is unavailable.
+
 ### A fixed shuffle seed does not fix worker scheduling
 
 **Evidence.** Node runner argument tests now require Vitest's `--no-file-parallelism` or

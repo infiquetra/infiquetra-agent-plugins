@@ -320,6 +320,16 @@ def test_two_prepares_of_subfolder_commit_produce_identical_complete_packets(
             assert ("--no-file-parallelism" if kind == "vitest" else "--runInBand") in argv
             fixture = Path(__file__).parent / "fixtures/review_tools" / f"{kind}-shuffle-run-{len(installs)}.txt"
             text = fixture.read_text().replace("@ROOT@", str(cwd))
+            destination = next((arg.split("=", 1)[1] for arg in argv if arg.startswith("--outputFile=")), None)
+            if destination is not None:
+                report = {"numTotalTests": 2, "numPassedTests": 0, "numFailedTests": 2,
+                    "numPendingTests": 0, "numTotalTestSuites": 2, "numPassedTestSuites": 0,
+                    "numFailedTestSuites": 2, "numPendingTestSuites": 0, "startTime": len(installs),
+                    "testResults": [{"name": str(cwd / f"{letter}.test.js"), "status": "failed",
+                        "assertionResults": [{"fullName": letter + " fails", "status": "failed",
+                            "duration": len(installs), "failureMessages": ["expected 2, received 1"]}]}
+                        for letter in ("e", "f")]}
+                Path(destination).write_text(json.dumps(report))
             return H.T.ProcessResult(1, text if kind == "vitest" else "", text if kind == "jest" else "")
         if Path(argv[0]).name == "stryker":
             if "--version" in argv:
@@ -354,6 +364,10 @@ def test_two_prepares_of_subfolder_commit_produce_identical_complete_packets(
         assert content(packets[0]) == content(packets[1])
         findings = json.loads((packets[0] / "findings.json").read_text())
         assert len([item for item in findings if item["rule"]["ref"] == "shuffle-failure"]) == 2
+        for item in findings:
+            if item["rule"]["ref"] == "shuffle-failure":
+                raw = json.loads((home / ".saga/review-output" / item["proof"]["raw_output"]).read_text())
+                assert raw["schema"] == "saga.node-test-result.v1"
         items = json.loads((packets[0] / "where-to-look.json").read_text())
         assert {item["classifier"]["name"] for item in items} >= {"two-runs", "surviving-mutant"}
         assert len([item for item in items if item["classifier"]["name"] == "two-runs"]) == 1

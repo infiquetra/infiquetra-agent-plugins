@@ -299,6 +299,7 @@ class ScanContext:
     mutation_deadline: float | None = None
     project: str = "."
     mutation_budget: int = 10
+    tool_version: str = "not-recorded"
 
 
 @dataclass(frozen=True)
@@ -414,6 +415,8 @@ class Adapter:
     #: Failure reasons that earn one more run of the same command before they are recorded
     #: (issue 260). A pass on the retry keeps its result and adds a ``baseline-flaky`` note.
     retry_failures: tuple[str, ...] = ()
+    #: Read an adapter-owned report after execution, before parsing or raw-output storage.
+    read_result: Callable[[ScanContext, ProcessResult], ProcessResult] | None = None
 
     def __post_init__(self) -> None:
         if self.stream not in ("stdout", "stderr", "both"):
@@ -1700,6 +1703,7 @@ def _run_adapter(
                 project=project,
                 mutation_budget=mutation_budget,
                 mutation_deadline=deadline if adapter.mutation else None,
+                tool_version=ran,
             )
             if comparison == "base-head":
                 hits, digests = _base_and_head(
@@ -1852,6 +1856,7 @@ def _once(
     if parsed.gap is not None:
         reason, row = parsed.gap
         degraded.append(_degraded(adapter, row, reason))
+        _absorb(adapter, parsed, label, degraded, items)
         return (), {}
     if parsed.unfinished:
         degraded.append(_degraded(adapter, "testing.surviving-mutant", parsed.unfinished_reason))
@@ -2096,6 +2101,7 @@ def _scan_root(
     if parsed.gap is not None:
         reason, row = parsed.gap
         degraded.append(_degraded(adapter, row, reason))
+        _absorb(adapter, parsed, label, degraded, items)
         return (), "", None, True
     if raw_sink is not None and adapter.stable_raw_for_change is not None:
         raw_sink.append(result.stdout or "")
@@ -2163,7 +2169,9 @@ def _capture(
             adapter, argv, scan.root, process, env, timeout, diagnostic, deadline,
         )
         if result is not None and problem is None:
-            if adapter.report_file is not None:
+            if adapter.read_result is not None:
+                result = adapter.read_result(scan, result)
+            elif adapter.report_file is not None:
                 report = scan.root / adapter.report_file
                 if report.is_symlink():
                     return None, "unparseable", True
@@ -3423,6 +3431,8 @@ def _relocated_env() -> tuple[dict[str, str], list[Path]]:
     env["TMP"] = str(tmp_dir)
     env["TEMP"] = str(tmp_dir)
     return env, [home_dir, tmp_dir]
+
+
 
 
 def _one_relocated(

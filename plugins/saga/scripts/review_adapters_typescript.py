@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 import review_node_projects
+import review_node_reports
 import review_tools
 from review_tools import Adapter, Hit, ParseResult, RulePin, ScanContext, ToolGap
 
@@ -725,6 +727,71 @@ def _shuffle_seed(context: ScanContext) -> int:
     return review_tools.change_seed(context)
 
 
+def _shuffle_report(context: ScanContext, kind: str) -> Path:
+    if context.scratch is None:
+        raise ToolGap("missing-report-directory", "testing.flaky-order-or-network")
+    return context.scratch / (kind + "-shuffle.json")
+
+
+def _read_shuffle_result(context: ScanContext, result: review_tools.ProcessResult,
+                         kind: str) -> review_tools.ProcessResult:
+    record, reason = review_node_reports.read(_shuffle_report(context, kind), kind,
+        context.tool_version, _shuffle_seed(context), context.root)
+    if record is not None and result.code != 0 and record["tests"]["total"] and not record["failures"]:
+        record, reason = None, "incomplete-json-report"
+    if record is None:
+        console = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        record = {"schema": review_node_reports.FALLBACK, "runner": kind,
+                  "reason": reason, "console": console, "exit_code": result.code}
+    else:
+        record["exit_code"] = result.code
+        record["project"] = context.project
+    return review_tools.ProcessResult(result.code, review_node_reports.dumps(record), result.stderr)
+
+
+def _shuffle_reader(kind: str) -> Callable[[ScanContext, review_tools.ProcessResult], review_tools.ProcessResult]:
+    def read(context: ScanContext, result: review_tools.ProcessResult) -> review_tools.ProcessResult:
+        return _read_shuffle_result(context, result, kind)
+    return read
+
+
+def _shuffle_evidence(text: str, kind: str,
+                      console_parse: Callable[[str], ParseResult]) -> ParseResult | None:
+    try:
+        record = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(record, dict) or record.get("runner") != kind:
+        return None
+    row = "testing.flaky-order-or-network"
+    if record.get("schema") == review_node_reports.FALLBACK:
+        parsed = console_parse(record["console"])
+        if not parsed.hits and parsed.gap is None and record["exit_code"] != 0:
+            parsed = replace(parsed, gap=("unparseable", row))
+        return replace(parsed, gaps=(*parsed.gaps, (record["reason"], row)))
+    if record.get("schema") != review_node_reports.SCHEMA:
+        return None
+    if record["tests"]["total"] == 0 and not record["failures"]:
+        return ParseResult((), gap=("no-tests-ran", row))
+    label = "Vitest" if kind == "vitest" else "Jest"
+    return ParseResult(tuple(Hit(
+        rule_id="shuffle-failure", path=case["file"],
+        statement=f"{label} {'test ' + case['full_name'] if case['full_name'] is not None else 'suite'} "
+                  f"failed in random order (seed {record['seed']}).",
+        anchor=f"{case['file']} :: {case['full_name'] or 'suite'}", row=row, whole_project=True,
+    ) for case in record["failures"]))
+
+
+def _stable_shuffle_evidence(text: str) -> str:
+    try:
+        record = json.loads(text)
+    except ValueError:
+        return review_tools.stable_transcript(text)
+    if isinstance(record, dict) and record.get("schema") == review_node_reports.FALLBACK:
+        return review_tools.stable_transcript(record["console"])
+    return review_node_reports.dumps(record)
+
+
 def _invoke_vitest_shuffle(context: ScanContext) -> list[str]:
     if not _has_markers(context.root):
         return []
@@ -733,14 +800,21 @@ def _invoke_vitest_shuffle(context: ScanContext) -> list[str]:
     _stage_tsconfig(context)
     staged = _stage_first_base(context, _VITEST_CONFIGS)
     _refuse_relative_imports(staged, "testing.flaky-order-or-network")
+    report = _shuffle_report(context, "vitest")
+    report.unlink(missing_ok=True)
     return [
         "vitest", "run", "--sequence.shuffle",
         "--sequence.seed", str(_shuffle_seed(context)),
         "--no-file-parallelism",
+        *review_node_reports.report_arguments("vitest", report, console=True),
     ]
 
 
 def _parse_vitest_shuffle(text: str) -> ParseResult:
+    return _shuffle_evidence(text, "vitest", _parse_vitest_console) or _parse_vitest_console(text)
+
+
+def _parse_vitest_console(text: str) -> ParseResult:
     plain = _ANSI.sub("", text)
     if "No test files found" in plain:
         return ParseResult((), gap=("no-tests-ran", "testing.flaky-order-or-network"))
@@ -798,10 +872,17 @@ def _invoke_jest_shuffle(context: ScanContext) -> list[str]:
         argv.extend(["--config", str(staged)])
     elif _files_with(context.root, (".ts", ".tsx", ".mts", ".cts")):
         raise ToolGap("not-configured", "testing.flaky-order-or-network")
+    report = _shuffle_report(context, "jest")
+    report.unlink(missing_ok=True)
+    argv.extend(review_node_reports.report_arguments("jest", report))
     return argv
 
 
 def _parse_jest_shuffle(text: str) -> ParseResult:
+    return _shuffle_evidence(text, "jest", _parse_jest_console) or _parse_jest_console(text)
+
+
+def _parse_jest_console(text: str) -> ParseResult:
     plain = _ANSI.sub("", text)
     if "No tests found" in plain:
         return ParseResult((), gap=("no-tests-ran", "testing.flaky-order-or-network"))
@@ -1127,9 +1208,13 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             base_files=tuple(str(item) for item in (row.get("base_files") or ())),
             local_bins=tuple(str(item) for item in (row.get("local_bins") or ())),
             stable_raw=(
-                review_tools.stable_transcript if tool_id in _TRANSCRIPTS
+                _stable_shuffle_evidence if tool_id in _TRANSCRIPTS
                 else _stable_knip if tool_id == "knip"
                 else _stable_stryker if tool_id == "stryker" else None
+            ),
+            read_result=(
+                _shuffle_reader(str(row.get("tool")))
+                if tool_id in _TRANSCRIPTS else None
             ),
         ))
     return built
