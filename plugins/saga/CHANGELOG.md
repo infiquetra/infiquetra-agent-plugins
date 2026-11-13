@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Native testing leads ignore comments and string literals, locate multiline signatures, and use
+  Rust module paths or Swift type names to disambiguate test names. Ambiguous tests remain
+  unlocated.
+
 ### Added
 
 - **Prepare installs a JavaScript or TypeScript head's npm packages into the packet.** A head with

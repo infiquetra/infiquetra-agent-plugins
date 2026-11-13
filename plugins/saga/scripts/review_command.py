@@ -863,29 +863,112 @@ def _model(finding: Mapping[str, Any]) -> str:
     return f"{source.get('name') or 'tool'} {source.get('version') or 'not-recorded'}"
 
 
+def _native_code(text: str, language: str) -> str:
+    """Mask comments and literals, preserving offsets and line numbers for source lookup."""
+    masked = list(text)
+    literal = re.compile(
+        r"r(#*)\"|'(?:\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|.)|[^'\\\n])'|\""
+        if language == "rust" else r'(#*)("""|")'
+    )
+    index = 0
+    while index < len(text):
+        start = index
+        if text.startswith("//", index):
+            end = text.find("\n", index)
+            index = len(text) if end < 0 else end
+        elif text.startswith("/*", index):
+            depth = 1
+            index += 2
+            while index < len(text) and depth:
+                if text.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif text.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+        elif match := literal.match(text, index):
+            opening = match.group()
+            index = match.end()
+            if opening.startswith("'"):
+                pass  # A complete Rust character literal; lifetimes are left intact.
+            else:
+                hashes = match.group(1) or ""
+                closing = ('"' + hashes if language == "rust"
+                           else match.group(2) + hashes)
+                raw = bool(hashes) or opening.startswith("r")
+                while index < len(text):
+                    if text.startswith(closing, index):
+                        index += len(closing)
+                        break
+                    index += 2 if not raw and text[index] == "\\" else 1
+        else:
+            index += 1
+            continue
+        masked[start:index] = ["\n" if char == "\n" else " " for char in text[start:index]]
+    return "".join(masked)
+
+
+def _native_definitions(text: str, language: str) -> list[tuple[tuple[str, ...], int]]:
+    """Read function identities and their line numbers within lexical module/type scopes."""
+    code = _native_code(text, language)
+    keyword = "fn" if language == "rust" else "func"
+    scopes = "mod" if language == "rust" else "class|struct|enum|extension"
+    tokens = re.compile(
+        r"\b(?:" + scopes + r")\s+(?P<scope>(?!func\b|var\b|let\b)\w+)"
+        r"|\b" + keyword + r"\s+(?P<function>\w+)\s*[(<]|(?P<brace>[{};])"
+    )
+    stack: list[str | None] = []
+    pending = None
+    found = []
+    for match in tokens.finditer(code):
+        if match.group("scope"):
+            pending = match.group("scope")
+        elif match.group("function"):
+            qualified = tuple(scope for scope in stack if scope is not None)
+            found.append(((*qualified, match.group("function")),
+                          code.count("\n", 0, match.start()) + 1))
+        elif match.group("brace") == "{":
+            stack.append(pending)
+            pending = None
+        elif match.group("brace") == "}":
+            if stack:
+                stack.pop()
+            pending = None
+        else:
+            pending = None
+    return found
+
+
 def _native_test_location(
     node: str, language: str, change: review_diff.Change, runner: Process,
     repo: Path, head: str, cache: dict[str, str | None],
 ) -> tuple[str, str, tuple[int, int]] | None:
-    """Locate a unique Rust/Swift test definition in the changed head files.
-
-    Rust unit tests can live in production modules. Ambiguous names remain unlocated rather
-    than pointing the reviewer at an arbitrary definition.
-    """
-    suffix, keyword = {"rust": (".rs", "fn"), "swift": (".swift", "func")}.get(
-        language, ("", ""))
-    if not suffix:
+    """Locate a unique qualified Rust/Swift test definition in changed head files."""
+    suffix = {"rust": ".rs", "swift": ".swift"}.get(language)
+    if suffix is None:
         return None
-    name = node.rsplit("/", 1)[-1].rsplit("::", 1)[-1].removesuffix("()")
-    pattern = re.compile(r"\b" + keyword + r"\s+" + re.escape(name) + r"\s*[(<]")
+    if language == "rust":
+        wanted = tuple(node.removesuffix("()").split("::"))
+    else:
+        suite, separator, name = node.rpartition("/")
+        wanted = (*suite.split(".")[-1:], name.removesuffix("()")) if separator else (node.removesuffix("()"),)
     found = []
     for item in sorted(change.files, key=lambda item: item.path):
         if item.status not in {"added", "modified", "renamed"} or not item.path.endswith(suffix):
             continue
         text = _head_text(runner, repo, head, item.path, cache)
-        for line, body in enumerate((text or "").splitlines(), 1):
-            if pattern.search(body):
-                found.append((item.path, name, (line, line)))
+        modules: tuple[str, ...] = ()
+        parts = Path(item.path).with_suffix("").parts
+        if language == "rust" and "src" in parts:
+            modules = parts[parts.index("src") + 1:]
+            if modules and modules[-1] in {"lib", "main", "mod"}:
+                modules = modules[:-1]
+        for qualified, line in _native_definitions(text or "", language):
+            identity = (*modules, *qualified)
+            if identity[-len(wanted):] == wanted:
+                found.append((item.path, qualified[-1], (line, line)))
     return found[0] if len(found) == 1 else None
 
 
@@ -944,6 +1027,9 @@ def _lead_items(
                     if path.endswith(".py") and name else None)
             if native is not None:
                 path, name, span = native
+            elif language in {"rust", "swift"}:
+                record_unlocated(finding, str(row), language, "two-runs")
+                continue
             if not path or path == ".":
                 record_unlocated(finding, str(row), language, "two-runs")
                 continue

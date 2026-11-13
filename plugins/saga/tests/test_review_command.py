@@ -4563,3 +4563,51 @@ def test_unlocated_lead_scope_survives_prepare_and_finish(tmp_path: Path, row: s
     assert {f['language']: f['severity'] for f in run['findings']} == {
         'python': 'fix-later', 'rust': 'blocks'}
     assert run['merge']['allowed'] is True
+
+
+@pytest.mark.parametrize(('language', 'path', 'node', 'source', 'line'), [
+    ('rust', 'src/lib.rs', 'tests::test_ok',
+     '// fn test_ok() {}\n/* outer /* fn test_ok() {} */ comment */\n'
+     'const TEXT: &str = r###"fn test_ok() {}"###;\n'
+     'mod tests {\n    fn test_ok\n    () {}\n}\n', 5),
+    ('swift', 'tests/AppTests.swift', 'AppTests.AppTests/testOK()',
+     '// func testOK() {}\n/* outer /* func testOK() {} */ comment */\n'
+     'let text = #"func testOK() {}"#\n'
+     'final class AppTests: XCTestCase {\n    func testOK\n    () {}\n}\n', 5),
+    ('rust', 'src/lib.rs', 'test_ok',
+     '// fn test_ok() {}\nconst TEXT: &str = \"fn test_ok() {}\";\n'
+     'fn test_ok() {}\n', 3),
+    ('swift', 'tests/AppTests.swift', 'testOK()',
+     'let text = \"\"\"\nfunc testOK() {}\n\"\"\"\nfunc testOK() {}\n', 4),
+    ('rust', 'src/lib.rs', 'second::test_ok',
+     'mod first { fn test_ok() {} }\nmod second { fn test_ok() {} }\n', 2),
+    ('swift', 'tests/AppTests.swift', 'Package.Second/testOK',
+     'class First { func testOK() {} }\nclass Second { func testOK() {} }\n', 2),
+])
+def test_native_lookup_ignores_non_code_and_preserves_scope(
+    tmp_path: Path, language: str, path: str, node: str, source: str, line: int,
+) -> None:
+    repo, base, _head, _change = _lead_change(tmp_path)
+    target = repo / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source, encoding='utf-8')
+    head = _commit(repo, 'native lookup')
+    result = C._native_test_location(node, language, C.review_diff.read(repo, base, head),
+                                     C.review_tools.subprocess_runner, repo, head, {})
+    assert result == (path, 'test_ok' if language == 'rust' else 'testOK', (line, line))
+
+
+def test_native_rust_lookup_uses_file_modules_and_keeps_ambiguity(tmp_path: Path) -> None:
+    repo, base, _head, _change = _lead_change(tmp_path)
+    (repo / 'src').mkdir()
+    for module in ('b', 'c'):
+        (repo / f'src/{module}.rs').write_text(
+            'mod tests {\n    fn test_dup() {}\n}\n', encoding='utf-8')
+    head = _commit(repo, 'module tests')
+    change = C.review_diff.read(repo, base, head)
+    for module in ('b', 'c'):
+        assert C._native_test_location(f'{module}::tests::test_dup', 'rust', change,
+                                       C.review_tools.subprocess_runner, repo, head, {}) == (
+                                           f'src/{module}.rs', 'test_dup', (2, 2))
+    assert C._native_test_location('test_dup', 'rust', change, C.review_tools.subprocess_runner,
+                                   repo, head, {}) is None

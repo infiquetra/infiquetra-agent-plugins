@@ -2,6 +2,18 @@
 
 ## 2026-11-13
 
+### Native test lookup needs lexical context and qualified identity
+
+**Evidence.** Small Rust and Swift fixtures reproduced false matches in comments and literals,
+missed multiline signatures, and collisions between modules or classes sharing a test name.
+Lookup now masks comments and literals while retaining line offsets, then follows lexical
+module/type scopes and Rust file modules. Ambiguous definitions remain unlocated.
+
+**Mechanism.** Line matching discarded both lexical context and the runner's qualified identity.
+
+**Generalizable rule.** Locate executable definitions using code context and qualified names;
+require a unique match before creating a source item.
+
 ### A degraded lead must retain its finding identity through recomputation
 
 **Evidence.** Mixed located and unlocated testing results reproduced row-wide escalation across
