@@ -110,6 +110,10 @@
 
 ### Fixed
 
+- **Two-runs names import failures and locates class methods correctly.** A pytest configuration
+  import failure records `conftest-import-failed` without claiming tests ran. Python test locations
+  resolve every class qualifier, so identically named methods in different classes stay distinct.
+
 - **cosmic-ray baselines preserve the test environment and failure identities.** Baselines
   remove profile fail-fast flags so all failing tests can be excluded, preserve parameter ids
   containing ` - `, and report a spent shared budget as `cap` before starting tests. Baselines,

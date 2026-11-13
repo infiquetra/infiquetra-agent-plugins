@@ -4435,3 +4435,19 @@ def test_survivor_anchors_preserve_each_tools_distinct_statements(
         assert all(':42:' not in anchor and ':43:' not in anchor for anchor in anchors)
     assert (items, degraded) == C._lead_items(list(reversed(findings)), change,
                                             C.review_tools.subprocess_runner, repo, head)
+
+
+def test_two_runs_python_class_qualifier_selects_the_right_method(tmp_path: Path) -> None:
+    repo, base, _head, _change = _lead_change(tmp_path)
+    (repo / 'tests/test_classes.py').write_text(
+        'class TestA:\n    def test_ok(self):\n        assert True\n\n'
+        'class TestB:\n    def test_ok(self):\n        assert True\n', encoding='utf-8')
+    head = _commit(repo, 'classes')
+    node = 'tests/test_classes.py::TestB::test_ok'
+    finding = _lead_finding(C.ROW_TWO_RUNS, node,
+                            {'scope': 'whole-project', 'file': 'tests/test_classes.py',
+                             'anchor': node}, 'passes')
+    items, degraded = C._lead_items([finding], C.review_diff.read(repo, base, head),
+                                    C.review_tools.subprocess_runner, repo, head)
+    assert degraded == []
+    assert items[0]['location']['lines'] == {'start': 6, 'end': 7}

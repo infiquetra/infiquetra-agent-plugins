@@ -533,3 +533,15 @@ def test_a_run_over_the_python_environment_leaves_the_packet_s_packages_untouche
     assert [hit["anchor"] for hit in payload["hits"]] == [ALREADY]
     assert _listing(site) == before
     assert not list(site.rglob("__pycache__"))
+
+
+def test_base_conftest_import_failure_has_its_own_reason(tmp_path: Path) -> None:
+    repo, base, _head = H.make_repo(
+        tmp_path, {'pytest.ini': INI, 'app.py': APP_BASE},
+        {'tests/conftest.py': 'import only_at_head\n',
+         'only_at_head.py': 'VALUE = 1\n',
+         'tests/test_new.py': 'def test_new():\n    assert True\n'})
+    payload = H.C.two_runs(repo, base, [('python', f'PYTHONPATH=. {H.PYTEST}')])
+    assert payload['hits'] == []
+    assert payload['gaps'] == [{'reason': 'conftest-import-failed',
+                               'row': 'testing.test-passes-before-change'}]

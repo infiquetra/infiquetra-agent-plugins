@@ -2,6 +2,19 @@
 
 ## 2026-11-12
 
+### Test collection failures and qualified identities must survive normalization
+
+**Evidence.** A copied `conftest.py` importing a head-only helper reproduced a base-run exit code
+of four and a generic missing-list reason. A two-class fixture reproduced the wrong method span.
+Two-runs now preserves `conftest-import-failed` across listing and batch-run boundaries, and lead
+conversion follows Python class qualifiers instead of taking the first bare method name.
+
+**Mechanism.** Test collection can fail before any test executes. A pytest node identifies both
+its containing class and method; stripping that scope loses identity before source lookup.
+
+**Generalizable rule.** Preserve meaningful runner failure reasons and qualified test identities
+through every helper boundary; do not turn a collection failure into evidence that tests ran.
+
 ### Mutation baselines need exhaustive failures and an explicit worker environment
 
 **Evidence.** Regression suites with two failing tests under `-x` or `--exitfirst`, a failing

@@ -393,8 +393,17 @@ def _list_ids(
             review_diagnostics.write_failure_tail(
                 diagnostics, "two-runs", step, code, stdout, stderr,
             )
-        return "no-test-list"
+        return _pytest_error(kind, code, stdout, stderr)
     return parsed
+
+
+def _pytest_error(kind: str, code: int, stdout: str, stderr: str) -> str:
+    if kind == "pytest" and code == 4 and (
+        "ImportError while loading conftest" in stdout + stderr
+        or "ConftestImportFailure" in stdout + stderr
+    ):
+        return "conftest-import-failed"
+    return "no-test-list"
 
 
 def _test_path(kind: str, node_id: str) -> str:
@@ -514,7 +523,7 @@ def _run_pytest_batch(
         if diagnostics is not None:
             review_diagnostics.write_failure_tail(diagnostics, "two-runs", step, code, stdout,
                                                   stderr)
-        return "no-test-list"
+        return _pytest_error("pytest", code, stdout, stderr)
     passed = {line[len(_PASSED):].strip() for line in stdout.splitlines()
               if line.startswith(_PASSED)}
     return [node for node in nodes if node in passed]
@@ -582,7 +591,7 @@ def two_runs(
 
 
 def _failed(reason: str, fallback: str) -> str:
-    return reason if reason in {"missing", "timeout"} else fallback
+    return reason if reason in {"missing", "timeout", "conftest-import-failed"} else fallback
 
 
 def _two_pytest_runs(

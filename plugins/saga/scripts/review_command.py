@@ -797,7 +797,7 @@ def _head_text(runner: Process, repo: Path, head: str, path: str, cache: dict[st
 
 
 def _python_def(text: str | None, name: str) -> tuple[int, int] | None:
-    """The first and last line of the function *name* defines in *text*, or ``None``."""
+    """Locate a pytest-qualified function or class method, or return ``None``."""
     import ast  # noqa: PLC0415
 
     if text is None:
@@ -806,10 +806,21 @@ def _python_def(text: str | None, name: str) -> tuple[int, int] | None:
         tree = ast.parse(text)
     except (SyntaxError, ValueError):
         return None
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-            return node.lineno, getattr(node, "end_lineno", None) or node.lineno
-    return None
+    body = tree.body
+    parts = name.split("::")
+    for qualifier in parts[:-1]:
+        classes = [node for node in body if isinstance(node, ast.ClassDef)
+                   and node.name == qualifier]
+        if len(classes) != 1:
+            return None
+        body = classes[0].body
+    matches = [node for node in body
+               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and node.name == parts[-1]]
+    if len(matches) != 1:
+        return None
+    node = matches[0]
+    return node.lineno, node.end_lineno or node.lineno
 
 
 def _python_function_at(text: str | None, line: int) -> str | None:
@@ -920,7 +931,8 @@ def _lead_items(
             name = node.split("::")[-1].split("[", 1)[0]
             native = (_native_test_location(node, language, change, runner, repo, head, cache)
                       if language in {"rust", "swift"} else None)
-            span = (_python_def(_head_text(runner, repo, head, path, cache), name)
+            qualified = node.split("::", 1)[-1].split("[", 1)[0]
+            span = (_python_def(_head_text(runner, repo, head, path, cache), qualified)
                     if path.endswith(".py") and name else None)
             if native is not None:
                 path, name, span = native
