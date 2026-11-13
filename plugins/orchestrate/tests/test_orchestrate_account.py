@@ -130,11 +130,18 @@ def launcher_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ORCHESTRATE_AGENT_LAUNCHER", str(launcher))
 
 
+# What `agents --app` prints on success: the new session's herdr core terminal.
+_LAUNCH_RESULT = (
+    '{"created_space": false, "space": "sp1", "tab": "tb1", "terminal": "t1", '
+    '"agent_name": "worker"}\n'
+)
+
+
 @pytest.fixture
 def pane_reads_nothing(monkeypatch: pytest.MonkeyPatch, orchestrate: ModuleType) -> None:
     """No statusline to read, so the account falls through to the transcript-root probe.
 
-    Without this the pane read reaches whatever `herdr` the machine has, which answers one way on
+    Without this the screen read reaches whatever `hc` the machine has, which answers one way on
     a workstation and another on a runner. The tests that plant a transcript are about that probe,
     so the statusline is made to say nothing rather than left to the environment.
     """
@@ -381,8 +388,8 @@ class TestPostLaunchAccountVerification:
             task="do work",
             worktree=str(repo),
             account="company",
-            tab_id="tab-1",
-            pane_id="pane-1",
+            tab_id="t1",
+            pane_id="t1",
         )
 
         slug = orchestrate.claude_project_slug(repo)
@@ -395,7 +402,7 @@ class TestPostLaunchAccountVerification:
             "live_agents",
             lambda: [
                 {
-                    "pane_id": "pane-1",
+                    "pane_id": "t1",
                     "cwd": str(repo),
                     "interactive_ready": True,
                     "agent": "claude",
@@ -403,7 +410,7 @@ class TestPostLaunchAccountVerification:
             ],
         )
 
-        receipt = orchestrate.verify_unit_preflight(unit, "pane-1", ready=True)
+        receipt = orchestrate.verify_unit_preflight(unit, "t1", ready=True)
         assert "account" not in receipt["confirmed_against_herdr"]
         assert receipt["confirmed_outside_herdr"] == ["account"]
         assert receipt["account"] == "company"
@@ -422,8 +429,8 @@ class TestPostLaunchAccountVerification:
             task="do work",
             worktree=str(repo),
             account="company",
-            tab_id="tab-1",
-            pane_id="pane-1",
+            tab_id="t1",
+            pane_id="t1",
         )
 
         # Worker landed on personal account
@@ -443,7 +450,7 @@ class TestPostLaunchAccountVerification:
             "live_agents",
             lambda: [
                 {
-                    "pane_id": "pane-1",
+                    "pane_id": "t1",
                     "cwd": str(repo),
                     "interactive_ready": True,
                     "agent": "claude",
@@ -452,10 +459,10 @@ class TestPostLaunchAccountVerification:
         )
 
         with pytest.raises(orchestrate.AccountMismatchError) as excinfo:
-            orchestrate.verify_unit_preflight(unit, "pane-1", ready=True)
+            orchestrate.verify_unit_preflight(unit, "t1", ready=True)
 
         assert "account mismatch" in str(excinfo.value)
-        assert closed_tabs == ["tab-1"]
+        assert closed_tabs == ["t1"]
         assert unit.status == orchestrate.ACCOUNT_MISMATCH
         assert "account mismatch" in unit.note
 
@@ -473,8 +480,8 @@ class TestPostLaunchAccountVerification:
             task="do work",
             worktree=str(repo),
             account="personal",
-            tab_id="tab-2",
-            pane_id="pane-2",
+            tab_id="t2",
+            pane_id="t2",
         )
 
         slug = orchestrate.claude_project_slug(repo)
@@ -493,7 +500,7 @@ class TestPostLaunchAccountVerification:
             "live_agents",
             lambda: [
                 {
-                    "pane_id": "pane-2",
+                    "pane_id": "t2",
                     "cwd": str(repo),
                     "interactive_ready": True,
                     "agent": "claude",
@@ -502,9 +509,9 @@ class TestPostLaunchAccountVerification:
         )
 
         with pytest.raises(orchestrate.AccountMismatchError):
-            orchestrate.verify_unit_preflight(unit, "pane-2", ready=True)
+            orchestrate.verify_unit_preflight(unit, "t2", ready=True)
 
-        assert closed_tabs == ["tab-2"]
+        assert closed_tabs == ["t2"]
         assert unit.status == orchestrate.ACCOUNT_MISMATCH
 
     def test_newer_transcript_under_wrong_root_detected_as_mismatch(
@@ -521,8 +528,8 @@ class TestPostLaunchAccountVerification:
             task="do work",
             worktree=str(repo),
             account="company",
-            tab_id="tab-3",
-            pane_id="pane-3",
+            tab_id="t3",
+            pane_id="t3",
         )
 
         slug = orchestrate.claude_project_slug(repo)
@@ -548,7 +555,7 @@ class TestPostLaunchAccountVerification:
             "live_agents",
             lambda: [
                 {
-                    "pane_id": "pane-3",
+                    "pane_id": "t3",
                     "cwd": str(repo),
                     "interactive_ready": True,
                     "agent": "claude",
@@ -557,7 +564,7 @@ class TestPostLaunchAccountVerification:
         )
 
         with pytest.raises(orchestrate.AccountMismatchError):
-            orchestrate.verify_unit_preflight(unit, "pane-3", ready=True)
+            orchestrate.verify_unit_preflight(unit, "t3", ready=True)
 
         assert unit.status == orchestrate.ACCOUNT_MISMATCH
 
@@ -591,15 +598,15 @@ class TestCmdGoAccountIntegration:
                 return subprocess.CompletedProcess(
                     cmd,
                     0,
-                    stdout='{"tab_id":"tab-1","agent_name":"worker","pane_id":"pane-1"}\n',
+                    stdout=_LAUNCH_RESULT,
                     stderr="",
                 )
             return cast(subprocess.CompletedProcess[str], real_run(cmd, *args, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", fake_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda *args, **kwargs: True)
-        # Both herdr readings a launch takes, pinned: the ownership snapshot and the agent list.
-        # Unpinned, fake_run passed them through to the herdr on PATH (issue 907, U34).
+        # Both herdr core readings a launch takes, pinned: the ownership snapshot and the agent list.
+        # Unpinned, fake_run passed them through to the hc on PATH (issue 907, U34).
         monkeypatch.setattr(orchestrate, "list_tab_ids", lambda *args, **kwargs: frozenset())
         monkeypatch.setattr(orchestrate, "live_agents", lambda *args, **kwargs: [])
         monkeypatch.setattr(orchestrate, "took_the_task", lambda *args, **kwargs: True)
@@ -646,29 +653,29 @@ class TestCmdGoAccountIntegration:
                 return subprocess.CompletedProcess(
                     cmd,
                     0,
-                    stdout='{"tab_id":"tab-1","agent_name":"worker","pane_id":"pane-1"}\n',
+                    stdout=_LAUNCH_RESULT,
                     stderr="",
                 )
             return cast(subprocess.CompletedProcess[str], real_run(cmd, *args, **kwargs))
 
         monkeypatch.setattr(orchestrate, "run", fake_run)
         monkeypatch.setattr(orchestrate, "await_ready", lambda *args, **kwargs: True)
-        # The ownership snapshot, pinned so it never asks the herdr on PATH (issue 907, U34). An
-        # empty snapshot makes tab-1 owned, so the mismatch below closes it -- and that close is
-        # recorded here rather than sent to whatever herdr the host has.
+        # The ownership snapshot, pinned so it never asks the hc on PATH (issue 907, U34). An
+        # empty snapshot makes t1 owned, so the mismatch below closes it -- and that close is
+        # recorded here rather than sent to whatever hc the host has.
         monkeypatch.setattr(orchestrate, "list_tab_ids", lambda *args, **kwargs: frozenset())
         closed: list[str] = []
         monkeypatch.setattr(
             orchestrate, "close_run_session", lambda unit: closed.append(unit.tab_id)
         )
-        # The prompt door is observed at the Herdr boundary inside fake_run above; the writer
+        # The prompt door is observed at the launcher boundary inside fake_run above; the writer
         # is real.
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
             lambda: [
                 {
-                    "pane_id": "pane-1",
+                    "pane_id": "t1",
                     "cwd": worker_worktree[0] if worker_worktree else str(repo),
                     "interactive_ready": True,
                     "agent": "claude",
@@ -685,7 +692,7 @@ class TestCmdGoAccountIntegration:
         # Task was never sent to the worker on the wrong account
         assert sent_tasks == []
         # The mismatch closed the tab this launch owned, and nothing else.
-        assert closed == ["tab-1"]
+        assert closed == ["t1"]
 
 
 @pytest.mark.usefixtures("launcher_on_path")
@@ -699,9 +706,9 @@ class TestStatuslineAccountEvidence:
     @staticmethod
     def _pane(monkeypatch: pytest.MonkeyPatch, orchestrate: ModuleType, text: str | None) -> None:
         def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
-            if cmd[:3] == ["herdr", "pane", "read"]:
+            if cmd[:2] == ["hc", "read"] and cmd[3:] == ["--lines", "0"]:
                 if text is None:
-                    return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such pane")
+                    return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such terminal")
                 return subprocess.CompletedProcess(cmd, 0, stdout=text, stderr="")
             raise AssertionError(f"unexpected command {cmd}")
 
@@ -716,25 +723,25 @@ class TestStatuslineAccountEvidence:
             orchestrate,
             "  operator [company]:/infiquetra/rev-781 (review/781)   /rc\n",
         )
-        assert orchestrate.pane_account_label("pane-1") == "company"
+        assert orchestrate.pane_account_label("t1") == "company"
 
     def test_plain_statusline_is_read_as_personal(
         self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._pane(monkeypatch, orchestrate, "  operator:/infiquetra/rev-781 (review/781)   /rc\n")
-        assert orchestrate.pane_account_label("pane-1") == "personal"
+        assert orchestrate.pane_account_label("t1") == "personal"
 
     def test_unreadable_pane_reports_nothing(
         self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._pane(monkeypatch, orchestrate, None)
-        assert orchestrate.pane_account_label("pane-1") is None
+        assert orchestrate.pane_account_label("t1") is None
 
     def test_statuslineless_pane_reports_nothing(
         self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._pane(monkeypatch, orchestrate, "some agent output with no statusline row\n")
-        assert orchestrate.pane_account_label("pane-1") is None
+        assert orchestrate.pane_account_label("t1") is None
 
     def test_ansi_coloured_statusline_is_read(
         self, orchestrate: ModuleType, monkeypatch: pytest.MonkeyPatch
@@ -744,7 +751,7 @@ class TestStatuslineAccountEvidence:
             orchestrate,
             "\x1b[0;36moperator\x1b[0m\x1b[0;35m [company]\x1b[0m:/infiquetra/rev-781\n",
         )
-        assert orchestrate.pane_account_label("pane-1") == "company"
+        assert orchestrate.pane_account_label("t1") == "company"
 
     def test_statusline_wins_over_a_stale_transcript_under_the_other_root(
         self,
@@ -761,7 +768,7 @@ class TestStatuslineAccountEvidence:
         unit = orchestrate.Unit(
             name="worker", vendor="claude", task="do work", worktree=str(repo), account="company"
         )
-        assert orchestrate.check_unit_account(unit, "pane-1", seconds=0) == (True, None)
+        assert orchestrate.check_unit_account(unit, "t1", seconds=0) == (True, None)
 
     def test_no_transcript_yet_and_personal_statusline_is_a_loud_mismatch(
         self,
@@ -775,7 +782,7 @@ class TestStatuslineAccountEvidence:
         unit = orchestrate.Unit(
             name="worker", vendor="claude", task="do work", worktree=str(repo), account="company"
         )
-        ok, error = orchestrate.check_unit_account(unit, "pane-1", seconds=0)
+        ok, error = orchestrate.check_unit_account(unit, "t1", seconds=0)
         assert ok is False
         assert error is not None and "on the personal account when company was required" in error
 
@@ -790,7 +797,7 @@ class TestStatuslineAccountEvidence:
         unit = orchestrate.Unit(
             name="worker", vendor="claude", task="do work", worktree=str(repo), account="company"
         )
-        ok, error = orchestrate.check_unit_account(unit, "pane-1", seconds=0)
+        ok, error = orchestrate.check_unit_account(unit, "t1", seconds=0)
         assert ok is False
         assert error is not None and "account unverified" in error
 
@@ -800,13 +807,13 @@ class TestStatuslineAccountEvidence:
         unit = orchestrate.Unit(
             name="worker", vendor="claude", task="do work", worktree=str(repo), account="compnay"
         )
-        ok, error = orchestrate.check_unit_account(unit, "pane-1", seconds=0)
+        ok, error = orchestrate.check_unit_account(unit, "t1", seconds=0)
         assert ok is False
         assert error is not None and "unknown account selection" in error
 
     def test_no_account_requested_is_not_checked(self, orchestrate: ModuleType, repo: Path) -> None:
         unit = orchestrate.Unit(name="worker", vendor="claude", task="do work", worktree=str(repo))
-        assert orchestrate.check_unit_account(unit, "pane-1", seconds=0) == (None, None)
+        assert orchestrate.check_unit_account(unit, "t1", seconds=0) == (None, None)
 
     def test_dotted_worktree_slug_matches_claudes_own(self, orchestrate: ModuleType) -> None:
         """``/Users/operator/.claude`` is stored as ``-Users-operator--claude``: dots become dashes."""
@@ -826,18 +833,18 @@ class TestStatuslineAccountEvidence:
             task="do work",
             worktree=str(repo),
             account="company",
-            tab_id="tab-9",
-            pane_id="pane-9",
+            tab_id="t9",
+            pane_id="t9",
         )
         monkeypatch.setattr(
             orchestrate,
             "live_agents",
             lambda: [
-                {"pane_id": "pane-9", "cwd": str(repo), "interactive_ready": True, "agent": "grok"}
+                {"pane_id": "t9", "cwd": str(repo), "interactive_ready": True, "agent": "grok"}
             ],
         )
 
-        receipt = orchestrate.verify_unit_preflight(unit, "pane-9", ready=True)
+        receipt = orchestrate.verify_unit_preflight(unit, "t9", ready=True)
         assert "account" in receipt["requested_only"]
         assert "account" not in receipt["confirmed_against_herdr"]
 
@@ -849,9 +856,9 @@ class TestNoSilentAccountSubstitution:
     @staticmethod
     def _pane(monkeypatch: pytest.MonkeyPatch, orchestrate: ModuleType, text: str | None) -> None:
         def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
-            if cmd[:3] == ["herdr", "pane", "read"]:
+            if cmd[:2] == ["hc", "read"] and cmd[3:] == ["--lines", "0"]:
                 if text is None:
-                    return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such pane")
+                    return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no such terminal")
                 return subprocess.CompletedProcess(cmd, 0, stdout=text, stderr="")
             raise AssertionError(f"unexpected command {cmd}")
 
@@ -873,8 +880,8 @@ class TestNoSilentAccountSubstitution:
             task="do work",
             worktree=str(repo),
             account="company",
-            tab_id="tab-1",
-            pane_id="pane-1",
+            tab_id="t1",
+            pane_id="t1",
         )
 
         monkeypatch.setattr(
@@ -882,7 +889,7 @@ class TestNoSilentAccountSubstitution:
             "live_agents",
             lambda: [
                 {
-                    "pane_id": "pane-1",
+                    "pane_id": "t1",
                     "cwd": str(repo),
                     "interactive_ready": True,
                     "agent": "claude",
@@ -891,7 +898,7 @@ class TestNoSilentAccountSubstitution:
         )
 
         with pytest.raises(orchestrate.AccountMismatchError) as excinfo:
-            orchestrate.verify_unit_account(unit, "pane-1")
+            orchestrate.verify_unit_account(unit, "t1")
 
         assert "account unverified" in str(excinfo.value)
         assert unit.status == orchestrate.ACCOUNT_MISMATCH
@@ -912,12 +919,12 @@ class TestNoSilentAccountSubstitution:
             task="do work",
             worktree=str(repo),
             account="company",
-            tab_id="tab-1",
-            pane_id="pane-1",
+            tab_id="t1",
+            pane_id="t1",
         )
 
         with pytest.raises(orchestrate.AccountMismatchError) as excinfo:
-            orchestrate.verify_unit_account(unit, "pane-1")
+            orchestrate.verify_unit_account(unit, "t1")
 
         assert "on the personal account when company was required" in str(excinfo.value)
         assert unit.status == orchestrate.ACCOUNT_MISMATCH
@@ -934,7 +941,7 @@ class TestNoSilentAccountSubstitution:
             account="enterprise-tier",
         )
 
-        ok, error = orchestrate.check_unit_account(unit, "pane-1", seconds=0)
+        ok, error = orchestrate.check_unit_account(unit, "t1", seconds=0)
         assert ok is False
         assert error is not None
         assert "unknown account selection 'enterprise-tier'" in error

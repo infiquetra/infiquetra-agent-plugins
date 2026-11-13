@@ -40,7 +40,8 @@ ORDERING_RULE = (
 # The single launch seam and background no-focus invariant contract across both surfaces.
 SINGLE_LAUNCH_SEAM_RULE = (
     "Never create worktrees manually or invoke `agents` directly",
-    "`--no-focus --current --herdr --herdr-control-only`",
+    # The launch flags since the move to herdr core: the Herdr app, without stealing focus.
+    "`--app --no-focus`",
     "controlled post-launch step",
     "unrecorded drift",
     "`adopt --yes`",

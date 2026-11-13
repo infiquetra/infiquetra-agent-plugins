@@ -191,9 +191,12 @@ class TestTheSweepIsTotal:
 
 
 class TestWorkspaceRetirement:
-    def test_a_workspace_this_run_created_is_retired_once_its_tabs_are_gone(
-        self, orch, bed, monkeypatch: pytest.MonkeyPatch
+    def test_a_recorded_workspace_is_reported_kept_for_the_window_and_never_closed(
+        self, orch, bed, monkeypatch: pytest.MonkeyPatch, capsys
     ) -> None:
+        """Workspaces are the Herdr app's: hc cannot close one, and closing one from the window
+        ends every terminal in it. ``clean`` names the recorded workspace, closes nothing, and the
+        record keeps it (decision D11 of the hc port plan)."""
         repo, store = bed
         write_record(
             store,
@@ -204,48 +207,24 @@ class TestWorkspaceRetirement:
             branch="parent/50",
             workspaces_created=["50-lane-a"],
         )
-        closed: list[list[str]] = []
+        touched: list[list[str]] = []
         real = orch.run
 
         def spy(cmd, **kw):
-            if cmd[:2] == ["herdr", "workspace"]:
-                closed.append(list(cmd))
+            if cmd[:1] in (["herdr"], ["hc"], ["herdr-app"]):
+                touched.append(list(cmd))
                 return FakeProc(0)
             return real(cmd, **kw)
 
         monkeypatch.setattr(orch, "run", spy)
-        orch.cmd_clean(clean_args(store))
-        assert closed == [["herdr", "workspace", "close", "50-lane-a"]]
-
-    def test_a_workspace_still_holding_a_live_agent_is_refused_and_the_agent_named(
-        self, orch, bed, monkeypatch: pytest.MonkeyPatch, capsys
-    ) -> None:
-        repo, store = bed
-        write_record(
-            store,
-            50,
-            units=[],
-            run_id="50",
-            base=git(repo, "rev-parse", "main"),
-            branch="parent/50",
-            workspaces_created=["50-lane-a"],
-        )
-        monkeypatch.setattr(
-            orch,
-            "live_agents",
-            lambda **kw: [{"name": "someone-else", "pane_id": "50-lane-a:pane-3"}],
-        )
-        monkeypatch.setattr(
-            orch,
-            "run",
-            lambda cmd, **kw: (
-                pytest.fail(f"a live workspace was touched: {cmd}")
-                if cmd[:2] == ["herdr", "workspace"]
-                else FakeProc(0)
-            ),
-        )
-        orch.cmd_clean(clean_args(store))
-        assert "it still holds someone-else" in capsys.readouterr().out
+        monkeypatch.setattr(orch, "live_agents", lambda **kw: [])
+        code = orch.cmd_clean(clean_args(store))
+        out = capsys.readouterr().out
+        assert [cmd for cmd in touched if "close" in cmd or "kill" in cmd] == []
+        assert "kept workspace 50-lane-a" in out
+        assert "close it from the window" in out
+        assert code == 3
+        assert orch.Run.load(50, store).workspaces_created == ["50-lane-a"]
 
     def test_a_workspace_this_run_did_not_create_is_never_retired(
         self, orch, bed, monkeypatch: pytest.MonkeyPatch

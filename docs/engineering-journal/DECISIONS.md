@@ -166,6 +166,34 @@ or the two-runs check's 120 second limit starts cutting off real suites.
 
 ## 2026-11-10
 
+### Orchestrate and the launcher scripts drive sessions through herdr core
+
+**Decision.** `launcher.py`, `roster.py` and `orchestrate.py` start sessions with
+`agents --app` and do every read, send, wait and close with `hc`; no old Herdr call remains in
+them. The input-box guard keeps its staged-input stop on plain text; ownership is the pre-launch
+snapshot of this machine's terminal addresses; `tab_id` and `pane_id` hold the terminal address;
+`wait` is one `hc wait` per unit; `clean` reports workspaces instead of closing them. Sixteen
+decisions with their reasons are in `docs/plans/2026-11-10-orchestrate-hc-port-plan.md`.
+
+**Rejected alternatives.** Reading every non-empty plain-text input box as unclassifiable (always
+sends): it removes the stop the guard exists for. An `hc events` client in place of the event
+socket: its notification shape could not be read without creating a terminal, and `hc wait` is
+the call hc's own manual names. Labels as the ownership proof: the run record stays the only
+authority on what may be closed, and a label would be a second, unverified source. Closing
+workspaces with `herdr-app do space.close`: it ends every terminal in the workspace, including
+ones the run does not own.
+
+**Rationale.** Old Herdr is being removed and its sessions do not show in the window, so the
+scripts had to move; each choice takes the side that never sends behind a person's text, never
+closes what the run did not create, and never reads missing data as a finished session.
+
+**Revisit when.** hc gains a styled screen read (the guard can then classify placeholders again
+without the known-placeholder list), a Codex or Claude Code update changes its empty-box text (the
+list in `launcher.py` names the versions it was read from), or Orchestrate starts units on other
+machines (the address rules assume this machine's core).
+
+---
+
 ### Resolve active project boards dynamically from project-mappings.json
 
 **Decision.** Replace hardcoded three-board CLI choices (`asgard`, `operations`, `campps`) and Saga's `DEFAULT_PROJECT = "operations"` fallback with dynamic resolution from `project-mappings.json` (`_active_project_choices()` in `sdlc_manager.py` and `resolve_project_for_repo()` in `board_progression.py`) across the ten active per-project boards (`campps`, `sovereign-circuit`, `company`, `argus`, `talaria`, `agent-platform`, `home-lab`, `eve-mimir`, `cognitive-ai-research`, `ai-native-engine`).
