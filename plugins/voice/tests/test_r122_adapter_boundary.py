@@ -33,14 +33,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from bridge_stub import DEFAULT_STUB_TOKEN, BridgeStub  # noqa: E402
+from hc_stub import terminal_record, write_fake_hc  # noqa: E402
 import turn_record  # noqa: E402
 
 VALID_UUID_1 = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
 VALID_UUID_2 = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
 
 AGENT_SESSION_ID = "session-r122-proc-1"
-PANE_ID = "pane-r122-proc-1"
-TERMINAL_ID = "term-r122-proc-1"
+TERMINAL_ID = "t122"
+PANE_ID = TERMINAL_ID  # herdr core has no panes: the identity uses the address twice
 
 
 class R122AdapterBoundaryTests(unittest.TestCase):
@@ -79,34 +80,18 @@ class R122AdapterBoundaryTests(unittest.TestCase):
         self.bridge_file.write_text(json.dumps(bridge_payload), encoding="utf-8")
         os.chmod(self.bridge_file, stat.S_IRUSR | stat.S_IWUSR)
 
-        # Write mock Herdr script
-        self.herdr_path = self.root / "fake_herdr"
-        herdr_envelope = {
-            "result": {
-                "type": "agent_list",
-                "agents": [
-                    {
-                        "pane_id": PANE_ID,
-                        "terminal_id": TERMINAL_ID,
-                        "agent_session": {"value": AGENT_SESSION_ID},
-                    }
-                ],
-            }
-        }
-        mock_herdr_code = (
-            f"#!/usr/bin/env python3\n"
-            f"import sys\n"
-            f"sys.stdout.write({json.dumps(json.dumps(herdr_envelope))} + '\\n')\n"
+        # Fake herdr core command answering `hc get` for this terminal
+        self.hc_path = write_fake_hc(
+            self.root / "fake_hc",
+            terminal_record(address=TERMINAL_ID, session_id=AGENT_SESSION_ID),
         )
-        self.herdr_path.write_text(mock_herdr_code, encoding="utf-8")
-        os.chmod(self.herdr_path, 0o755)
 
         # Subprocess environment
         self.env = dict(os.environ)
         self.env["HOME"] = str(self.home_dir)
         self.env["VOICE_STATE_DIR"] = str(self.state_dir)
-        self.env["HERDR_PANE_ID"] = PANE_ID
-        self.env["HERDR_BIN_PATH"] = str(self.herdr_path)
+        self.env["HC_TERMINAL_ID"] = TERMINAL_ID
+        self.env["VOICE_HC_BIN"] = str(self.hc_path)
         self.env["PYTHONDONTWRITEBYTECODE"] = "1"
 
         self.identity_dict = {

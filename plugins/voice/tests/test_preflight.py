@@ -81,15 +81,26 @@ SAMPLE_TRANSCRIPTION = json.dumps(
     {"transcript": "voice preflight sample", "provider": "xai"}
 ).encode("utf-8")
 
-GOOD_KEYBINDING_TOML = (
-    "[[keys.command]]\n"
-    'key = "f9"\n'
-    'command = "voice stop"\n'
-    'description = "stop voice playback"\n'
+#: The Herdr app's keys.json: f9 delivers "stop" to the voice-stop mod.
+GOOD_KEYS = {"global": {"f9": "voice-stop.stop"}}
+#: Keys that never reach the stop path.
+OTHER_KEYS = {"global": {"f9": "tab.new"}, "terminal": {"ctrl-1": "terminal"}}
+#: A minimal mod whose "stop" command runs the launcher.
+GOOD_MOD_JS = (
+    'import { cx, exec, nextCommand } from "herdr";\n'
+    "cx.spawn(async () => {\n"
+    "  for (;;) {\n"
+    "    const command = await nextCommand();\n"
+    '    if (command === "stop") await exec("voice", ["stop"]);\n'
+    "  }\n"
+    "});\n"
 )
-OTHER_KEYBINDING_TOML = (
-    "[[keys.command]]\n" 'key = "f9"\n' 'command = "something else"\n'
-)
+
+
+def _mod_running(program: str, *arguments: str) -> str:
+    """A mod whose one command runs ``program arguments`` through exec."""
+    literal = ", ".join(json.dumps(argument) for argument in arguments)
+    return f'await exec({json.dumps(program)}, [{literal}]);\n'
 
 
 class _RouteTable:
@@ -145,8 +156,9 @@ class PreflightTestBase(unittest.TestCase):
         self.addCleanup(self.config_dir.cleanup)
         self.bin_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.bin_dir.cleanup)
-        self.keybinding_path = Path(self.config_dir.name) / "config.toml"
-        self.keybinding_path.write_text(GOOD_KEYBINDING_TOML, encoding="utf-8")
+        self.keybinding_path = Path(self.config_dir.name) / "keys.json"
+        self.write_keys(GOOD_KEYS)
+        self.write_mod("voice-stop", GOOD_MOD_JS)
         self.capture_bin = Path(self.bin_dir.name) / "capture-bin"
         self.playback_bin = Path(self.bin_dir.name) / "playback-bin"
         # A resolvable `voice` on PATH. Before the runnability change this
@@ -173,6 +185,14 @@ class PreflightTestBase(unittest.TestCase):
         )
         env.start()
         self.addCleanup(env.stop)
+
+    def write_keys(self, keys: dict) -> None:
+        self.keybinding_path.write_text(json.dumps(keys), encoding="utf-8")
+
+    def write_mod(self, name: str, main_js: str) -> None:
+        mod = Path(self.config_dir.name) / "mods" / name
+        mod.mkdir(parents=True, exist_ok=True)
+        (mod / "main.js").write_text(main_js, encoding="utf-8")
 
     def run_all(self, seam) -> list:
         return preflight.run_all(
@@ -488,36 +508,56 @@ class SampleRoundTripTests(PreflightTestBase):
 
 
 class KeybindingProbeTests(PreflightTestBase):
+    def test_the_probe_reads_the_herdr_app_keys_not_old_herdr(self) -> None:
+        self.assertEqual(
+            preflight.DEFAULT_KEYBINDING_PATH, Path("~/.config/herdr-app/keys.json")
+        )
+
     def test_absent_config_is_reported_and_never_created(self) -> None:
-        absent = Path(self.config_dir.name) / "does-not-exist.toml"
+        absent = Path(self.config_dir.name) / "does-not-exist.json"
         result = preflight.probe_keybinding(absent)
+        self.assertEqual(result.owner, preflight.KEYBINDING_OWNER)
         self.assertEqual(result.status, preflight.CHECK_FAILED)
-        self.assertIn("no readable herdr config", result.detail)
+        self.assertIn("no readable Herdr app keys", result.detail)
         self.assertFalse(absent.exists())
 
-    def test_config_without_voice_stop_is_reported_and_never_written(self) -> None:
-        self.keybinding_path.write_text(OTHER_KEYBINDING_TOML, encoding="utf-8")
+    def test_keys_without_voice_stop_are_reported_and_never_written(self) -> None:
+        self.write_keys(OTHER_KEYS)
         before = self.keybinding_path.read_bytes()
         result = preflight.probe_keybinding(self.keybinding_path)
         self.assertEqual(result.status, preflight.CHECK_FAILED)
         self.assertIn("voice stop", result.detail)
+        self.assertIn("needs a mod", result.detail)
         self.assertEqual(self.keybinding_path.read_bytes(), before)
 
-    def test_config_with_a_runnable_voice_stop_passes(self) -> None:
+    def test_a_key_reaching_a_mod_that_runs_voice_stop_passes(self) -> None:
         result = preflight.probe_keybinding(self.keybinding_path)
         self.assertEqual(result.status, preflight.CHECK_OK)
         self.assertIn(str(self.voice_launcher), result.detail)
+        self.assertIn("'voice-stop'", result.detail)
 
-    def test_probe_does_not_require_a_specific_type_field(self) -> None:
-        self.keybinding_path.write_text(
-            "[[keys.command]]\n"
-            'key = "f9"\n'
-            'type = "something-else"\n'
-            'command = "voice stop"\n',
-            encoding="utf-8",
+    def test_an_object_action_naming_the_mod_command_passes(self) -> None:
+        self.write_keys(
+            {"global": {"f9": {"command": "voice-stop.stop", "args": {}}}}
         )
         result = preflight.probe_keybinding(self.keybinding_path)
         self.assertEqual(result.status, preflight.CHECK_OK)
+
+    def test_a_send_action_typing_voice_stop_does_not_count(self) -> None:
+        # send: types into whichever terminal has focus; it runs nothing.
+        self.write_keys({"global": {"f9": "send:voice stop\r"}})
+        result = preflight.probe_keybinding(self.keybinding_path)
+        self.assertEqual(result.status, preflight.CHECK_FAILED)
+
+    def test_a_key_to_a_mod_that_never_runs_the_stop_path_fails(self) -> None:
+        self.write_mod("voice-stop", _mod_running("git", "status"))
+        result = preflight.probe_keybinding(self.keybinding_path)
+        self.assertEqual(result.status, preflight.CHECK_FAILED)
+
+    def test_an_exec_built_at_run_time_is_not_guessed(self) -> None:
+        self.write_mod("voice-stop", 'await exec("voice", [verb]);\n')
+        result = preflight.probe_keybinding(self.keybinding_path)
+        self.assertEqual(result.status, preflight.CHECK_FAILED)
 
     def test_the_marker_alone_does_not_pass_when_nothing_can_run(self) -> None:
         # The regression. `voice stop` was the documented binding while no
@@ -539,34 +579,21 @@ class KeybindingProbeTests(PreflightTestBase):
     def test_a_stale_script_path_beside_a_real_interpreter_fails(self) -> None:
         # `python3` resolves perfectly well while the script beside it does
         # not. Checking only the program would call this runnable.
-        self.keybinding_path.write_text(
-            "[[keys.command]]\n"
-            'key = "f9"\n'
-            'command = "python3 /nonexistent/voice_cli.py stop"\n',
-            encoding="utf-8",
+        self.write_mod(
+            "voice-stop", _mod_running("python3", "/nonexistent/voice_cli.py", "stop")
         )
         result = preflight.probe_keybinding(self.keybinding_path)
         self.assertEqual(result.status, preflight.CHECK_FAILED)
         self.assertIn("does not exist", result.detail)
 
     def test_an_absolute_launcher_path_is_accepted_when_executable(self) -> None:
-        self.keybinding_path.write_text(
-            "[[keys.command]]\n"
-            'key = "f9"\n'
-            f'command = "{self.voice_launcher} stop"\n',
-            encoding="utf-8",
-        )
+        self.write_mod("voice-stop", _mod_running(str(self.voice_launcher), "stop"))
         result = preflight.probe_keybinding(self.keybinding_path)
         self.assertEqual(result.status, preflight.CHECK_OK)
 
     def test_a_present_but_non_executable_launcher_fails(self) -> None:
         self.voice_launcher.chmod(0o644)
-        self.keybinding_path.write_text(
-            "[[keys.command]]\n"
-            'key = "f9"\n'
-            f'command = "{self.voice_launcher} stop"\n',
-            encoding="utf-8",
-        )
+        self.write_mod("voice-stop", _mod_running(str(self.voice_launcher), "stop"))
         result = preflight.probe_keybinding(self.keybinding_path)
         self.assertEqual(result.status, preflight.CHECK_FAILED)
         self.assertIn("not executable", result.detail)
@@ -583,17 +610,17 @@ class KeybindingProbeTests(PreflightTestBase):
         preflight.probe_keybinding(self.keybinding_path)
         self.assertFalse(witness.exists())
 
-    def test_unparseable_config_is_reported_by_name(self) -> None:
-        self.keybinding_path.write_text("[ not toml", encoding="utf-8")
+    def test_unparseable_keys_are_reported_by_name(self) -> None:
+        self.keybinding_path.write_text("{ not json", encoding="utf-8")
         result = preflight.probe_keybinding(self.keybinding_path)
         self.assertEqual(result.status, preflight.CHECK_FAILED)
-        self.assertIn("TOML", result.detail)
+        self.assertIn("JSON", result.detail)
 
     def test_an_absent_keybinding_fails_the_run(self) -> None:
-        self.keybinding_path.write_text(OTHER_KEYBINDING_TOML, encoding="utf-8")
+        self.write_keys(OTHER_KEYS)
         seam = _RouteTable(_happy_routes())
         results = self.run_all(seam)
-        keybinding = self.result_for(results, "herdr-config", "keybinding")
+        keybinding = self.result_for(results, preflight.KEYBINDING_OWNER, "Herdr app key")
         self.assertEqual(keybinding.status, preflight.CHECK_FAILED)
         self.assertFalse(all(r.status == preflight.CHECK_OK for r in results))
 

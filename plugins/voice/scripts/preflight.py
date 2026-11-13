@@ -22,8 +22,9 @@ The probes, in fixed order:
   guarantee. ``auth_required: false`` on the health endpoint is never read
   as anonymous access: the token is required either way, and a missing
   token is reported as token-missing, never as healthy.
-- The operator's Herdr-wide keybinding — one read-only probe of Herdr's
-  ``config.toml`` (KTD13); voice never writes any Herdr configuration.
+- The operator's Herdr-wide stop key — one read-only probe of the Herdr
+  app's ``keys.json`` and the mod a key there reaches (KTD13); voice never
+  writes any Herdr configuration.
 - The operator-supplied capture and playback executables.
 
 When synthesis is unavailable, the sample round trip is reported by name
@@ -41,7 +42,6 @@ import os
 import re
 import shlex
 import shutil
-import tomllib
 import urllib.error
 import urllib.request
 import uuid
@@ -62,6 +62,7 @@ __all__ = [
     "PROBE_TIMEOUT_SECONDS",
     "SAMPLE_PHRASE",
     "DEFAULT_KEYBINDING_PATH",
+    "KEYBINDING_OWNER",
     "probe_forge_health",
     "probe_forge_voice_id",
     "synthesize_sample",
@@ -98,8 +99,13 @@ SAMPLE_PHRASE = "Voice preflight sample."
 
 SAMPLE_FILE_PREFIX = "preflight-sample-"
 
-#: The operator's Herdr custom keybindings live here (KTD13, XDG).
-DEFAULT_KEYBINDING_PATH = Path("~/.config/herdr/config.toml")
+#: The Herdr app's key bindings live here (KTD13); its mods live beside it
+#: in ``mods/<name>/main.js``. Old Herdr's ``~/.config/herdr/config.toml``
+#: is retired and no longer read.
+DEFAULT_KEYBINDING_PATH = Path("~/.config/herdr-app/keys.json")
+
+#: The owner name the stop-key probe reports under.
+KEYBINDING_OWNER = "herdr-app-keys"
 
 #: The documented binding, and what the probe reports by name.
 KEYBINDING_MARKER = "voice stop"
@@ -512,32 +518,74 @@ def probe_sample_round_trip(sample_bytes: bytes, *, open_url: Callable) -> Probe
     )
 
 
-def _keybinding_commands(config: object):
-    """Every binding command string under the ``keys`` section."""
+#: A literal ``exec("program", ["arg", ...])`` call in a Herdr app mod.
+_EXEC_CALL = re.compile(r"""\bexec\(\s*(["'`])([^"'`]+)\1\s*,\s*\[([^\]]*)\]""")
+#: One string literal inside that call's argument list.
+_STRING_LITERAL = re.compile(r"""^\s*(["'`])([^"'`]*)\1\s*$""")
+
+
+def _key_actions(config: object):
+    """Every ``(section, key, action name)`` bound in the app's ``keys.json``.
+
+    An action is a string (``"tab.new"``, ``"send:..."``, ``"<mod>.<command>"``)
+    or an object whose ``command`` names it.
+    """
     if not isinstance(config, dict):
         return
-    keys = config.get("keys")
-    if not isinstance(keys, dict):
-        return
-    for entries in keys.values():
-        if not isinstance(entries, list):
+    for section, keys in config.items():
+        if not isinstance(keys, dict):
             continue
-        for entry in entries:
-            if isinstance(entry, dict):
-                command = entry.get("command")
-                if isinstance(command, str):
-                    yield command
+        for key, action in keys.items():
+            if isinstance(action, dict):
+                action = action.get("command")
+            if isinstance(action, str) and action.strip():
+                yield section, key, action.strip()
+
+
+def _mod_exec_commands(main_js: Path) -> list[str]:
+    """The programs a mod runs through literal ``exec(...)`` calls, as command lines.
+
+    Only calls whose program and every argument are string literals are
+    read; anything built at run time cannot be resolved without running
+    the mod, so it is left out rather than guessed.
+    """
+    try:
+        text = main_js.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    commands = []
+    for match in _EXEC_CALL.finditer(text):
+        arguments = []
+        for part in match.group(3).split(","):
+            if not part.strip():
+                continue
+            literal = _STRING_LITERAL.match(part)
+            if literal is None:
+                break
+            arguments.append(literal.group(2))
+        else:
+            commands.append(shlex.join([match.group(2), *arguments]))
+    return commands
 
 
 def probe_keybinding(config_path: Path | str | None = None) -> ProbeResult:
-    """Read-only probe of the operator's Herdr-wide ``voice stop`` binding.
+    """Read-only probe of the operator's Herdr-wide ``voice stop`` key.
 
-    Reads Herdr's ``config.toml`` (KTD13) and reports whether any
-    binding's command string contains ``voice stop``. Absence — of the
-    file or of the binding — is reported by name; the probe never creates
-    or repairs any Herdr configuration (R15).
+    The Herdr app binds a key to an app command, to ``send:<text>`` (which
+    types into the focused terminal), or to a mod's command; it cannot bind
+    a key to a program directly. So a stop key that works from anywhere is a
+    key bound to ``<mod>.<command>`` in ``keys.json`` whose mod runs the stop
+    path with ``exec``. This probe reads ``keys.json``, follows each mod
+    action to ``mods/<mod>/main.js`` beside it, resolves the literal
+    ``exec(...)`` calls there, and reports whether one runs the stop path
+    and can actually run (KTD13). It does not trace which of a mod's
+    commands reaches which ``exec`` call.
+
+    Absence — of the file, of a key, or of a runnable command — is reported
+    by name; the probe never creates or repairs any Herdr configuration and
+    never runs the command (R15).
     """
-    check = f"herdr keybinding containing {KEYBINDING_MARKER!r}"
+    check = f"Herdr app key running {KEYBINDING_MARKER!r}"
     if config_path is not None:
         path = Path(config_path).expanduser()
     else:
@@ -546,42 +594,56 @@ def probe_keybinding(config_path: Path | str | None = None) -> ProbeResult:
         raw = path.read_bytes()
     except OSError:
         return ProbeResult(
-            "herdr-config",
+            KEYBINDING_OWNER,
             check,
             CHECK_FAILED,
-            f"no readable herdr config at {path}; the keybinding cannot be "
-            "verified",
+            f"no readable Herdr app keys at {path}; the stop key cannot be verified",
         )
     try:
-        config = tomllib.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+        config = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
         return ProbeResult(
-            "herdr-config",
-            check,
-            CHECK_FAILED,
-            f"{path} does not parse as TOML",
+            KEYBINDING_OWNER, check, CHECK_FAILED, f"{path} does not parse as JSON"
         )
-    marked = [
-        command for command in _keybinding_commands(config) if command_names_stop_path(command)
-    ]
+    mods = path.parent / "mods"
+    marked = []
+    for section, key, action in _key_actions(config):
+        if action.startswith("send:"):
+            continue  # types into whichever terminal has focus; runs nothing
+        mod, separator, _command = action.partition(".")
+        if not separator or not mod:
+            continue
+        main_js = mods / mod / "main.js"
+        if not main_js.is_file():
+            continue  # an app command such as tab.new, not a mod
+        for command in _mod_exec_commands(main_js):
+            if command_names_stop_path(command):
+                marked.append((section, key, mod, command))
     if not marked:
         return ProbeResult(
-            "herdr-config",
+            KEYBINDING_OWNER,
             check,
             CHECK_FAILED,
-            f"no keybinding command contains {KEYBINDING_MARKER!r}",
+            f"no key in {path} reaches a mod that runs {KEYBINDING_MARKER!r}; "
+            "the Herdr app binds keys to app and mod commands only, so the "
+            "stop key needs a mod whose command runs it with exec",
         )
     reasons = []
-    for command in marked:
+    for section, key, mod, command in marked:
         runnable, detail = command_is_runnable(command)
         if runnable:
-            return ProbeResult("herdr-config", check, CHECK_OK, detail)
+            return ProbeResult(
+                KEYBINDING_OWNER,
+                check,
+                CHECK_OK,
+                f"key {key!r} ({section}) reaches mod {mod!r}: {detail}",
+            )
         reasons.append(detail)
     return ProbeResult(
-        "herdr-config",
+        KEYBINDING_OWNER,
         check,
         CHECK_FAILED,
-        "a keybinding names the stop path but cannot run it: " + "; ".join(reasons),
+        "a key reaches the stop path but cannot run it: " + "; ".join(reasons),
     )
 
 

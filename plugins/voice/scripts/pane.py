@@ -5,8 +5,8 @@ Herdr pane (R13), because an interactive Claude session owns the pane it
 occupies, and it is started through ``voice_cli.py pane``.
 
 The pane displays the bound agent's identity continuously, alongside the
-recording state (R4): the Herdr agent name and the bound Claude session
-id from ``binding.json``, re-read on every redraw so a rebind becomes
+recording state (R4): the bound agent's name and Claude session id from
+``binding.json``, re-read on every redraw so a rebind becomes
 visible. While a recording runs it shows the literal ``*** RECORDING ***``
 (R11).
 
@@ -157,10 +157,10 @@ class VoicePane:
                 f"session {report.binding.session_id}"
             )
         elif report.status == binding.STATUS_ABSENT:
-            lines.append("not bound — run: voice_cli.py bind <herdr-agent>")
+            lines.append("not bound — run: voice_cli.py bind <terminal>")
         else:
             lines.append(
-                "binding unreadable — rebind: voice_cli.py bind <herdr-agent>"
+                "binding unreadable — rebind: voice_cli.py bind <terminal>"
             )
         if self.recording:
             lines.append(f"recording: {RECORDING_INDICATOR}")

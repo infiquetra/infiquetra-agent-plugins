@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "com.infiquetra.cla
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from bridge_stub import DEFAULT_STUB_TOKEN, BridgeStub  # noqa: E402
+from hc_stub import terminal_record, write_fake_hc  # noqa: E402
 import turn_record  # noqa: E402
 import user_prompt_submit_hook  # noqa: E402
 import voice_policy  # noqa: E402
@@ -35,8 +36,8 @@ VALID_UUID_1 = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
 VALID_UUID_2 = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
 
 AGENT_SESSION_ID = "session-test-prompt-1"
-PANE_ID = "pane-test-prompt-1"
-TERMINAL_ID = "term-test-prompt-1"
+TERMINAL_ID = "t31"
+PANE_ID = TERMINAL_ID  # herdr core has no panes: the identity uses the address twice
 
 
 class UserPromptSubmitHookTests(unittest.TestCase):
@@ -70,27 +71,11 @@ class UserPromptSubmitHookTests(unittest.TestCase):
         self.bridge_file.write_text(json.dumps(bridge_payload), encoding="utf-8")
         os.chmod(self.bridge_file, stat.S_IRUSR | stat.S_IWUSR)
 
-        # Write mock Herdr script
-        self.herdr_path = self.root / "fake_herdr"
-        herdr_envelope = {
-            "result": {
-                "type": "agent_list",
-                "agents": [
-                    {
-                        "pane_id": PANE_ID,
-                        "terminal_id": TERMINAL_ID,
-                        "agent_session": {"value": AGENT_SESSION_ID},
-                    }
-                ],
-            }
-        }
-        mock_herdr_code = (
-            f"#!/usr/bin/env python3\n"
-            f"import sys\n"
-            f"sys.stdout.write({json.dumps(json.dumps(herdr_envelope))} + '\\n')\n"
+        # Fake herdr core command answering `hc get` for this terminal
+        self.hc_path = write_fake_hc(
+            self.root / "fake_hc",
+            terminal_record(address=TERMINAL_ID, session_id=AGENT_SESSION_ID),
         )
-        self.herdr_path.write_text(mock_herdr_code, encoding="utf-8")
-        os.chmod(self.herdr_path, 0o755)
 
         # Environment patch
         self.env_patcher = mock.patch.dict(
@@ -98,14 +83,14 @@ class UserPromptSubmitHookTests(unittest.TestCase):
             {
                 "HOME": str(self.home_dir),
                 "VOICE_STATE_DIR": str(self.state_dir),
-                "HERDR_PANE_ID": PANE_ID,
-                "HERDR_BIN_PATH": str(self.herdr_path),
+                "HC_TERMINAL_ID": TERMINAL_ID,
+                "VOICE_HC_BIN": str(self.hc_path),
             },
         )
         self.env_patcher.start()
         self.addCleanup(self.env_patcher.stop)
 
-        # Default identity dictionary matching Herdr fixture
+        # Default identity dictionary matching the herdr core fixture
         self.identity_dict = {
             "agent_session_id": AGENT_SESSION_ID,
             "pane_id": PANE_ID,
@@ -251,8 +236,8 @@ class UserPromptSubmitHookTests(unittest.TestCase):
         self.assertEqual(stdout_text, "")
 
     def test_identity_resolution_failure_emits_no_context(self) -> None:
-        # Invalid Herdr path
-        with mock.patch.dict(os.environ, {"HERDR_BIN_PATH": "/nonexistent/herdr"}):
+        # A herdr core command that does not exist
+        with mock.patch.dict(os.environ, {"VOICE_HC_BIN": "/nonexistent/hc"}):
             payload = {"session_id": AGENT_SESSION_ID, "prompt": "Hello"}
             code, stdout_text = self.run_hook(json.dumps(payload))
             self.assertEqual(code, 0)
@@ -262,7 +247,7 @@ class UserPromptSubmitHookTests(unittest.TestCase):
         self.stub.set_binding(VALID_UUID_1, self.identity_dict)
         self.stub.set_turn(VALID_UUID_2, VALID_UUID_1, state="open")
 
-        # Payload has different session_id than Herdr fixture
+        # Payload has different session_id than the herdr core fixture
         payload = {"session_id": "mismatched-session-id", "prompt": "Hello"}
         code, stdout_text = self.run_hook(json.dumps(payload))
         self.assertEqual(code, 0)

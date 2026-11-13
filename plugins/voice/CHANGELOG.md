@@ -3,6 +3,63 @@
 All notable changes to the voice package are recorded here from 0.4.1. Earlier
 releases are recorded only in the git history.
 
+## [0.5.0] - 2026-11-10
+
+Voice moves from old Herdr (`herdr agent`, `herdr pane`, `~/.config/herdr`) to herdr
+core (`hc`) and the Herdr app. Old Herdr is retired, and sessions started in herdr core
+were unreachable from 0.4.1.
+
+### Changed
+
+- `voice bind <terminal>` binds a herdr core terminal, named or addressed (`t7`), with
+  `hc get --json`. It refuses a terminal on another machine, a finished one, and one
+  without the `voice.agent-session` label. `binding.json` stores the terminal address in
+  place of the pane id, so **a binding from 0.4.1 reads as unreadable: run `voice bind`
+  again**.
+
+- Delivery pastes the transcript into the bound terminal the way the Herdr app's window
+  does: `hc connect`, a framed `terminal.attach` at the terminal's own size, one
+  bracketed paste with every control character removed, and a clean detach. It never
+  presses Enter and never uses `hc send` or `hc keys`; `hc keys` could not type `?`,
+  `!`, quotes or anything outside ASCII. A program that has not turned on bracketed
+  paste gets nothing and the transcript is held, and so is a transcript starting with
+  `/` or `!`, which Claude Code would run as a command. The paste happens only when the
+  attach reply names exactly the bound terminal and carries its status. A live check on
+  a real Claude Code 2.1 session confirmed the text lands in the input box, intact and
+  unsubmitted.
+
+- Delivery pastes only into an agent whose status is `idle` or `done`; any other
+  status, or none, holds the transcript with a spoken refusal. After the paste, voice
+  checks the status and turn in the attach reply and a fresh `hc get`; if anything
+  changed it says the transcript may have reached a prompt and never presses Enter.
+  The window between the status read and the paste remains (see the README).
+
+- Text a program reports through herdr core (a status question, a terminal name, an
+  error message) loses every control character and is capped at 120 characters before
+  voice shows it, so no planted escape sequence reaches the operator's terminal. `voice
+  bind` refuses a session label that holds control characters.
+
+- The Auralis bridge identity comes from herdr core: `HC_TERMINAL_ID`, `hc get`, and the
+  terminal's `voice.agent-session` label. The terminal address is both `terminal_id` and
+  `pane_id`. It is resolved only while Auralis has published its bridge discovery file,
+  so without Auralis no hook or presence loop runs `hc`.
+
+- The settings `HERDR_PANE_ID` and `HERDR_BIN_PATH` are replaced by `HC_TERMINAL_ID` (set
+  by herdr core) and `VOICE_HC_BIN` (default `hc`).
+
+- Preflight checks the stop key in the Herdr app's `~/.config/herdr-app/keys.json`
+  instead of old Herdr's `config.toml`, following a key's mod command to the mod's
+  `exec("voice", ["stop"])` call. It reports under `herdr-app-keys`.
+
+### Added
+
+- A SessionStart hook in the Claude adapter labels its own terminal with the Claude
+  session id (`voice.agent-session`) on every start, resume, clear and compact. Restart
+  each Claude session once after updating so the label exists before binding.
+
+- `tests/conftest.py` hides `hc` and `HC_TERMINAL_ID` from the suite, so tests run inside
+  a Herdr terminal cannot reach the real herdr core.
+
 ## [0.4.1] - 2026-10-14
 
 ### Changed

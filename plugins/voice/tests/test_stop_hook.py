@@ -7,7 +7,7 @@ than a wall clock or a platform binary. U2 never imports or executes
 ``speak.py``: the hook hands the text off by argv and file.
 
 Wire-bound tests assert KTD6 bridged reconciliation (authored vs fallback)
-and local speech suppression against a local BridgeStub and Herdr fixture.
+and local speech suppression against a local BridgeStub and a fake herdr core command.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ sys.path.insert(0, str(_PACKAGE / "tests"))
 
 import binding  # noqa: E402
 from bridge_stub import DEFAULT_STUB_TOKEN, BridgeStub  # noqa: E402
+from hc_stub import terminal_record, write_fake_hc  # noqa: E402
 import process  # noqa: E402
 import stop_hook  # noqa: E402
 import turn_record  # noqa: E402
@@ -37,8 +38,8 @@ import turn_record  # noqa: E402
 AGENT = "example-agent"
 BOUND_SESSION = "example-session-bound"
 OTHER_SESSION = "example-session-other"
-PANE_ID = "example-pane-one"
-TERMINAL_ID = "example-term-one"
+TERMINAL_ID = "t11"
+PANE_ID = TERMINAL_ID  # herdr core has no panes: the identity uses the address twice
 BOUND_AT = "2026-08-25T00:00:00+00:00"
 RESPONSE_TEXT = "Example response text for the spoken loop."
 
@@ -92,6 +93,11 @@ class StopHookTestCase(unittest.TestCase):
             {
                 "VOICE_STATE_DIR": str(self.state_dir),
                 "HOME": str(self.home_dir),
+                # Empty, so the bridge identity refuses before any hc call:
+                # a test run inside a Herdr terminal must never read the
+                # real herdr core. Bridge tests below set a fake one.
+                "HC_TERMINAL_ID": "",
+                "VOICE_HC_BIN": "/nonexistent/hc",
             },
         )
         environment.start()
@@ -347,33 +353,17 @@ class WireBoundReconciliationTests(StopHookTestCase):
         self.bridge_file.write_text(json.dumps(bridge_payload), encoding="utf-8")
         os.chmod(self.bridge_file, stat.S_IRUSR | stat.S_IWUSR)
 
-        # Mock Herdr script
-        self.herdr_path = self.root / "fake_herdr"
-        herdr_envelope = {
-            "result": {
-                "type": "agent_list",
-                "agents": [
-                    {
-                        "pane_id": PANE_ID,
-                        "terminal_id": TERMINAL_ID,
-                        "agent_session": {"value": BOUND_SESSION},
-                    }
-                ],
-            }
-        }
-        mock_herdr_code = (
-            f"#!/usr/bin/env python3\n"
-            f"import sys\n"
-            f"sys.stdout.write({json.dumps(json.dumps(herdr_envelope))} + '\\n')\n"
+        # Fake herdr core command answering `hc get` for this terminal
+        self.hc_path = write_fake_hc(
+            self.root / "fake_hc",
+            terminal_record(address=TERMINAL_ID, session_id=BOUND_SESSION),
         )
-        self.herdr_path.write_text(mock_herdr_code, encoding="utf-8")
-        os.chmod(self.herdr_path, 0o755)
 
         self.env_patcher_bridge = patch.dict(
             os.environ,
             {
-                "HERDR_PANE_ID": PANE_ID,
-                "HERDR_BIN_PATH": str(self.herdr_path),
+                "HC_TERMINAL_ID": TERMINAL_ID,
+                "VOICE_HC_BIN": str(self.hc_path),
             },
         )
         self.env_patcher_bridge.start()

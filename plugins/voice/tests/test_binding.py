@@ -22,12 +22,12 @@ import binding  # noqa: E402
 
 AGENT = "example-agent"
 SESSION_ID = "example-session-one"
-PANE_ID = "example-pane-one"
+TERMINAL = "t7"
 BOUND_AT = "2026-08-25T00:00:00+00:00"
 
 OTHER_AGENT = "example-agent-other"
 OTHER_SESSION_ID = "example-session-two"
-OTHER_PANE_ID = "example-pane-two"
+OTHER_TERMINAL = "t8"
 OTHER_BOUND_AT = "2026-08-25T01:00:00+00:00"
 
 
@@ -49,7 +49,7 @@ class BindingStoreTestCase(unittest.TestCase):
 
     def write_example(self) -> binding.Binding:
         return binding.write_binding(
-            AGENT, SESSION_ID, PANE_ID, bound_at=BOUND_AT
+            AGENT, SESSION_ID, TERMINAL, bound_at=BOUND_AT
         )
 
 
@@ -63,32 +63,32 @@ class WriteAndReadTests(BindingStoreTestCase):
         self.assertEqual(record, written)
         self.assertEqual(record.agent, AGENT)
         self.assertEqual(record.session_id, SESSION_ID)
-        self.assertEqual(record.pane_id, PANE_ID)
+        self.assertEqual(record.terminal, TERMINAL)
         self.assertEqual(record.bound_at, BOUND_AT)
 
     def test_a_write_creates_a_missing_state_directory(self) -> None:
         nested = self.state_dir / "deeper" / "state"
         with patch.dict(os.environ, {"VOICE_STATE_DIR": str(nested)}):
-            binding.write_binding(AGENT, SESSION_ID, PANE_ID, bound_at=BOUND_AT)
+            binding.write_binding(AGENT, SESSION_ID, TERMINAL, bound_at=BOUND_AT)
             self.assertIsNotNone(binding.read_binding())
 
     def test_bound_at_defaults_to_a_current_utc_timestamp(self) -> None:
-        record = binding.write_binding(AGENT, SESSION_ID, PANE_ID)
+        record = binding.write_binding(AGENT, SESSION_ID, TERMINAL)
         parsed = datetime.fromisoformat(record.bound_at)
         self.assertIsNotNone(parsed.tzinfo)
 
     def test_empty_or_blank_fields_are_rejected_by_name(self) -> None:
         cases = [
-            ("", SESSION_ID, PANE_ID),
-            ("   ", SESSION_ID, PANE_ID),
-            (AGENT, "", PANE_ID),
+            ("", SESSION_ID, TERMINAL),
+            ("   ", SESSION_ID, TERMINAL),
+            (AGENT, "", TERMINAL),
             (AGENT, SESSION_ID, " "),
         ]
-        for agent, session_id, pane_id in cases:
-            with self.subTest(agent=agent, session_id=session_id, pane_id=pane_id):
+        for agent, session_id, terminal in cases:
+            with self.subTest(agent=agent, session_id=session_id, terminal=terminal):
                 with self.assertRaises(ValueError):
                     binding.write_binding(
-                        agent, session_id, pane_id, bound_at=BOUND_AT
+                        agent, session_id, terminal, bound_at=BOUND_AT
                     )
         self.assertFalse(
             self.binding_path().exists(),
@@ -105,7 +105,7 @@ class WriteAndReadTests(BindingStoreTestCase):
             {
                 "agent": AGENT,
                 "session_id": SESSION_ID,
-                "pane_id": PANE_ID,
+                "terminal": TERMINAL,
                 "bound_at": BOUND_AT,
             },
         )
@@ -117,7 +117,7 @@ class SingleValuedStickyTests(BindingStoreTestCase):
     def test_exactly_one_binding_exists_at_a_time(self) -> None:
         self.write_example()
         binding.write_binding(
-            OTHER_AGENT, OTHER_SESSION_ID, OTHER_PANE_ID, bound_at=OTHER_BOUND_AT
+            OTHER_AGENT, OTHER_SESSION_ID, OTHER_TERMINAL, bound_at=OTHER_BOUND_AT
         )
         files = sorted(path.name for path in self.state_dir.iterdir())
         self.assertEqual(files, [binding.BINDING_FILENAME])
@@ -125,13 +125,13 @@ class SingleValuedStickyTests(BindingStoreTestCase):
     def test_rebinding_replaces_the_previous_binding(self) -> None:
         self.write_example()
         binding.write_binding(
-            OTHER_AGENT, OTHER_SESSION_ID, OTHER_PANE_ID, bound_at=OTHER_BOUND_AT
+            OTHER_AGENT, OTHER_SESSION_ID, OTHER_TERMINAL, bound_at=OTHER_BOUND_AT
         )
         record = binding.read_binding()
         self.assertIsNotNone(record)
         self.assertEqual(record.agent, OTHER_AGENT)
         self.assertEqual(record.session_id, OTHER_SESSION_ID)
-        self.assertEqual(record.pane_id, OTHER_PANE_ID)
+        self.assertEqual(record.terminal, OTHER_TERMINAL)
         self.assertEqual(record.bound_at, OTHER_BOUND_AT)
 
     def test_the_binding_persists_until_explicitly_changed(self) -> None:
@@ -184,7 +184,15 @@ class UnboundReadTests(BindingStoreTestCase):
                 {
                     "agent": AGENT,
                     "session_id": "",
-                    "pane_id": PANE_ID,
+                    "terminal": TERMINAL,
+                    "bound_at": BOUND_AT,
+                }
+            ),
+            "an old Herdr binding": json.dumps(
+                {
+                    "agent": AGENT,
+                    "session_id": SESSION_ID,
+                    "pane_id": "w1:p1",
                     "bound_at": BOUND_AT,
                 }
             ),
@@ -192,7 +200,7 @@ class UnboundReadTests(BindingStoreTestCase):
                 {
                     "agent": AGENT,
                     "session_id": 42,
-                    "pane_id": PANE_ID,
+                    "terminal": TERMINAL,
                     "bound_at": BOUND_AT,
                 }
             ),

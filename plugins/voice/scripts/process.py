@@ -1,7 +1,8 @@
 """Subprocess discipline for the voice package.
 
-Every subprocess voice starts runs with its standard input explicitly
-closed and a deadline attached. Two entry points cover the two shapes:
+Every subprocess voice starts runs with a deadline attached, and none
+ever reads the operator's terminal. Three entry points cover the three
+shapes:
 
 - :func:`run` — one bounded helper call. The deadline is a required
   keyword-only argument, so a call without one is impossible by signature.
@@ -9,6 +10,10 @@ closed and a deadline attached. Two entry points cover the two shapes:
   The parent never waits for it and never polls it, so the child carries
   its deadlines internally; the spawner gives it closed standard input and
   devnull output streams.
+- :func:`converse` — one child voice talks to over pipes (``hc connect``,
+  which speaks herdr core's protocol on its standard input and output).
+  Its standard input is a pipe voice writes, never the operator's
+  terminal, and a watchdog kills it when its deadline passes.
 
 Both take an injectable spawn seam so tests never touch a real platform
 binary, and neither ever runs a shell: argv is a list of argument strings,
@@ -18,9 +23,10 @@ and a shell string is rejected by type.
 from __future__ import annotations
 
 import subprocess
+import threading
 from collections.abc import Callable, Sequence
 
-__all__ = ["run", "spawn_detached"]
+__all__ = ["Conversation", "converse", "run", "spawn_detached"]
 
 
 def _validate_argv(argv: object) -> list[str]:
@@ -106,3 +112,77 @@ def spawn_detached(argv: Sequence[str], *, spawn: Callable = subprocess.Popen) -
         start_new_session=True,
     )
     return child.pid
+
+
+class Conversation:
+    """A child voice talks to over pipes, killed by a watchdog at its deadline."""
+
+    def __init__(self, child, deadline: float) -> None:
+        self.child = child
+        self._expired = threading.Event()
+        self._timer = threading.Timer(deadline, self._expire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    @property
+    def stdin(self):
+        return self.child.stdin
+
+    @property
+    def stdout(self):
+        return self.child.stdout
+
+    @property
+    def expired(self) -> bool:
+        """Whether the watchdog ended the child because its deadline passed."""
+        return self._expired.is_set()
+
+    def _expire(self) -> None:
+        self._expired.set()
+        try:
+            self.child.kill()
+        except OSError:
+            pass
+
+    def finish(self, timeout: float) -> int | None:
+        """Close the child's input, wait for it, and stop the watchdog.
+
+        A child that does not exit within ``timeout`` is killed. Returns its
+        exit code, or ``None`` when it had to be killed.
+        """
+        try:
+            self.child.stdin.close()
+        except OSError:
+            pass
+        try:
+            code = self.child.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self._expire()
+            self.child.wait()
+            code = None
+        self._timer.cancel()
+        return code
+
+
+def converse(
+    argv: Sequence[str],
+    *,
+    timeout: float,
+    spawn: Callable = subprocess.Popen,
+) -> Conversation:
+    """Start one child to talk to over pipes, under a deadline.
+
+    Standard input and output are binary pipes the caller writes and reads;
+    standard error is captured. ``timeout`` is required: a watchdog kills
+    the child when it passes, which ends any read the caller is blocked in.
+    The caller ends the conversation with :meth:`Conversation.finish`.
+    """
+    command = _validate_argv(argv)
+    seconds = _validate_timeout(timeout)
+    child = spawn(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return Conversation(child, seconds)

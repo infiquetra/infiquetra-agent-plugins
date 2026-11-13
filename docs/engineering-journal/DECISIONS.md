@@ -166,6 +166,54 @@ or the two-runs check's 120 second limit starts cutting off real suites.
 
 ## 2026-11-10
 
+### Voice pastes into herdr core through an attach and labels its own session
+
+**Decision.** Voice 0.5.0 moves from old Herdr to herdr core. Delivery pastes the
+transcript the way the Herdr app's window does: `hc connect`, `hello` in framed mode,
+`terminal.attach` at the size `hc get` reported, one input frame holding `ESC[200~` +
+transcript + `ESC[201~` (every control character removed first), then a close that
+herdr core confirms. It pastes only when the program has turned on bracketed paste and
+the agent reports `idle` or `done` (a finished turn nobody has looked at yet, which
+`hc ls` showed for several Claude sessions on 2026-11-10). The status and turn are
+checked again from the attach reply and a fresh `hc get`; a change is reported as "the
+transcript may have reached a prompt", never followed by Enter. herdr core does not
+know which Claude session runs in a terminal, so the voice Claude adapter's
+SessionStart hook runs `hc label $HC_TERMINAL_ID voice.agent-session=<id>`, and
+`voice bind`, delivery and the Auralis bridge identity read that label back with
+`hc get --json`. The bridge identity uses the terminal address as both `terminal_id`
+and `pane_id`.
+
+The frame layout (channel u32, kind u8, length u32, little-endian; kinds 0 data,
+1 credit, 2 close, 6 automatic input) is not in `hc schema`; it was read from the
+frames `hc attach` exchanges with herdr core 0.1.20, through a logging proxy on an
+isolated core.
+
+**Rejected alternatives.** `hc send` always presses Enter, so a misheard transcript
+would be submitted to an agent that may run with bypassed permissions. `hc keys` (the
+first 0.5.0 design) takes key names, not text: a probe showed it rejects `? ! " : ( )
+@ # $ % & * + _ ~ ^ { } | < >` and anything outside ASCII, types a bare `A` as `a`,
+and waits about three seconds before pressing keys, so it could deliver no spoken
+question and left a three-second window for a dialog to catch keystrokes. Writing the
+console's `herdr.agentSession` label instead of a voice-owned one would switch on
+seat-board and usage-limits behaviour in herdr-console as a side effect. Finding the
+session through `~/.claude/sessions/<pid>.json` and the process tree (as herdr-console
+does) ties a portable package to Claude's private files and account homes.
+
+**Rationale.** The voice contract is that a transcript lands unsubmitted and editable
+(R16). The attach paste is the only route herdr core offers that carries arbitrary
+text without submitting it. On the isolated core it delivered every character above,
+Chinese text and emoji intact, left the terminal's size and a second, window-like
+viewer undisturbed, left no connection behind, and finished in about 0.1 seconds. The
+label mirrors what old Herdr's own SessionStart hook did: it recorded the session id
+from the same hook payload.
+
+**Revisit when.** herdr core gains `hc send --no-enter` (or `terminal.send` with
+`submit: false`) or a guard that refuses input unless the program is settled; the
+frame layout or the attach semantics change in a herdr core release; or herdr core or
+the `agents` launcher starts publishing a terminal's Claude session id. Voice should
+then use those instead.
+
+
 ### Resolve active project boards dynamically from project-mappings.json
 
 **Decision.** Replace hardcoded three-board CLI choices (`asgard`, `operations`, `campps`) and Saga's `DEFAULT_PROJECT = "operations"` fallback with dynamic resolution from `project-mappings.json` (`_active_project_choices()` in `sdlc_manager.py` and `resolve_project_for_repo()` in `board_progression.py`) across the ten active per-project boards (`campps`, `sovereign-circuit`, `company`, `argus`, `talaria`, `agent-platform`, `home-lab`, `eve-mimir`, `cognitive-ai-research`, `ai-native-engine`).
