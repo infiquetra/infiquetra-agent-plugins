@@ -2,6 +2,18 @@
 
 ## 2026-11-12
 
+### Mutation statement formats carry different identities
+
+**Evidence.** Cross-language lead tests reproduced collapsed TypeScript, Dart and Swift survivors
+and a Rust replacement's numeric argument being read as an operator. Lead anchors now recognize
+the named mutators in each supported statement form and hash replacement descriptions otherwise.
+
+**Mechanism.** A trailing-parentheses pattern describes cosmic-ray's output, but cargo-mutants
+uses parentheses inside arbitrary replacement expressions. Sorting cannot recover lost identity.
+
+**Generalizable rule.** Normalize each producer's identity explicitly before deduplicating results;
+use a stable digest of the full statement when the producer supplies no mutator name.
+
 ### An advisory testing result requires a reviewer item or a blocking fallback
 
 **Evidence.** Rust and Swift two-runs results carried a project location that lead conversion

@@ -110,6 +110,10 @@
 
 ### Fixed
 
+- **Surviving-mutant anchors understand every supported tool.** StrykerJS, Muter, mutate4dart
+  and cosmic-ray retain their mutator names; cargo-mutants replacement descriptions and unknown
+  statement forms use a stable statement digest. Distinct survivors on one line stay distinct.
+
 - **Testing results cannot disappear from reviewer leads.** Rust and Swift two-runs results
   locate unique test definitions in changed head files, including Rust inline tests. Unlocated
   results and results beyond the item cap record a reason and restore blocking severity for

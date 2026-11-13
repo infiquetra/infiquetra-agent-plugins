@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 import re
@@ -766,7 +767,21 @@ ROW_MUTANT = "testing.surviving-mutant"
 LEAD_CAP = 8
 LEAD_QUESTION = "testing.accepts-broken-code"
 _WORD = re.compile(r"[a-z0-9]+")
-_OPERATOR = re.compile(r"\(([^()]+)\)\.?$")
+_MUTATOR_STATEMENTS = (
+    re.compile(r"^A mutant survived \(([^()]+)\)\.$"),
+    re.compile(r"^Muter mutant survived: (.+)\.$"),
+    re.compile(r"^(?:StrykerJS|mutate4dart) mutant survived: (.+?) in .+\.$"),
+)
+
+
+def _mutant_operator(statement: str) -> str:
+    for pattern in _MUTATOR_STATEMENTS:
+        match = pattern.fullmatch(statement)
+        if match:
+            return match.group(1)
+    # cargo-mutants supplies a replacement description, not a mutator name. Unknown statement
+    # forms keep their identity too; parentheses in a replacement must never become an operator.
+    return "statement-" + hashlib.sha256(statement.encode("utf-8")).hexdigest()[:16]
 
 
 def _words(text: str) -> set[str]:
@@ -928,8 +943,7 @@ def _lead_items(
                 degraded.append(_degraded("testing", language, str(row), "surviving-mutant",
                                           "unlocated-lead"))
                 continue
-            match = _OPERATOR.search(str(finding.get("statement") or ""))
-            operator = match.group(1) if match else "unknown-operator"
+            operator = _mutant_operator(str(finding.get("statement") or ""))
             text = _head_text(runner, repo, head, path, cache) if path.endswith(".py") else None
             where = {"scope": "lines", "file": path, "lines": {"start": line, "end": line},
                      "function": _python_function_at(text, line),

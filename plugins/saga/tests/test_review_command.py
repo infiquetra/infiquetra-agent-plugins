@@ -4398,3 +4398,40 @@ def test_capped_testing_leads_stay_blocking(tmp_path: Path) -> None:
     result = C.review_formula.compute({'findings': findings, 'degraded_inputs': degraded})
     assert all(finding['severity'] == 'blocks' for finding in result['findings'])
 
+
+
+@pytest.mark.parametrize(('language', 'statements', 'expected'), [
+    ('python', ['A mutant survived (core/Not).', 'A mutant survived (core/And).'],
+     ['core/Not', 'core/And']),
+    ('typescript', ['StrykerJS mutant survived: ConditionalExpression in src/a.ts.',
+                    'StrykerJS mutant survived: EqualityOperator in src/a.ts.'],
+     ['ConditionalExpression', 'EqualityOperator']),
+    ('dart', ['mutate4dart mutant survived: BinaryExpression in lib/a.dart.',
+              'mutate4dart mutant survived: NegateCondition in lib/a.dart.'],
+     ['BinaryExpression', 'NegateCondition']),
+    ('swift', ['Muter mutant survived: RemoveSideEffects.',
+               'Muter mutant survived: RelationalOperatorReplacement.'],
+     ['RemoveSideEffects', 'RelationalOperatorReplacement']),
+    ('rust', ['cargo-mutants mutant survived: replace a -> Option<i32> with Some(42).',
+              'cargo-mutants mutant survived: replace a -> Option<i32> with Some(43).'],
+     []),
+])
+def test_survivor_anchors_preserve_each_tools_distinct_statements(
+    tmp_path: Path, language: str, statements: list[str], expected: list[str],
+) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    findings = [_mutant_finding(2, 'unused') for _ in statements]
+    for finding, statement in zip(findings, statements, strict=True):
+        finding['language'] = language
+        finding['statement'] = statement
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    assert degraded == [] and len(items) == 2
+    anchors = [item['location']['anchor'] for item in items]
+    assert len(set(anchors)) == 2
+    if expected:
+        assert all(any(operator in anchor for anchor in anchors) for operator in expected)
+    else:
+        assert all('statement-' in anchor for anchor in anchors)
+        assert all(':42:' not in anchor and ':43:' not in anchor for anchor in anchors)
+    assert (items, degraded) == C._lead_items(list(reversed(findings)), change,
+                                            C.review_tools.subprocess_runner, repo, head)
