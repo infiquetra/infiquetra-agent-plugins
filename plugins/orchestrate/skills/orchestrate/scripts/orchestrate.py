@@ -3024,8 +3024,15 @@ def parent_branch_name(issue: int, *, runner: Callable[..., Any] | None = None) 
     standalone form and the printed line says so rather than pretending it knew.
     """
     call = runner or run
+    remote = call(["git", "remote", "get-url", "origin"], check=False)
+    if getattr(remote, "returncode", 1) != 0:
+        return f"issue/{issue}", "GitHub could not be asked for sub-issues, so the standalone name"
+    match = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$", remote.stdout.strip())
+    if match is None:
+        return f"issue/{issue}", "GitHub could not be asked for sub-issues, so the standalone name"
+    owner, repository = match.groups()
     query = (
-        '{repository(owner:"infiquetra",name:"infiquetra-claude-plugins")'
+        f'{{repository(owner:"{owner}",name:"{repository}")'
         f"{{issue(number:{int(issue)}){{subIssues(first:1){{totalCount}}}}}}}}"
     )
     proc = call(["gh", "api", "graphql", "-f", f"query={query}"], check=False, timeout=60)
