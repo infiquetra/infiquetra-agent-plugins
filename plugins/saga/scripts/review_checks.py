@@ -628,15 +628,27 @@ def _node_report(kind: str, arguments: list[str], cwd: Path, files: list[str], t
         argv += ["--reporter=json", "--maxWorkers=1", "--sequence.seed=0",
                  "--cache=false", "--configLoader=runner"]
     else:
-        argv += ["--json", "--runInBand", "--no-cache", "--seed=0", "--runTestsByPath"]
+        argv += ["--json", "--reporters=default", "--runInBand", "--no-cache", "--seed=0",
+                 "--runTestsByPath"]
     if names:
         argv += ["--testNamePattern", "^(?:" + "|".join(re.escape(n) for n in sorted(set(names))) + ")$"]
-    result = _run_capture([*argv, *files], cwd, timeout)
-    if isinstance(result, str):
-        return result
-    stdout, stderr, code = result
+    # Project settings may redirect JSON away from stdout. Cover both Vitest outputFile
+    # forms: the dotted flag alone does not override a configured string. Keep it first;
+    # Vitest's CLI cannot assign a dotted property after parsing the scalar flag.
+    with tempfile.TemporaryDirectory(prefix="saga-node-report-") as temporary:
+        report = Path(temporary) / "results.json"
+        if kind == "vitest":
+            argv += [f"--outputFile.json={report}"]
+        result = _run_capture([*argv, f"--outputFile={report}", "--", *files], cwd, timeout)
+        if isinstance(result, str):
+            return result
+        stdout, stderr, code = result
+        try:
+            payload = report.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            payload = ""
     try:
-        data = json.loads(stdout)
+        data = json.loads(payload)
         suites = data["testResults"]
         if code not in (0, 1) or not isinstance(suites, list) or (files and not suites):
             raise ValueError("not a case report")

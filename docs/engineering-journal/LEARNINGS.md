@@ -2,6 +2,20 @@
 
 ## 2026-11-13
 
+### Own the structured report destination as well as its format
+
+**Evidence.** Synthetic subfolder fixtures configure Vitest's JSON output as both a string
+and a reporter-keyed object, and Jest's output file with a custom reporter. The two-runs
+check now selects its reporter and a private temporary report file, reads only that file,
+and removes it after success or failure. Complete repeated prepares compare every packet byte.
+
+**Mechanism.** Selecting JSON did not prevent project configuration from redirecting it away
+from stdout. Vitest's reporter-keyed option alone leaves a configured string in force. Adding
+the scalar option after it covers that form without triggering a command-parser error.
+
+**Generalizable rule.** Treat report format, destination and configuration precedence as one
+integration contract. Exercise supported configuration forms through the actual runner.
+
 ### Console failure messages are not an identity boundary
 
 **Evidence.** Real pytest fixtures with ` - ` and `] - ` in parameter identifiers and `] - `

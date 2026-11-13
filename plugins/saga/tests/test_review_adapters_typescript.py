@@ -1961,6 +1961,28 @@ def test_typescript_tools_run_inside_changed_subfolder_and_stage_its_base_config
         assert not _degraded(out, tool)
 
 
+def test_vitest_shuffle_probes_the_project_binary_and_requires_its_profile_pin(tmp_path: Path) -> None:
+    root = tmp_path / "web"
+    binary = root / "node_modules/.bin/vitest"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("inert local binary\n")
+    adapter = _adapter("vitest-shuffle")
+    calls: list[list[str]] = []
+
+    def process(argv: list[str], **kwargs: Any) -> Any:
+        calls.append(argv)
+        if "--version" in argv:
+            assert kwargs["cwd"] != root
+            return T.ProcessResult(0, "vitest/3.2.4 darwin-arm64 node-v22.22.3\n")
+        return T.ProcessResult(0, "")
+
+    assert T._read_version(adapter, {}, process, {}, root) == ("3.2.4", "version-mismatch")
+    assert T._read_version(adapter, {"pins": {"vitest": {"version": "3.2.4"}}},
+                           process, {}, root) == ("3.2.4", None)
+    T._execute(adapter, ["vitest", "run"], root, process, {}, 30)
+    assert all(argv[0] == str(binary) for argv in calls)
+
+
 def test_stryker_budget_selects_ten_spread_over_files_and_lines_independent_of_order(tmp_path: Path) -> None:
     if not shutil.which("node"):
         pytest.skip("node is not installed")

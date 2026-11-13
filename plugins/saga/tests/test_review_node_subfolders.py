@@ -54,16 +54,49 @@ for file in files:
         if name == 'skipped': status = 'pending'
         cases.append({'fullName': name, 'status': status, 'duration': time.time()})
     suites.append({'name': str(cwd / file), 'assertionResults': list(reversed(cases)), 'status': 'passed'})
-print(json.dumps({'testResults': suites, 'startTime': time.time()}))
+payload = json.dumps({'testResults': suites, 'startTime': time.time()})
+kind = pathlib.Path(sys.argv[0]).name
+config = cwd / ('vitest.config.mjs' if kind == 'vitest' else 'jest.config.cjs')
+output = None
+if config.is_file():
+    settings = json.loads(config.read_text().removeprefix('export default ').removeprefix('module.exports = '))
+    settings = settings.get('test', settings)
+    output = settings.get('outputFile')
+    if isinstance(output, dict): output = output.get('json')
+    if kind == 'jest' and settings.get('reporters') and '--reporters=default' not in args:
+        raise RuntimeError('project reporter was not overridden')
+option = '--outputFile.json=' if kind == 'vitest' else '--outputFile='
+output = next((arg[len(option):] for arg in args if arg.startswith(option)), output)
+if output:
+    target = cwd / output
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(payload)
+    print('JSON report written to ' + str(target))
+else:
+    print(payload)
 '''
 
 
-def _repo(tmp_path: Path, kind: str) -> tuple[Path, str, str, Path]:
+def _report_config(kind: str, output_form: str) -> dict[str, str]:
+    output: Any = ".project/json/output.json"
+    if output_form == "object":
+        output = {"json": output, "junit": ".project/junit.xml"}
+    if kind == "vitest":
+        return {"web/vitest.config.mjs": "export default " + json.dumps({
+            "test": {"reporters": ["json"], "outputFile": output}})}
+    return {"web/jest.config.cjs": "module.exports = " + json.dumps({
+        "outputFile": output, "reporters": ["./project-reporter.cjs"]}),
+        "web/project-reporter.cjs": "module.exports = class { constructor() { throw Error('project reporter used'); } };\n"}
+
+
+def _repo(tmp_path: Path, kind: str, output_form: str | None = None) -> tuple[Path, str, str, Path]:
     manifest = json.dumps({"scripts": {"test": kind + (" run" if kind == "vitest" else "")},
                            "devDependencies": {kind: "1.0.0"}})
     common = {"web/package.json": manifest, "web/package-lock.json": '{"lockfileVersion":3,"packages":{}}',
               "web/app.ts": "export const value = false;\n", "web/old.test.ts": "existing\n",
               ".gitignore": "node_modules/\n"}
+    if output_form:
+        common.update(_report_config(kind, output_form))
     repo, base, head = H.make_repo(tmp_path, common,
         {"web/app.ts": "export const value = true;\n",
          "web/new.test.ts": "already\nfixed\nskipped\n"})
@@ -72,15 +105,50 @@ def _repo(tmp_path: Path, kind: str) -> tuple[Path, str, str, Path]:
     return repo, base, head, modules
 
 
-@pytest.mark.parametrize("kind", ["vitest", "jest"])
-def test_two_runs_in_subfolder_reports_only_a_new_case_passing_on_old_code(tmp_path: Path, kind: str) -> None:
-    repo, base, _, modules = _repo(tmp_path, kind)
+@pytest.mark.parametrize("kind,output_form", [("vitest", "string"), ("vitest", "object"), ("jest", "string")])
+def test_two_runs_in_subfolder_reports_only_a_new_case_passing_on_old_code(
+    tmp_path: Path, kind: str, output_form: str,
+) -> None:
+    repo, base, _, modules = _repo(tmp_path, kind, output_form)
     (repo / "web/node_modules").symlink_to(modules)
     found = H.C.two_runs(repo, base, [("typescript", "cd web && npm test")])
     assert found["gaps"] == []
     assert [(hit["path"], hit["rule_id"]) for hit in found["hits"]] == [
         ("web/new.test.ts", "web/new.test.ts::already")]
     assert H.C.two_runs(repo, base, [("typescript", "cd web && npm test")]) == found
+    assert not (repo / "web/.project").exists()
+
+
+@pytest.mark.parametrize("kind", ["vitest", "jest"])
+@pytest.mark.parametrize("failure", ["missing-report", "malformed-report", "timeout"])
+def test_node_report_requires_its_own_file_and_cleans_it_after_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, failure: str,
+) -> None:
+    H.executable(tmp_path / "node_modules/.bin" / kind, "#!/bin/sh\nexit 0\n")
+    reports: list[Path] = []
+
+    def capture(argv: list[str], cwd: Path, timeout: int) -> Any:
+        option = "--outputFile.json=" if kind == "vitest" else "--outputFile="
+        report = Path(next(arg[len(option):] for arg in argv if arg.startswith(option)))
+        assert report.parent.is_dir() and not report.exists()
+        assert f"--outputFile={report}" in argv
+        if kind == "vitest":
+            assert "--reporter=json" in argv
+            assert argv.index(f"--outputFile.json={report}") < argv.index(f"--outputFile={report}")
+        else:
+            assert "--json" in argv and "--reporters=default" in argv
+        reports.append(report)
+        if failure == "timeout":
+            return "timeout"
+        if failure == "malformed-report":
+            report.write_text("not json")
+        # Valid-looking stdout must never substitute for a missing or broken report.
+        return json.dumps({"testResults": []}), "", 0
+
+    monkeypatch.setattr(H.C, "_run_capture", capture)
+    assert H.C._node_report(kind, [], tmp_path, [], 10, None, "head-listing-run") == (
+        "timeout" if failure == "timeout" else "no-test-list")
+    assert reports and not reports[0].parent.exists()
 
 
 @pytest.mark.parametrize("kind", ["vitest", "jest"])
@@ -109,8 +177,13 @@ def test_modified_node_test_excludes_cases_that_already_existed(tmp_path: Path, 
 
 
 @pytest.mark.skipif(os.environ.get("SAGA_TEST_LIVE_NPM") != "1", reason="opt-in (SAGA_TEST_LIVE_NPM=1): needs npm and network")
-@pytest.mark.parametrize("kind,version", [("vitest", "4.1.11"), ("jest", "30.5.2")])
-def test_live_node_two_runs_with_locked_subfolder_dependencies(tmp_path: Path, kind: str, version: str) -> None:
+@pytest.mark.parametrize("kind,version,output_form", [
+    ("vitest", "4.1.11", "string"), ("vitest", "4.1.11", "object"),
+    ("jest", "30.5.2", "string"),
+])
+def test_live_node_two_runs_with_locked_subfolder_dependencies(
+    tmp_path: Path, kind: str, version: str, output_form: str,
+) -> None:
     if not shutil.which("npm"):
         pytest.skip("npm is not installed")
     N = H.load("review_dependencies_node")
@@ -118,6 +191,9 @@ def test_live_node_two_runs_with_locked_subfolder_dependencies(tmp_path: Path, k
     manifest = {"name": "example", "private": True, "scripts": {"test": kind + (" run" if kind == "vitest" else "")},
                 "devDependencies": {kind: version}}
     common = {"web/package.json": json.dumps(manifest), "web/app.js": "module.exports = (a, b) => a - b;\n"}
+    common.update(_report_config(kind, output_form))
+    imports = "import {test, expect} from 'vitest';\nimport add from './app.js';\n" if kind == "vitest" else "const add = require('./app');\n"
+    common["web/old.test.js"] = imports + "test('existing', () => expect(add(0,0)).toBe(0));\n"
     repo, base, _ = H.make_repo(tmp_path, common, {"README.md": "example\n"})
     web = repo / "web"
     proc = subprocess.run(["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"],
@@ -125,8 +201,8 @@ def test_live_node_two_runs_with_locked_subfolder_dependencies(tmp_path: Path, k
     assert proc.returncode == 0, proc.stderr
     H.commit(repo, "lock")
     base = H.git(repo, "rev-parse", "HEAD")
-    imports = "import {test, expect} from 'vitest';\nimport add from './app.js';\n" if kind == "vitest" else "const add = require('./app');\n"
     H.write(repo, {"web/app.js": "module.exports = (a, b) => a + b;\n",
+                   "web/old.test.js": common["web/old.test.js"] + "test('also-new', () => expect(add(0,0)).toBe(0));\n",
                    "web/new.test.js": imports + "test('already', () => expect(add(0,0)).toBe(0));\n"
                    + "test('fixed', () => expect(add(1,1)).toBe(2));\n"})
     head = H.commit(repo, "fix")
@@ -145,19 +221,22 @@ def test_live_node_two_runs_with_locked_subfolder_dependencies(tmp_path: Path, k
         N.link_projects(repo, N.installed_projects(packet))
         found = H.C.two_runs(repo, base, [("typescript", "cd web && npm test")], diagnostics=tmp_path / "diagnostics")
         assert found["gaps"] == [], found
-        assert [hit["rule_id"] for hit in found["hits"]] == ["web/new.test.js::already"]
+        assert [hit["rule_id"] for hit in found["hits"]] == [
+            "web/new.test.js::already", "web/old.test.js::also-new"]
+        assert H.C.two_runs(repo, base, [("typescript", "cd web && npm test")]) == found
+        assert not (web / ".project").exists()
     finally:
         N.unseal(packet / "dependencies/node")
 
 
-@pytest.mark.parametrize("kind", ["vitest", "jest"])
+@pytest.mark.parametrize("kind,output_form", [("vitest", "string"), ("vitest", "object"), ("jest", "string")])
 @pytest.mark.parametrize("vendored", [False, True])
 def test_two_prepares_of_subfolder_commit_produce_identical_complete_packets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, vendored: bool,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, output_form: str, vendored: bool,
 ) -> None:
     C = H.load("review_command")
     A = H.load("review_adapters_typescript")
-    repo, base, head, _ = _repo(tmp_path, kind)
+    repo, base, head, _ = _repo(tmp_path, kind, output_form)
     if vendored:
         # The manager is synthetic here; the separate offline npm test installs a real
         # archive. This fixture exercises verified file inputs through complete prepare.
