@@ -16,6 +16,30 @@
   Rust module paths or Swift type names to disambiguate test names. Ambiguous tests remain
   unlocated.
 
+### Fixed
+
+- Vitest and Jest random-order findings and their stored evidence now come from Saga-owned
+  JSON reports. Canonical evidence retains runner versions, seeds, counts and sorted failure
+  messages while omitting console output and timing fields. Recognized relocated Node runs
+  use the same evidence format; missing or invalid reports keep console evidence with a gap.
+
+- Saga's Vitest and Jest random-order and two-runs checks disable file parallelism.
+  Vitest versions that reject the serial option record `unsupported-file-parallelism`
+  without failing prepare or silently running files in parallel. Flaky failures stay visible.
+
+- Node installs accept tracked in-repository `.tgz` and `.tar.gz` dependency archives only
+  after Saga verifies their lock integrity against the bytes. Symlinks, escaping paths,
+  untracked files, missing hashes and mismatches are refused before the manager starts.
+
+- TypeScript projects below a repository with no root `package.json` now receive locked
+  dependencies for up to four changed projects. Prepare and re-runs link each project's own
+  packages, and TypeScript tools use that project's base configuration and relative paths.
+- Two-runs recognises Vitest and Jest, including literal package test scripts, discovers
+  subfolder test commands, and reports new passing cases that also pass on the old code.
+- Stryker keeps test files in its sandbox and excludes them only from mutation targets.
+  Mutation execution uses a deterministic ten-mutant budget across projects; report timing
+  and arrival order no longer change packet bytes.
+
 ### Added
 
 - **Prepare installs a JavaScript or TypeScript head's npm packages into the packet.** A head with

@@ -10,7 +10,6 @@ import shutil
 import socket
 import subprocess
 import sys
-import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -117,6 +116,7 @@ class _Calls:
         seen: list[tuple[list[str], Path]] | None = None,
         watch: tuple[str, ...] = (),
         snapshots: list[tuple[list[str], bool | None, dict[str, str | None]]] | None = None,
+        node_report: dict[str, Any] | str | None = None,
     ) -> None:
         self.base = base
         self.payload = payload
@@ -133,6 +133,7 @@ class _Calls:
         self.watch = watch
         self.snapshots = snapshots if snapshots is not None else []
         self.calls: list[list[str]] = []
+        self.node_report = node_report
 
     def _tool(self, argv: list[str]) -> str:
         return Path(argv[0]).name
@@ -181,6 +182,11 @@ class _Calls:
             if link.is_symlink() or link.is_file():
                 link.unlink()
             link.symlink_to(target_name)
+        if self.node_report is not None:
+            destination = next((arg.split("=", 1)[1] for arg in argv if arg.startswith("--outputFile=")), None)
+            if destination is not None:
+                text = json.dumps(self.node_report) if isinstance(self.node_report, dict) else self.node_report
+                Path(destination).write_text(text.replace("@ROOT@", Path(cwd).as_posix()))
         return T.ProcessResult(self.base_code if at_base else self.code, body, self.stderr)
 
 
@@ -923,8 +929,10 @@ def test_vitest_shuffle_failure_carries_seed_and_flags(
     assert len(runs) == 1
     argv = runs[0]
     assert argv[:4] == ["vitest", "run", "--sequence.shuffle", "--sequence.seed"]
-    assert "--reporter" not in argv
+    assert "--reporter=json" in argv and "--reporter=default" in argv
+    assert any(arg.startswith("--outputFile.json=") for arg in argv)
     assert argv[4] == "4242"
+    assert "--no-file-parallelism" in argv
     findings = _read(output, "findings.json")
     assert len(findings) == 1
     assert findings[0]["rule"]["ref"] == "shuffle-failure"
@@ -946,8 +954,34 @@ def test_vitest_shuffle_with_no_tests_is_a_gap(tmp_path: Path) -> None:
     ) == 0
     assert _read(output, "findings.json") == []
     degraded = _degraded(output, "vitest")
-    assert len(degraded) == 1
-    assert degraded[0]["reason"] == "no-tests-ran"
+    assert {item["reason"] for item in degraded} == {"no-tests-ran", "missing-json-report"}
+
+
+def test_vitest_shuffle_rejected_serial_option_is_a_gap_not_a_failed_prepare(tmp_path: Path) -> None:
+    repo, _source = _runner_repo(tmp_path, "vitest")
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    runner = _Calls(base, "", stderr="CACError: Unknown option `--fileParallelism`\n",
+                    code=1, versions={"vitest": "1.0.4"})
+    assert _run(repo, base, head, _profile(tmp_path / "profile.json"), output,
+                tmp_path / "home", [_adapter("vitest-shuffle")], runner) == 0
+    _valid(output)
+    assert _read(output, "findings.json") == []
+    assert {item["reason"] for item in _degraded(output, "vitest")} == {
+        "version-mismatch", "unsupported-file-parallelism", "missing-json-report"}
+    runs = [argv for argv in runner.calls if "--version" not in argv]
+    assert len(runs) == 1 and "--no-file-parallelism" in runs[0]
+
+
+def test_vitest_assertion_about_an_unknown_option_is_still_a_failure() -> None:
+    result = A._parse_vitest_shuffle(
+        " FAIL  example.test.js > validates options\n"
+        "CACError: Unknown option `--fileParallelism`\n"
+        " Test Files  1 failed (1)\n Tests  1 failed (1)\n")
+    assert result.gap is None
+    assert [hit.rule_id for hit in result.hits] == ["shuffle-failure"]
 
 
 def test_jest_shuffle_failure_carries_seed_and_flags(
@@ -976,7 +1010,9 @@ def test_jest_shuffle_failure_carries_seed_and_flags(
     assert len(runs) == 1
     argv = runs[0]
     assert argv[1:5] == ["--randomize", "--seed", "4242", "--showSeed"]
-    assert "--json" not in argv
+    assert "--runInBand" in argv
+    assert "--json" in argv and "--reporters=default" in argv
+    assert any(arg.startswith("--outputFile=") for arg in argv)
     assert "--config" not in argv
     findings = _read(output, "findings.json")
     assert len(findings) == 1
@@ -999,8 +1035,103 @@ def test_jest_shuffle_with_no_tests_is_a_gap(tmp_path: Path) -> None:
     ) == 0
     assert _read(output, "findings.json") == []
     degraded = _degraded(output, "jest")
-    assert len(degraded) == 1
-    assert degraded[0]["reason"] == "no-tests-ran"
+    assert {item["reason"] for item in degraded} == {"no-tests-ran", "missing-json-report"}
+
+
+def _node_result(failing: tuple[str, ...] = ("outer full failing name",)) -> dict[str, Any]:
+    return {"numTotalTests": len(failing) + 3, "numPassedTests": 1,
+        "numFailedTests": len(failing), "numPendingTests": 1, "numTodoTests": 1,
+        "numTotalTestSuites": 1, "numPassedTestSuites": int(not failing),
+        "numFailedTestSuites": int(bool(failing)), "numPendingTestSuites": 0,
+        "startTime": 123, "testResults": [{"name": "@ROOT@/example.test.js",
+            "status": "failed" if failing else "passed", "endTime": 456,
+            "assertionResults": [
+                *[{"fullName": name, "status": "failed", "duration": 23,
+                   "failureMessages": ["expected 2, received 1", "duration 12ms at 0xabc"]}
+                  for name in failing],
+                {"fullName": "passing", "status": "passed", "duration": 1},
+                {"fullName": "pending", "status": "pending"},
+                {"fullName": "todo", "status": "todo"}]}]}
+
+
+@pytest.mark.parametrize("kind", ["vitest", "jest"])
+def test_shuffle_json_evidence_ignores_all_console_timing_and_retains_failure_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    monkeypatch.setattr(A, "_shuffle_seed", lambda _context: 7)
+    repo, _source = _runner_repo(tmp_path, kind)
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n")
+    head = _commit(repo, "head")
+    home = tmp_path / "home"
+    outputs = []
+    digests = []
+    for attempt in (1, 2, 3):
+        data = _node_result(("outer full failing name",) if attempt < 3 else ("different failure",))
+        data["startTime"] = attempt * 999
+        data["testResults"][0]["assertionResults"].reverse()
+        data["testResults"][0]["assertionResults"][0]["duration"] = attempt
+        warning = "stderr | example.test.js > warning\nwarning from a test\n"
+        noise = (f"{attempt} tests {attempt * 100}ms ({attempt * 20}%)\n"
+                 + ("✓ passing test [2]\n" if attempt == 1 else "")
+                 + f"hint: try again in ~{attempt}.2s\n")
+        console = (
+            'Running tests with seed "7"\n FAIL example.test.js > outer full failing name\n'
+            'AssertionError: expected 2, received 1\n Test Files 1 failed (1)\n Tests 1 failed (4)\n'
+            if kind == "vitest" else
+            'FAIL example.test.js\n ● outer full failing name\n expected 2, received 1\n'
+            'Test Suites: 1 failed, 1 total\nTests: 1 failed, 4 total\nSeed: 7\n'
+        )
+        console = warning + console + noise if attempt == 1 else noise + console + warning
+        runner = _Calls(base, console, stderr=console, code=1, node_report=data)
+        output = tmp_path / f"out-{attempt}"
+        assert _run(repo, base, head, _profile(tmp_path / "profile.json"), output,
+                    home, [_adapter(kind + "-shuffle")], runner) == 0
+        _valid(output)
+        assert not _degraded(output, kind)
+        findings = _read(output, "findings.json")
+        assert len(findings) == 1
+        digests.append(findings[0]["proof"]["raw_output"])
+        outputs.append(output)
+        for argv in runner.calls:
+            for arg in argv:
+                if arg.startswith("--outputFile="):
+                    assert not Path(arg.split("=", 1)[1]).parent.exists()
+    for name in ("findings.json", "outcomes.json", "degraded.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes()
+    assert digests[0] == digests[1] and digests[0] != digests[2]
+    assert "outer full failing name" in _read(outputs[0], "findings.json")[0]["statement"]
+    assert "different failure" in _read(outputs[2], "findings.json")[0]["statement"]
+    raw = json.loads((home / ".saga/review-output" / digests[0]).read_text())
+    assert raw["runner"] == kind and raw["version"] == _TS_VERSIONS[kind] and raw["seed"] == 7
+    assert raw["tests"] == {"total": 4, "passed": 1, "failed": 1, "pending": 1, "todo": 1}
+    assert raw["files"]["failed"] == 1
+    assert raw["failures"][0]["messages"] == ["duration 12ms at 0xabc", "expected 2, received 1"]
+    assert not {"console", "startTime", "duration"} & raw.keys()
+
+
+@pytest.mark.parametrize("kind", ["vitest", "jest"])
+@pytest.mark.parametrize("report,reason", [(None, "missing-json-report"),
+    ("not json", "invalid-json-report"), ({}, "invalid-json-report"),
+    (_node_result(()), "incomplete-json-report")])
+def test_shuffle_missing_or_invalid_json_keeps_console_findings_and_records_gap(
+    tmp_path: Path, kind: str, report: Any, reason: str,
+) -> None:
+    repo, _source = _runner_repo(tmp_path, kind)
+    base = _commit(repo, "base")
+    (repo / "README.md").write_text("head\n")
+    head = _commit(repo, "head")
+    console = _fixture(kind + "-shuffle-run-1.txt")
+    runner = _Calls(base, console, stderr=console, code=1, node_report=report)
+    output = tmp_path / "out"
+    home = tmp_path / "home"
+    assert _run(repo, base, head, _profile(tmp_path / "profile.json"), output,
+                home, [_adapter(kind + "-shuffle")], runner) == 0
+    findings = _read(output, "findings.json")
+    assert len(findings) == 2
+    assert {item["reason"] for item in _degraded(output, kind)} == {reason}
+    raw = (home / ".saga/review-output" / findings[0]["proof"]["raw_output"]).read_text()
+    assert "FAIL" in raw and not raw.startswith("{")
 
 
 def _stryker_repo(tmp_path: Path) -> tuple[Path, Path]:
@@ -1046,7 +1177,7 @@ def test_stryker_survivor_on_changed_lines_is_a_lead(tmp_path: Path) -> None:
     assert len(runs) == 1
     argv = runs[0]
     assert "--testRunner" in argv and argv[argv.index("--testRunner") + 1] == "jest"
-    assert "--reporters" in argv and argv[argv.index("--reporters") + 1] == "json"
+    assert "--reporters" in argv and argv[argv.index("--reporters") + 1] == "json,saga-budget"
     assert "--mutate" in argv
     # Issue 147: the sandbox is removed even after a failure. It must stay in the worktree:
     # outside it Stryker finds no node_modules to link and every initial test run fails.
@@ -1639,6 +1770,9 @@ def test_live_vitest_shuffle_records_its_seed(tmp_path: Path) -> None:
     statement = _finding(output, "shuffle-failure")["statement"]
     assert re.search(r"\(seed \d+\)", statement)
     assert "adds" in statement
+    finding = _finding(output, "shuffle-failure")
+    raw = json.loads((tmp_path / "home/.saga/review-output" / finding["proof"]["raw_output"]).read_text())
+    assert raw["schema"] == "saga.node-test-result.v1" and raw["failures"][0]["messages"]
 
 
 def test_live_jest_shuffle_records_its_seed(tmp_path: Path) -> None:
@@ -1666,6 +1800,9 @@ def test_live_jest_shuffle_records_its_seed(tmp_path: Path) -> None:
     statement = _finding(output, "shuffle-failure")["statement"]
     assert re.search(r"\(seed \d+\)", statement)
     assert "adds" in statement
+    finding = _finding(output, "shuffle-failure")
+    raw = json.loads((tmp_path / "home/.saga/review-output" / finding["proof"]["raw_output"]).read_text())
+    assert raw["schema"] == "saga.node-test-result.v1" and raw["failures"][0]["messages"]
 
 
 def test_live_knip_reports_a_new_unused_file(tmp_path: Path) -> None:
@@ -1856,7 +1993,7 @@ def test_stryker_mutates_only_the_changed_ranges(tmp_path: Path) -> None:
     mutate = [argv[index + 1] for index, item in enumerate(argv) if item == "--mutate"]
     assert mutate == ["src/example.js:2-2,src/example.js:4-4"]
     ignore = [argv[index + 1] for index, item in enumerate(argv) if item == "--ignorePatterns"]
-    assert ignore == [",".join(A._STRYKER_IGNORE)]
+    assert ignore == [], "test files must stay in Stryker's sandbox"
 
 
 def test_stryker_change_without_source_lines_records_nothing_to_mutate(tmp_path: Path) -> None:
@@ -1926,3 +2063,95 @@ def test_shuffle_runs_differing_in_timing_and_finish_order_record_identical_byte
     assert files == {"e.test.js", "f.test.js"}
     for name in ("findings.json", "degraded.json", "outcomes.json"):
         assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+
+
+@pytest.mark.parametrize("tool", ["tsc", "stryker", "eslint", "vitest-shuffle", "knip"])
+def test_typescript_tools_run_inside_changed_subfolder_and_stage_its_base_config(tmp_path: Path, tool: str) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "web/src").mkdir(parents=True)
+    (repo / "web/package.json").write_text(json.dumps({"devDependencies": {"vitest": "4.1.11"}}))
+    (repo / "web/package-lock.json").write_text('{"lockfileVersion": 3, "packages": {}}')
+    (repo / "web/tsconfig.json").write_text('{"compilerOptions":{"target":"ES2020"}}')
+    (repo / "web/vitest.config.mjs").write_text('export default { test: { globals: true } };\n')
+    (repo / "web/src/app.ts").write_text('export const value = 1;\n')
+    base = _commit(repo, "base")
+    (repo / "web/src/app.ts").write_text('export const value = 2;\n')
+    (repo / "web/vitest.config.mjs").write_text('export default { test: { exclude: ["**/*"] } };\n')
+    head = _commit(repo, "head")
+    # Installed packages are outside git and available only at the project's location.
+    (repo / "web/node_modules/vitest").mkdir(parents=True)
+    seen: list[tuple[list[str], Path]] = []
+    runner = _Calls(base, "", seen=seen, watch=("vitest.config.mjs",),
+                    files={"reports/mutation/mutation.json": json.dumps({"files": {}})})
+    out = tmp_path / "out"
+    assert _run(repo, base, head, _profile(tmp_path / "profile.json"), out,
+                tmp_path / "home", [_adapter(tool)], runner) == 0
+    runs = [(argv, cwd) for argv, cwd in seen if "--version" not in argv]
+    assert runs and all(cwd.name == "web" for _, cwd in runs)
+    if tool == "stryker":
+        argv = runs[0][0]
+        assert argv[argv.index("--testRunner") + 1] == "vitest"
+        assert argv[argv.index("--mutate") + 1] == "src/app.ts:1-1"
+        state = [state for argv, at_base, state in runner.snapshots if at_base is False][0]
+        assert "globals: true" in state["vitest.config.mjs"]
+    if tool == "tsc":
+        assert not _degraded(out, tool)
+
+
+def test_vitest_shuffle_probes_the_project_binary_and_requires_its_profile_pin(tmp_path: Path) -> None:
+    root = tmp_path / "web"
+    binary = root / "node_modules/.bin/vitest"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("inert local binary\n")
+    adapter = _adapter("vitest-shuffle")
+    calls: list[list[str]] = []
+
+    def process(argv: list[str], **kwargs: Any) -> Any:
+        calls.append(argv)
+        if "--version" in argv:
+            assert kwargs["cwd"] != root
+            return T.ProcessResult(0, "vitest/3.2.4 darwin-arm64 node-v22.22.3\n")
+        return T.ProcessResult(0, "")
+
+    assert T._read_version(adapter, {}, process, {}, root) == ("3.2.4", "version-mismatch")
+    assert T._read_version(adapter, {"pins": {"vitest": {"version": "3.2.4"}}},
+                           process, {}, root) == ("3.2.4", None)
+    T._execute(adapter, ["vitest", "run"], root, process, {}, 30)
+    assert all(argv[0] == str(binary) for argv in calls)
+
+
+def test_stryker_budget_selects_ten_spread_over_files_and_lines_independent_of_order(tmp_path: Path) -> None:
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    plugin = tmp_path / "budget.mjs"
+    plugin.write_text(A._STRYKER_BUDGET_PLUGIN.replace("__BUDGET__", "10"))
+    driver = tmp_path / "driver.mjs"
+    driver.write_text('''
+import { select } from './budget.mjs';
+const input = [];
+for (const file of ['a.ts','b.ts','c.ts']) for (let line=1; line<=12; line++)
+ for (const op of ['A','B','C']) input.push({plan:'Run',runOptions:{},mutant:{
+   fileName:process.cwd()+'/'+file, location:{start:{line,column:0},end:{line,column:1}},mutatorName:op,replacement:'x'}});
+function run(plans) {
+ const kept = [...select(plans,10)].map(p => [p.mutant.fileName,p.mutant.location.start.line,p.mutant.mutatorName]);
+ if (plans.filter(p=>p.plan==='EarlyResult' && p.mutant.status==='Ignored').length !== input.length-10) throw Error('unbounded');
+ return kept;
+}
+console.log(JSON.stringify([run(structuredClone(input)),run(structuredClone(input).reverse())]));
+''')
+    proc = subprocess.run(["node", str(driver)], cwd=tmp_path, capture_output=True, text=True, check=True)
+    first, second = json.loads(proc.stdout)
+    assert first == second and len(first) == 10
+    assert {Path(p).name for p, _, _ in first} == {"a.ts", "b.ts", "c.ts"}
+    assert len({(p, line) for p, line, _ in first}) == 10
+
+
+def test_stryker_report_order_and_volatile_values_do_not_change_survivor_ids_or_raw() -> None:
+    mutants = [{"mutatorName": "EqualityOperator", "replacement": value, "status": "Survived",
+                "location": {"start": {"line": line}, "end": {"line": line}}}
+               for line, value in [(2, "false"), (1, "true")]]
+    a = json.dumps({"files": {"src/app.ts": {"mutants": mutants}}, "time": 1})
+    b = json.dumps({"files": {"src/app.ts": {"mutants": list(reversed(mutants))}}, "time": 2})
+    assert A._parse_stryker(a) == A._parse_stryker(b)
+    assert _adapter("stryker").stable_raw(a) == _adapter("stryker").stable_raw(b)

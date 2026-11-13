@@ -35,6 +35,8 @@ import coverage_lines
 import review_diff
 import review_diagnostics
 import review_formula
+import review_node_projects
+import review_node_reports
 import review_records
 
 SCHEMA = "review_records.v1"
@@ -297,6 +299,9 @@ class ScanContext:
     #: For a mutation adapter, the monotonic time its share of the mutation cap runs out. A tool
     #: that can stop on its own before then, and report what it finished, reads it.
     mutation_deadline: float | None = None
+    project: str = "."
+    mutation_budget: int = 10
+    tool_version: str = "not-recorded"
 
 
 @dataclass(frozen=True)
@@ -412,6 +417,8 @@ class Adapter:
     #: Failure reasons that earn one more run of the same command before they are recorded
     #: (issue 260). A pass on the retry keeps its result and adds a ``baseline-flaky`` note.
     retry_failures: tuple[str, ...] = ()
+    #: Read an adapter-owned report after execution, before parsing or raw-output storage.
+    read_result: Callable[[ScanContext, ProcessResult], ProcessResult] | None = None
 
     def __post_init__(self) -> None:
         if self.stream not in ("stdout", "stderr", "both"):
@@ -1132,6 +1139,7 @@ def run(
     framework: bool = True,
     diagnostics_directory: Path | str | None = None,
     python_env: Path | str | None = None,
+    node_projects: tuple[tuple[str, Path], ...] = (),
 ) -> int:
     """Write the record files, including where-to-look items.
 
@@ -1149,6 +1157,7 @@ def run(
             framework,
             Path(diagnostics_directory) if diagnostics_directory is not None else None,
             Path(python_env) if python_env is not None else None,
+            node_projects,
         )
     except RunnerFailure as exc:
         print(str(exc), file=sys.stderr)
@@ -1168,6 +1177,7 @@ def _run(
     framework: bool,
     diagnostics_directory: Path | None = None,
     python_env: Path | None = None,
+    node_projects: tuple[tuple[str, Path], ...] = (),
 ) -> int:
     base_sha = _require_sha(repo, base)
     head_sha = _require_sha(repo, head)
@@ -1196,6 +1206,21 @@ def _run(
             degraded.extend(_allow_comments(head_root, change))
             for adapter in adapters:
                 _link_env(adapter, repo, head_root, head_sha, head_sha)
+            import review_dependencies_node
+            import review_node_projects
+            # Link each project's environment before tools run, including scripted checks.
+            folders = review_node_projects.projects(head_root, (f.path for f in change.files))
+            for project_folder in folders:
+                if project_folder != ".":
+                    for adapter in adapters:
+                        if "typescript" in adapter.languages:
+                            scoped = replace(adapter,
+                                env_dirs=tuple(f"{project_folder}/{p}" for p in adapter.env_dirs),
+                                lockfiles=tuple(f"{project_folder}/{p}" for p in adapter.lockfiles))
+                            _link_env(scoped, repo, head_root, head_sha, head_sha)
+            for project_folder, _modules in node_projects:
+                _remove_tree(head_root / project_folder / "node_modules")
+            review_dependencies_node.link_projects(head_root, node_projects)
             head_languages = run_languages(head_root)
             # What stands in the worktree now (the linked dependency folders, the stripped
             # settings files) is what every tool starts from; whatever a tool adds or edits
@@ -1556,7 +1581,30 @@ def _run_adapter(
     diagnostics_directory: Path | None = None,
     rule_sources: dict[str, dict[str, Any]] | None = None,
     python_env: Path | None = None,
+    project: str | None = None,
+    mutation_budget: int = 10,
 ) -> list[Hit]:
+    if project is None and "typescript" in adapter.languages:
+        import review_node_projects
+        folders = review_node_projects.projects(head_root, (f.path for f in change.files))
+        if folders and folders != ["."]:
+            project_hits: list[Hit] = []
+            for index, folder in enumerate(folders):
+                prefix = folder + "/"
+                scoped = review_diff.Change(tuple(
+                    replace(f, path=f.path[len(prefix):],
+                            old_path=(f.old_path[len(prefix):] if f.old_path and
+                                      f.old_path.startswith(prefix) else None))
+                    for f in change.files if f.path.startswith(prefix)))
+                found = _run_adapter(
+                    adapter, repo, base_sha, head_sha, head_root / folder, scoped, home,
+                    profile, process, env, deadline, degraded, items, base_markers,
+                    head_markers, head_languages, diagnostics_directory, rule_sources,
+                    python_env, folder, 10 // len(folders) + (index < 10 % len(folders)))
+                project_hits.extend(replace(hit, path=f"{folder}/{hit.path}" if hit.path != "." else folder)
+                            for hit in found)
+            return project_hits
+    project = project or "."
     if _markers_removed(adapter, base_markers, head_markers):
         degraded.append(
             _degraded(adapter, _primary_row(adapter), "language-markers-removed")
@@ -1634,7 +1682,9 @@ def _run_adapter(
         ran = version or adapter.default_version
         comparison = "base-head" if adapter.type_checker else adapter.comparison
         with (
-            _staged_base_files(repo, base_sha, adapter.base_files) as staged,
+            _staged_base_files(repo, base_sha, tuple(
+                name if project == "." else f"{project}/{name}"
+                for name in adapter.base_files)) as staged,
             _scratch() as scratch,
         ):
             context = ScanContext(
@@ -1645,13 +1695,17 @@ def _run_adapter(
                 base=base_sha,
                 test_command=_python_test_command(profile),
                 commands=_scan_commands(profile),
-                base_files=staged,
+                base_files=tuple((name if project == "." else name[len(project) + 1:], path)
+                                 for name, path in staged),
                 change=change,
                 head=head_sha,
                 scratch=scratch,
                 diagnostics_directory=diagnostics_directory,
                 python_env=python_env,
+                project=project,
+                mutation_budget=mutation_budget,
                 mutation_deadline=deadline if adapter.mutation else None,
+                tool_version=ran,
             )
             if comparison == "base-head":
                 hits, digests = _base_and_head(
@@ -1804,6 +1858,7 @@ def _once(
     if parsed.gap is not None:
         reason, row = parsed.gap
         degraded.append(_degraded(adapter, row, reason))
+        _absorb(adapter, parsed, label, degraded, items)
         return (), {}
     if parsed.unfinished:
         degraded.append(_degraded(adapter, "testing.surviving-mutant", parsed.unfinished_reason))
@@ -1944,6 +1999,8 @@ def _base_and_head(
     items: list[Mapping[str, Any]],
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
     settings = _settings_digest(adapter, rules_digest)
+    if context.project != ".":
+        settings = hashlib.sha256(f"{settings}:{context.project}".encode()).hexdigest()
     key = {"base": base_sha, "adapter": adapter.id, "version": version, "settings": settings}
     cached = _read_base_cache(context.home, adapter, version, base_sha, settings, key)
     if cached is None:
@@ -1951,8 +2008,20 @@ def _base_and_head(
             with _worktree(repo, base_sha) as base_root:
                 _strip_settings(base_root, only=_C4C_SETTINGS_NAMES)
                 _link_env(adapter, repo, base_root, base_sha, head_sha)
+                if context.project != ".":
+                    prefix = context.project + "/"
+                    scoped_adapter = replace(adapter,
+                        env_dirs=tuple(prefix + p for p in adapter.env_dirs),
+                        lockfiles=tuple(prefix + p for p in adapter.lockfiles))
+                    _link_env(scoped_adapter, repo, base_root, base_sha, head_sha)
+                # Use the same packet packages for base and head scans.
+                modules = context.root / "node_modules"
+                target = base_root / context.project
+                if modules.is_symlink() and target.is_dir():
+                    import review_dependencies_node
+                    review_dependencies_node.link_into(target, modules.resolve())
                 base_hits, base_digest, base_problem, base_ran = _scan_root(
-                    adapter, replace(context, repo=base_root, root=base_root, scan="base"),
+                    adapter, replace(context, repo=base_root, root=base_root / context.project, scan="base"),
                     process, env,
                     timeout, "base", degraded, items,
                 )
@@ -2034,6 +2103,7 @@ def _scan_root(
     if parsed.gap is not None:
         reason, row = parsed.gap
         degraded.append(_degraded(adapter, row, reason))
+        _absorb(adapter, parsed, label, degraded, items)
         return (), "", None, True
     if raw_sink is not None and adapter.stable_raw_for_change is not None:
         raw_sink.append(result.stdout or "")
@@ -2101,7 +2171,9 @@ def _capture(
             adapter, argv, scan.root, process, env, timeout, diagnostic, deadline,
         )
         if result is not None and problem is None:
-            if adapter.report_file is not None:
+            if adapter.read_result is not None:
+                result = adapter.read_result(scan, result)
+            elif adapter.report_file is not None:
                 report = scan.root / adapter.report_file
                 if report.is_symlink():
                     return None, "unparseable", True
@@ -3363,6 +3435,58 @@ def _relocated_env() -> tuple[dict[str, str], list[Path]]:
     return env, [home_dir, tmp_dir]
 
 
+def _relocated_node_kind(command: str, argv: list[str], root: Path) -> tuple[str, list[str]] | None:
+    if not argv:
+        return None
+    program = Path(argv[0]).name
+    if program in {"vitest", "jest"}:
+        return program, argv[:1]
+    if program == "npx" and len(argv) > 1 and argv[1] in {"vitest", "jest"}:
+        return argv[1], argv[:2]
+    if program in {"npm", "pnpm", "yarn"}:
+        known = review_node_projects.test_command(command, root)
+        if known is not None:
+            kind, _arguments, folder = known
+            binary = root / folder / "node_modules/.bin" / kind
+            return kind, [str(binary) if binary.is_file() else kind]
+    return None
+
+
+def _relocated_node_result(
+    known: tuple[str, list[str]], argv: list[str], root: Path, work: Path, env: Mapping[str, str],
+    process: Process, language: str, degraded: list[dict[str, str]],
+) -> tuple[ProcessResult, str, str]:
+    kind, probe = known
+    with _scratch() as scratch:
+        report = scratch / "relocated-tests.json"
+        separator = ["--"] if Path(argv[0]).name in {"npm", "pnpm", "yarn"} and "--" not in argv else []
+        serial = "--no-file-parallelism" if kind == "vitest" else "--runInBand"
+        result = process([*argv, *separator, serial,
+            *review_node_reports.report_arguments(kind, report, console=True)],
+            cwd=work, env=env, timeout=120, shell=False)
+        version = "not-recorded"
+        if report.is_file() and not report.is_symlink():
+            try:
+                answer = process([*probe, "--version"], cwd=work, env=env, timeout=10, shell=False)
+                if answer.code == 0:
+                    version = _found_version(answer.stdout or answer.stderr or "") or version
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        record, reason = review_node_reports.read(report, kind, version, None, root)
+        if record is not None and result.code != 0 and record["tests"]["total"] and not record["failures"]:
+            record, reason = None, "incomplete-json-report"
+        if record is not None:
+            record["exit_code"] = result.code
+            if version == "not-recorded":
+                degraded.append(_gap("architecture-maintainability", language, _RELOCATED_ROW,
+                                     "relocated-test", "version-unreadable"))
+            return result, _scrub(review_node_reports.dumps(record)), version
+        degraded.append(_gap("architecture-maintainability", language, _RELOCATED_ROW,
+                             "relocated-test", str(reason)))
+        console = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        return result, stable_transcript(_scrub(_ANSI_ESCAPE.sub("", console), root)), version
+
+
 def _one_relocated(
     head_root: Path,
     language: str,
@@ -3374,9 +3498,16 @@ def _one_relocated(
 ) -> Hit | None:
     argv = _rewrite_command(head_root, command)
     env, temps = _relocated_env()
+    known = _relocated_node_kind(command, argv, head_root)
+    evidence: str | None = None
+    version = "not-recorded"
     try:
         try:
-            result = process(argv, cwd=work, env=env, timeout=120, shell=False)
+            if known is not None:
+                result, evidence, version = _relocated_node_result(
+                    known, argv, head_root, work, env, process, language, degraded)
+            else:
+                result = process(argv, cwd=work, env=env, timeout=120, shell=False)
         except FileNotFoundError:
             degraded.append(_gap(
                 "architecture-maintainability", language, _RELOCATED_ROW,
@@ -3403,10 +3534,11 @@ def _one_relocated(
         row=_RELOCATED_ROW,
         language=language,
         raw_output=store_raw(
-            stable_transcript(_scrub(_ANSI_ESCAPE.sub("", result.stdout or ""))).encode(), home,
+            (evidence if evidence is not None else
+             stable_transcript(_scrub(_ANSI_ESCAPE.sub("", result.stdout or "")))).encode(), home,
         ),
         tool="relocated-test",
-        version="not-recorded",
+        version=version,
     )
 
 

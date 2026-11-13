@@ -381,8 +381,8 @@ def test_a_failed_export_and_a_subfolder_project_are_fixed_reasons(tmp_path: Pat
     runner = FakeManager({"web/package.json": "100644", "web/package-lock.json": "100644",
                           "web/node_modules/x/package.json": "100644", "README.md": "100644"})
     record = D.fetch(runner, tmp_path, "HEAD", packet, _export({}))
-    assert record["node"] == {"state": "not-installed", "reason": "subfolder-project",
-                              "projects": ["web"]}
+    assert record["node"] == {"state": "projects", "projects": [
+        {"project": "web", "state": "not-installed", "reason": "symlinked-input"}]}
 
 
 def test_a_head_without_package_json_gets_no_node_entry(tmp_path: Path) -> None:
@@ -395,6 +395,8 @@ def test_the_reason_words_are_the_documented_set() -> None:
         "no-lockfile", "binary-lockfile", "unsupported-lockfile", "non-registry-source",
         "symlinked-input", "lockfile-mismatch", "manager-missing", "network", "timeout",
         "size-limit", "install-failed", "head-export", "subfolder-project",
+        "project-limit", "not-changed", "unsafe-project",
+        "missing-integrity", "integrity-mismatch", "untracked-tarball", "missing-tarball",
     }
 
 
@@ -900,3 +902,356 @@ def test_a_lockfile_that_is_not_utf8_is_unsupported(tmp_path: Path) -> None:
 ])
 def test_a_yarn_berry_lockfile_is_unsupported(text: str) -> None:
     assert N.vet("yarn.lock", text) == "unsupported-lockfile"
+
+
+@pytest.mark.parametrize("lockfile", ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"])
+def test_subfolder_install_uses_its_lock_and_is_repeatable(tmp_path: Path, lockfile: str) -> None:
+    locks = {"package-lock.json": NPM_LOCK, "pnpm-lock.yaml": PNPM_LOCK,
+             "yarn.lock": YARN_LOCK, "bun.lock": BUN_LOCK}
+    files = {"web/package.json": PACKAGE_JSON, f"web/{lockfile}": locks[lockfile],
+             "web/.npmrc": "registry=https://example.invalid/\n"}
+    first, packet, runner = _fetch(tmp_path / "a", files)
+    second, other, _ = _fetch(tmp_path / "b", files)
+    project = first["node"]["projects"][0]
+    assert project["project"] == "web" and project["state"] == "installed"
+    assert first == second and _contents(packet) == _contents(other)
+    assert runner.calls[0]["cwd"].name == "web"
+    assert ".npmrc" not in runner.seen_files
+    assert N.installed_projects(packet) == (("web", packet / project["directory"]),)
+    copy = tmp_path / "copy"
+    (copy / "web").mkdir(parents=True)
+    N.link_projects(copy, N.installed_projects(packet))
+    assert (copy / "web/node_modules/left-pad/index.js").is_file()
+    assert not (copy / "node_modules").exists()
+
+
+def test_subfolder_installs_only_changed_projects_with_a_fixed_bound(tmp_path: Path) -> None:
+    files = {f"p{i}/{name}": text for i in range(7)
+             for name, text in {"package.json": PACKAGE_JSON, "package-lock.json": NPM_LOCK}.items()}
+    runner = FakeManager({name: "100644" for name in files})
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    record = N.entry(runner, tmp_path, "HEAD", packet, _export(files),
+                     changed=[f"p{i}/app.ts" for i in range(6)])
+    projects = record["projects"]
+    assert [p["project"] for p in projects if p["state"] == "installed"] == ["p0", "p1", "p2", "p3"]
+    assert [p["reason"] for p in projects if p["state"] == "not-installed"] == [
+        "project-limit", "project-limit", "not-changed"]
+    assert len(runner.calls) == 4
+
+
+@pytest.mark.parametrize("reason", ["no-lockfile", "non-registry-source", "symlinked-input"])
+def test_subfolder_installs_keep_root_input_guards(tmp_path: Path, reason: str) -> None:
+    files = {"web/package.json": PACKAGE_JSON}
+    if reason != "no-lockfile":
+        files["web/package-lock.json"] = (NPM_LOCK if reason == "symlinked-input" else
+            _npm({"version": "1.0.0", "resolved": "https://example.invalid/outside.tgz", "integrity": INTEGRITY}))
+    modes = {"web/package-lock.json": "120000"} if reason == "symlinked-input" else None
+    record, _, runner = _fetch(tmp_path, files, modes=modes)
+    assert record["node"]["projects"] == [{"project": "web", "state": "not-installed", "reason": reason}]
+    assert not runner.calls
+
+
+def test_subfolder_packet_paths_cannot_escape_or_follow_a_link(tmp_path: Path) -> None:
+    record, packet, _ = _fetch(tmp_path, {"web/package.json": PACKAGE_JSON,
+                                       "web/package-lock.json": NPM_LOCK})
+    record["node"]["projects"][0]["directory"] = "../outside"
+    (packet / D.FILE).write_text(json.dumps(record), "utf-8")
+    assert N.installed_projects(packet) == ()
+
+
+# Vendored archive fixtures carry only inert files and fixed archive metadata.
+def _vendored_archive() -> bytes:
+    import gzip
+    import io
+    import tarfile
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as archive:
+        for name, data in {
+            "package/package.json": json.dumps({"name": "vendored", "version": "1.0.0",
+                "scripts": {"install": "node -e \"require('fs').writeFileSync('scripts-ran', 'no')\""}}).encode(),
+            "package/index.js": b"module.exports = 'inert-vendored';\n",
+        }.items():
+            member = tarfile.TarInfo(name)
+            member.size, member.mode, member.mtime = len(data), 0o644, 0
+            archive.addfile(member, io.BytesIO(data))
+    return gzip.compress(raw.getvalue(), mtime=0)
+
+
+def _tarball_files(*, project: str = ".", spec: str = "file:vendor/vendored-1.0.0.tgz",
+                   integrity: str | None = "correct") -> dict[str, str | bytes]:
+    import base64
+    import hashlib
+    data = _vendored_archive()
+    if integrity == "correct":
+        integrity = "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode()
+    entry = {"version": "1.0.0", "resolved": spec}
+    if integrity is not None:
+        entry["integrity"] = integrity
+    prefix = "" if project == "." else project + "/"
+    return {prefix + "package.json": json.dumps({"name": "example", "version": "1.0.0",
+                "dependencies": {"vendored": spec}}),
+            prefix + "package-lock.json": json.dumps({"lockfileVersion": 3,
+                "packages": {"": {"dependencies": {"vendored": spec}}, "node_modules/vendored": entry}}),
+            prefix + "vendor/vendored-1.0.0.tgz": data}
+
+
+def _binary_export(files: dict[str, str | bytes]) -> Any:
+    def export(root: Path) -> bool:
+        for name, data in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data if isinstance(data, bytes) else data.encode())
+        return True
+    return export
+
+
+def _fetch_vendored(tmp_path: Path, files: dict[str, str | bytes], *,
+                    modes: dict[str, str] | None = None, export: Any = None,
+                    runner: Any = None) -> tuple[dict[str, Any], Path, Any]:
+    tree = {name: (modes or {}).get(name, "100644") for name in files}
+    runner = runner or FakeManager(tree)
+    packet = tmp_path / "packet"
+    packet.mkdir(parents=True)
+    record = D.fetch(runner, tmp_path, "HEAD", packet, export or _binary_export(files))
+    (packet / D.FILE).write_text(json.dumps(record))
+    return record, packet, runner
+
+
+@pytest.mark.parametrize("project", [".", "web"])
+def test_vendored_archive_is_verified_and_prepares_are_identical(tmp_path: Path, project: str) -> None:
+    files = _tarball_files(project=project)
+    first, packet, runner = _fetch_vendored(tmp_path / "a", files)
+    second, other, _ = _fetch_vendored(tmp_path / "b", files)
+    entry = first["node"] if project == "." else first["node"]["projects"][0]
+    assert entry["state"] == "installed", first
+    assert first == second and _contents(packet) == _contents(other)
+    assert len(runner.calls) == 1
+    assert "--ignore-scripts" in runner.calls[0]["argv"]
+    assert runner.calls[0]["env"]["npm_config_registry"] == "https://registry.npmjs.org/"
+
+
+@pytest.mark.parametrize("spec,integrity,reason", [
+    ("file:/outside/vendored.tgz", "correct", "non-registry-source"),
+    ("file:../../outside.tgz", "correct", "non-registry-source"),
+    ("file:vendor/vendored-1.0.0.tgz", None, "missing-integrity"),
+    ("file:vendor/vendored-1.0.0.tgz", INTEGRITY, "integrity-mismatch"),
+    ("file:vendor/directory", "correct", "non-registry-source"),
+    ("file://example.invalid/vendor.tgz", "correct", "non-registry-source"),
+    ("file:vendor/%2e%2e/vendored.tgz", "correct", "non-registry-source"),
+])
+def test_unsafe_or_unverified_local_sources_never_start_the_manager(
+    tmp_path: Path, spec: str, integrity: str | None, reason: str,
+) -> None:
+    record, _, runner = _fetch_vendored(tmp_path, _tarball_files(spec=spec, integrity=integrity))
+    assert record["node"] == {"state": "not-installed", "reason": reason}
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize("mode,reason", [("120000", "symlinked-input"), ("160000", "untracked-tarball")])
+def test_vendored_archive_must_be_a_tracked_regular_head_file(tmp_path: Path, mode: str, reason: str) -> None:
+    files = _tarball_files()
+    record, _, runner = _fetch_vendored(tmp_path, files,
+        modes={"vendor/vendored-1.0.0.tgz": mode})
+    assert record["node"] == {"state": "not-installed", "reason": reason}
+    assert not runner.calls
+
+
+def test_untracked_archive_in_an_export_is_refused(tmp_path: Path) -> None:
+    files = _tarball_files()
+    tree = {name: "100644" for name in files if not name.endswith(".tgz")}
+    record, _, runner = _fetch_vendored(tmp_path, files, runner=FakeManager(tree))
+    assert record["node"]["reason"] == "untracked-tarball" and not runner.calls
+
+
+def test_exported_symlink_cannot_supply_archive_bytes_from_outside(tmp_path: Path) -> None:
+    files = _tarball_files()
+    outside = tmp_path / "outside.tgz"
+    outside.write_bytes(_vendored_archive())
+    def export(root: Path) -> bool:
+        _binary_export({name: data for name, data in files.items() if not name.endswith(".tgz")})(root)
+        (root / "vendor").mkdir()
+        (root / "vendor/vendored-1.0.0.tgz").symlink_to(outside)
+        return True
+    record, _, runner = _fetch_vendored(tmp_path, files, export=export)
+    assert record["node"]["reason"] == "symlinked-input" and not runner.calls
+
+
+def test_symlink_component_cannot_be_hidden_by_parent_normalisation(tmp_path: Path) -> None:
+    files = _tarball_files(spec="file:link/../vendor/vendored-1.0.0.tgz")
+    files["link"] = "inert-example-link"
+    record, _, runner = _fetch_vendored(tmp_path, files, modes={"link": "120000"})
+    assert record["node"]["reason"] == "symlinked-input" and not runner.calls
+
+
+def test_subfolder_archive_path_can_normalise_to_a_tracked_file_at_repository_root(tmp_path: Path) -> None:
+    files = _tarball_files(project="web", spec="file:../vendor/vendored-1.0.0.tgz")
+    files["vendor/vendored-1.0.0.tgz"] = files.pop("web/vendor/vendored-1.0.0.tgz")
+    record, _, runner = _fetch_vendored(tmp_path, files)
+    assert record["node"]["projects"][0]["state"] == "installed" and len(runner.calls) == 1
+
+
+@pytest.mark.parametrize("project,shared", [(".", False), ("web", False), ("web", True)])
+@pytest.mark.parametrize("manager", ["npm", "bun"])
+def test_real_manager_installs_only_the_verified_vendored_archive_without_registry_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project: str, shared: bool, manager: str,
+) -> None:
+    monkeypatch.undo()
+    if shutil.which(manager) is None or shutil.which("node") is None:
+        pytest.skip(f"{manager} and node are required for this offline archive install")
+    files = _tarball_files(project=project,
+        spec="file:../vendor/vendored-1.0.0.tgz" if shared else "file:vendor/vendored-1.0.0.tgz")
+    if shared:
+        files["vendor/vendored-1.0.0.tgz"] = files.pop("web/vendor/vendored-1.0.0.tgz")
+    if manager == "bun":
+        files = _tarball_lock_format(files, "bun.lock") if project == "." else {
+            **{name: data for name, data in files.items() if not name.startswith("web/")},
+            **{"web/" + name: data for name, data in _tarball_lock_format(
+                {name.removeprefix("web/"): data for name, data in files.items()
+                 if name.startswith("web/")}, "bun.lock").items()}}
+    tree = {name: "100644" for name in files}
+    checks = []
+    def runner(argv: list[str], **kwargs: Any) -> Any:
+        if argv[:2] == ["git", "ls-tree"]:
+            return FakeManager(tree)(argv, **kwargs)
+        if argv[:2] == ["git", "cat-file"]:
+            return Result(1)
+        env = {**kwargs["env"], "npm_config_offline": "true"}
+        checks.append((argv, env))
+        command = [*argv, "--offline"] if manager == "bun" else argv
+        proc = subprocess.run(command, cwd=kwargs["cwd"], env=env, capture_output=True,
+                              text=True, timeout=kwargs["timeout"])
+        assert not list(Path(kwargs["cwd"]).rglob("scripts-ran"))
+        return Result(proc.returncode, proc.stdout, proc.stderr)
+    first, packet, _ = _fetch_vendored(tmp_path / "a", files, runner=runner)
+    second, other, _ = _fetch_vendored(tmp_path / "b", files, runner=runner)
+    entry = first["node"] if project == "." else first["node"]["projects"][0]
+    assert entry["state"] == "installed", first
+    assert first == second and _contents(packet) == _contents(other)
+    modules = N.installed_projects(packet)[0][1]
+    assert (modules / "vendored/index.js").read_text() == "module.exports = 'inert-vendored';\n"
+    assert len(checks) == 2 and all(env["npm_config_ignore_scripts"] == "true" for _, env in checks)
+
+
+def _tarball_lock_format(files: dict[str, str | bytes], kind: str) -> dict[str, str | bytes]:
+    import hashlib
+    files = dict(files)
+    lock = json.loads(files.pop("package-lock.json"))
+    item = lock["packages"]["node_modules/vendored"]
+    spec, integrity = item["resolved"], item.get("integrity")
+    if kind in {"package-lock.json", "npm-shrinkwrap.json"}:
+        files[kind] = json.dumps(lock)
+    elif kind == "yarn.lock":
+        # Yarn classic writes the resolved SHA-1 fragment but often omits integrity. Its
+        # fragment alone is deliberately insufficient for the new admission rule.
+        checksum = hashlib.sha1(_vendored_archive()).hexdigest()
+        files[kind] = ('# yarn lockfile v1\n\n'
+            f'"vendored@{spec}":\n  version "1.0.0"\n  resolved "{spec}#{checksum}"\n'
+            + (f'  integrity {integrity}\n' if integrity else ''))
+    elif kind == "bun.lock":
+        files[kind] = json.dumps({"lockfileVersion": 1, "workspaces": {"": {
+            "name": "example", "dependencies": {"vendored": spec}}}, "packages": {
+                "vendored": ["vendored@" + spec.removeprefix("file:"), {}, integrity]}})
+    elif kind in {"pnpm6", "pnpm9"}:
+        resolution = f"tarball: {spec}" + (f", integrity: {integrity}" if integrity else "")
+        files["pnpm-lock.yaml"] = (f"lockfileVersion: '{'6.0' if kind == 'pnpm6' else '9.0'}'\n\n"
+            "importers:\n  .:\n    dependencies:\n      vendored:\n"
+            f"        specifier: {spec}\n        version: {spec}\n\n"
+            f"packages:\n  'vendored@{spec}':\n    resolution: {{{resolution}}}\n\n"
+            f"snapshots:\n  'vendored@{spec}': {{}}\n")
+    else:
+        raise AssertionError(kind)
+    return files
+
+
+@pytest.mark.parametrize("kind", ["package-lock.json", "npm-shrinkwrap.json", "pnpm6", "pnpm9", "yarn.lock", "bun.lock"])
+def test_each_supported_lock_reader_authenticates_local_archive_bytes(tmp_path: Path, kind: str) -> None:
+    files = _tarball_lock_format(_tarball_files(), kind)
+    record, _, runner = _fetch_vendored(tmp_path, files)
+    assert record["node"]["state"] == "installed", record
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.parametrize("kind", ["npm-shrinkwrap.json", "pnpm6", "pnpm9", "yarn.lock", "bun.lock"])
+@pytest.mark.parametrize("integrity,reason", [(None, "missing-integrity"), (INTEGRITY, "integrity-mismatch")])
+def test_no_lock_reader_admits_a_local_archive_without_a_matching_integrity(
+    tmp_path: Path, kind: str, integrity: str | None, reason: str,
+) -> None:
+    files = _tarball_lock_format(_tarball_files(integrity=integrity), kind)
+    record, _, runner = _fetch_vendored(tmp_path, files)
+    assert record["node"]["reason"] == reason, record
+    assert not runner.calls
+
+
+@pytest.mark.parametrize("kind", ["pnpm9", "yarn.lock", "bun.lock"])
+def test_no_lock_reader_admits_an_outside_archive_with_a_valid_hash(tmp_path: Path, kind: str) -> None:
+    files = _tarball_lock_format(_tarball_files(spec="file:../outside.tgz"), kind)
+    record, _, runner = _fetch_vendored(tmp_path, files)
+    assert record["node"]["reason"] == "non-registry-source" and not runner.calls
+
+
+@pytest.mark.parametrize("algorithm", ["sha1", "sha256", "sha384", "sha512"])
+def test_local_archive_integrity_is_computed_with_the_named_hash(tmp_path: Path, algorithm: str) -> None:
+    import base64
+    import hashlib
+    digest = hashlib.new(algorithm, _vendored_archive()).digest()
+    files = _tarball_files(integrity=algorithm + "-" + base64.b64encode(digest).decode())
+    record, _, _ = _fetch_vendored(tmp_path, files)
+    assert record["node"]["state"] == "installed", record
+
+
+@pytest.mark.parametrize("extension", [".tgz", ".tar.gz"])
+def test_vendored_tarball_extensions_and_internal_parent_segments_are_supported(tmp_path: Path, extension: str) -> None:
+    path = "vendor/vendored-1.0.0" + extension
+    files = _tarball_files(spec="file:vendor/../" + path)
+    files[path] = files.pop("vendor/vendored-1.0.0.tgz")
+    record, _, _ = _fetch_vendored(tmp_path, files)
+    assert record["node"]["state"] == "installed", record
+
+
+def test_existing_archive_above_export_root_is_refused_without_a_manager_call(tmp_path: Path) -> None:
+    files = _tarball_files(spec="file:../outside.tgz")
+    def export(root: Path) -> bool:
+        _binary_export(files)(root)
+        (root.parent / "outside.tgz").write_bytes(_vendored_archive())
+        return True
+    record, _, runner = _fetch_vendored(tmp_path, files, export=export)
+    assert record["node"]["reason"] == "non-registry-source" and not runner.calls
+
+
+def test_symlinked_archive_parent_is_refused_even_when_leaf_is_regular(tmp_path: Path) -> None:
+    files = _tarball_files()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "vendored-1.0.0.tgz").write_bytes(_vendored_archive())
+    def export(root: Path) -> bool:
+        _binary_export({name: data for name, data in files.items() if not name.endswith(".tgz")})(root)
+        (root / "vendor").symlink_to(outside, target_is_directory=True)
+        return True
+    record, _, runner = _fetch_vendored(tmp_path, files, export=export)
+    assert record["node"]["reason"] == "symlinked-input" and not runner.calls
+
+
+def test_missing_archive_that_is_tracked_at_head_has_a_fixed_reason(tmp_path: Path) -> None:
+    files = _tarball_files()
+    record, _, runner = _fetch_vendored(tmp_path, files,
+        export=_binary_export({name: data for name, data in files.items() if not name.endswith(".tgz")}))
+    assert record["node"]["reason"] == "missing-tarball" and not runner.calls
+
+
+@pytest.mark.parametrize("reason", ["size-limit", "timeout"])
+def test_archive_hashing_obeys_the_existing_install_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
+    if reason == "size-limit":
+        monkeypatch.setattr(N.D, "FETCH_MAX_BYTES", 1)
+    else:
+        monkeypatch.setattr(N, "TIMEOUT", 0)
+    record, _, runner = _fetch_vendored(tmp_path, _tarball_files())
+    assert record["node"]["reason"] == reason and not runner.calls
+
+
+@pytest.mark.parametrize("spec", ["file:~/vendored.tgz", "file:vendor/../~/vendored.tgz"])
+def test_home_expansion_cannot_redirect_a_verified_relative_archive(tmp_path: Path, spec: str) -> None:
+    files = _tarball_files(spec=spec)
+    files["~/vendored.tgz"] = files.pop("vendor/vendored-1.0.0.tgz")
+    record, _, runner = _fetch_vendored(tmp_path, files)
+    assert record["node"]["reason"] == "non-registry-source" and not runner.calls

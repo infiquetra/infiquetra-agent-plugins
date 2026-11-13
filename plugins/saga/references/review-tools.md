@@ -235,6 +235,15 @@ c4c_gaps:
 
 `tsc` is the type checker: base against head over the whole project, `correctness.type-error`, blocks. It runs against a staged config that extends the base tsconfig, never the head tree's. `eslint` takes its outcome from its own level on changed lines: severity 2 is `correctness.tool-error` and blocks, severity 1 is `correctness.tool-warning` and fixes later. `npm-audit` compares the lockfiles base against head; the severity words map per the fence (`critical` and `high` block, `moderate`, `low` and `info` fix later, anything unrated blocks). `stryker` keeps surviving mutants on changed lines, `testing.surviving-mutant`, fixes later (a lead the reviewer judges), sharing the 900 second mutation cap; its JSON report is read after the run. `vitest-shuffle` and `jest-shuffle` run the suites in random order on changed lines, `testing.flaky-order-or-network`, fix later; a run with no tests is reason `no-tests-ran`, never a pass. `knip` compares unused files, exports, types and dependencies base against head, `architecture-maintainability.complexity-dead-code-naming`, note. `dependency-cruiser` compares rule violations base against head per the fence (`error` blocks). `prettier` is fix mode: it reformats and writes no record. `typescript-no-network` is a known gap (see below). `vitest-coverage` and `jest-coverage` are data rows; C3 writes their fenced invocations into the profile test command.
 
+
+When the repository has no root `package.json`, prepare installs up to four changed Node
+projects from their own lockfiles and records skipped projects with reasons. Every TypeScript
+adapter runs from that project's folder, stages its base settings, and translates findings
+back to repository-relative paths. Stryker's ten-mutant budget is divided across those projects;
+it samples changed lines in stable hashed order, round-robin across files, before taking a
+second mutant from a line. Budget exclusions are `Ignored` mutations and a `mutant-budget`
+gap. Test files stay in the sandbox; only mutation targets exclude them.
+
 ## Dart
 
 `dart-analyze` is the type checker: base against head over the whole project. Errors are `correctness.type-error` and block; `warning` and `information` map per the fence. `mutate4dart` keeps surviving mutants on changed lines, `testing.surviving-mutant`, fixes later (a lead the reviewer judges), sharing the 900 second mutation cap. `dart-shuffle` runs the suite in random order on changed lines, `testing.flaky-order-or-network`, fix later; a run with no tests is reason `no-tests-ran`, never a pass. `dart-format` is fix mode: it reformats and writes no record. `dart-no-network` is a known gap (see below). `dart-coverage` is a data row; C3 writes its fenced invocation into the profile test command. A Flutter report carries no branch data, so the line fallback applies and the findings are degraded.
@@ -371,7 +380,8 @@ and its options, each optionally after literal `NAME=value` assignments (no expa
 `PATH`, `VIRTUAL_ENV` or `PYTHONHOME`), and any of those as the single simple command of `bash -c`
 or `sh -c` (no other shell syntax, variable or glob), which may end in `"$@"` with a `$0` name
 after it.
-Any other command, `cargo test` and `swift test` aside, is reason `no-test-list`. `prepare` fetches
+Any other command, `cargo test`, `swift test` and the Node forms below aside, is reason
+`no-test-list`. `prepare` fetches
 the head's dependencies before the tools run and hands the tools the same saga-written Python
 environment the reviewer's re-runs get (`ScanContext.python_env`); with it, `two-runs` lists and
 runs the tests, at head and on the old version, as that environment's `bin/python3 -m pytest`, with
@@ -389,6 +399,20 @@ reason `no-test-list-default-collection`. A pytest configuration import failure 
 its output in
 `two-runs-<head|base>-<listing|run>-*/tail.txt` under the private `--diagnostics-directory`, never in the
 packet.
+
+`two-runs` also recognises `vitest run`, `npx vitest run`, `jest`, `npx jest`, and
+`npm test`, `npm run test`, `pnpm test` or `yarn test` when the package's literal test
+script resolves to one of those runners. A literal `cd <project> && <command>` selects a
+subfolder. Prepare infers a missing Node test command from each changed project's manifest.
+Compound scripts and unrecognised options are refused; package-manager lifecycle hooks are
+bypassed. Each project uses its own packet packages and base test/transform settings.
+
+The Node check runs only changed test files and reads case identities and statuses from
+structured runner reports. Jest's `--listTests` lists files, so its JSON run also enumerates
+cases; Vitest uses the same assertion report structure. A new case must pass at head, then
+pass on base with only the changed tests copied in, to become a lead. Known cases, skipped
+cases and cases failing on base produce no lead. Timings and console text never enter the
+packet, and ambiguous duplicate case names are not treated as passing evidence.
 
 | Adapter id | Comparison | Row | Computed severity |
 |---|---|---|---|

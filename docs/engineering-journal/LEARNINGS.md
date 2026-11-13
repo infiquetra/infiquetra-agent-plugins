@@ -2,6 +2,55 @@
 
 ## 2026-11-13
 
+### Store test results independently of reporter presentation
+
+**Evidence.** Synthetic Vitest and Jest runs vary summary counts and timings in console text,
+optional passing-test lines, warning placement and approximate-duration hints. The same JSON
+results now produce the same stored evidence digest and findings; a different failing set
+changes the digest. Complete subfolder prepares compare every packet byte. Missing, invalid
+or incomplete reports retain console findings and evidence with an explicit gap.
+Recognized relocated Node commands use the same result projection and visible fallback;
+unknown command execution remains unchanged.
+
+**Mechanism.** Reporter verbosity and output interleaving are presentation choices rather than
+test outcomes. Canonical evidence selects runner/version, seed, counts and sorted failure
+identities/messages from private JSON files. File counts come from per-file results: Vitest's
+suite summary also counts nested describe blocks. Failure-message content remains diagnostic;
+only terminal escapes and project/dependency or Saga scratch path prefixes are normalized.
+
+**Generalizable rule.** Hash a structured result projection rather than a scrubbed transcript.
+Preserve failure diagnostics and make a fallback visible instead of silently claiming stable
+structured evidence when a report is unavailable.
+
+### A fixed shuffle seed does not fix worker scheduling
+
+**Evidence.** Node runner argument tests now require Vitest's `--no-file-parallelism` or
+Jest's `--runInBand` in random-order runs and every two-runs invocation. Synthetic complete
+subfolder prepares retain shuffle failures and compare every packet byte while transcript
+timings and arrival order vary. An older Vitest startup rejection records a scoped gap and
+allows other checks to continue.
+
+**Mechanism.** A shuffle seed controls test order but does not serialize separate file workers.
+Feature rejection must be read from the installed runner, since its version can differ from
+the review profile's pin. Falling back to parallel execution would discard the intended control.
+
+**Generalizable rule.** Control scheduling as well as the random seed when collecting evidence.
+Keep residual timer races visible; a confirming pass must not erase an observed failure.
+
+### Own the structured report destination as well as its format
+
+**Evidence.** Synthetic subfolder fixtures configure Vitest's JSON output as both a string
+and a reporter-keyed object, and Jest's output file with a custom reporter. The two-runs
+check now selects its reporter and a private temporary report file, reads only that file,
+and removes it after success or failure. Complete repeated prepares compare every packet byte.
+
+**Mechanism.** Selecting JSON did not prevent project configuration from redirecting it away
+from stdout. Vitest's reporter-keyed option alone leaves a configured string in force. Adding
+the scalar option after it covers that form without triggering a command-parser error.
+
+**Generalizable rule.** Treat report format, destination and configuration precedence as one
+integration contract. Exercise supported configuration forms through the actual runner.
+
 ### Console failure messages are not an identity boundary
 
 **Evidence.** Real pytest fixtures with ` - ` and `] - ` in parameter identifiers and `] - `
@@ -142,6 +191,46 @@ it dropped.
 
 **Generalizable rule.** Before downgrading a deterministic result to reviewer advice, guarantee
 its delivery or keep a conservative, visible fallback. Ambiguous definitions are gaps, not guesses.
+
+### A testing lead needs both its real file and its mutation operator
+
+**Evidence.** Lead items skip findings whose file is `.` and deduplicate mutants by file, line
+and operator. The shared test-path helper previously returned `.` for every runner except
+pytest. The operator reader recognised only cosmic-ray's parenthesised operator, so distinct
+Stryker mutations on one line collapsed to `unknown-operator`. Node case identities now retain
+`file::fullName`, and the shared lead builder reads Stryker's own mutator statement. The packet
+regression retains two distinct same-line mutation items for both Vitest and Jest projects.
+
+**Generalizable rule.** Test the identity fields consumed by the final lead builder, including
+same-location evidence that must remain distinct.
+
+
+### Mutation exclusions must leave the tests in Stryker's sandbox
+
+**Evidence.** New live subfolder Vitest and Jest fixtures initially reported no tests despite
+installed packages and staged configuration. The adapter passed `**/*.test.*` and `**/*.spec.*`
+to Stryker's `ignorePatterns`, which excludes files from the sandbox itself. Removing those
+patterns lets both real runners produce a surviving mutant. Test files are excluded from
+`mutate` instead; changed-line targets already exclude them.
+
+**Mechanism.** A tool's input-copy filter and its mutation-target filter have different meanings.
+Mocked report tests could not catch the distinction because they supplied a report without
+running the tests that would have produced it.
+
+**Generalizable rule.** Validate a mutation adapter with an actual named test file and its test
+runner, using the installed dependency layout that prepare creates.
+
+### Installing packages does not connect them to prepare's tools
+
+**Evidence.** Node packages were linked for reviewer re-runs, but `review_tools.run` received only
+the packet's Python environment. The project manifest lookup also stayed at the repository root,
+and prepare stripped runner configuration at every depth without restoring subfolder settings.
+The new complete-packet fixtures exercise dependency installation, inferred test commands, the
+two-runs subprocess and project-scoped mutation reports together, twice, and compare every byte.
+
+**Generalizable rule.** Test the complete producer-to-consumer path, including the working folder
+and configuration, before treating a packaged environment as usable by a check.
+
 
 ## 2026-11-11
 

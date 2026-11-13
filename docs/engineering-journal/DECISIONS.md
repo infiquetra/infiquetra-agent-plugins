@@ -1,5 +1,96 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-13
+
+### Authenticate tracked local dependency archives before invoking a Node manager
+
+**Decision.** Node lock readers may admit a relative `file:` archive only when its normalised
+path stays inside the head repository, every path component is free of symlinks, the target is
+a tracked regular file, and its bytes match the lock's supported integrity hash. Walk components
+before normalising so a symlink cannot be hidden by `..`. Reuse one verifier across npm,
+shrinkwrap, pnpm, Yarn classic and Bun. A manifest file dependency must name an archive already
+verified from the lock. Hashing observes the existing install byte and time limits; manager
+scripts, fresh home, registry and network settings retain their existing controls.
+
+**Rejected alternatives.** Trusting manager-side integrity checks; admitting every `file:`
+source; accepting an untracked export artifact; treating Yarn's resolved checksum fragment as
+an integrity field; admitting local directories under the archive rule.
+
+**Rationale.** The committed file and lock hash provide a bounded byte input that Saga can
+check before any package manager reads it. Local directories require a separate content and
+link policy because a lock does not provide an equivalent archive hash for them.
+
+**Revisit when.** A supported lock format changes how it represents archives or integrity,
+or a separately designed directory snapshot policy is needed.
+
+---
+
+## 2026-11-12
+
+### Node two-runs compares structured case reports and bypasses package lifecycle hooks
+
+**Decision.** Recognise literal Vitest and Jest commands, including supported package test
+scripts, and invoke the installed runner directly in the owning project. Run changed test files
+at head and existing versions at base to enumerate case identities and statuses. Copy only the
+changed test files and re-run newly passing cases on base. Jest lists files rather than cases,
+so its structured test run serves as both enumeration and observation. Discard report timing,
+console and assertion-order fields; duplicate case names are ambiguous and produce no lead.
+
+**Rejected alternatives.** Reading case names from console formatting; treating a file listing
+as a case listing; running package lifecycle hooks to obtain a test command; copying production
+files whose names merely contain `test`.
+
+**Rationale.** A reviewer lead needs a stable test identity and an observed pass on each version,
+using the same installed dependencies. A test that already existed or was skipped is no such
+lead.
+
+**Revisit when.** A supported runner exposes stable case-only collection, or measured projects
+need additional literal command options.
+
+---
+
+### Saga installs up to four changed Node projects when there is no root manifest
+
+**Decision.** A changed file belongs to its nearest ancestor package manifest. Without a root
+`package.json`, prepare selects those projects in sorted order and installs at most four, each
+from its own lockfile under the existing registry, input, configuration, byte and time guards.
+They share the install deadline. `dependencies.json` names each project's own package folder
+and records `not-changed`, `project-limit`, or an input/install failure for every skipped project.
+The root-project record remains compatible with existing packets.
+
+**Rejected alternatives.** Installing every subfolder regardless of the change; picking one
+project implicitly; using a root dependency link for several independently locked projects.
+
+**Rationale.** A mixed repository needs bounded preparation and explicit dependency ownership.
+
+**Revisit when.** Four independent projects regularly change together, or workspace projects
+need a single install from an ancestor lockfile without a root manifest.
+
+---
+
+### TypeScript scans use project-relative contexts and a shared ten-mutant sample
+
+**Decision.** Node project package folders are linked into each prepare and re-run checkout.
+TypeScript adapters run from the owning project, stage that project's base configuration,
+use project-relative mutation ranges, and translate findings back to repository paths.
+The ten-mutant budget is divided deterministically across selected projects. Within each
+project, a Stryker 10 reporter converts unselected run plans to `Ignored` before execution,
+taking one mutant per changed line before another, with hashed line order and round-robin
+file selection. Its report retains only stable mutation identities and statuses.
+
+**Rejected alternatives.** A clock-limited partial sample; spending all mutations on the first
+project; copying test files out of the mutation sandbox through `ignorePatterns`.
+
+**Rationale.** Packet identity must not depend on run duration, report arrival order, or scratch
+paths. The Stryker reporter event supplies all plans before mutation execution, which makes a
+fixed sample possible without replacing its test runner.
+
+**Revisit when.** A Stryker upgrade changes the mutable plan objects exposed by its reporter event,
+or measured reviews justify a different allocation across projects.
+
+---
+
+
 ## 2026-11-11
 
 ### Testing leads are scripted where-to-look items, eight of each per packet
