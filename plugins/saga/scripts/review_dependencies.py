@@ -139,7 +139,7 @@ class NotFetched(Exception):
         self.output = output
 
 
-def fetch(runner: Process, repo: Path, head: str, packet: Path, export: Export) -> dict[str, Any]:
+def fetch(runner: Process, repo: Path, head: str, packet: Path, export: Export, *, base: str | None = None) -> dict[str, Any]:
     """Fetch the head's dependencies into *packet* and return ``dependencies.json``'s content.
 
     *export* writes the head's tracked files into the folder it is given, without symlinks.
@@ -150,7 +150,7 @@ def fetch(runner: Process, repo: Path, head: str, packet: Path, export: Export) 
     python = _python_entry(runner, repo, head, packet, export)
     if python is not None:
         record["python"] = python
-    _add_node_entry(record, runner, repo, head, packet, export)
+    _add_node_entry(record, runner, repo, head, packet, export, base)
     import review_dependencies_dart  # noqa: PLC0415 - imports this module
 
     dart = review_dependencies_dart.entry(runner, repo, head, packet, export)
@@ -160,12 +160,16 @@ def fetch(runner: Process, repo: Path, head: str, packet: Path, export: Export) 
 
 
 def _add_node_entry(record: dict[str, Any], runner: Process, repo: Path, head: str,
-                    packet: Path, export: Export) -> None:
+                    packet: Path, export: Export, base: str | None = None) -> None:
     """The ``node`` entry, from ``review_dependencies_node`` (imported here: it imports this
     module)."""
     import review_dependencies_node  # noqa: PLC0415
 
-    node = review_dependencies_node.entry(runner, repo, head, packet, export)
+    changed = None
+    if base is not None:
+        import review_diff
+        changed = [item.path for item in review_diff.read(repo, base, head).files]
+    node = review_dependencies_node.entry(runner, repo, head, packet, export, changed=changed)
     if node is not None:
         record["node"] = node
 

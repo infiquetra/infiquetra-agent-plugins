@@ -11,6 +11,10 @@ alone, by the manager the lockfile belongs to, with install scripts off, into
 - ``yarn.lock`` (classic, version 1): ``yarn install --frozen-lockfile``;
 - ``bun.lock``: ``bun install --frozen-lockfile``.
 
+Without a root manifest, up to four projects owning changed files are installed separately
+under ``dependencies/node/projects/<project>/node_modules``. Each project and every skipped
+reason is recorded; all selected installs share one deadline.
+
 No lockfile is ever written. Before anything runs, saga reads the lockfile itself and refuses any
 package that does not come from the public npm registry (a git, file, link or tarball source,
 another registry), so a commit cannot point the install at an operator file or another host. The
@@ -51,6 +55,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import review_dependencies as D  # noqa: E402
+import review_node_projects as P  # noqa: E402
 
 KEY = "node"
 DIRECTORY = "dependencies/node/node_modules"
@@ -61,6 +66,7 @@ REASONS = frozenset({
     "no-lockfile", "binary-lockfile", "unsupported-lockfile", "non-registry-source",
     "symlinked-input", "lockfile-mismatch", "manager-missing", "network", "timeout",
     "size-limit", "install-failed", "head-export", "subfolder-project",
+    "project-limit", "not-changed", "unsafe-project",
 })
 #: Lockfiles in the order one is chosen when a head has several, and the manager for each.
 LOCKFILES = (
@@ -109,14 +115,43 @@ class _Failure(Exception):
 
 
 def entry(runner: D.Process, repo: Path, head: str, packet: Path,
-          export: D.Export) -> dict[str, Any] | None:
+          export: D.Export, *, changed: list[str] | None = None) -> dict[str, Any] | None:
     """The ``node`` entry for the head, or ``None`` when it holds no npm project at all."""
     root = D._tree(runner, repo, head)
     if "package.json" not in root:
-        projects = _subfolder_projects(runner, repo, head)
-        if projects is not None:
-            return {"state": "not-installed", "reason": "subfolder-project", "projects": projects}
-        return None
+        tree = D._tree(runner, repo, head, recursive=True)
+        folders = sorted({path.rpartition("/")[0] for path in tree
+                          if path.endswith("/package.json")
+                          and "node_modules" not in path.split("/")})
+        if not folders:
+            return None
+        wanted = P.selected(folders, changed) if changed is not None else folders
+        records = []
+        count = 0
+        deadline = time.monotonic() + TIMEOUT
+        for folder in folders:
+            record: dict[str, Any]
+            if not P.safe_folder(folder):
+                record = {"state": "not-installed", "reason": "unsafe-project"}
+            elif folder not in wanted:
+                record = {"state": "not-installed", "reason": "not-changed"}
+            elif count >= P.MAX_PROJECTS:
+                record = {"state": "not-installed", "reason": "project-limit"}
+            else:
+                count += 1
+                names = {path[len(folder) + 1:]: mode for path, mode in tree.items()
+                         if path.startswith(folder + "/")}
+                chosen = next(((name, manager) for name, manager in LOCKFILES if name in names), None)
+                if chosen is None:
+                    reason = "binary-lockfile" if BINARY_LOCKFILE in names else "no-lockfile"
+                    record = {"state": "not-installed", "reason": reason}
+                elif names["package.json"] == "120000" or names[chosen[0]] == "120000":
+                    record = {"state": "not-installed", "reason": "symlinked-input"}
+                else:
+                    record = _install(runner, packet, export, *chosen, folder=folder,
+                                      deadline=deadline)
+            records.append({"project": folder, **record})
+        return {"state": "projects", "projects": records}
     chosen = next(((name, manager) for name, manager in LOCKFILES if name in root), None)
     if chosen is None:
         reason = "binary-lockfile" if BINARY_LOCKFILE in root else "no-lockfile"
@@ -132,6 +167,42 @@ def node_modules(packet: Path) -> Path | None:
     entry must say ``installed`` and name a relative folder inside the packet that exists, with
     no symlink along the way."""
     return D._packet_directory(packet, KEY, frozenset({"installed"}))
+
+
+def installed_projects(packet: Path) -> tuple[tuple[str, Path], ...]:
+    """Validated project -> modules bindings, including the legacy root record."""
+    root = node_modules(packet)
+    if root is not None:
+        return ((".", root),)
+    try:
+        data = json.loads((packet / D.FILE).read_text("utf-8"))
+        records = data.get(KEY, {}).get("projects", [])
+    except (OSError, ValueError, AttributeError):
+        return ()
+    if not isinstance(records, list):
+        return ()
+    found = {}
+    for record in records:
+        if not isinstance(record, dict) or record.get("state") != "installed":
+            continue
+        folder, directory = record.get("project"), record.get("directory")
+        if not isinstance(folder, str) or not P.safe_folder(folder):
+            continue
+        expected = f"dependencies/node/projects/{folder}/node_modules"
+        if directory != expected:
+            continue
+        path = packet / expected
+        if path.is_dir() and not any(p.is_symlink() for p in [path, *path.parents]
+                                     if p.is_relative_to(packet)):
+            found[folder] = path
+    return tuple(sorted(found.items()))
+
+
+def link_projects(copy: Path, projects: tuple[tuple[str, Path], ...]) -> None:
+    for folder, modules in projects:
+        target = copy / folder
+        if target.is_dir() and target.resolve().is_relative_to(copy.resolve()):
+            link_into(target, modules)
 
 
 def link_into(copy: Path, modules: Path) -> bool:
@@ -177,15 +248,22 @@ def needs_node(argv0: str) -> bool:
 
 
 def _install(runner: D.Process, packet: Path, export: D.Export, lockfile: str,
-             manager: str) -> dict[str, Any]:
-    target = packet / DIRECTORY
-    deadline = time.monotonic() + TIMEOUT
+             manager: str, *, folder: str = ".", deadline: float | None = None) -> dict[str, Any]:
+    directory = DIRECTORY if folder == "." else f"dependencies/node/projects/{folder}/node_modules"
+    target = packet / directory
+    deadline = deadline if deadline is not None else time.monotonic() + TIMEOUT
     with D._temporary("saga-review-node-") as work:
         source = work / "head"
         source.mkdir()
         try:
             if not export(source):
                 raise _Failure("head-export")
+            export_root = source
+            source = export_root / folder
+            if not source.resolve().is_relative_to(export_root.resolve()) or any(
+                    path.is_symlink() for path in [source, *source.parents]
+                    if path.is_relative_to(export_root)):
+                raise _Failure("symlinked-input")
             for name in ("package.json", lockfile):
                 if (source / name).is_symlink() or not (source / name).is_file():
                     raise _Failure("symlinked-input")
@@ -197,7 +275,7 @@ def _install(runner: D.Process, packet: Path, export: D.Export, lockfile: str,
             problem = vet(lockfile, text)
             if problem is not None:
                 raise _Failure(problem)
-            _strip_configuration(source)
+            _strip_configuration(export_root)
             problem = vet_manifests(source)
             if problem is not None:
                 raise _Failure(problem)
@@ -215,7 +293,7 @@ def _install(runner: D.Process, packet: Path, export: D.Export, lockfile: str,
             dropped += _prune_escaping_links(target)
             record: dict[str, Any] = {
                 "state": "installed",
-                "directory": DIRECTORY,
+                "directory": directory,
                 "manager": manager,
                 "lockfile": lockfile,
                 "packages": _packages(target),

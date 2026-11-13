@@ -1,5 +1,26 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-12
+
+### Saga installs up to four changed Node projects when there is no root manifest
+
+**Decision.** A changed file belongs to its nearest ancestor package manifest. Without a root
+`package.json`, prepare selects those projects in sorted order and installs at most four, each
+from its own lockfile under the existing registry, input, configuration, byte and time guards.
+They share the install deadline. `dependencies.json` names each project's own package folder
+and records `not-changed`, `project-limit`, or an input/install failure for every skipped project.
+The root-project record remains compatible with existing packets.
+
+**Rejected alternatives.** Installing every subfolder regardless of the change; picking one
+project implicitly; using a root dependency link for several independently locked projects.
+
+**Rationale.** A mixed repository needs bounded preparation and explicit dependency ownership.
+
+**Revisit when.** Four independent projects regularly change together, or workspace projects
+need a single install from an ancestor lockfile without a root manifest.
+
+---
+
 ## 2026-11-11
 
 ### Testing leads are scripted where-to-look items, eight of each per packet

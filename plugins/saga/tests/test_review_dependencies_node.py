@@ -381,8 +381,8 @@ def test_a_failed_export_and_a_subfolder_project_are_fixed_reasons(tmp_path: Pat
     runner = FakeManager({"web/package.json": "100644", "web/package-lock.json": "100644",
                           "web/node_modules/x/package.json": "100644", "README.md": "100644"})
     record = D.fetch(runner, tmp_path, "HEAD", packet, _export({}))
-    assert record["node"] == {"state": "not-installed", "reason": "subfolder-project",
-                              "projects": ["web"]}
+    assert record["node"] == {"state": "projects", "projects": [
+        {"project": "web", "state": "not-installed", "reason": "symlinked-input"}]}
 
 
 def test_a_head_without_package_json_gets_no_node_entry(tmp_path: Path) -> None:
@@ -395,6 +395,7 @@ def test_the_reason_words_are_the_documented_set() -> None:
         "no-lockfile", "binary-lockfile", "unsupported-lockfile", "non-registry-source",
         "symlinked-input", "lockfile-mismatch", "manager-missing", "network", "timeout",
         "size-limit", "install-failed", "head-export", "subfolder-project",
+        "project-limit", "not-changed", "unsafe-project",
     }
 
 
@@ -900,3 +901,59 @@ def test_a_lockfile_that_is_not_utf8_is_unsupported(tmp_path: Path) -> None:
 ])
 def test_a_yarn_berry_lockfile_is_unsupported(text: str) -> None:
     assert N.vet("yarn.lock", text) == "unsupported-lockfile"
+
+
+@pytest.mark.parametrize("lockfile", ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"])
+def test_subfolder_install_uses_its_lock_and_is_repeatable(tmp_path: Path, lockfile: str) -> None:
+    locks = {"package-lock.json": NPM_LOCK, "pnpm-lock.yaml": PNPM_LOCK,
+             "yarn.lock": YARN_LOCK, "bun.lock": BUN_LOCK}
+    files = {"web/package.json": PACKAGE_JSON, f"web/{lockfile}": locks[lockfile],
+             "web/.npmrc": "registry=https://example.invalid/\n"}
+    first, packet, runner = _fetch(tmp_path / "a", files)
+    second, other, _ = _fetch(tmp_path / "b", files)
+    project = first["node"]["projects"][0]
+    assert project["project"] == "web" and project["state"] == "installed"
+    assert first == second and _contents(packet) == _contents(other)
+    assert runner.calls[0]["cwd"].name == "web"
+    assert ".npmrc" not in runner.seen_files
+    assert N.installed_projects(packet) == (("web", packet / project["directory"]),)
+    copy = tmp_path / "copy"
+    (copy / "web").mkdir(parents=True)
+    N.link_projects(copy, N.installed_projects(packet))
+    assert (copy / "web/node_modules/left-pad/index.js").is_file()
+    assert not (copy / "node_modules").exists()
+
+
+def test_subfolder_installs_only_changed_projects_with_a_fixed_bound(tmp_path: Path) -> None:
+    files = {f"p{i}/{name}": text for i in range(7)
+             for name, text in {"package.json": PACKAGE_JSON, "package-lock.json": NPM_LOCK}.items()}
+    runner = FakeManager({name: "100644" for name in files})
+    packet = tmp_path / "packet"
+    packet.mkdir()
+    record = N.entry(runner, tmp_path, "HEAD", packet, _export(files),
+                     changed=[f"p{i}/app.ts" for i in range(6)])
+    projects = record["projects"]
+    assert [p["project"] for p in projects if p["state"] == "installed"] == ["p0", "p1", "p2", "p3"]
+    assert [p["reason"] for p in projects if p["state"] == "not-installed"] == [
+        "project-limit", "project-limit", "not-changed"]
+    assert len(runner.calls) == 4
+
+
+@pytest.mark.parametrize("reason", ["no-lockfile", "non-registry-source", "symlinked-input"])
+def test_subfolder_installs_keep_root_input_guards(tmp_path: Path, reason: str) -> None:
+    files = {"web/package.json": PACKAGE_JSON}
+    if reason != "no-lockfile":
+        files["web/package-lock.json"] = (NPM_LOCK if reason == "symlinked-input" else
+            _npm({"version": "1.0.0", "resolved": "file:outside.tgz", "integrity": INTEGRITY}))
+    modes = {"web/package-lock.json": "120000"} if reason == "symlinked-input" else None
+    record, _, runner = _fetch(tmp_path, files, modes=modes)
+    assert record["node"]["projects"] == [{"project": "web", "state": "not-installed", "reason": reason}]
+    assert not runner.calls
+
+
+def test_subfolder_packet_paths_cannot_escape_or_follow_a_link(tmp_path: Path) -> None:
+    record, packet, _ = _fetch(tmp_path, {"web/package.json": PACKAGE_JSON,
+                                       "web/package-lock.json": NPM_LOCK})
+    record["node"]["projects"][0]["directory"] = "../outside"
+    (packet / D.FILE).write_text(json.dumps(record), "utf-8")
+    assert N.installed_projects(packet) == ()
