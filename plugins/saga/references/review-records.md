@@ -160,6 +160,9 @@ change exists to add or fix, the same way, naming the mutant. `prepare` turns up
 row into scripted where-to-look items (classifier `two-runs` or `surviving-mutant`, question
 `testing.accepts-broken-code`, probability 1), so the reviewer answers each one; more than 8 is
 recorded as the degraded reason `lead-cap` with a `detail` naming how many were listed.
+Scripted checks beyond their own 60-item cap likewise record the degraded reason `item-cap`
+once per affected classifier and language, with that language's omitted `count` and a `detail`
+naming how many were listed.
 
 ### Judged findings
 

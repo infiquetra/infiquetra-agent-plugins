@@ -1,5 +1,23 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-14
+
+### An unbounded producer of mandatory reviewer items makes finish reject every review
+
+**Evidence.** `plugins/saga/scripts/review_command.py`, `_cap_scripted_items` caps each scripted
+check's where-to-look items at `SCRIPTED_ITEM_CAP` (60) in `prepare`, spreading the kept items
+round-robin over their files and recording the overflow as `item-cap` degraded entries with the
+omitted count and a `detail`. Tests in `plugins/saga/tests/test_review_scripted_item_cap.py`
+cover the boundary, the spread, the per-language counts and an end-to-end prepare.
+
+**Mechanism.** The reviewer must answer every where-to-look item, and `reviewer_answer.py`
+`_check_items` rejects the whole review when any item has no answer. An unbounded producer
+(such as the machine-specific-value check) can emit thousands of items on a large change, so
+every finish fails and the review can never complete. Other producers already had caps (the
+sweep's 60 and the testing leads' 8); the scripted items had none.
+
+**Generalizable rule.** Every producer of mandatory reviewer work needs a cap and a recorded overflow.
+
 ## 2026-11-13
 
 ### Store test results independently of reporter presentation

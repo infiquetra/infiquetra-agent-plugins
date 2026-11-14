@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Each scripted check lists at most 60 where-to-look items, spread over its files round-robin;
+  overflow records one `item-cap` entry per affected classifier and language, with that
+  language's omitted count and a detail naming how many were listed.
+
 - Testing lead overflow records one `lead-cap` entry per affected row and language, with that
   language's omitted count. The shared item cap and advisory severity are unchanged.
 
