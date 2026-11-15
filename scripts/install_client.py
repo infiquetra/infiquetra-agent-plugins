@@ -143,6 +143,7 @@ class InstallOptions:
     filtered: bool = False
     uninstall_legacy: bool = False
     allow_inapplicable: bool = False
+    agy_gemini_dir: Path | None = None
 
 
 @dataclass
@@ -240,6 +241,17 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--agy-account",
+        choices=("personal", "company"),
+        default="personal",
+        help="Agy account to plan/check. Company requires --agy-company-home or AGY_COMPANY_HOME. Default: personal",
+    )
+    parser.add_argument(
+        "--agy-company-home",
+        type=Path,
+        help="Company root (its gemini dir is <root>/gemini). Only with --agy-account company",
+    )
+    parser.add_argument(
         "--uninstall-legacy",
         action="store_true",
         help=(
@@ -261,6 +273,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     if args.check and args.dry_run:
         # --check is already read-only. Accept the flag so a plan that adds it is not an error.
         pass
+    if args.agy_company_home is not None and args.agy_account != "company":
+        parser.error("--agy-company-home requires --agy-account company")
+    if args.agy_account == "company" and args.client != "agy":
+        parser.error("--agy-account company is only supported with --client agy")
     return args
 
 
@@ -751,6 +767,62 @@ def agy_manifest(path: Path) -> dict:
     return document
 
 
+def resolve_agy_company_gemini_dir(
+    company_home: str | Path, *, home: Path | None = None
+) -> Path:
+    """``<company-root>/gemini`` for an explicitly selected company account.
+
+    Mirrors the delegate launcher: ``~`` and relative roots resolve against
+    the real home. Fails closed on a degenerate root (the real home, the
+    personal Gemini dir, or the filesystem root) and on a symlinked root,
+    ``home``, or ``gemini`` component, so a company plan can never resolve
+    to the personal ``~/.gemini``.
+    """
+    real_home = (home or Path.home()).expanduser()
+    raw = str(company_home)
+    if raw == "~":
+        root = real_home
+    elif raw.startswith("~/"):
+        root = real_home / raw[2:]
+    elif Path(raw).is_absolute():
+        root = Path(raw)
+    else:
+        root = real_home / raw
+    personal_gemini = real_home / ".gemini"
+    resolved_root = root.resolve()
+    resolved_personal = personal_gemini.resolve()
+    if root == Path(root.anchor) or resolved_root in (
+        real_home.resolve(),
+        resolved_personal,
+    ):
+        raise InstallError(
+            f"AGY_COMPANY_HOME must not be the real home or personal Gemini dir: {root}"
+        )
+    for candidate in (root, root / "home", root / "gemini"):
+        if candidate.is_symlink():
+            raise InstallError(
+                f"AGY_COMPANY_HOME must not use a symlinked company root: {root}"
+            )
+    gemini_dir = root / "gemini"
+    resolved_gemini = gemini_dir.resolve()
+    if resolved_gemini == resolved_personal or resolved_gemini.is_relative_to(
+        resolved_personal
+    ):
+        raise InstallError(
+            f"AGY_COMPANY_HOME must not be the real home or personal Gemini dir: {root}"
+        )
+    return gemini_dir
+
+
+def agy_gemini_dir(home: Path, company_gemini_dir: Path | None = None) -> Path:
+    return company_gemini_dir if company_gemini_dir is not None else home / ".gemini"
+
+
+def agy_company_skill_destinations(gemini_dir: Path) -> tuple[Path, Path, str]:
+    """Skill destinations inside a company Gemini dir (no vendor state)."""
+    return gemini_dir / "skills", gemini_dir / ".infiquetra-skills.json", GEMINI_SCHEMA
+
+
 # --- install planning ---------------------------------------------------------
 
 
@@ -1216,6 +1288,7 @@ def plan_agy(
     overrides: dict[str, str],
     *,
     required: bool,
+    company_gemini_dir: Path | None = None,
 ) -> list[Action]:
     """Install the package directory, unless a copy we did not record is already there.
 
@@ -1225,7 +1298,7 @@ def plan_agy(
     not this catalog. Replacing an unsourced directory would delete that copy.
     """
     actions: list[Action] = []
-    plugins_root = home / ".gemini" / "config" / "plugins"
+    plugins_root = agy_gemini_dir(home, company_gemini_dir) / "config" / "plugins"
     manifest = plugins_root / ".infiquetra-install.json"
     document = agy_manifest(manifest) if manifest.is_file() else {"packages": {}}
     recorded_packages = document.get("packages") if isinstance(document.get("packages"), dict) else {}
@@ -1302,8 +1375,13 @@ def existing_link_blocks(dest: Path, target: Path) -> str | None:
     return None
 
 
-def plan_symlink_client(client: str, packages: list[Package], home: Path) -> list[Action]:
-    skills_root, manifest_path, schema = skill_destinations(client, home)
+def plan_symlink_client(
+    client: str,
+    packages: list[Package],
+    home: Path,
+    destinations: tuple[Path, Path, str] | None = None,
+) -> list[Action]:
+    skills_root, manifest_path, schema = destinations or skill_destinations(client, home)
     document = link_manifest(manifest_path, schema)
     actions: list[Action] = []
     for package in packages:
@@ -1351,6 +1429,15 @@ def plan_symlink_client(client: str, packages: list[Package], home: Path) -> lis
                     )
                 )
     return actions
+
+
+def plan_agy_company_skills(
+    packages: list[Package], company_gemini_dir: Path, home: Path
+) -> list[Action]:
+    """Plan catalog skill symlinks into a company Gemini dir (planning only)."""
+    return plan_symlink_client(
+        "agy", packages, home, destinations=agy_company_skill_destinations(company_gemini_dir)
+    )
 
 
 def plan_command_skills(
@@ -1753,7 +1840,17 @@ def plan_install(
     if client == "muse":
         return plan_muse(packages, catalog, home, overrides, required=required, options=options)
     if client == "agy":
-        return plan_agy(packages, catalog, home, overrides, required=required)
+        actions = plan_agy(
+            packages,
+            catalog,
+            home,
+            overrides,
+            required=required,
+            company_gemini_dir=options.agy_gemini_dir,
+        )
+        if options.agy_gemini_dir is not None:
+            actions.extend(plan_agy_company_skills(packages, options.agy_gemini_dir, home))
+        return actions
     raise InstallError(f"unknown client {client}")  # pragma: no cover
 
 
@@ -2072,9 +2169,10 @@ def plan_agy_uninstall(
     overrides: dict[str, str],
     *,
     required: bool,
+    company_gemini_dir: Path | None = None,
 ) -> list[Action]:
     actions: list[Action] = []
-    plugins_root = home / ".gemini" / "config" / "plugins"
+    plugins_root = agy_gemini_dir(home, company_gemini_dir) / "config" / "plugins"
     known = load_object(plugins_root / "known_marketplaces.json") or {}
     for name, entry in sorted(known.items()):
         if not isinstance(entry, dict):
@@ -2212,7 +2310,9 @@ def plan_uninstall(
     if client == "grok":
         return plan_grok_uninstall(home, catalog, overrides, required=required)
     if client == "agy":
-        return plan_agy_uninstall(packages, home, overrides, required=required)
+        return plan_agy_uninstall(
+            packages, home, overrides, required=required, company_gemini_dir=options.agy_gemini_dir
+        )
     if client == "opencode":
         return plan_skill_uninstall(
             "opencode", packages, home, overrides, required=required, uninstall_argv=None
@@ -2303,8 +2403,14 @@ def recorded_target(manifest_path: Path, link: Path) -> str | None:
     return None
 
 
-def check_skill_client(client: str, packages: list[Package], home: Path, catalog: Path) -> list[Readback]:
-    skills_root, manifest_path, _schema = skill_destinations(client, home)
+def check_skill_client(
+    client: str,
+    packages: list[Package],
+    home: Path,
+    catalog: Path,
+    destinations: tuple[Path, Path, str] | None = None,
+) -> list[Readback]:
+    skills_root, manifest_path, _schema = destinations or skill_destinations(client, home)
     rows = []
     for package in packages:
         results = []
@@ -2426,8 +2532,22 @@ def check_grok(packages: list[Package], home: Path, catalog: Path) -> list[Readb
     return rows
 
 
-def check_agy(packages: list[Package], home: Path, catalog: Path) -> list[Readback]:
-    plugins_root = home / ".gemini" / "config" / "plugins"
+def check_agy_company_skills(
+    packages: list[Package], company_gemini_dir: Path, home: Path, catalog: Path
+) -> list[Readback]:
+    return check_skill_client(
+        "agy", packages, home, catalog,
+        destinations=agy_company_skill_destinations(company_gemini_dir),
+    )
+
+
+def check_agy(
+    packages: list[Package],
+    home: Path,
+    catalog: Path,
+    company_gemini_dir: Path | None = None,
+) -> list[Readback]:
+    plugins_root = agy_gemini_dir(home, company_gemini_dir) / "config" / "plugins"
     document = load_object(plugins_root / ".infiquetra-install.json") or {}
     recorded = document.get("packages") if isinstance(document.get("packages"), dict) else {}
     rows = []
@@ -2525,7 +2645,10 @@ def check_client(
         elif client == "grok":
             checked = check_grok(applicable, home, catalog)
         elif client == "agy":
-            checked = check_agy(applicable, home, catalog)
+            checked = check_agy(
+                applicable, home, catalog,
+                company_gemini_dir=(options or InstallOptions()).agy_gemini_dir,
+            )
         elif client == "muse":
             checked = check_muse(
                 applicable,
@@ -2747,16 +2870,32 @@ def run(argv: list[str] | None = None) -> int:
         raise InstallError(f"--catalog {catalog} is not a directory")
     packages = select_packages(catalog, args.package)
     clients = selected_clients(args.client)
+    company_gemini_dir: Path | None = None
+    if getattr(args, "agy_account", "personal") == "company":
+        raw_company = getattr(args, "agy_company_home", None) or os.environ.get(
+            "AGY_COMPANY_HOME", ""
+        )
+        if not raw_company:
+            raise InstallError(
+                "--agy-account company requires --agy-company-home or AGY_COMPANY_HOME"
+            )
+        if args.execute:
+            raise InstallError(
+                "company Agy --execute is not supported: the vendor binary would run "
+                "against the personal account; use --dry-run or --check for company"
+            )
+        company_gemini_dir = resolve_agy_company_gemini_dir(raw_company, home=Path.home())
     options = InstallOptions(
         args.staging_dir,
         args.scope,
         bool(args.package),
         args.uninstall_legacy,
         allow_inapplicable=args.client == "all",
+        agy_gemini_dir=company_gemini_dir,
     )
     if clients == ("muse",):
         muse_packages(catalog, packages, filtered=options.filtered)
-    if any(client in SKILL_CLIENTS for client in clients):
+    if any(client in SKILL_CLIENTS for client in clients) or company_gemini_dir is not None:
         require_unique_skills(packages)
     overrides = parse_binaries(args.binary)
     home = Path.home()
