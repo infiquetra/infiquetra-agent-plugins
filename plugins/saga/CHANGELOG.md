@@ -22,6 +22,10 @@
 
 ### Fixed
 
+- The machine-specific-value check now emits one item per value kind per line, and the
+  scripted-item cap counts distinct items only, so duplicate scripted where-to-look items
+  no longer inflate the `item-cap` count or displace distinct items from the kept set.
+
 - Vitest and Jest random-order findings and their stored evidence now come from Saga-owned
   JSON reports. Canonical evidence retains runner versions, seeds, counts and sorted failure
   messages while omitting console output and timing fields. Recognized relocated Node runs

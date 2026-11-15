@@ -1203,7 +1203,7 @@ def machine_values(root: Path, base: str, user: str, host: str) -> dict[str, Any
         for number in sorted(item.lines):
             if number < 1 or number > len(lines):
                 continue
-            for kind in _machine_spans(lines[number - 1], user, host):
+            for kind in dict.fromkeys(_machine_spans(lines[number - 1], user, host)):
                 function = _function_at(text, number) if path.suffix == ".py" else None
                 items.append({
                     "kind": "where_to_look",
