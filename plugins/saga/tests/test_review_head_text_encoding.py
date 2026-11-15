@@ -82,3 +82,33 @@ def test_lead_items_survive_a_changed_file_that_is_not_utf8(tmp_path: Path) -> N
     assert items == []
     assert degraded == []
 
+
+def _mutant_finding(path: str, line: int) -> dict[str, object]:
+    return {
+        "kind": "finding", "lens": "testing", "language": "python",
+        "statement": "A mutant survived (core/Not).",
+        "rule": {"row": "testing.surviving-mutant", "ref": "surviving-mutant"},
+        "location": {"scope": "lines", "file": path, "anchor": f"{path}:{line}",
+                     "lines": {"start": line, "end": line}, "function": None},
+        "source": {"kind": "tool", "name": "review-checks", "version": "1.0.0"},
+    }
+
+
+def test_a_lead_in_a_file_that_is_not_utf8_keeps_its_line_and_loses_only_the_function(
+    tmp_path: Path,
+) -> None:
+    repo, head = _repo(tmp_path, {"src/a.py": _LATIN_1, "src/b.py": _UTF_8})
+    change = D.Change(files=(
+        D.FileChange(path="src/a.py", status="modified", lines=frozenset({3})),
+        D.FileChange(path="src/b.py", status="modified", lines=frozenset({2})),
+    ))
+    findings = [_mutant_finding("src/a.py", 3), _mutant_finding("src/b.py", 2)]
+
+    items, degraded = C._lead_items(findings, change, T.subprocess_runner, repo, head)
+
+    assert degraded == []
+    located = {item["location"]["file"]: item["location"] for item in items}
+    assert located["src/a.py"]["lines"] == {"start": 3, "end": 3}
+    assert located["src/a.py"]["function"] is None
+    assert located["src/b.py"]["lines"] == {"start": 2, "end": 2}
+    assert located["src/b.py"]["function"] == "greet"

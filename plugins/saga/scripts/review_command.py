@@ -920,8 +920,9 @@ def _head_text(runner: Process, repo: Path, head: str, path: str, cache: dict[st
                ) -> str | None:
     """The file's text at ``head``, or ``None`` when it is absent or is not UTF-8 text.
 
-    The runner decodes output as UTF-8 and raises on any other encoding. A lead in such a file
-    is still listed, without the function name its text would have given.
+    The runner decodes output as UTF-8 and raises on any other encoding. A Python lead in such a
+    file keeps its location and loses the function name its text would have given; a Rust or
+    Swift test that cannot be read is recorded as unlocated.
     """
     if path not in cache:
         try:
