@@ -22,6 +22,11 @@
 
 ### Fixed
 
+- The testing leads no longer stop prepare when a changed file is not UTF-8 text. They read
+  each changed file at the head commit to name the function a lead sits in; a file in another
+  encoding now yields a lead without a function name. A change whose added, removed or
+  context lines themselves hold non-UTF-8 bytes still cannot be prepared.
+
 - The machine-specific-value check now emits one item per value kind per line, and the
   scripted-item cap counts distinct items only, so duplicate scripted where-to-look items
   no longer inflate the `item-cap` count or displace distinct items from the kept set.
