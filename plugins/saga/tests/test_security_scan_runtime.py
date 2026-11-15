@@ -51,3 +51,21 @@ def test_summary_displays_control_characters_as_data() -> None:
     displayed = scan._markdown(summary, [])
     assert "\x1b" not in displayed and "\x07" not in displayed
     assert "example" in displayed
+
+
+def test_missing_promisor_objects_never_fetch_or_change_target(tmp_path: Path) -> None:
+    source = contract._plain(tmp_path, name="origin", marker=False)
+    contract._git(source.path, "config", "uploadpack.allowFilter", "true")
+    target = tmp_path / "partial"
+    contract._git(tmp_path, "clone", "--quiet", "--filter=tree:0", "--no-checkout",
+                  source.path.as_uri(), str(target))
+    missing = contract._git(target, "rev-list", "--objects", "--all", "--missing=print")
+    assert any(line.startswith("?") for line in missing.splitlines())
+    machine = contract._machine(tmp_path)
+    before = contract._fingerprint(target)
+
+    scan = contract._scan(machine, target, tmp_path / "out")
+
+    assert contract._fingerprint(target) == before, "the scan fetched into the target"
+    assert scan.code == 2, scan.terminal
+    assert machine.calls() == [], "a row ran without a complete local tree"

@@ -11,7 +11,9 @@ and reuses their existing adapters. It creates an independent repository contain
 an empty base and one snapshot of the chosen commit's tree, checks tree-ID equality,
 and runs `review_tools.run(..., framework=False, repository_scan=True)` against that
 copy. Source commits, configuration, hooks, dependency environments and uncommitted
-files are not copied. Gitlink entries survive unchanged, but submodule contents are
+files are not copied. The selected tree must already be available locally; missing
+partial-clone objects yield an incomplete scan without fetching into the target.
+Gitlink entries survive unchanged, but submodule contents are
 not fetched or read; each is an incomplete unscanned gap.
 
 The keyword-only `repository_scan` seam defaults to `False`, preserving review's

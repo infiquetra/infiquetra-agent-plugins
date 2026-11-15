@@ -2,6 +2,14 @@
 
 ## 2026-11-15
 
+### A Git object read can fetch into a partial clone
+
+**Evidence.** The supplemental `test_missing_promisor_objects_never_fetch_or_change_target` first failed: scanning a local `tree:0` partial clone added pack files under its `.git/objects/pack` and returned clean. With lazy fetching disabled and Git transports denied for scan-owned Git commands, the same test passes: missing local objects yield exit `2`, no adapter runs, and every target entry retains its mode and content.
+
+**Mechanism.** Git can obtain missing promisor objects while traversing a committed tree. Avoiding checkout and optional locks alone does not make such reads free of writes or transport activity.
+
+**Generalizable rule.** A read-only Git boundary must also control lazy object acquisition. Missing local input is an incomplete scan, not permission to modify the target object database.
+
 ### A version probe is not an advisory request
 
 **Evidence.** The additional runtime check `test_uninvoked_advisory_row_is_not_disclosed_as_invoked` initially failed after pip-audit's version was observed but every requirement file was rejected. The summary incorrectly listed that row among invoked advisory-service rows. It now derives that disclosure from adapter invocation, and the test passes with no fake pip-audit scan call.

@@ -22,6 +22,14 @@ Backend is `inline`; this dispatch uses the existing worker session, with no chi
 
 At U2, the runtime selector passed all 24 selected independent tests and the three additional runtime checks passed. The unchanged review-runner/Python-adapter test run passed 244 tests with two skips; command help, repository validation and whitespace checks passed. These are hermetic fake-tool checks and do not claim real advisory detections.
 
+A supplemental partial-clone check subsequently exposed a read-only boundary defect: Git fetched missing trees/blobs into the target and the scan returned clean. The regression failed on changed target pack files before the fix. Scan-owned Git commands now disable lazy fetching and deny transports; all four supplemental runtime tests pass, including incomplete exit `2`, no adapter invocation, and an unchanged partial clone. The first usable checkpoint above remains the earlier command milestone; final handoff validation includes this correction.
+
+The skill-directory inventory test now explicitly includes the new portable `security-scan` skill while retaining the exact existing vendor-command set. All 38 command-surface checks pass; neither frozen acceptance/regression file changed.
+
+Validation uses separate pinned SDLC inputs: the template input at `ffa9285bbe1d5a7c521aeb831f68c2a0f2712303`, and a private Git copy at `f8d0994` for the role snapshot's revision-aware parity check. The SDLC feature working tree is not the canonical input. Whole suites run sequentially because existing drift/bundle tests mutate and restore shared files. A serial root run passed 1,321 tests with 28 skips, and nine earlier plugin failures cleared after restoring fixtures and correcting the role input.
+
+The existing live Dart mutation test exposed a stale global `mutate4dart 0.12.2` kernel: it reported an invalid SDK hash, and its fallback failed under a fresh HOME. A private kernel was compiled from the same cached package and existing package configuration with the current Dart SDK, and a temporary wrapper inside the ignored worktree cache supplies it during validation. The global wrapper and snapshots retained their content hashes. The fresh-HOME version probe and live survivor test then passed; no package, pin or global activation was changed. The Jev sweep API key is excluded from validation processes because repository source is outside this session's permitted judgment state; any resulting unavailable-sweep result remains explicit.
+
 Unit build-loop iteration details will be recorded here before the final combined-branch pass. The shared Saga record remains the authority for each check's status, revision and iteration number.
 
 ## Limits and next step

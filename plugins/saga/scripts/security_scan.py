@@ -14,9 +14,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import review_formula
 import review_tools as tools
@@ -45,6 +46,8 @@ def _git(repo: Path, *args: str, data: bytes | None = None) -> bytes:
     env.update({
         "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
         "GIT_CONFIG_NOSYSTEM": "1", "GIT_OPTIONAL_LOCKS": "0",
+        # Reads in partial clones can otherwise fetch into the target object store.
+        "GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": "",
         "GIT_AUTHOR_NAME": "snapshot", "GIT_COMMITTER_NAME": "snapshot",
         "GIT_AUTHOR_EMAIL": "snapshot@example.invalid",
         "GIT_COMMITTER_EMAIL": "snapshot@example.invalid",
