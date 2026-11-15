@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add a portable whole-repository `security-scan` command and skill over the existing
+  security catalogue. It scans one commit in an independent snapshot, prints local
+  findings, writes private external records, and distinguishes complete, findings
+  and incomplete outcomes. Submodules remain explicit gaps; CDK synthesis requires
+  named opt-in; pip-audit audits exact pins without resolving dependencies.
+- Add a default-preserving scan-policy seam for external-profile pins/rules and
+  unpinned version reporting. Ordinary review output and invocations stay unchanged.
+
 - Each scripted check lists at most 60 where-to-look items, spread over its files round-robin;
   overflow records one `item-cap` entry per affected classifier and language, with that
   language's omitted count and a detail naming how many were listed.

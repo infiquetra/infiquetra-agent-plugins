@@ -2,6 +2,14 @@
 
 ## 2026-11-15
 
+### A version probe is not an advisory request
+
+**Evidence.** The additional runtime check `test_uninvoked_advisory_row_is_not_disclosed_as_invoked` initially failed after pip-audit's version was observed but every requirement file was rejected. The summary incorrectly listed that row among invoked advisory-service rows. It now derives that disclosure from adapter invocation, and the test passes with no fake pip-audit scan call.
+
+**Mechanism.** The shared runner probes a version before asking an adapter whether it has work. A readable version plus a degraded status therefore proves neither that an audit ran nor that package data could leave the machine.
+
+**Generalizable rule.** Describe an external action from the observed action path, not from a prerequisite such as availability or version. The [implementation work session](../work-sessions/2026-11-15-saga-whole-repository-security-scan.md) distinguishes fake-tool evidence from live scanner detections.
+
 ### An empty baseline enables whole-tree reporting, but a copy must preserve the tree and bound history
 
 **Evidence.** At source revision `ebc263ed91e1c50f2e90fbacd8ef0572232f3ffb`, a disposable planning probe retained one canned finding through the changed-line path and through each of the six security base/head invocation builders in `plugins/saga/scripts/review_tools.py`: osv-scanner, pip-audit, cdk-nag, checkov-cdk, npm-audit and cargo-deny. The probe used the existing invocation builders with stub process/parser results; no scanner binary or advisory service was called. The unchanged review-runner suite also passed all 127 collected tests. The [plan](../plans/2026-11-15-saga-whole-repository-security-scan-plan.md) records the permanent behavior tests still required.
