@@ -518,8 +518,10 @@ def _prepare(
         # The tool runner already wrote the scripted checks' own items (for instance the
         # machine-specific-value check) to this file; they join the sweep's items, not replaced.
         scripted = _read_json(staging / "where-to-look.json", "where-to-look")
+        kept, capped = _cap_scripted_items(scripted if isinstance(scripted, list) else [])
+        degraded.extend(capped)
         where = _merge_where_items(
-            [*(scripted if isinstance(scripted, list) else []), *leads],
+            [*kept, *leads],
             items,
             [_gap_item(entry) for entry in gaps],
         )
@@ -730,9 +732,11 @@ def _merge_where_items(
 ) -> list[dict[str, Any]]:
     """Every where-to-look item the reviewer must answer: scripted, then swept, then tool gaps.
 
-    *scripted* items come from saga's own checks and are facts (probability 1), so none is ever
-    dropped. The sweep's cap (``ITEM_CAP``) bounds only *swept*; scripted and gap items come on
-    top of it, so a packet can hold more items than the cap. An item that repeats an earlier
+    *scripted* items come from saga's own checks and are facts (probability 1). The caller has
+    already held each scripted check to its own cap (``SCRIPTED_ITEM_CAP``) and each testing lead
+    to ``LEAD_CAP``; this merge drops none of the items it is given. The sweep's cap
+    (``ITEM_CAP``) bounds only *swept*; scripted and gap items come on top of it, so a packet can
+    hold more items than that cap. An item that repeats an earlier
     one's lens, language, location, classifier and question ids is kept once, the earlier one
     winning. The caller writes the result in the packet's canonical order
     (``review_tools.stable_order``).
@@ -773,6 +777,9 @@ _GAP_REASONS = frozenset({"missing", "known-gap"})
 ROW_TWO_RUNS = "testing.test-passes-before-change"
 ROW_MUTANT = "testing.surviving-mutant"
 LEAD_CAP = 8
+#: The most where-to-look items one scripted check may add to a packet. A reviewer answers every
+#: item, so an unbounded check can make a review impossible to finish.
+SCRIPTED_ITEM_CAP = 60
 LEAD_QUESTION = "testing.accepts-broken-code"
 _WORD = re.compile(r"[a-z0-9]+")
 _MUTATOR_STATEMENTS = (
@@ -780,6 +787,107 @@ _MUTATOR_STATEMENTS = (
     re.compile(r"^Muter mutant survived: (.+)\.$"),
     re.compile(r"^(?:StrykerJS|mutate4dart) mutant survived: (.+?) in .+\.$"),
 )
+
+
+def _cap_scripted_items(
+    scripted: Sequence[Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Cap each scripted check's items at ``SCRIPTED_ITEM_CAP``, with a degraded entry per cut.
+
+    Groups by (lens, classifier name). A group at or under the cap is kept whole in
+    its original order. A larger group is cut to the cap: items are sorted by
+    (file, start line, anchor) and taken round-robin by file so the kept items
+    spread over as many files as possible. Pure: the same input gives the same output.
+    """
+    groups: dict[tuple[Any, str], list[dict[str, Any]]] = {}
+    order: list[tuple[Any, str]] = []
+    for item in scripted:
+        if not isinstance(item, Mapping):
+            continue
+        classifier = item.get("classifier")
+        classifier_name = ""
+        if isinstance(classifier, Mapping):
+            raw_name = classifier.get("name")
+            classifier_name = raw_name if isinstance(raw_name, str) else ""
+        key = (item.get("lens"), classifier_name)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(dict(item))
+
+    kept: list[dict[str, Any]] = []
+    degraded: list[dict[str, Any]] = []
+    for key in order:
+        lens, classifier_name = key
+        group = groups[key]
+        if len(group) <= SCRIPTED_ITEM_CAP:
+            kept.extend(group)
+            continue
+
+        def sort_key(entry: dict[str, Any]) -> tuple[str, int, str]:
+            location = entry.get("location")
+            if not isinstance(location, Mapping):
+                location = {}
+            file_value = location.get("file")
+            file_name = file_value if isinstance(file_value, str) else ""
+            lines = location.get("lines")
+            start_value = lines.get("start") if isinstance(lines, Mapping) else None
+            start = start_value if isinstance(start_value, int) and not isinstance(start_value, bool) else 0
+            anchor_value = location.get("anchor")
+            anchor = anchor_value if isinstance(anchor_value, str) else ""
+            return (file_name, start, anchor)
+
+        sorted_group = sorted(group, key=sort_key)
+        by_file: dict[str, list[dict[str, Any]]] = {}
+        for entry in sorted_group:
+            location = entry.get("location")
+            if not isinstance(location, Mapping):
+                location = {}
+            file_value = location.get("file")
+            file_name = file_value if isinstance(file_value, str) else ""
+            by_file.setdefault(file_name, []).append(entry)
+        files = sorted(by_file)
+        picked: list[dict[str, Any]] = []
+        depth = 0
+        while len(picked) < SCRIPTED_ITEM_CAP:
+            progressed = False
+            for file_name in files:
+                if len(picked) >= SCRIPTED_ITEM_CAP:
+                    break
+                entries = by_file[file_name]
+                if depth < len(entries):
+                    picked.append(entries[depth])
+                    progressed = True
+            if not progressed:
+                break
+            depth += 1
+        kept.extend(picked)
+
+        picked_ids = {id(entry) for entry in picked}
+        dropped = [entry for entry in sorted_group if id(entry) not in picked_ids]
+        languages: dict[str, int] = {}
+        for entry in dropped:
+            raw_language = entry.get("language")
+            language = raw_language if isinstance(raw_language, str) and raw_language else "none"
+            languages[language] = languages.get(language, 0) + 1
+        lens_value = lens if isinstance(lens, str) else str(lens) if lens is not None else ""
+        for language in sorted(languages):
+            entry = _degraded(lens_value, language, f"{lens}.{classifier_name}", "review-checks", "item-cap")
+            entry["count"] = languages[language]
+            entry["detail"] = (
+                f"listed {SCRIPTED_ITEM_CAP} of {len(group)} {classifier_name} "
+                "items as where-to-look items"
+            )
+            degraded.append(entry)
+
+    degraded.sort(
+        key=lambda entry: (
+            str(entry.get("lens")),
+            str(entry.get("input", "")),
+            str(entry.get("language")),
+        )
+    )
+    return kept, degraded
 
 
 def _mutant_operator(statement: str) -> str:

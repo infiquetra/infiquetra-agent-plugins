@@ -370,6 +370,9 @@ locate unique test definitions in changed head source files. Unlocated leads rec
 Only those unlocated findings regain blocking severity at prepare and finish, subject to normal
 builder excusal and per-language enforcement. Leads beyond the cap record `lead-cap`
 once per affected row and language, with that language's omitted `count`.
+Scripted checks beyond their own 60-item cap likewise record `item-cap` once per affected
+classifier and language, with that language's omitted `count` and a `detail` naming how many
+were listed.
 Capped leads stay fix-later. A confirmed machine-specific finding stays fix later.
 When the relocated test command fails, `architecture-maintainability.relocated-run-fails` blocks in
 the same outcome file.
