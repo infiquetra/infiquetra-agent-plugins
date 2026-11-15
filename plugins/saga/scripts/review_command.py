@@ -732,9 +732,11 @@ def _merge_where_items(
 ) -> list[dict[str, Any]]:
     """Every where-to-look item the reviewer must answer: scripted, then swept, then tool gaps.
 
-    *scripted* items come from saga's own checks and are facts (probability 1), so none is ever
-    dropped. The sweep's cap (``ITEM_CAP``) bounds only *swept*; scripted and gap items come on
-    top of it, so a packet can hold more items than the cap. An item that repeats an earlier
+    *scripted* items come from saga's own checks and are facts (probability 1). The caller has
+    already held each scripted check to its own cap (``SCRIPTED_ITEM_CAP``) and each testing lead
+    to ``LEAD_CAP``; this merge drops none of the items it is given. The sweep's cap
+    (``ITEM_CAP``) bounds only *swept*; scripted and gap items come on top of it, so a packet can
+    hold more items than that cap. An item that repeats an earlier
     one's lens, language, location, classifier and question ids is kept once, the earlier one
     winning. The caller writes the result in the packet's canonical order
     (``review_tools.stable_order``).
