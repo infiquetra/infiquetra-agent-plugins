@@ -725,6 +725,24 @@ def _jev_rate() -> dict[str, float] | None:
     return None
 
 
+def _where_item_key(item: Mapping[str, Any]) -> str:
+    classifier = item.get("classifier")
+    questions = item.get("questions")
+    return json.dumps(
+        [
+            item.get("lens"),
+            item.get("language"),
+            item.get("location"),
+            classifier.get("name") if isinstance(classifier, Mapping) else None,
+            sorted(
+                str(question.get("id")) for question in questions
+                if isinstance(question, Mapping)
+            ) if isinstance(questions, list) else [],
+        ],
+        sort_keys=True, ensure_ascii=False,
+    )
+
+
 def _merge_where_items(
     scripted: Sequence[Any],
     swept: Sequence[Any],
@@ -746,21 +764,7 @@ def _merge_where_items(
     for item in (*scripted, *swept, *gaps):
         if not isinstance(item, Mapping):
             continue
-        classifier = item.get("classifier")
-        questions = item.get("questions")
-        key = json.dumps(
-            [
-                item.get("lens"),
-                item.get("language"),
-                item.get("location"),
-                classifier.get("name") if isinstance(classifier, Mapping) else None,
-                sorted(
-                    str(question.get("id")) for question in questions
-                    if isinstance(question, Mapping)
-                ) if isinstance(questions, list) else [],
-            ],
-            sort_keys=True, ensure_ascii=False,
-        )
+        key = _where_item_key(item)
         if key in seen:
             continue
         seen.add(key)
@@ -799,11 +803,19 @@ def _cap_scripted_items(
     (file, start line, anchor) and taken round-robin by file so the kept items
     spread over as many files as possible. Pure: the same input gives the same output.
     """
-    groups: dict[tuple[Any, str], list[dict[str, Any]]] = {}
-    order: list[tuple[Any, str]] = []
+    distinct: list[Mapping[str, Any]] = []
+    seen_keys: set[str] = set()
     for item in scripted:
         if not isinstance(item, Mapping):
             continue
+        dup_key = _where_item_key(item)
+        if dup_key in seen_keys:
+            continue
+        seen_keys.add(dup_key)
+        distinct.append(item)
+    groups: dict[tuple[Any, str], list[dict[str, Any]]] = {}
+    order: list[tuple[Any, str]] = []
+    for item in distinct:
         classifier = item.get("classifier")
         classifier_name = ""
         if isinstance(classifier, Mapping):

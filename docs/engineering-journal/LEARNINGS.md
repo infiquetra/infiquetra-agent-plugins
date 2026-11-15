@@ -1,5 +1,22 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-15
+
+### Count and cap after duplicates are gone, and remove them where they are made
+
+**Evidence.** `plugins/saga/scripts/review_checks.py`, `machine_values` made one
+where-to-look item per machine-specific-value match on a line, so a line holding the same
+kind of value many times produced exact duplicates; and
+`plugins/saga/scripts/review_command.py`, `_cap_scripted_items` counted and cut that raw
+list before `_merge_where_items` dropped the repeats.
+
+**Mechanism.** The cap ran before the step that removes duplicates, so it counted repeated
+items and could keep repeats that the merge later dropped, leaving available distinct
+items out of the review packet.
+
+**Generalizable rule.** Count and cap after removing duplicates, and remove duplicates
+where they are made.
+
 ## 2026-11-14
 
 ### An unbounded producer of mandatory reviewer items makes finish reject every review

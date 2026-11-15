@@ -133,6 +133,39 @@ def test_detail_reads_exactly() -> None:
     )
 
 
+def test_copies_of_one_item_do_not_count_against_cap() -> None:
+    distinct = [_item("src/a.py", n) for n in range(1, 11)]
+    items = [*distinct, *([distinct[0]] * 200)]
+    kept, degraded = C._cap_scripted_items(items)
+    assert kept == distinct
+    assert degraded == []
+
+
+def test_five_copies_each_counts_once() -> None:
+    distinct = [_item("src/a.py", n) for n in range(1, 101)]
+    items = [item for item in distinct for _ in range(5)]
+    kept, degraded = C._cap_scripted_items(items)
+    assert len(kept) == 60
+    seen = {json.dumps(item, sort_keys=True) for item in kept}
+    assert len(seen) == 60
+    caps = [entry for entry in degraded if entry["reason"] == "item-cap"]
+    assert len(caps) == 1
+    assert caps[0]["count"] == 40
+    assert caps[0]["detail"] == (
+        "listed 60 of 100 machine-specific-value items as where-to-look items"
+    )
+
+
+def test_items_differing_only_in_anchor_are_distinct() -> None:
+    items = [
+        _item("src/a.py", 1, anchor="machine-specific-value:home:1:a"),
+        _item("src/a.py", 1, anchor="machine-specific-value:home:1:b"),
+    ]
+    kept, degraded = C._cap_scripted_items(items)
+    assert kept == items
+    assert degraded == []
+
+
 # --- end-to-end prepare check (copied setup from test_review_command.py) ---
 
 
