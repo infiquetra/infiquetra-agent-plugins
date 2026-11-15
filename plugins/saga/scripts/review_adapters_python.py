@@ -661,6 +661,17 @@ def _parse_bandit(text: str) -> ParseResult:
 
 
 def _invoke_pip_audit(context: ScanContext) -> list[str]:
+    if context.repository_scan:
+        files, _unsupported = pip_audit_scan_inputs(context.root)
+        if not files:
+            return []
+        argv = [
+            "pip-audit", "--format", "json", "--progress-spinner", "off",
+            "--disable-pip", "--no-deps",
+        ]
+        for name in files:
+            argv.extend(["--requirement", name])
+        return argv
     files = [
         path.relative_to(context.root).as_posix()
         for path in review_tools.scan_files(context.root)
@@ -672,6 +683,34 @@ def _invoke_pip_audit(context: ScanContext) -> list[str]:
     for name in sorted(files):
         argv.extend(["--requirement", name])
     return argv
+
+
+def pip_audit_scan_inputs(root: Path) -> tuple[list[str], list[str]]:
+    """Only literal exact pins may reach the scan's resolver-free audit invocation.
+
+    Includes, local paths, URLs, wildcards and installer options are unsupported input,
+    not an invitation to invoke pip. Keep this policy beside the invocation it governs.
+    """
+    exact = re.compile(
+        r"^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\[[A-Za-z0-9_,. -]+\])?"
+        r"\s*==\s*[A-Za-z0-9][A-Za-z0-9_.+!-]*(?:\s*;[^\r\n]+)?$"
+    )
+    accepted: list[str] = []
+    unsupported: list[str] = []
+    for path in review_tools.scan_files(root):
+        if not fnmatch.fnmatchcase(path.name, "requirements*.txt"):
+            continue
+        name = path.relative_to(root).as_posix()
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("not a regular file")
+            lines = [line.split(" #", 1)[0].strip() for line in path.read_text().splitlines()]
+            entries = [line for line in lines if line and not line.startswith("#")]
+            valid = bool(entries) and all(exact.fullmatch(line) for line in entries)
+        except (OSError, UnicodeError, ValueError):
+            valid = False
+        (accepted if valid else unsupported).append(name)
+    return sorted(accepted), sorted(unsupported)
 
 
 def _parse_pip_audit(text: str) -> ParseResult:
