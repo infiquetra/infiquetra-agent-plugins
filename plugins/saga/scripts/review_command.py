@@ -918,9 +918,18 @@ def _words(text: str) -> set[str]:
 
 def _head_text(runner: Process, repo: Path, head: str, path: str, cache: dict[str, str | None]
                ) -> str | None:
+    """The file's text at ``head``, or ``None`` when it is absent or is not UTF-8 text.
+
+    The runner decodes output as UTF-8 and raises on any other encoding. A lead in such a file
+    is still listed, without the function name its text would have given.
+    """
     if path not in cache:
-        shown = _git(runner, repo, ["show", f"{head}:{path}"])
-        cache[path] = shown.stdout if shown.code == 0 else None
+        try:
+            shown = _git(runner, repo, ["show", f"{head}:{path}"])
+        except UnicodeDecodeError:
+            cache[path] = None
+        else:
+            cache[path] = shown.stdout if shown.code == 0 else None
     return cache[path]
 
 

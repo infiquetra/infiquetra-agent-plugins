@@ -2,6 +2,20 @@
 
 ## 2026-11-15
 
+### A helper that reads repository files as text must survive files that are not text
+
+**Evidence.** `plugins/saga/scripts/review_command.py`, `_head_text` read a changed file at the
+head commit through the shared process runner, which decodes output as strict UTF-8. Called
+from `_lead_items` for every changed Python file, it raised `UnicodeDecodeError` on a source
+file in another encoding and `saga review prepare` exited 1 with no packet.
+
+**Mechanism.** The text was only used to name the function a testing lead sits in, an
+optional detail, yet reading it sat on the path every prepare takes. One legacy-encoded file
+in a change therefore stopped the whole review, although every other check handled the file.
+
+**Generalizable rule.** When a file's text only enriches a result, treat unreadable text as
+absent and carry on; never let an optional read decide whether the review runs.
+
 ### Count and cap after duplicates are gone, and remove them where they are made
 
 **Evidence.** `plugins/saga/scripts/review_checks.py`, `machine_values` made one
