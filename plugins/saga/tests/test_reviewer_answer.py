@@ -128,6 +128,39 @@ def test_prompt_describes_serious_testing_rows() -> None:
     assert "minor weakness" in text
 
 
+def test_prompt_widens_accepts_broken_code_without_the_undo_check() -> None:
+    text = _section("Test defects that can stop a merge")
+    flat = " ".join(text.split())
+    assert "a change whose purpose no test checks" in flat
+    assert "no longer exercises what it names" in flat and "not upkeep" in flat
+    # The reviewer does not undo the change itself: saga's two-runs check does that job.
+    assert "Check that the change's tests check the change" not in PROMPT
+    assert "git apply -R" not in PROMPT
+
+
+def test_prompt_tells_the_reviewer_how_to_judge_a_two_runs_lead() -> None:
+    text = " ".join(_section("New tests that already pass before the change").split())
+    assert "testing.test-passes-before-change" in text and "findings.json" in text
+    assert "a lead, not a block" in text
+    assert "testing.accepts-broken-code" in text and "`traced`" in text
+    assert "passes before the change and after it" in text
+    assert "pin behaviour the change keeps" in text or "pins behaviour the change keeps" in text
+    assert "leave the lead alone" in text
+    assert "where-to-look items with classifier `two-runs`" in text
+    assert "answer the item `cleared`" in text and "Answer the item with a" in text
+
+
+def test_prompt_tells_the_reviewer_how_to_judge_a_surviving_mutant_lead() -> None:
+    text = " ".join(_section("Surviving mutants on the change's lines").split())
+    assert "testing.surviving-mutant" in text and "findings.json" in text
+    assert "a lead, not a block" in text
+    assert "testing.accepts-broken-code" in text and "`traced`" in text
+    assert "(file, line, operator)" in text and "still pass with it" in text
+    assert "incidental" in text and "leave the lead alone" in text
+    assert "where-to-look items with classifier `surviving-mutant`" in text
+    assert "answer the item `cleared`" in text and "Answer the item with a" in text
+
+
 def test_prompt_requires_a_sandboxed_reproduction_with_test_command_and_output() -> None:
     text = _section("Reproduce what you believe")
     assert "scratch copy" in text and "Only test files may change" in text

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 import re
@@ -209,6 +210,7 @@ class Offline:
     #: The packet's installed npm packages, linked at the re-run folder's root as
     #: ``node_modules``, read-only; ``None`` when there are none.
     node: Path | None = None
+    node_projects: tuple[tuple[str, Path], ...] = ()
     #: The packet's pub cache, when there is one; each re-run gets a writable pub cache in its
     #: own ``tmp`` folder that links to it (:func:`_dart_pub_cache`).
     dart: Path | None = None
@@ -226,16 +228,19 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
     a saga-written Python environment over the packet's packages, both or neither (``None``)."""
     vendor = review_dependencies.rust_vendor(packet)
     deps = review_dependencies.python_environment(packet)
-    python = shutil.which("python3") if deps is not None else None
+    # The interpreter the packages were installed for, which prepare may have chosen to match the
+    # project's ``requires-python`` rather than the operator's ``python3``.
+    python = review_dependencies.python_for(deps) if deps is not None else None
     modules = review_dependencies_node.node_modules(packet)
+    node_projects = review_dependencies_node.installed_projects(packet)
     dart = _offline_dart(packet)
-    if vendor is None and python is None and modules is None and dart is None:
+    if vendor is None and python is None and not node_projects and dart is None:
         yield None
         return
     temporary: list[Path] = []
     try:
         env: dict[str, str] = {}
-        reads: tuple[Path, ...] = (modules,) if modules is not None else ()
+        reads: tuple[Path, ...] = tuple(path for _, path in node_projects)
         toolchain: tuple[Path, ...] = ()
         path = os.environ.get("PATH", "")
         shim: Path | None = None
@@ -262,9 +267,9 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
                 path = env["PATH"]
                 toolchain += review_dependencies.python_toolchain(shim, deps)
         if vendor is None:
-            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim, node=modules,
+            yield (Offline(env=env, reads=reads, toolchain=toolchain, python=shim, node=modules, node_projects=node_projects,
                            dart=dart_cache)
-                   if shim is not None or modules is not None or dart_cache is not None else None)
+                   if shim is not None or node_projects or dart_cache is not None else None)
             return
         home = Path(tempfile.mkdtemp(prefix="saga-review-cargo-home-"))
         temporary.append(home)
@@ -277,7 +282,7 @@ def _offline_dependencies(packet: Path) -> Iterator[Offline | None]:
             env["PATH"] = os.pathsep.join([str(shim_cargo.parent), path])
         yield Offline(env=env, reads=(*reads, vendor, home), cargo=shim_cargo,
                       toolchain=(*review_dependencies.toolchain_paths(cargo), *toolchain),
-                      rust=True, python=shim, node=modules, dart=dart_cache)
+                      rust=True, python=shim, node=modules, node_projects=node_projects, dart=dart_cache)
     finally:
         for folder in temporary:
             shutil.rmtree(folder, ignore_errors=True)
@@ -292,8 +297,10 @@ def _node_rerun(
     node's own install readable and its real ``bin`` first on ``PATH``, so a ``#!/usr/bin/env
     node`` script finds it even when the operator's ``node`` is a link under the denied home.
     Nothing from the packet goes on ``PATH``."""
-    if offline is not None and offline.node is not None:
-        review_dependencies_node.link_into(scratch, offline.node)
+    if offline is not None:
+        review_dependencies_node.link_projects(scratch, offline.node_projects)
+        if offline.node is not None:
+            review_dependencies_node.link_into(scratch, offline.node)
     if argv and review_dependencies_node.needs_node(str(argv[0])):
         path = env.get("PATH", "")
         real = review_dependencies_node.node_bin(path)
@@ -466,13 +473,24 @@ def _prepare(
     staging = Path(tempfile.mkdtemp(prefix="saga-review-packet-"))
     try:
         _probe_calibration(calibration, profile)
-        code = review_tools.run(
-            repo, base, head, given_profile, staging, home, builder_path,
-            adapters=list(adapters) if adapters is not None else None,
-            runner=runner,
-            framework=False,
-            diagnostics_directory=args.diagnostics_directory,
-        )
+        # Issue 262: fetched once here, read-only and offline for the reviewer and the re-run.
+        # Fetched before the tools run, so the scripted testing checks (the two runs of a new
+        # test, the mutation run) run the change's tests over the same Python environment the
+        # reviewer's re-runs get, instead of one without the change's dependencies.
+        _write_json(staging / review_dependencies.FILE, review_dependencies.fetch(
+            runner, repo, head, staging,
+            lambda dest: _export_head(runner, repo, head, dest), base=base,
+        ))
+        with _offline_dependencies(staging) as offline:
+            code = review_tools.run(
+                repo, base, head, given_profile, staging, home, builder_path,
+                adapters=list(adapters) if adapters is not None else None,
+                runner=runner,
+                framework=False,
+                diagnostics_directory=args.diagnostics_directory,
+                python_env=offline.python if offline is not None else None,
+                node_projects=offline.node_projects if offline is not None else (),
+            )
         if code != 0:
             raise CommandFailure(code, "")
         findings = _read_json(staging / "findings.json", "findings")
@@ -492,14 +510,18 @@ def _prepare(
             repo, base, head, args, calibration, home, ask,
         )
         degraded.extend(sweep_degraded)
+        leads, lead_degraded = _lead_items(findings, change, runner, repo, head)
+        degraded.extend(lead_degraded)
         gaps = [entry for entry in degraded if entry.get("reason") in _GAP_REASONS]
         for line in _cache_notices(degraded, home):
             print(f"warning: {line}", file=sys.stderr)
         # The tool runner already wrote the scripted checks' own items (for instance the
         # machine-specific-value check) to this file; they join the sweep's items, not replaced.
         scripted = _read_json(staging / "where-to-look.json", "where-to-look")
+        kept, capped = _cap_scripted_items(scripted if isinstance(scripted, list) else [])
+        degraded.extend(capped)
         where = _merge_where_items(
-            scripted if isinstance(scripted, list) else [],
+            [*kept, *leads],
             items,
             [_gap_item(entry) for entry in gaps],
         )
@@ -520,11 +542,6 @@ def _prepare(
         except review_formula.FormulaError as exc:
             raise CommandFailure(2, str(exc)) from exc
         files = [{"path": item.path, "status": item.status} for item in change.files]
-        # Issue 262: fetched once here, read-only and offline for the reviewer and the re-run.
-        _write_json(staging / review_dependencies.FILE, review_dependencies.fetch(
-            runner, repo, head, staging,
-            lambda dest: _export_head(runner, repo, head, dest),
-        ))
         _write_json(staging / "change.json", {
             "repo": str(repo.resolve()), "base": base, "head": head, "files": files,
             "changed_lines": changed,
@@ -541,6 +558,9 @@ def _prepare(
         _write_json(staging / "may-block.json", reasons)
         _write_json(staging / "open-search-cap.json", {"cap": reviewer_answer.OPEN_SEARCH_CAP})
         _write_json(staging / "grades.json", grades)
+        # Lead conversion may restore a blocking row. Keep the tool runner's public outcomes
+        # consistent with the final prepare formula, including its omitted-lead degradation.
+        _write_json(staging / "outcomes.json", grades)
         _copy_check_modules(staging)
         if store is not None:
             try:
@@ -569,7 +589,7 @@ def _prepare(
         _publish(staging, out)
     finally:
         # The packet's npm packages are sealed read-only; give their folders write back first.
-        review_dependencies_node.unseal(staging / review_dependencies_node.DIRECTORY)
+        review_dependencies_node.unseal(staging / "dependencies/node")
         # A Dart cache in the packet is read-only file by file; give write back first.
         review_dependencies_dart.unseal(staging / "dependencies" / "dart")
         shutil.rmtree(staging, ignore_errors=True)
@@ -705,6 +725,24 @@ def _jev_rate() -> dict[str, float] | None:
     return None
 
 
+def _where_item_key(item: Mapping[str, Any]) -> str:
+    classifier = item.get("classifier")
+    questions = item.get("questions")
+    return json.dumps(
+        [
+            item.get("lens"),
+            item.get("language"),
+            item.get("location"),
+            classifier.get("name") if isinstance(classifier, Mapping) else None,
+            sorted(
+                str(question.get("id")) for question in questions
+                if isinstance(question, Mapping)
+            ) if isinstance(questions, list) else [],
+        ],
+        sort_keys=True, ensure_ascii=False,
+    )
+
+
 def _merge_where_items(
     scripted: Sequence[Any],
     swept: Sequence[Any],
@@ -712,9 +750,11 @@ def _merge_where_items(
 ) -> list[dict[str, Any]]:
     """Every where-to-look item the reviewer must answer: scripted, then swept, then tool gaps.
 
-    *scripted* items come from saga's own checks and are facts (probability 1), so none is ever
-    dropped. The sweep's cap (``ITEM_CAP``) bounds only *swept*; scripted and gap items come on
-    top of it, so a packet can hold more items than the cap. An item that repeats an earlier
+    *scripted* items come from saga's own checks and are facts (probability 1). The caller has
+    already held each scripted check to its own cap (``SCRIPTED_ITEM_CAP``) and each testing lead
+    to ``LEAD_CAP``; this merge drops none of the items it is given. The sweep's cap
+    (``ITEM_CAP``) bounds only *swept*; scripted and gap items come on top of it, so a packet can
+    hold more items than that cap. An item that repeats an earlier
     one's lens, language, location, classifier and question ids is kept once, the earlier one
     winning. The caller writes the result in the packet's canonical order
     (``review_tools.stable_order``).
@@ -724,21 +764,7 @@ def _merge_where_items(
     for item in (*scripted, *swept, *gaps):
         if not isinstance(item, Mapping):
             continue
-        classifier = item.get("classifier")
-        questions = item.get("questions")
-        key = json.dumps(
-            [
-                item.get("lens"),
-                item.get("language"),
-                item.get("location"),
-                classifier.get("name") if isinstance(classifier, Mapping) else None,
-                sorted(
-                    str(question.get("id")) for question in questions
-                    if isinstance(question, Mapping)
-                ) if isinstance(questions, list) else [],
-            ],
-            sort_keys=True, ensure_ascii=False,
-        )
+        key = _where_item_key(item)
         if key in seen:
             continue
         seen.add(key)
@@ -748,6 +774,448 @@ def _merge_where_items(
 
 #: Degraded reasons that become a check for the reviewer to answer by hand.
 _GAP_REASONS = frozenset({"missing", "known-gap"})
+
+#: The testing leads that become where-to-look items, each with its cap per packet. A lead is a
+#: tool result that fixes later on its own; as an item, the reviewer must say whether it shows that
+#: no test checks what the change adds or fixes.
+ROW_TWO_RUNS = "testing.test-passes-before-change"
+ROW_MUTANT = "testing.surviving-mutant"
+LEAD_CAP = 8
+#: The most where-to-look items one scripted check may add to a packet. A reviewer answers every
+#: item, so an unbounded check can make a review impossible to finish.
+SCRIPTED_ITEM_CAP = 60
+LEAD_QUESTION = "testing.accepts-broken-code"
+_WORD = re.compile(r"[a-z0-9]+")
+_MUTATOR_STATEMENTS = (
+    re.compile(r"^A mutant survived \(([^()]+)\)\.$"),
+    re.compile(r"^Muter mutant survived: (.+)\.$"),
+    re.compile(r"^(?:StrykerJS|mutate4dart) mutant survived: (.+?) in .+\.$"),
+)
+
+
+def _cap_scripted_items(
+    scripted: Sequence[Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Cap each scripted check's items at ``SCRIPTED_ITEM_CAP``, with a degraded entry per cut.
+
+    Groups by (lens, classifier name). A group at or under the cap is kept whole in
+    its original order. A larger group is cut to the cap: items are sorted by
+    (file, start line, anchor) and taken round-robin by file so the kept items
+    spread over as many files as possible. Pure: the same input gives the same output.
+    """
+    distinct: list[Mapping[str, Any]] = []
+    seen_keys: set[str] = set()
+    for item in scripted:
+        if not isinstance(item, Mapping):
+            continue
+        dup_key = _where_item_key(item)
+        if dup_key in seen_keys:
+            continue
+        seen_keys.add(dup_key)
+        distinct.append(item)
+    groups: dict[tuple[Any, str], list[dict[str, Any]]] = {}
+    order: list[tuple[Any, str]] = []
+    for item in distinct:
+        classifier = item.get("classifier")
+        classifier_name = ""
+        if isinstance(classifier, Mapping):
+            raw_name = classifier.get("name")
+            classifier_name = raw_name if isinstance(raw_name, str) else ""
+        key = (item.get("lens"), classifier_name)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(dict(item))
+
+    kept: list[dict[str, Any]] = []
+    degraded: list[dict[str, Any]] = []
+    for key in order:
+        lens, classifier_name = key
+        group = groups[key]
+        if len(group) <= SCRIPTED_ITEM_CAP:
+            kept.extend(group)
+            continue
+
+        def sort_key(entry: dict[str, Any]) -> tuple[str, int, str]:
+            location = entry.get("location")
+            if not isinstance(location, Mapping):
+                location = {}
+            file_value = location.get("file")
+            file_name = file_value if isinstance(file_value, str) else ""
+            lines = location.get("lines")
+            start_value = lines.get("start") if isinstance(lines, Mapping) else None
+            start = start_value if isinstance(start_value, int) and not isinstance(start_value, bool) else 0
+            anchor_value = location.get("anchor")
+            anchor = anchor_value if isinstance(anchor_value, str) else ""
+            return (file_name, start, anchor)
+
+        sorted_group = sorted(group, key=sort_key)
+        by_file: dict[str, list[dict[str, Any]]] = {}
+        for entry in sorted_group:
+            location = entry.get("location")
+            if not isinstance(location, Mapping):
+                location = {}
+            file_value = location.get("file")
+            file_name = file_value if isinstance(file_value, str) else ""
+            by_file.setdefault(file_name, []).append(entry)
+        files = sorted(by_file)
+        picked: list[dict[str, Any]] = []
+        depth = 0
+        while len(picked) < SCRIPTED_ITEM_CAP:
+            progressed = False
+            for file_name in files:
+                if len(picked) >= SCRIPTED_ITEM_CAP:
+                    break
+                entries = by_file[file_name]
+                if depth < len(entries):
+                    picked.append(entries[depth])
+                    progressed = True
+            if not progressed:
+                break
+            depth += 1
+        kept.extend(picked)
+
+        picked_ids = {id(entry) for entry in picked}
+        dropped = [entry for entry in sorted_group if id(entry) not in picked_ids]
+        languages: dict[str, int] = {}
+        for entry in dropped:
+            raw_language = entry.get("language")
+            language = raw_language if isinstance(raw_language, str) and raw_language else "none"
+            languages[language] = languages.get(language, 0) + 1
+        lens_value = lens if isinstance(lens, str) else str(lens) if lens is not None else ""
+        for language in sorted(languages):
+            entry = _degraded(lens_value, language, f"{lens}.{classifier_name}", "review-checks", "item-cap")
+            entry["count"] = languages[language]
+            entry["detail"] = (
+                f"listed {SCRIPTED_ITEM_CAP} of {len(group)} {classifier_name} "
+                "items as where-to-look items"
+            )
+            degraded.append(entry)
+
+    degraded.sort(
+        key=lambda entry: (
+            str(entry.get("lens")),
+            str(entry.get("input", "")),
+            str(entry.get("language")),
+        )
+    )
+    return kept, degraded
+
+
+def _mutant_operator(statement: str) -> str:
+    for pattern in _MUTATOR_STATEMENTS:
+        match = pattern.fullmatch(statement)
+        if match:
+            return match.group(1)
+    # cargo-mutants supplies a replacement description, not a mutator name. Unknown statement
+    # forms keep their identity too; parentheses in a replacement must never become an operator.
+    return "statement-" + hashlib.sha256(statement.encode("utf-8")).hexdigest()[:16]
+
+
+def _words(text: str) -> set[str]:
+    return {word for word in _WORD.findall(text.lower()) if len(word) >= 3 and word != "test"}
+
+
+def _head_text(runner: Process, repo: Path, head: str, path: str, cache: dict[str, str | None]
+               ) -> str | None:
+    """The file's text at ``head``, or ``None`` when it is absent or is not UTF-8 text.
+
+    The runner decodes output as UTF-8 and raises on any other encoding. A Python lead in such a
+    file keeps its location and loses the function name its text would have given; a Rust or
+    Swift test that cannot be read is recorded as unlocated.
+    """
+    if path not in cache:
+        try:
+            shown = _git(runner, repo, ["show", f"{head}:{path}"])
+        except UnicodeDecodeError:
+            cache[path] = None
+        else:
+            cache[path] = shown.stdout if shown.code == 0 else None
+    return cache[path]
+
+
+def _python_def(text: str | None, name: str) -> tuple[int, int] | None:
+    """Locate a pytest-qualified function or class method, or return ``None``."""
+    import ast  # noqa: PLC0415
+
+    if text is None:
+        return None
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+    body = tree.body
+    parts = name.split("::")
+    for qualifier in parts[:-1]:
+        classes = [node for node in body if isinstance(node, ast.ClassDef)
+                   and node.name == qualifier]
+        if len(classes) != 1:
+            return None
+        body = classes[0].body
+    matches = [node for node in body
+               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and node.name == parts[-1]]
+    if len(matches) != 1:
+        return None
+    node = matches[0]
+    return node.lineno, node.end_lineno or node.lineno
+
+
+def _python_function_at(text: str | None, line: int) -> str | None:
+    import ast  # noqa: PLC0415
+
+    if text is None:
+        return None
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+    best: tuple[int, str] | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            end = getattr(node, "end_lineno", None) or node.lineno
+            if node.lineno <= line <= end and (best is None or end - node.lineno < best[0]):
+                best = (end - node.lineno, node.name)
+    return None if best is None else best[1]
+
+
+def _lead_item(lens: str, language: str, location: dict[str, Any], name: str, model: str
+               ) -> dict[str, Any]:
+    return {
+        "kind": "where_to_look",
+        "schema": review_records.SCHEMA,
+        "lens": lens,
+        "language": language,
+        "degraded": False,
+        "questions": [{"id": LEAD_QUESTION, "probability": 1}],
+        "classifier": {"name": name, "model": model},
+        "location": location,
+    }
+
+
+def _model(finding: Mapping[str, Any]) -> str:
+    source = finding.get("source") if isinstance(finding.get("source"), Mapping) else {}
+    return f"{source.get('name') or 'tool'} {source.get('version') or 'not-recorded'}"
+
+
+def _native_code(text: str, language: str) -> str:
+    """Mask comments and literals, preserving offsets and line numbers for source lookup."""
+    masked = list(text)
+    literal = re.compile(
+        r"r(#*)\"|'(?:\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|.)|[^'\\\n])'|\""
+        if language == "rust" else r'(#*)("""|")'
+    )
+    index = 0
+    while index < len(text):
+        start = index
+        if text.startswith("//", index):
+            end = text.find("\n", index)
+            index = len(text) if end < 0 else end
+        elif text.startswith("/*", index):
+            depth = 1
+            index += 2
+            while index < len(text) and depth:
+                if text.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif text.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+        elif match := literal.match(text, index):
+            opening = match.group()
+            index = match.end()
+            if opening.startswith("'"):
+                pass  # A complete Rust character literal; lifetimes are left intact.
+            else:
+                hashes = match.group(1) or ""
+                closing = ('"' + hashes if language == "rust"
+                           else match.group(2) + hashes)
+                raw = bool(hashes) or opening.startswith("r")
+                escape = "\\" + hashes if language == "swift" else (None if raw else "\\")
+                while index < len(text):
+                    if text.startswith(closing, index):
+                        index += len(closing)
+                        break
+                    index += (len(escape) + 1 if escape and text.startswith(escape, index)
+                              else 1)
+        else:
+            index += 1
+            continue
+        masked[start:index] = ["\n" if char == "\n" else " " for char in text[start:index]]
+    return "".join(masked)
+
+
+def _native_definitions(text: str, language: str) -> list[tuple[tuple[str, ...], int]]:
+    """Read function identities and their line numbers within lexical module/type scopes."""
+    code = _native_code(text, language)
+    keyword = "fn" if language == "rust" else "func"
+    scopes = "mod" if language == "rust" else "class|struct|enum|extension"
+    tokens = re.compile(
+        r"\b(?:" + scopes + r")\s+(?P<scope>(?!func\b|var\b|let\b)\w+)"
+        r"|\b" + keyword + r"\s+(?P<function>\w+)\s*[(<]|(?P<brace>[{};])"
+    )
+    stack: list[str | None] = []
+    pending = None
+    found = []
+    for match in tokens.finditer(code):
+        if match.group("scope"):
+            pending = match.group("scope")
+        elif match.group("function"):
+            qualified = tuple(scope for scope in stack if scope is not None)
+            found.append(((*qualified, match.group("function")),
+                          code.count("\n", 0, match.start()) + 1))
+        elif match.group("brace") == "{":
+            stack.append(pending)
+            pending = None
+        elif match.group("brace") == "}":
+            if stack:
+                stack.pop()
+            pending = None
+        else:
+            pending = None
+    return found
+
+
+def _native_test_location(
+    node: str, language: str, change: review_diff.Change, runner: Process,
+    repo: Path, head: str, cache: dict[str, str | None],
+) -> tuple[str, str, tuple[int, int]] | None:
+    """Locate a unique qualified Rust/Swift test definition in changed head files."""
+    suffix = {"rust": ".rs", "swift": ".swift"}.get(language)
+    if suffix is None:
+        return None
+    if language == "rust":
+        wanted = tuple(node.removesuffix("()").split("::"))
+    else:
+        suite, separator, name = node.rpartition("/")
+        wanted = (*suite.split(".")[-1:], name.removesuffix("()")) if separator else (node.removesuffix("()"),)
+    found = []
+    for item in sorted(change.files, key=lambda item: item.path):
+        if item.status not in {"added", "modified", "renamed"} or not item.path.endswith(suffix):
+            continue
+        text = _head_text(runner, repo, head, item.path, cache)
+        modules: tuple[str, ...] = ()
+        parts = Path(item.path).with_suffix("").parts
+        if language == "rust" and "src" in parts:
+            modules = parts[parts.index("src") + 1:]
+            if modules and modules[-1] in {"lib", "main", "mod"}:
+                modules = modules[:-1]
+        for qualified, line in _native_definitions(text or "", language):
+            identity = (*modules, *qualified)
+            if identity[-len(wanted):] == wanted:
+                found.append((item.path, qualified[-1], (line, line)))
+    return found[0] if len(found) == 1 else None
+
+
+def _lead_items(
+    findings: Sequence[Any],
+    change: review_diff.Change,
+    runner: Process,
+    repo: Path,
+    head: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Where-to-look items for the testing leads, and a degraded entry for each capped kind.
+
+    Two-runs lists new tests that pass before the change; mutation testing lists mutants on
+    changed lines no test killed. Each becomes an item at the test or the mutated line, so the
+    reviewer must say whether it shows that nothing checks what the change adds or fixes. At most
+    ``LEAD_CAP`` of each: tests whose names share the most words with the changed files and the
+    functions the change edits come first, then by test id; mutants by file, line and operator.
+    """
+    cache: dict[str, str | None] = {}
+    changed_words: set[str] = set()
+    for item in change.files:
+        if item.status not in {"added", "modified", "renamed"}:
+            continue
+        if not review_tools.is_python_test_file(item.path):
+            changed_words |= _words(Path(item.path).stem)
+        if item.path.endswith(".py") and not review_tools.is_python_test_file(item.path):
+            text = _head_text(runner, repo, head, item.path, cache)
+            for line in sorted(item.lines):
+                function = _python_function_at(text, line)
+                if function:
+                    changed_words |= _words(function)
+    degraded: list[dict[str, Any]] = []
+    unlocated: dict[tuple[str, str, str], list[str]] = {}
+
+    def record_unlocated(finding: Mapping[str, Any], row: str, language: str, tool: str) -> None:
+        unlocated.setdefault((row, language, tool), []).append(str(finding.get("id") or ""))
+
+    tests: list[tuple[int, str, dict[str, Any]]] = []
+    mutants: list[tuple[str, int, str, dict[str, Any]]] = []
+    for finding in findings:
+        if not isinstance(finding, Mapping) or not isinstance(finding.get("rule"), Mapping):
+            continue
+        row = finding["rule"].get("row")
+        location = finding.get("location") if isinstance(finding.get("location"), Mapping) else {}
+        path = str(location.get("file") or "")
+        if row not in {ROW_TWO_RUNS, ROW_MUTANT}:
+            continue
+        language = str(finding.get("language") or "none")
+        if row == ROW_TWO_RUNS:
+            node = str(finding["rule"].get("ref") or location.get("anchor") or "")
+            name = node.split("::")[-1].split("[", 1)[0]
+            native = (_native_test_location(node, language, change, runner, repo, head, cache)
+                      if language in {"rust", "swift"} else None)
+            qualified = node.split("::", 1)[-1].split("[", 1)[0]
+            span = (_python_def(_head_text(runner, repo, head, path, cache), qualified)
+                    if path.endswith(".py") and name else None)
+            if native is not None:
+                path, name, span = native
+            elif language in {"rust", "swift"}:
+                record_unlocated(finding, str(row), language, "two-runs")
+                continue
+            if not path or path == ".":
+                record_unlocated(finding, str(row), language, "two-runs")
+                continue
+            where: dict[str, Any] = (
+                {"scope": "lines", "file": path, "lines": {"start": span[0], "end": span[1]},
+                 "function": name, "anchor": f"two-runs:{node}"}
+                if span else {"scope": "whole-project", "file": path, "anchor": f"two-runs:{node}"}
+            )
+            score = len(_words(name) & changed_words)
+            tests.append((-score, node, _lead_item("testing", language, where, "two-runs",
+                                                   _model(finding))))
+        elif row == ROW_MUTANT:
+            lines = location.get("lines") if isinstance(location.get("lines"), Mapping) else {}
+            line = lines.get("start")
+            if not path or path == "." or not isinstance(line, int) or line < 1:
+                record_unlocated(finding, str(row), language, "surviving-mutant")
+                continue
+            operator = _mutant_operator(str(finding.get("statement") or ""))
+            text = _head_text(runner, repo, head, path, cache) if path.endswith(".py") else None
+            where = {"scope": "lines", "file": path, "lines": {"start": line, "end": line},
+                     "function": _python_function_at(text, line),
+                     "anchor": f"surviving-mutant:{operator}:{line}"}
+            mutants.append((path, line, operator, _lead_item(
+                "testing", language, where, "surviving-mutant", _model(finding))))
+    for (row, language, tool), ids in sorted(unlocated.items()):
+        entry = _degraded("testing", language, row, tool, "unlocated-lead")
+        entry.update(count=len(ids), finding_ids=sorted(ids))
+        degraded.append(entry)
+    items: list[dict[str, Any]] = []
+    for kind, row, ranked in (
+        ("two-runs", ROW_TWO_RUNS, [entry[-1] for entry in sorted(tests, key=lambda e: e[:2])]),
+        ("surviving-mutant", ROW_MUTANT,
+         [entry[-1] for entry in sorted(mutants, key=lambda e: e[:3])]),
+    ):
+        unique: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in ranked:
+            key = json.dumps(item["location"], sort_keys=True)
+            if key not in seen:
+                seen.add(key)
+                unique.append(item)
+        items.extend(unique[:LEAD_CAP])
+        overflow = unique[LEAD_CAP:]
+        for language in sorted({item["language"] for item in overflow}):
+            entry = _degraded("testing", language, row, kind, "lead-cap")
+            entry["count"] = sum(item["language"] == language for item in overflow)
+            entry["detail"] = f"listed {LEAD_CAP} of {len(unique)} leads as where-to-look items"
+            degraded.append(entry)
+    return items, degraded
 
 #: The rule pack whose local cache the security scanner reads, and the reasons it gives up with.
 _RULE_PACK = "p/security-audit"

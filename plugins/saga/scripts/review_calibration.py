@@ -60,6 +60,7 @@ COMPONENTS: tuple[str, ...] = (
     "plugins/saga/scripts/review_command.py",
     "plugins/saga/scripts/review_dependencies.py",
     "plugins/saga/scripts/review_dependencies_node.py",
+    "plugins/saga/scripts/review_node_projects.py",
     "plugins/saga/scripts/review_dependencies_dart.py",
     "plugins/saga/scripts/question_banks.py",
     "plugins/saga/references/question-banks/policy-questions.json",

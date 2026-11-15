@@ -512,8 +512,10 @@ def test_filing_runs_prepare_then_create_and_records_the_number(
 
 
 def test_filing_real_prepare_offline_passes_readiness(
-    staged: dict[str, Path], tmp_path: Path,
+    staged: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("INFIQUETRA_SDLC_PATH", str(tmp_path / "no-external-sdlc"))
+    monkeypatch.setenv("INFIQUETRA_SDLC_SCHEMA_OFFLINE", "1")
     findings = [f for f in _newest_findings(staged["record"]) if f["id"] == _guard_id(staged)]
     title, body = review_state.defect_body(
         findings, repo="infiquetra-agent-plugins", card=164, revision="0" * 40)
@@ -524,7 +526,7 @@ def test_filing_real_prepare_offline_passes_readiness(
     prepared = review_state._completed(
         [sys.executable, str(mc), "--format", "json", "issue", "prepare",
          "--repo", "infiquetra-agent-plugins", "--type", "defect", "--team", "asgard",
-         "--project", "operations", "--title", title, "--status", "Discovering",
+         "--project", "agent-platform", "--title", title, "--status", "Discovering",
          "--risk", "high", "--source-file", "body.md"],
         cwd=workdir,
     )

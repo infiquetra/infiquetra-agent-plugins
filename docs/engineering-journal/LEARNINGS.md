@@ -28,6 +28,477 @@ simply invisible, so the agent concludes the new mechanism does not work.
 **Generalizable rule.** When the tool under a skill is replaced, change the skill's
 recipe in the same change as the tool, and say which paths still use the old one.
 
+## 2026-11-15
+
+### A helper that reads repository files as text must survive files that are not text
+
+**Evidence.** `plugins/saga/scripts/review_command.py`, `_head_text` read a changed file at the
+head commit through the shared process runner, which decodes output as strict UTF-8. Called
+from `_lead_items` for every changed Python file, it raised `UnicodeDecodeError` on a source
+file in another encoding and `saga review prepare` exited 1 with no packet.
+
+**Mechanism.** The text was only used to name the function a testing lead sits in, an
+optional detail, yet reading it sat on the path every prepare takes. One legacy-encoded file
+in a change therefore stopped the whole review, although every other check handled the file.
+
+**Generalizable rule.** When a file's text only enriches a result, treat unreadable text as
+absent and carry on; never let an optional read decide whether the review runs.
+
+### Count and cap after duplicates are gone, and remove them where they are made
+
+**Evidence.** `plugins/saga/scripts/review_checks.py`, `machine_values` made one
+where-to-look item per machine-specific-value match on a line, so a line holding the same
+kind of value many times produced exact duplicates; and
+`plugins/saga/scripts/review_command.py`, `_cap_scripted_items` counted and cut that raw
+list before `_merge_where_items` dropped the repeats.
+
+**Mechanism.** The cap ran before the step that removes duplicates, so it counted repeated
+items and could keep repeats that the merge later dropped, leaving available distinct
+items out of the review packet.
+
+**Generalizable rule.** Count and cap after removing duplicates, and remove duplicates
+where they are made.
+
+## 2026-11-14
+
+### An unbounded producer of mandatory reviewer items makes finish reject every review
+
+**Evidence.** `plugins/saga/scripts/review_command.py`, `_cap_scripted_items` caps each scripted
+check's where-to-look items at `SCRIPTED_ITEM_CAP` (60) in `prepare`, spreading the kept items
+round-robin over their files and recording the overflow as `item-cap` degraded entries with the
+omitted count and a `detail`. Tests in `plugins/saga/tests/test_review_scripted_item_cap.py`
+cover the boundary, the spread, the per-language counts and an end-to-end prepare.
+
+**Mechanism.** The reviewer must answer every where-to-look item, and `reviewer_answer.py`
+`_check_items` rejects the whole review when any item has no answer. An unbounded producer
+(such as the machine-specific-value check) can emit thousands of items on a large change, so
+every finish fails and the review can never complete. Other producers already had caps (the
+sweep's 60 and the testing leads' 8); the scripted items had none.
+
+**Generalizable rule.** Every producer of mandatory reviewer work needs a cap and a recorded overflow.
+
+## 2026-11-13
+
+### Store test results independently of reporter presentation
+
+**Evidence.** Synthetic Vitest and Jest runs vary summary counts and timings in console text,
+optional passing-test lines, warning placement and approximate-duration hints. The same JSON
+results now produce the same stored evidence digest and findings; a different failing set
+changes the digest. Complete subfolder prepares compare every packet byte. Missing, invalid
+or incomplete reports retain console findings and evidence with an explicit gap.
+Recognized relocated Node commands use the same result projection and visible fallback;
+unknown command execution remains unchanged.
+
+**Mechanism.** Reporter verbosity and output interleaving are presentation choices rather than
+test outcomes. Canonical evidence selects runner/version, seed, counts and sorted failure
+identities/messages from private JSON files. File counts come from per-file results: Vitest's
+suite summary also counts nested describe blocks. Failure-message content remains diagnostic;
+only terminal escapes and project/dependency or Saga scratch path prefixes are normalized.
+
+**Generalizable rule.** Hash a structured result projection rather than a scrubbed transcript.
+Preserve failure diagnostics and make a fallback visible instead of silently claiming stable
+structured evidence when a report is unavailable.
+
+### A fixed shuffle seed does not fix worker scheduling
+
+**Evidence.** Node runner argument tests now require Vitest's `--no-file-parallelism` or
+Jest's `--runInBand` in random-order runs and every two-runs invocation. Synthetic complete
+subfolder prepares retain shuffle failures and compare every packet byte while transcript
+timings and arrival order vary. An older Vitest startup rejection records a scoped gap and
+allows other checks to continue.
+
+**Mechanism.** A shuffle seed controls test order but does not serialize separate file workers.
+Feature rejection must be read from the installed runner, since its version can differ from
+the review profile's pin. Falling back to parallel execution would discard the intended control.
+
+**Generalizable rule.** Control scheduling as well as the random seed when collecting evidence.
+Keep residual timer races visible; a confirming pass must not erase an observed failure.
+
+### Own the structured report destination as well as its format
+
+**Evidence.** Synthetic subfolder fixtures configure Vitest's JSON output as both a string
+and a reporter-keyed object, and Jest's output file with a custom reporter. The two-runs
+check now selects its reporter and a private temporary report file, reads only that file,
+and removes it after success or failure. Complete repeated prepares compare every packet byte.
+
+**Mechanism.** Selecting JSON did not prevent project configuration from redirecting it away
+from stdout. Vitest's reporter-keyed option alone leaves a configured string in force. Adding
+the scalar option after it covers that form without triggering a command-parser error.
+
+**Generalizable rule.** Treat report format, destination and configuration precedence as one
+integration contract. Exercise supported configuration forms through the actual runner.
+
+### Console failure messages are not an identity boundary
+
+**Evidence.** Real pytest fixtures with ` - ` and `] - ` in parameter identifiers and `] - `
+in failure messages reproduced corrupted deselection flags. The mutation wrapper now requests
+a temporary JUnit XML report for baseline runs and reconstructs identities from its separate
+file, class and test-name attributes. Class methods and collection failures are covered too.
+The report directory is cleaned up and its flags never reach the saved mutation command.
+
+**Mechanism.** Looking for the last apparent separator could consume part of a failure message.
+
+**Generalizable rule.** Read identities from structured runner output, independently of diagnostic
+text. If an identity cannot be reconstructed safely, keep the failed-baseline result.
+
+### Native test lookup needs lexical context and qualified identity
+
+**Evidence.** Small Rust and Swift fixtures reproduced false matches in comments and literals,
+missed multiline signatures, and collisions between modules or classes sharing a test name.
+A further Swift fixture caught an escaped raw-string delimiter exposing a false definition;
+escape handling now follows the string delimiter as well.
+Lookup now masks comments and literals while retaining line offsets, then follows lexical
+module/type scopes and Rust file modules. Ambiguous definitions remain unlocated.
+
+**Mechanism.** Line matching discarded both lexical context and the runner's qualified identity.
+
+**Generalizable rule.** Locate executable definitions using code context and qualified names;
+require a unique match before creating a source item.
+
+### A degraded lead must retain its finding identity through recomputation
+
+**Evidence.** Mixed located and unlocated testing results reproduced row-wide escalation across
+languages. Prepare-to-finish regressions now verify that clearing located items leaves those
+findings advisory while only the unlocated findings retain blocking severity. Builder excusal
+and per-language enforcement still apply. Each row and language records one counted degraded
+entry containing the sorted finding identifiers, accepted by the existing record validators.
+
+**Mechanism.** Reconstructing severity from a row identifier discarded the finer scope of the
+original failure to locate a result. Finish recomputed that same overbroad consequence.
+
+**Generalizable rule.** Persist the identities affected by degradation at the handoff boundary;
+recomputation must apply the consequence to that same scope.
+
+## 2026-11-12
+
+### Recomputed severity must reach every published outcome view
+
+**Evidence.** Prepare regressions for both omitted testing rows showed blocking severity in
+`grades.json` but stale advisory severity in `outcomes.json`, which the tool runner wrote before
+lead conversion. Prepare now refreshes both from its final formula result; the tests also compare
+all packet bytes across repeated prepares.
+
+**Mechanism.** A later handoff stage added degradation and recomputed grades, leaving an earlier
+published view of the same findings unchanged.
+
+**Generalizable rule.** When a later stage changes a finding's consequence, refresh every
+published outcome view from the same result before publishing the packet.
+
+### A mutation worker needs an integration test through its real launcher
+
+**Evidence.** The live regression test
+`test_live_cosmic_packet_environment_reaches_mutants_and_child_interpreters` runs the production
+uv invocation without a global cosmic-ray installation. Its test imports a packet-only package,
+checks the packet shim environment, starts both bare Python interpreter names, runs two mutation
+sessions and compares their results and packet dependency bytes. The test passes with two
+survivors per run. Separate Rust, Swift, TypeScript and Dart lead tests cover the handoff boundary.
+The fail-fast regression also covers an absolute pytest launcher path; checking only the bare word
+`pytest` missed that supported command form.
+
+**Mechanism.** Stubbing uv verifies arguments but cannot expose uv's environment replacement or
+prove that a mutation worker and its children can import packet dependencies.
+
+**Generalizable rule.** Test dependency isolation through the actual tool launcher and worker
+boundary, and verify both repeated results and unchanged inputs.
+
+### Dependency hygiene applies to fallback commands too
+
+**Evidence.** Direct fallback-command tests reproduced missing bytecode suppression both with
+and without a packet shim. The fallback now embeds the same shim environment, or explicit
+bytecode suppression when there is no shim. A documentation assertion also caught the stale
+50-file description of the implemented 10-file mutation-test selection bound.
+
+**Mechanism.** An early return bypassed environment construction for unrecognized test commands.
+
+**Generalizable rule.** Check fallback paths against the same input-hygiene contract as the
+recognized path; bind documented numerical bounds to their executable owner when practical.
+
+### Test collection failures and qualified identities must survive normalization
+
+**Evidence.** A copied `conftest.py` importing a head-only helper reproduced a base-run exit code
+of four and a generic missing-list reason. A two-class fixture reproduced the wrong method span.
+Two-runs now preserves `conftest-import-failed` across listing and batch-run boundaries, and lead
+conversion follows Python class qualifiers instead of taking the first bare method name.
+
+**Mechanism.** Test collection can fail before any test executes. A pytest node identifies both
+its containing class and method; stripping that scope loses identity before source lookup.
+
+**Generalizable rule.** Preserve meaningful runner failure reasons and qualified test identities
+through every helper boundary; do not turn a collection failure into evidence that tests ran.
+
+### Mutation baselines need exhaustive failures and an explicit worker environment
+
+**Evidence.** Regression suites with two failing tests under `-x` or `--exitfirst`, a failing
+parameter id containing ` - `, an already spent budget and a packet shim reproduced the review
+findings. The wrapper now removes fail-fast for baseline discovery, preserves the parameter id,
+stops with `cap` when the shared budget expires and embeds the shim environment in each test
+command. These tests run the wrapper and real pytest without requiring a global cosmic-ray.
+
+**Mechanism.** A baseline that exits early names only some failures; truncating a parameter id
+can exclude its passing siblings. The tool installer's environment reaches every subprocess
+unless the test command restores the packet's executable search path and virtual environment.
+
+**Generalizable rule.** Make baseline selection exhaustive before narrowing, preserve full test
+identities, and apply dependency isolation at the worker boundary as well as the parent process.
+
+### Mutation statement formats carry different identities
+
+**Evidence.** Cross-language lead tests reproduced collapsed TypeScript, Dart and Swift survivors
+and a Rust replacement's numeric argument being read as an operator. Lead anchors now recognize
+the named mutators in each supported statement form and hash replacement descriptions otherwise.
+
+**Mechanism.** A trailing-parentheses pattern describes cosmic-ray's output, but cargo-mutants
+uses parentheses inside arbitrary replacement expressions. Sorting cannot recover lost identity.
+
+**Generalizable rule.** Normalize each producer's identity explicitly before deduplicating results;
+use a stable digest of the full statement when the producer supplies no mutator name.
+
+### An advisory testing result requires a reviewer item or a blocking fallback
+
+**Evidence.** Rust and Swift two-runs results carried a project location that lead conversion
+skipped. Regression tests in `test_review_command.py` reproduce both missing items and omitted
+results at the item cap. Prepare now searches changed native source files for a unique test
+function; an unlocated result records degradation and restores blocking severity for its
+testing row at prepare and finish. Results past the item cap stay advisory with a recorded count,
+because they repeat a signal the reviewer is already answering.
+
+**Mechanism.** A global severity downgrade applies even when a language cannot supply a location
+or an item budget drops the result. A cap on reviewer work must leave a visible count of what
+it dropped.
+
+**Generalizable rule.** Before downgrading a deterministic result to reviewer advice, guarantee
+its delivery or keep a conservative, visible fallback. Ambiguous definitions are gaps, not guesses.
+
+### A testing lead needs both its real file and its mutation operator
+
+**Evidence.** Lead items skip findings whose file is `.` and deduplicate mutants by file, line
+and operator. The shared test-path helper previously returned `.` for every runner except
+pytest. The operator reader recognised only cosmic-ray's parenthesised operator, so distinct
+Stryker mutations on one line collapsed to `unknown-operator`. Node case identities now retain
+`file::fullName`, and the shared lead builder reads Stryker's own mutator statement. The packet
+regression retains two distinct same-line mutation items for both Vitest and Jest projects.
+
+**Generalizable rule.** Test the identity fields consumed by the final lead builder, including
+same-location evidence that must remain distinct.
+
+
+### Mutation exclusions must leave the tests in Stryker's sandbox
+
+**Evidence.** New live subfolder Vitest and Jest fixtures initially reported no tests despite
+installed packages and staged configuration. The adapter passed `**/*.test.*` and `**/*.spec.*`
+to Stryker's `ignorePatterns`, which excludes files from the sandbox itself. Removing those
+patterns lets both real runners produce a surviving mutant. Test files are excluded from
+`mutate` instead; changed-line targets already exclude them.
+
+**Mechanism.** A tool's input-copy filter and its mutation-target filter have different meanings.
+Mocked report tests could not catch the distinction because they supplied a report without
+running the tests that would have produced it.
+
+**Generalizable rule.** Validate a mutation adapter with an actual named test file and its test
+runner, using the installed dependency layout that prepare creates.
+
+### Installing packages does not connect them to prepare's tools
+
+**Evidence.** Node packages were linked for reviewer re-runs, but `review_tools.run` received only
+the packet's Python environment. The project manifest lookup also stayed at the repository root,
+and prepare stripped runner configuration at every depth without restoring subfolder settings.
+The new complete-packet fixtures exercise dependency installation, inferred test commands, the
+two-runs subprocess and project-scoped mutation reports together, twice, and compare every byte.
+
+**Generalizable rule.** Test the complete producer-to-consumer path, including the working folder
+and configuration, before treating a packaged environment as usable by a check.
+
+
+## 2026-11-11
+
+### A reviewer judges what it must answer, not what a prompt section mentions
+
+**Evidence.** With the two-runs leads only in the packet's findings and a prompt section describing
+how to escalate them, a measured reviewer left every lead as fix later, the planted one included,
+and never cited `testing.accepts-broken-code`. Items in `where-to-look.json` must each be answered,
+so `prepare` now turns the testing leads into scripted items (`review_command._lead_items`); test
+`test_testing_leads_become_where_to_look_items_at_the_test_and_the_mutated_line`.
+
+**Mechanism.** The answer contract checks every where-to-look item and nothing else; guidance about
+other packet contents competes with the item list for the reviewer's attention and loses.
+
+**Generalizable rule.** When a reviewer must judge something, make it an item the answer contract
+requires, not a paragraph of advice.
+
+### A stable order is not a representative sample
+
+**Evidence.** The first mutant budget took the first ten changed-line mutants sorted by file, line
+and operator; on a change with thousands of them, all ten sat at the top of the alphabetically
+first file. The selection now takes one mutant per line, control-flow lines first, in an order fixed
+by a hash of file and line, round-robin across files (`review_adapters_python._COSMIC_SELECT`);
+tests `test_the_mutant_budget_spreads_over_files_and_lines_and_prefers_control_flow` and
+`test_the_mutant_budget_is_repeatable_whatever_order_the_session_lists_them`.
+
+**Mechanism.** Several mutation operators apply to each line, so a sorted list spends a small budget
+on a handful of neighbouring lines.
+
+**Generalizable rule.** When a budget must be repeatable, make it spread by construction (one per
+unit, hashed order, round-robin), not merely sorted.
+
+### A prepare-side result must not depend on the clock, nor write into the packet
+
+**Evidence.** In a measured run, most versions' two prepares gave different packets. The mutation
+results came from whichever mutants had finished before a time limit (`partial-cap`), and running
+the tests over the packet's dependency environment wrote `__pycache__/*.pyc` files into the
+packet's `site-packages`. The fix runs a fixed number of changed-line mutants in a stable order
+(`review_adapters_python._COSMIC_BUDGET`), keeps the time limit as a safety stop that reports
+nothing, and turns bytecode writes off in the environment (`review_dependencies.python_shim_env`);
+tests `test_cosmic_ray_budget_runs_the_same_mutants_every_time` and
+`test_a_run_over_the_python_environment_leaves_the_packet_s_packages_untouched`.
+
+**Mechanism.** Anything that varies with machine load (how far a time-limited run got) or that a
+run leaves behind in an input folder (bytecode caches) makes two prepares of one change differ.
+
+**Generalizable rule.** Bound review work by count in a stable order, keep time limits as stops that
+report nothing partial, and never let a run write into the inputs it reads.
+
+### Surviving mutants on changed lines appear on clean changes as often as on broken ones
+
+**Evidence.** Once mutation testing ran on every Python packet, clean versions of changes had
+about as many survivors on their changed lines as the versions with planted defects, and an
+earlier wider run showed changes blocked by surviving mutants alone about as often on clean
+versions as on defect versions. `testing.surviving-mutant` now fixes later, and the reviewer
+prompt's "Surviving mutants on the change's lines" section has the reviewer escalate a survivor on
+the line the change exists for.
+
+**Mechanism.** Most changed lines carry mutants no reasonable test pins (log text, defaults,
+formatting); only a survivor on the change's purpose line says its tests miss the point.
+
+**Generalizable rule.** Treat a surviving mutant as a lead the reviewer weighs against the change's
+purpose, not as a verdict.
+
+### A new test that passes before the change is a lead, not a defect
+
+**Evidence.** Once the two-runs check ran in a measured prepare, it flagged several new tests on a
+version with a planted defect, one of them the planted defect, and flagged the same other tests on
+the clean version of the change. Those other tests pinned behaviour the change keeps (an existing
+path that still matches, a fallback that still applies), so the row's base outcome of blocks would
+have held a clean change. The row now fixes later (`review_formula.ROWS`), and the reviewer prompt's
+"New tests that already pass before the change" section has the reviewer escalate the one meant to
+check the change.
+
+**Mechanism.** "Passes on the old code" is true both of a test that cannot detect the change and of
+a test that guards what the change leaves alone; only the change's purpose separates them, which is
+a judgment, not a mechanical fact.
+
+**Generalizable rule.** A mechanical signal whose meaning depends on intent should feed the reviewer
+as a lead, with instructions for the escalation, rather than block on its own.
+
+### A mutation run killed at its cap reports nothing it already learned
+
+**Evidence.** On a large change the mutation run reached the shared cap and was killed, so its
+result was only `cap`, with no survivors from the mutants that had finished. The wrapper now
+interrupts `cosmic-ray exec` before the cap and dumps what finished (`review_adapters_python`,
+`_COSMIC_STOP_MARGIN`); test `test_cosmic_ray_stops_before_the_cap_and_reports_what_finished`.
+
+**Mechanism.** The runner's timeout kills the whole process group, including the step that would
+have read the session database.
+
+**Generalizable rule.** A long tool with partial results should own a deadline inside the runner's,
+and report what it finished, degraded, rather than be killed.
+
+### A committed profile's test command assumes a shell the checks do not use
+
+**Evidence.** With dependencies installed, the two-runs listing still exited 4 with "file or
+directory not found: plugins/*/tests", and the mutation baseline failed the same way. The runner
+takes the test command from the base commit's `.saga-profile.json` before any external profile
+(`review_tools._profile_for_run`), and this repository's command is
+`python3 -m pytest plugins/*/tests ...`; the checks run it as an argument list, so pytest receives
+the glob literally. The fix names the change's test files explicitly
+(`review_checks._two_pytest_runs`, `review_adapters_python._cosmic_tests`); tests
+`test_a_profile_glob_the_shell_never_expanded_does_not_stop_the_check` and
+`test_cosmic_ray_names_the_change_s_test_files_instead_of_the_default_collection`.
+
+**Mechanism.** Profile commands are written for a person's shell, which expands globs; a check
+that runs them without a shell must either expand them itself or not depend on them. Only the
+change's own test files can hold a new test, and the tests that exercise a mutated module are the
+ones that mention it, so naming those files is both independent of the project's collection
+settings and much faster than the whole suite.
+
+Once named, two further failures showed: copied test files that import a module only the change
+adds abort an old-version run given node ids, and tests that read a file the review checkout
+strips (a fixture named like a tool configuration) fail the unmutated baseline.
+
+**Generalizable rule.** When a check needs particular tests, name them; use a project's default
+collection only as a fallback, and say in the degraded reason that the fallback was used. A test
+that cannot pass before any mutation is left out of mutation testing, not allowed to stop it.
+
+### A uv lock holds hashes only for the Python versions its project allows
+
+**Evidence.** A locked project with `requires-python = ">=3.12,<3.14"` installed into the review
+packet as `partial`: its compiled packages were `install-failed` when prepare installed them for a
+Python 3.14 interpreter. A synthetic lock with the same bound records no `cp314` wheel for those
+packages, and `uv pip install --require-hashes` with the lock's hashes fails with "Hash mismatch"
+because uv picks the index's newer `cp314` wheel. The fix picks an interpreter the requirement
+covers (`plugins/saga/scripts/review_dependencies.py`, `choose_python`, `python_for`); tests
+`test_an_interpreter_the_lock_excludes_is_replaced_by_one_it_covers` and
+`test_the_environment_uses_the_interpreter_the_packet_was_installed_for`.
+
+**Mechanism.** `uv lock` prunes wheels for interpreters outside `requires-python`, so the exported
+requirements carry no hash for them. With the interpreter excluded, uv either finds no wheel
+(`no-wheel`) or downloads one that the lock does not list (a hash failure, recorded as
+`install-failed`).
+
+**Generalizable rule.** Install a lock only for an interpreter its `requires-python` admits, and
+find the same interpreter again, by version, wherever the installed packages are used.
+
+### A profile's test command often wraps pytest in a shell with a variable and "$@"
+
+**Evidence.** A profile used `bash -c 'PYTHONPATH=tests .venv/bin/python -m pytest -q ... "$@"'
+bash`; two-runs refused it and cosmic-ray's baseline failed because the review checkout has no
+`.venv`. Reading assignments, `.venv/bin/python` and `"$@"` (`review_tools.read_pytest_command`)
+and running the packet environment's interpreter with the assignment set lets both checks run;
+test `test_a_project_venv_command_with_a_pythonpath_runs_in_the_python_environment`.
+
+**Mechanism.** The wrapper exists so that callers can append arguments (`"$@"`) and set a search
+path; the named interpreter belongs to a virtual environment the reviewed checkout never has.
+
+**Generalizable rule.** When a check rewrites a command onto its own interpreter, carry the
+command's literal assignments and passed arguments with it, and keep the failing run's output
+somewhere private so the next failure is diagnosable.
+
+### A check that runs the change's tests must run them where its dependencies are installed
+
+**Evidence.** In a measured review run of a Python project, the two-runs check
+(`testing.test-passes-before-change`) degraded with `no-test-list` and the cosmic-ray check
+(`testing.surviving-mutant`) degraded with `cap` on every Python version, so planted test defects
+were never looked at. Prepare fetched the head's dependencies only after the tools had run
+(`plugins/saga/scripts/review_command.py`, `_prepare`), and only the reviewer's re-runs used them
+(`_offline_dependencies`). The fix fetches first and passes that environment on
+`ScanContext.python_env` (`plugins/saga/scripts/review_tools.py`); two-runs and cosmic-ray then run
+pytest as its `bin/python3 -m pytest` (`review_checks.py` `two_runs`, `review_adapters_python.py`
+`_cosmic_test_argv`). Tests: `test_tests_that_import_a_locked_dependency_need_the_python_environment`,
+`test_prepare_hands_the_tools_the_python_environment_the_re_runs_get`.
+
+**Mechanism.** A profile's test command such as `uv run --no-sync pytest -q` runs pytest from the
+project's own `.venv`, which in a fresh review worktree is empty, or from whichever `pytest` is on
+`PATH`, whose interpreter lacks the project's packages. Collection fails, the listing exits
+non-zero, and the check reads that as "no test list". Inside cosmic-ray, `uv run --with` puts its
+own environment first on `PATH`, so even a bare `python3` misses the packages; the baseline fails,
+and the wrapper reported every stop as `unfinished`, which the runner recorded as `cap` although
+the 900 second cap was never reached. A `bash -c '... python -m pytest ...'` command was not
+recognised at all, because "pytest" was not a separate word.
+
+**Generalizable rule.** A check that executes the code under review needs the same dependency
+environment as every other place that executes it, and a launcher it cannot see through (`uv run`,
+`bash -c`) has to be parsed and replaced by that environment's interpreter, not trusted; and a
+degraded reason must name what actually stopped the run, never a catch-all.
+
+## 2026-11-10
+
+### Ambient ~/workspace/infiquetra/infiquetra-sdlc checkouts mask vendored project-mapping changes in local tests
+
+**Evidence.** Running `pytest` in `plugins/mission-control/tests/` and `plugins/saga/tests/test_review_state.py` without setting `INFIQUETRA_SDLC_PATH` read the workstation's unmerged `~/workspace/infiquetra/infiquetra-sdlc/config/project-mappings.json`, hiding eleven test fixtures that still passed retired `--project operations` or `--project asgard` (`plugins/mission-control/scripts/sdlc_manager.py:142-148`, `plugins/saga/scripts/board_progression.py:794-815`).
+
+**Mechanism.** `get_sdlc_path()` defaults to `~/workspace/infiquetra/infiquetra-sdlc` when `INFIQUETRA_SDLC_PATH` is unset, and `_resolve_project_mappings()` checks that external override before the vendored `config/project-mappings.json`. On CI runners the external checkout is absent so vendored mappings govern; on an operator machine with an older `infiquetra-sdlc` checkout, unset `INFIQUETRA_SDLC_PATH` silently overrides vendored changes—and if a resolver appends `~/workspace/infiquetra/infiquetra-sdlc` after a nonexistent `INFIQUETRA_SDLC_PATH`, even explicit overrides leak back to the workstation checkout.
+
+**Generalizable rule.** Treat an explicit `INFIQUETRA_SDLC_PATH` as replacing `~/workspace/infiquetra/infiquetra-sdlc` rather than falling through to it, stop at the first readable `project-mappings.json`, and run vendored-config test suites with `INFIQUETRA_SDLC_PATH` pointed at a nonexistent path (as well as the target SDLC worktree) before declaring parity with CI.
+
 ## 2026-11-06
 
 ### Serious test defects need a narrower blocking path

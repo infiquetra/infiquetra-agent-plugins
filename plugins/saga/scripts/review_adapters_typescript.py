@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-import review_formula
+import review_node_projects
+import review_node_reports
 import review_tools
 from review_tools import Adapter, Hit, ParseResult, RulePin, ScanContext, ToolGap
 
@@ -559,6 +561,74 @@ def _stryker_targets(context: ScanContext) -> list[str] | None:
     return targets
 
 
+# Stryker 10's reporter event exposes mutable plan objects before execution. Convert plans
+# outside a fixed sample to honest Ignored results, without spending test time on them.
+# https://github.com/stryker-mutator/stryker-js/blob/master/packages/core/src/mutants/mutant-test-planner.ts
+_STRYKER_BUDGET_PLUGIN = r"""
+import { createHash } from 'node:crypto';
+import { relative } from 'node:path';
+export function select(plans, budget) {
+  const key = p => {
+    const m = p.mutant;
+    return JSON.stringify([relative(process.cwd(), m.fileName), m.location,
+                           m.mutatorName, m.replacement]);
+  };
+  const hash = text => createHash('sha256').update(text).digest('hex');
+  const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  const files = new Map();
+  for (const p of [...plans].filter(p => p.plan === 'Run').sort((a,b) => cmp(key(a),key(b)))) {
+    const file = relative(process.cwd(), p.mutant.fileName);
+    const line = p.mutant.location.start.line;
+    if (!files.has(file)) files.set(file, new Map());
+    const lines = files.get(file);
+    if (!lines.has(line)) lines.set(line, []);
+    lines.get(line).push(p);
+  }
+  const queues = [...files].sort(([a],[b]) => cmp(a,b)).map(([file, lines]) => {
+    const groups = [...lines].sort(([a],[b]) => cmp(hash(file+':'+a),hash(file+':'+b))).map(([,p]) => p);
+    const queue = [];
+    while (groups.some(g => g.length)) for (const g of groups) if (g.length) queue.push(g.shift());
+    return queue;
+  });
+  const keep = new Set();
+  while (keep.size < budget && queues.some(q => q.length))
+    for (const q of queues) if (q.length && keep.size < budget) keep.add(q.shift());
+  for (const p of plans) if (p.plan === 'Run' && !keep.has(p)) {
+    p.plan = 'EarlyResult';
+    p.mutant.status = 'Ignored';
+    p.mutant.statusReason = 'saga-mutant-budget';
+    delete p.runOptions;
+  }
+  return keep;
+}
+export const strykerPlugins = [{kind: 'Reporter', name: 'saga-budget', value: {
+  onMutationTestingPlanReady({mutantPlans}) { select(mutantPlans, __BUDGET__); }
+}}];
+"""
+
+
+def _stage_stryker_budget(context: ScanContext) -> Path:
+    target = review_tools.scan_folder(context, "stryker-budget") / "budget.mjs"
+    target.write_text(_STRYKER_BUDGET_PLUGIN.replace("__BUDGET__", str(context.mutation_budget)),
+                      encoding="utf-8")
+    return target
+
+
+def _stable_stryker(text: str) -> str:
+    """Only the data the survivor parser consumes, in stable file/operator order."""
+    try:
+        data = json.loads(text)
+        files = {}
+        for path, file in sorted(data.get("files", {}).items()):
+            mutants = [{key: mutant[key] for key in (
+                "mutatorName", "location", "status", "statusReason", "replacement") if key in mutant}
+                for mutant in file.get("mutants", [])]
+            files[path] = {"mutants": sorted(mutants, key=lambda m: json.dumps(m, sort_keys=True))}
+        return json.dumps({"files": files}, sort_keys=True, separators=(",", ":"))
+    except (ValueError, AttributeError, TypeError):
+        return text
+
+
 def _invoke_stryker(context: ScanContext) -> list[str]:
     if not _has_markers(context.root):
         return []
@@ -566,7 +636,16 @@ def _invoke_stryker(context: ScanContext) -> list[str]:
     if runner is None:
         raise ToolGap("not-configured", "testing.surviving-mutant")
     _stage_tsconfig(context)
-    argv = ["stryker", "run", "--testRunner", runner, "--reporters", "json"]
+    configs = _VITEST_CONFIGS if runner == "vitest" else _JEST_CONFIGS
+    test_config = _stage_first_base(context, configs)
+    _refuse_relative_imports(test_config, "testing.surviving-mutant")
+    if runner == "jest":
+        babel = _stage_first_base(context, _BABEL_CONFIGS)
+        _refuse_relative_imports(babel, "testing.surviving-mutant")
+        _stage_first_base(context, (".swcrc", ".swcrc.json"))
+    budget = _stage_stryker_budget(context)
+    argv = ["stryker", "run", "--testRunner", runner, "--reporters", "json,saga-budget",
+            "--appendPlugins", str(budget), "--concurrency", "1", "--force"]
     # The sandbox stays in its default place, ``.stryker-tmp`` in the worktree: StrykerJS links a
     # project's real ``node_modules`` folders into the sandbox, and from there it finds the
     # worktree's linked dependency folder; from any folder outside the worktree no parent has one,
@@ -581,15 +660,15 @@ def _invoke_stryker(context: ScanContext) -> list[str]:
         raise ToolGap("nothing-to-mutate", "testing.surviving-mutant")
     # StrykerJS 10 reads each of these flags as one comma-separated list, and a
     # repeated flag replaces the earlier one, so every value goes in one flag.
-    mutate = targets or (list(_STRYKER_MUTATE) if staged is None else [])
+    mutate = targets or ([*_STRYKER_MUTATE, *("!" + pattern for pattern in _STRYKER_IGNORE)]
+                         if staged is None else [])
     if mutate:
         argv.extend(["--mutate", ",".join(mutate)])
-    if staged is None:
-        argv.extend(["--ignorePatterns", ",".join(_STRYKER_IGNORE)])
     return argv
 
 
 def _parse_stryker(text: str) -> ParseResult:
+    text = _stable_stryker(text)
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -600,7 +679,7 @@ def _parse_stryker(text: str) -> ParseResult:
     if not isinstance(files, dict):
         raise ValueError("stryker report files must be an object")
     hits: list[Hit] = []
-    for path, entry in files.items():
+    for path, entry in sorted(files.items()):
         if not isinstance(entry, dict):
             continue
         seen: dict[str, int] = {}
@@ -631,12 +710,86 @@ def _parse_stryker(text: str) -> ParseResult:
                 end=end or start,
                 row="testing.surviving-mutant",
             ))
-    return ParseResult(tuple(hits))
+    skipped = sum(1 for file in files.values() if isinstance(file, dict)
+                  for mutant in file.get("mutants", [])
+                  if isinstance(mutant, dict) and mutant.get("statusReason") == "saga-mutant-budget")
+    abnormal = any(mutant.get("status") in {"Timeout", "RuntimeError"}
+                   for file in files.values() if isinstance(file, dict)
+                   for mutant in file.get("mutants", []) if isinstance(mutant, dict))
+    if abnormal:
+        return ParseResult((), gap=("mutant-abnormal", "testing.surviving-mutant"))
+    return ParseResult(tuple(hits), gaps=(("mutant-budget", "testing.surviving-mutant"),)
+                       if skipped else ())
 
 
 def _shuffle_seed(context: ScanContext) -> int:
     """Fixed by the change, so two runs of one change shuffle alike (issue 244)."""
     return review_tools.change_seed(context)
+
+
+def _shuffle_report(context: ScanContext, kind: str) -> Path:
+    if context.scratch is None:
+        raise ToolGap("missing-report-directory", "testing.flaky-order-or-network")
+    return context.scratch / (kind + "-shuffle.json")
+
+
+def _read_shuffle_result(context: ScanContext, result: review_tools.ProcessResult,
+                         kind: str) -> review_tools.ProcessResult:
+    record, reason = review_node_reports.read(_shuffle_report(context, kind), kind,
+        context.tool_version, _shuffle_seed(context), context.root)
+    if record is not None and result.code != 0 and record["tests"]["total"] and not record["failures"]:
+        record, reason = None, "incomplete-json-report"
+    if record is None:
+        console = "\n".join(part for part in (result.stdout, result.stderr) if part)
+        record = {"schema": review_node_reports.FALLBACK, "runner": kind,
+                  "reason": reason, "console": console, "exit_code": result.code}
+    else:
+        record["exit_code"] = result.code
+        record["project"] = context.project
+    return review_tools.ProcessResult(result.code, review_node_reports.dumps(record), result.stderr)
+
+
+def _shuffle_reader(kind: str) -> Callable[[ScanContext, review_tools.ProcessResult], review_tools.ProcessResult]:
+    def read(context: ScanContext, result: review_tools.ProcessResult) -> review_tools.ProcessResult:
+        return _read_shuffle_result(context, result, kind)
+    return read
+
+
+def _shuffle_evidence(text: str, kind: str,
+                      console_parse: Callable[[str], ParseResult]) -> ParseResult | None:
+    try:
+        record = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(record, dict) or record.get("runner") != kind:
+        return None
+    row = "testing.flaky-order-or-network"
+    if record.get("schema") == review_node_reports.FALLBACK:
+        parsed = console_parse(record["console"])
+        if not parsed.hits and parsed.gap is None and record["exit_code"] != 0:
+            parsed = replace(parsed, gap=("unparseable", row))
+        return replace(parsed, gaps=(*parsed.gaps, (record["reason"], row)))
+    if record.get("schema") != review_node_reports.SCHEMA:
+        return None
+    if record["tests"]["total"] == 0 and not record["failures"]:
+        return ParseResult((), gap=("no-tests-ran", row))
+    label = "Vitest" if kind == "vitest" else "Jest"
+    return ParseResult(tuple(Hit(
+        rule_id="shuffle-failure", path=case["file"],
+        statement=f"{label} {'test ' + case['full_name'] if case['full_name'] is not None else 'suite'} "
+                  f"failed in random order (seed {record['seed']}).",
+        anchor=f"{case['file']} :: {case['full_name'] or 'suite'}", row=row, whole_project=True,
+    ) for case in record["failures"]))
+
+
+def _stable_shuffle_evidence(text: str) -> str:
+    try:
+        record = json.loads(text)
+    except ValueError:
+        return review_tools.stable_transcript(text)
+    if isinstance(record, dict) and record.get("schema") == review_node_reports.FALLBACK:
+        return review_tools.stable_transcript(record["console"])
+    return review_node_reports.dumps(record)
 
 
 def _invoke_vitest_shuffle(context: ScanContext) -> list[str]:
@@ -647,13 +800,21 @@ def _invoke_vitest_shuffle(context: ScanContext) -> list[str]:
     _stage_tsconfig(context)
     staged = _stage_first_base(context, _VITEST_CONFIGS)
     _refuse_relative_imports(staged, "testing.flaky-order-or-network")
+    report = _shuffle_report(context, "vitest")
+    report.unlink(missing_ok=True)
     return [
         "vitest", "run", "--sequence.shuffle",
         "--sequence.seed", str(_shuffle_seed(context)),
+        "--no-file-parallelism",
+        *review_node_reports.report_arguments("vitest", report, console=True),
     ]
 
 
 def _parse_vitest_shuffle(text: str) -> ParseResult:
+    return _shuffle_evidence(text, "vitest", _parse_vitest_console) or _parse_vitest_console(text)
+
+
+def _parse_vitest_console(text: str) -> ParseResult:
     plain = _ANSI.sub("", text)
     if "No test files found" in plain:
         return ParseResult((), gap=("no-tests-ran", "testing.flaky-order-or-network"))
@@ -662,6 +823,8 @@ def _parse_vitest_shuffle(text: str) -> ParseResult:
     failed = any(
         int(count) > 0 for count in _VITEST_SUMMARY.findall(plain)
     ) or "Failed Tests" in plain
+    if not failed and review_node_projects.unsupported_file_parallelism(plain):
+        return ParseResult((), gap=("unsupported-file-parallelism", "testing.flaky-order-or-network"))
     failures: dict[tuple[str, str | None], None] = {}
     for match in _VITEST_FAIL.finditer(plain):
         path, case = match.group(1), match.group(2)
@@ -698,7 +861,7 @@ def _invoke_jest_shuffle(context: ScanContext) -> list[str]:
     _stage_first_base(context, (".swcrc", ".swcrc.json"))
     staged = _stage_first_base(context, _JEST_CONFIGS)
     _refuse_relative_imports(staged, "testing.flaky-order-or-network")
-    argv = ["jest", "--randomize", "--seed", str(_shuffle_seed(context)), "--showSeed"]
+    argv = ["jest", "--randomize", "--seed", str(_shuffle_seed(context)), "--showSeed", "--runInBand"]
     if staged is None:
         package = _base_json(context, "package.json")
         key = package.get("jest")
@@ -709,10 +872,17 @@ def _invoke_jest_shuffle(context: ScanContext) -> list[str]:
         argv.extend(["--config", str(staged)])
     elif _files_with(context.root, (".ts", ".tsx", ".mts", ".cts")):
         raise ToolGap("not-configured", "testing.flaky-order-or-network")
+    report = _shuffle_report(context, "jest")
+    report.unlink(missing_ok=True)
+    argv.extend(review_node_reports.report_arguments("jest", report))
     return argv
 
 
 def _parse_jest_shuffle(text: str) -> ParseResult:
+    return _shuffle_evidence(text, "jest", _parse_jest_console) or _parse_jest_console(text)
+
+
+def _parse_jest_console(text: str) -> ParseResult:
     plain = _ANSI.sub("", text)
     if "No tests found" in plain:
         return ParseResult((), gap=("no-tests-ran", "testing.flaky-order-or-network"))
@@ -1038,8 +1208,13 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
             base_files=tuple(str(item) for item in (row.get("base_files") or ())),
             local_bins=tuple(str(item) for item in (row.get("local_bins") or ())),
             stable_raw=(
-                review_tools.stable_transcript if tool_id in _TRANSCRIPTS
-                else _stable_knip if tool_id == "knip" else None
+                _stable_shuffle_evidence if tool_id in _TRANSCRIPTS
+                else _stable_knip if tool_id == "knip"
+                else _stable_stryker if tool_id == "stryker" else None
+            ),
+            read_result=(
+                _shuffle_reader(str(row.get("tool")))
+                if tool_id in _TRANSCRIPTS else None
             ),
         ))
     return built

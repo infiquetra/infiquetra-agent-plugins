@@ -1,259 +1,753 @@
 {
   "boards": {
-    "asgard": {
+    "agent-platform": {
       "fields": {
         "Assignees": {
           "dataType": "ASSIGNEES",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxHo",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZUo",
           "name": "Assignees"
         },
         "Closed": {
           "dataType": "CLOSED",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxIY",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZWI",
           "name": "Closed"
         },
         "Created": {
           "dataType": "CREATED",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxIQ",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZV4",
           "name": "Created"
         },
         "Labels": {
           "dataType": "LABELS",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxHw",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZU4",
           "name": "Labels"
         },
         "Linked pull requests": {
           "dataType": "LINKED_PULL_REQUESTS",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxH0",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZVA",
           "name": "Linked pull requests"
         },
         "Milestone": {
           "dataType": "MILESTONE",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxH4",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZVI",
           "name": "Milestone"
         },
         "Objective": {
           "dataType": "",
-          "id": "PVTSSF_lADODdfJoc4BZLMHzhVgDKQ",
+          "id": "PVTSSF_lADODdfJoc4BrC-hzhpXZYY",
           "name": "Objective",
           "options": [
             {
-              "id": "fadfc659",
-              "name": "Team Freya"
+              "id": "ecfa55db",
+              "name": "Fleet Telemetry Baseline Build-Out"
             },
             {
-              "id": "d1028406",
-              "name": "Team Mimir"
+              "id": "7aed421d",
+              "name": "Herdr-app-customization"
             },
             {
-              "id": "dd7f2f45",
-              "name": "The Norns"
+              "id": "d4a271b9",
+              "name": "improve-agent-plugins"
             },
             {
-              "id": "cb64e085",
-              "name": "The Norns: Next Horizon"
+              "id": "07424a2b",
+              "name": "sdlc-and-standards"
             }
           ]
         },
         "Parent issue": {
           "dataType": "PARENT_ISSUE",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxII",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZVo",
           "name": "Parent issue"
         },
         "Priority": {
           "dataType": "",
-          "id": "PVTSSF_lADODdfJoc4BZLMHzhfhKRE",
+          "id": "PVTSSF_lADODdfJoc4BrC-hzhpXZYc",
           "name": "Priority",
           "options": [
             {
-              "id": "0061ff80",
+              "id": "012f3328",
               "name": "P0"
             },
             {
-              "id": "f3d2615c",
+              "id": "4e5a8ef5",
               "name": "P1"
             },
             {
-              "id": "8c8032cd",
+              "id": "bb19aabc",
               "name": "P2"
             },
             {
-              "id": "8c2b65d3",
+              "id": "0b3bb134",
               "name": "P3"
             }
           ]
         },
         "Repository": {
           "dataType": "REPOSITORY",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxH8",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZVQ",
           "name": "Repository"
         },
         "Reviewers": {
           "dataType": "REVIEWERS",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxIE",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZVg",
           "name": "Reviewers"
         },
         "Stage": {
           "dataType": "",
-          "id": "PVTSSF_lADODdfJoc4BZLMHzhgxGuQ",
+          "id": "PVTSSF_lADODdfJoc4BrC-hzhpXZYk",
           "name": "Stage",
           "options": [
             {
-              "id": "550bcec5",
+              "id": "b8cbb9e8",
               "name": "Active"
             },
             {
-              "id": "c3d90e6d",
+              "id": "6ecd6d99",
               "name": "Intake"
             },
             {
-              "id": "775c8546",
+              "id": "0110ecfb",
               "name": "Planning"
             },
             {
-              "id": "22d0665a",
+              "id": "4a98ee2a",
               "name": "Retro"
             },
             {
-              "id": "9af1c0be",
+              "id": "a5adf484",
               "name": "Shaping"
             },
             {
-              "id": "66227d8c",
+              "id": "96794685",
               "name": "Verify"
             }
           ]
         },
         "Status": {
           "dataType": "",
-          "id": "PVTSSF_lADODdfJoc4BZLMHzhULxHs",
+          "id": "PVTSSF_lADODdfJoc4BrC-hzhpXZUw",
           "name": "Status",
           "options": [
             {
-              "id": "534d50ab",
+              "id": "86ba5ee8",
               "name": "Awaiting operator input"
             },
             {
-              "id": "4c963384",
+              "id": "1aa600b2",
               "name": "Awaiting verification"
             },
             {
-              "id": "54a1740c",
+              "id": "f0be75c3",
               "name": "Backlog"
             },
             {
-              "id": "f34ac4d2",
+              "id": "79c15f4e",
               "name": "Blocked"
             },
             {
-              "id": "fc10c3d1",
+              "id": "9239ec92",
               "name": "Capturing"
             },
             {
-              "id": "0dae030b",
+              "id": "95ab7d05",
               "name": "Capturing learnings"
             },
             {
-              "id": "9dcbdb5a",
+              "id": "fcf6b3c9",
               "name": "Closeout"
             },
             {
-              "id": "22204058",
+              "id": "ad484043",
               "name": "Code review"
             },
             {
-              "id": "3afb5d94",
+              "id": "c1f4d3bb",
               "name": "Defining requirements"
             },
             {
-              "id": "bcb1d367",
+              "id": "ed18dc07",
               "name": "Deploying to non-production"
             },
             {
-              "id": "d6c37b2b",
+              "id": "a2701848",
               "name": "Design review"
             },
             {
-              "id": "76617050",
+              "id": "83c86a11",
               "name": "Designing"
             },
             {
-              "id": "84e6c317",
+              "id": "370f1923",
               "name": "Discovering"
             },
             {
-              "id": "347c6c7a",
+              "id": "e0e20f12",
               "name": "Execution planning"
             },
             {
-              "id": "446200cf",
+              "id": "feacfdc7",
               "name": "Gathering evidence"
             },
             {
-              "id": "b521945f",
+              "id": "c7334029",
               "name": "Implementing"
             },
             {
-              "id": "38c454e0",
+              "id": "6455a585",
               "name": "Integrating"
             },
             {
-              "id": "252f7fa6",
+              "id": "c6445791",
               "name": "Needs clarification"
             },
             {
-              "id": "82c74836",
+              "id": "a53eca31",
               "name": "Ready for Active"
             },
             {
-              "id": "4a6d42e1",
+              "id": "8c1ce286",
               "name": "Ready for Planning"
             },
             {
-              "id": "337f09c4",
+              "id": "b94c96a2",
               "name": "Ready to close"
             },
             {
-              "id": "f4552691",
+              "id": "c49bde44",
               "name": "Ready to merge"
             },
             {
-              "id": "6855a39e",
+              "id": "9919204d",
               "name": "Repairing"
             },
             {
-              "id": "69641181",
+              "id": "ad4588e7",
               "name": "Triage"
             },
             {
-              "id": "8f07fe64",
+              "id": "0882ff8b",
               "name": "Verification failed"
             },
             {
-              "id": "e6b71805",
+              "id": "6f1bf968",
               "name": "Verifying"
             }
           ]
         },
         "Sub-issues progress": {
           "dataType": "SUB_ISSUES_PROGRESS",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxIM",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZVw",
           "name": "Sub-issues progress"
         },
         "Title": {
           "dataType": "TITLE",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxHk",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZUg",
           "name": "Title"
         },
         "Updated": {
           "dataType": "UPDATED",
-          "id": "PVTF_lADODdfJoc4BZLMHzhULxIU",
+          "id": "PVTF_lADODdfJoc4BrC-hzhpXZWA",
           "name": "Updated"
         }
       },
-      "id": "PVT_kwDODdfJoc4BZLMH",
-      "number": 2,
-      "title": "Asgard"
+      "id": "PVT_kwDODdfJoc4BrC-h",
+      "number": 14,
+      "title": "Agent Platform"
+    },
+    "ai-native-engine": {
+      "fields": {
+        "Assignees": {
+          "dataType": "ASSIGNEES",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZyc",
+          "name": "Assignees"
+        },
+        "Closed": {
+          "dataType": "CLOSED",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZzM",
+          "name": "Closed"
+        },
+        "Created": {
+          "dataType": "CREATED",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZzE",
+          "name": "Created"
+        },
+        "Labels": {
+          "dataType": "LABELS",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZyk",
+          "name": "Labels"
+        },
+        "Linked pull requests": {
+          "dataType": "LINKED_PULL_REQUESTS",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZyo",
+          "name": "Linked pull requests"
+        },
+        "Milestone": {
+          "dataType": "MILESTONE",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZys",
+          "name": "Milestone"
+        },
+        "Objective": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC_AzhpXZzQ",
+          "name": "Objective",
+          "options": [
+            {
+              "id": "bf4b6d16",
+              "name": "engine-core"
+            }
+          ]
+        },
+        "Parent issue": {
+          "dataType": "PARENT_ISSUE",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZy8",
+          "name": "Parent issue"
+        },
+        "Priority": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC_AzhpXZzU",
+          "name": "Priority",
+          "options": [
+            {
+              "id": "012f3328",
+              "name": "P0"
+            },
+            {
+              "id": "4e5a8ef5",
+              "name": "P1"
+            },
+            {
+              "id": "bb19aabc",
+              "name": "P2"
+            },
+            {
+              "id": "0b3bb134",
+              "name": "P3"
+            }
+          ]
+        },
+        "Repository": {
+          "dataType": "REPOSITORY",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZyw",
+          "name": "Repository"
+        },
+        "Reviewers": {
+          "dataType": "REVIEWERS",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZy4",
+          "name": "Reviewers"
+        },
+        "Stage": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC_AzhpXZzY",
+          "name": "Stage",
+          "options": [
+            {
+              "id": "b8cbb9e8",
+              "name": "Active"
+            },
+            {
+              "id": "6ecd6d99",
+              "name": "Intake"
+            },
+            {
+              "id": "0110ecfb",
+              "name": "Planning"
+            },
+            {
+              "id": "4a98ee2a",
+              "name": "Retro"
+            },
+            {
+              "id": "a5adf484",
+              "name": "Shaping"
+            },
+            {
+              "id": "96794685",
+              "name": "Verify"
+            }
+          ]
+        },
+        "Status": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC_AzhpXZyg",
+          "name": "Status",
+          "options": [
+            {
+              "id": "86ba5ee8",
+              "name": "Awaiting operator input"
+            },
+            {
+              "id": "1aa600b2",
+              "name": "Awaiting verification"
+            },
+            {
+              "id": "f0be75c3",
+              "name": "Backlog"
+            },
+            {
+              "id": "79c15f4e",
+              "name": "Blocked"
+            },
+            {
+              "id": "9239ec92",
+              "name": "Capturing"
+            },
+            {
+              "id": "95ab7d05",
+              "name": "Capturing learnings"
+            },
+            {
+              "id": "fcf6b3c9",
+              "name": "Closeout"
+            },
+            {
+              "id": "ad484043",
+              "name": "Code review"
+            },
+            {
+              "id": "c1f4d3bb",
+              "name": "Defining requirements"
+            },
+            {
+              "id": "ed18dc07",
+              "name": "Deploying to non-production"
+            },
+            {
+              "id": "a2701848",
+              "name": "Design review"
+            },
+            {
+              "id": "83c86a11",
+              "name": "Designing"
+            },
+            {
+              "id": "370f1923",
+              "name": "Discovering"
+            },
+            {
+              "id": "e0e20f12",
+              "name": "Execution planning"
+            },
+            {
+              "id": "feacfdc7",
+              "name": "Gathering evidence"
+            },
+            {
+              "id": "c7334029",
+              "name": "Implementing"
+            },
+            {
+              "id": "6455a585",
+              "name": "Integrating"
+            },
+            {
+              "id": "c6445791",
+              "name": "Needs clarification"
+            },
+            {
+              "id": "a53eca31",
+              "name": "Ready for Active"
+            },
+            {
+              "id": "8c1ce286",
+              "name": "Ready for Planning"
+            },
+            {
+              "id": "b94c96a2",
+              "name": "Ready to close"
+            },
+            {
+              "id": "c49bde44",
+              "name": "Ready to merge"
+            },
+            {
+              "id": "9919204d",
+              "name": "Repairing"
+            },
+            {
+              "id": "ad4588e7",
+              "name": "Triage"
+            },
+            {
+              "id": "0882ff8b",
+              "name": "Verification failed"
+            },
+            {
+              "id": "6f1bf968",
+              "name": "Verifying"
+            }
+          ]
+        },
+        "Sub-issues progress": {
+          "dataType": "SUB_ISSUES_PROGRESS",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZzA",
+          "name": "Sub-issues progress"
+        },
+        "Title": {
+          "dataType": "TITLE",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZyM",
+          "name": "Title"
+        },
+        "Updated": {
+          "dataType": "UPDATED",
+          "id": "PVTF_lADODdfJoc4BrC_AzhpXZzI",
+          "name": "Updated"
+        }
+      },
+      "id": "PVT_kwDODdfJoc4BrC_A",
+      "number": 18,
+      "title": "AI-Native Engine"
+    },
+    "argus": {
+      "fields": {
+        "Assignees": {
+          "dataType": "ASSIGNEES",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZJs",
+          "name": "Assignees"
+        },
+        "Closed": {
+          "dataType": "CLOSED",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZKc",
+          "name": "Closed"
+        },
+        "Created": {
+          "dataType": "CREATED",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZKU",
+          "name": "Created"
+        },
+        "Labels": {
+          "dataType": "LABELS",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZJ0",
+          "name": "Labels"
+        },
+        "Linked pull requests": {
+          "dataType": "LINKED_PULL_REQUESTS",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZJ4",
+          "name": "Linked pull requests"
+        },
+        "Milestone": {
+          "dataType": "MILESTONE",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZJ8",
+          "name": "Milestone"
+        },
+        "Objective": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-XzhpXZKg",
+          "name": "Objective",
+          "options": [
+            {
+              "id": "aa53e719",
+              "name": "argus-core"
+            },
+            {
+              "id": "40530566",
+              "name": "argus-ears"
+            },
+            {
+              "id": "c9c1b7ac",
+              "name": "eidolon"
+            }
+          ]
+        },
+        "Parent issue": {
+          "dataType": "PARENT_ISSUE",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZKM",
+          "name": "Parent issue"
+        },
+        "Priority": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-XzhpXZKk",
+          "name": "Priority",
+          "options": [
+            {
+              "id": "012f3328",
+              "name": "P0"
+            },
+            {
+              "id": "4e5a8ef5",
+              "name": "P1"
+            },
+            {
+              "id": "bb19aabc",
+              "name": "P2"
+            },
+            {
+              "id": "0b3bb134",
+              "name": "P3"
+            }
+          ]
+        },
+        "Repository": {
+          "dataType": "REPOSITORY",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZKA",
+          "name": "Repository"
+        },
+        "Reviewers": {
+          "dataType": "REVIEWERS",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZKI",
+          "name": "Reviewers"
+        },
+        "Stage": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-XzhpXZKo",
+          "name": "Stage",
+          "options": [
+            {
+              "id": "b8cbb9e8",
+              "name": "Active"
+            },
+            {
+              "id": "6ecd6d99",
+              "name": "Intake"
+            },
+            {
+              "id": "0110ecfb",
+              "name": "Planning"
+            },
+            {
+              "id": "4a98ee2a",
+              "name": "Retro"
+            },
+            {
+              "id": "a5adf484",
+              "name": "Shaping"
+            },
+            {
+              "id": "96794685",
+              "name": "Verify"
+            }
+          ]
+        },
+        "Status": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-XzhpXZJw",
+          "name": "Status",
+          "options": [
+            {
+              "id": "86ba5ee8",
+              "name": "Awaiting operator input"
+            },
+            {
+              "id": "1aa600b2",
+              "name": "Awaiting verification"
+            },
+            {
+              "id": "f0be75c3",
+              "name": "Backlog"
+            },
+            {
+              "id": "79c15f4e",
+              "name": "Blocked"
+            },
+            {
+              "id": "9239ec92",
+              "name": "Capturing"
+            },
+            {
+              "id": "95ab7d05",
+              "name": "Capturing learnings"
+            },
+            {
+              "id": "fcf6b3c9",
+              "name": "Closeout"
+            },
+            {
+              "id": "ad484043",
+              "name": "Code review"
+            },
+            {
+              "id": "c1f4d3bb",
+              "name": "Defining requirements"
+            },
+            {
+              "id": "ed18dc07",
+              "name": "Deploying to non-production"
+            },
+            {
+              "id": "a2701848",
+              "name": "Design review"
+            },
+            {
+              "id": "83c86a11",
+              "name": "Designing"
+            },
+            {
+              "id": "370f1923",
+              "name": "Discovering"
+            },
+            {
+              "id": "e0e20f12",
+              "name": "Execution planning"
+            },
+            {
+              "id": "feacfdc7",
+              "name": "Gathering evidence"
+            },
+            {
+              "id": "c7334029",
+              "name": "Implementing"
+            },
+            {
+              "id": "6455a585",
+              "name": "Integrating"
+            },
+            {
+              "id": "c6445791",
+              "name": "Needs clarification"
+            },
+            {
+              "id": "a53eca31",
+              "name": "Ready for Active"
+            },
+            {
+              "id": "8c1ce286",
+              "name": "Ready for Planning"
+            },
+            {
+              "id": "b94c96a2",
+              "name": "Ready to close"
+            },
+            {
+              "id": "c49bde44",
+              "name": "Ready to merge"
+            },
+            {
+              "id": "9919204d",
+              "name": "Repairing"
+            },
+            {
+              "id": "ad4588e7",
+              "name": "Triage"
+            },
+            {
+              "id": "0882ff8b",
+              "name": "Verification failed"
+            },
+            {
+              "id": "6f1bf968",
+              "name": "Verifying"
+            }
+          ]
+        },
+        "Sub-issues progress": {
+          "dataType": "SUB_ISSUES_PROGRESS",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZKQ",
+          "name": "Sub-issues progress"
+        },
+        "Title": {
+          "dataType": "TITLE",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZJo",
+          "name": "Title"
+        },
+        "Updated": {
+          "dataType": "UPDATED",
+          "id": "PVTF_lADODdfJoc4BrC-XzhpXZKY",
+          "name": "Updated"
+        }
+      },
+      "id": "PVT_kwDODdfJoc4BrC-X",
+      "number": 12,
+      "title": "Argus"
     },
     "campps": {
       "fields": {
@@ -293,8 +787,32 @@
           "name": "Objective",
           "options": [
             {
+              "id": "1d0a516f",
+              "name": "CAMPPS-Commercial-Strategy"
+            },
+            {
+              "id": "e22ac845",
+              "name": "CAMPPS-External-Gates"
+            },
+            {
+              "id": "a66a53c5",
+              "name": "CAMPPS-First-Release"
+            },
+            {
+              "id": "302c4cff",
+              "name": "CAMPPS-Mobile-And-Later"
+            },
+            {
+              "id": "e9f9c4ab",
+              "name": "CAMPPS-Operator-Decisions"
+            },
+            {
               "id": "7d69c4d3",
               "name": "CAMPPS-Phase-1"
+            },
+            {
+              "id": "37596ed7",
+              "name": "CAMPPS-Production-Cutover"
             },
             {
               "id": "3f51806b",
@@ -343,6 +861,14 @@
             {
               "id": "65a9daa5",
               "name": "L8 Activate Active-Active"
+            },
+            {
+              "id": "93deb537",
+              "name": "context-library-drift"
+            },
+            {
+              "id": "7e132afe",
+              "name": "cyber-security-audit"
             }
           ]
         },
@@ -473,6 +999,10 @@
               "name": "Discovering"
             },
             {
+              "id": "c094b1bb",
+              "name": "Done"
+            },
+            {
               "id": "29226c2d",
               "name": "Execution planning"
             },
@@ -546,121 +1076,57 @@
       "number": 4,
       "title": "campps"
     },
-    "operations": {
+    "cognitive-ai-research": {
       "fields": {
         "Assignees": {
           "dataType": "ASSIGNEES",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxKI",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZrI",
           "name": "Assignees"
         },
         "Closed": {
           "dataType": "CLOSED",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxK4",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZsQ",
           "name": "Closed"
         },
         "Created": {
           "dataType": "CREATED",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxKw",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZsE",
           "name": "Created"
         },
         "Labels": {
           "dataType": "LABELS",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxKQ",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZrU",
           "name": "Labels"
         },
         "Linked pull requests": {
           "dataType": "LINKED_PULL_REQUESTS",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxKU",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZrY",
           "name": "Linked pull requests"
         },
         "Milestone": {
           "dataType": "MILESTONE",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxKY",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZrc",
           "name": "Milestone"
         },
         "Objective": {
           "dataType": "",
-          "id": "PVTSSF_lADODdfJoc4BZLMKzhVgDKU",
+          "id": "PVTSSF_lADODdfJoc4BrC-5zhpXZuM",
           "name": "Objective",
           "options": [
             {
-              "id": "841cd7e9",
-              "name": "Auralis V1"
-            },
-            {
-              "id": "ef264f54",
-              "name": "Fleet Telemetry Baseline Build-Out"
-            },
-            {
-              "id": "0c25d0da",
-              "name": "Talaria v0.5.0"
-            },
-            {
-              "id": "ed95d0ce",
-              "name": "Talaria v0.6.0"
-            },
-            {
-              "id": "f1c2aef4",
-              "name": "Talaria v0.6.1"
-            },
-            {
-              "id": "7d930a3d",
-              "name": "Talaria v0.6.2"
-            },
-            {
-              "id": "bf31c09d",
-              "name": "defect"
-            },
-            {
-              "id": "bf920ea6",
-              "name": "defects-claude-plugins"
-            },
-            {
-              "id": "63d615cf",
-              "name": "defects-codex-plugins"
-            },
-            {
-              "id": "f39edb7a",
-              "name": "improve-agent-plugins"
-            },
-            {
-              "id": "6c4ff129",
-              "name": "improve-antigravity-plugins"
-            },
-            {
-              "id": "4a10eb7a",
-              "name": "improve-claude-plugins"
-            },
-            {
-              "id": "86eb34e5",
-              "name": "improve-codex-plugins"
-            },
-            {
-              "id": "99d468cd",
-              "name": "infiquetra-maintentance"
-            },
-            {
-              "id": "14f87794",
-              "name": "team-freya"
-            },
-            {
-              "id": "e9f72ddc",
-              "name": "team-mimir"
-            },
-            {
-              "id": "259bf694",
-              "name": "team-norns"
+              "id": "6d82553d",
+              "name": "cognitive-lab-builder"
             }
           ]
         },
         "Parent issue": {
           "dataType": "PARENT_ISSUE",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxKo",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZr0",
           "name": "Parent issue"
         },
         "Priority": {
           "dataType": "",
-          "id": "PVTSSF_lADODdfJoc4BZLMKzhV_XRw",
+          "id": "PVTSSF_lADODdfJoc4BrC-5zhpXZuY",
           "name": "Priority",
           "options": [
             {
@@ -683,17 +1149,17 @@
         },
         "Repository": {
           "dataType": "REPOSITORY",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxKc",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZrg",
           "name": "Repository"
         },
         "Reviewers": {
           "dataType": "REVIEWERS",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxKk",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZrw",
           "name": "Reviewers"
         },
         "Stage": {
           "dataType": "",
-          "id": "PVTSSF_lADODdfJoc4BZLMKzhgxGuM",
+          "id": "PVTSSF_lADODdfJoc4BrC-5zhpXZuc",
           "name": "Stage",
           "options": [
             {
@@ -724,7 +1190,7 @@
         },
         "Status": {
           "dataType": "",
-          "id": "PVTSSF_lADODdfJoc4BZLMKzhULxKM",
+          "id": "PVTSSF_lADODdfJoc4BrC-5zhpXZrQ",
           "name": "Status",
           "options": [
             {
@@ -835,23 +1301,1286 @@
         },
         "Sub-issues progress": {
           "dataType": "SUB_ISSUES_PROGRESS",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxKs",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZr8",
           "name": "Sub-issues progress"
         },
         "Title": {
           "dataType": "TITLE",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxKE",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZrA",
           "name": "Title"
         },
         "Updated": {
           "dataType": "UPDATED",
-          "id": "PVTF_lADODdfJoc4BZLMKzhULxK0",
+          "id": "PVTF_lADODdfJoc4BrC-5zhpXZsM",
           "name": "Updated"
         }
       },
-      "id": "PVT_kwDODdfJoc4BZLMK",
-      "number": 3,
-      "title": "Operations"
+      "id": "PVT_kwDODdfJoc4BrC-5",
+      "number": 17,
+      "title": "Cognitive AI Research"
+    },
+    "company": {
+      "fields": {
+        "Assignees": {
+          "dataType": "ASSIGNEES",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXY8Y",
+          "name": "Assignees"
+        },
+        "Closed": {
+          "dataType": "CLOSED",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXZAA",
+          "name": "Closed"
+        },
+        "Created": {
+          "dataType": "CREATED",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXY_o",
+          "name": "Created"
+        },
+        "Labels": {
+          "dataType": "LABELS",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXY8s",
+          "name": "Labels"
+        },
+        "Linked pull requests": {
+          "dataType": "LINKED_PULL_REQUESTS",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXY80",
+          "name": "Linked pull requests"
+        },
+        "Milestone": {
+          "dataType": "MILESTONE",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXY88",
+          "name": "Milestone"
+        },
+        "Objective": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-JzhpXZAg",
+          "name": "Objective",
+          "options": [
+            {
+              "id": "7dfe7a6a",
+              "name": "The Norns: Next Horizon"
+            },
+            {
+              "id": "8a0a7c00",
+              "name": "company-interface"
+            },
+            {
+              "id": "189cf10f",
+              "name": "team-freya"
+            },
+            {
+              "id": "e5db6af8",
+              "name": "team-heimdall"
+            },
+            {
+              "id": "4050b3fb",
+              "name": "team-mimir"
+            },
+            {
+              "id": "48ee00ed",
+              "name": "team-njord"
+            }
+          ]
+        },
+        "Parent issue": {
+          "dataType": "PARENT_ISSUE",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXY-g",
+          "name": "Parent issue"
+        },
+        "Priority": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-JzhpXZAk",
+          "name": "Priority",
+          "options": [
+            {
+              "id": "012f3328",
+              "name": "P0"
+            },
+            {
+              "id": "4e5a8ef5",
+              "name": "P1"
+            },
+            {
+              "id": "bb19aabc",
+              "name": "P2"
+            },
+            {
+              "id": "0b3bb134",
+              "name": "P3"
+            }
+          ]
+        },
+        "Repository": {
+          "dataType": "REPOSITORY",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXY9E",
+          "name": "Repository"
+        },
+        "Reviewers": {
+          "dataType": "REVIEWERS",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXY-Q",
+          "name": "Reviewers"
+        },
+        "Stage": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-JzhpXZAo",
+          "name": "Stage",
+          "options": [
+            {
+              "id": "b8cbb9e8",
+              "name": "Active"
+            },
+            {
+              "id": "6ecd6d99",
+              "name": "Intake"
+            },
+            {
+              "id": "0110ecfb",
+              "name": "Planning"
+            },
+            {
+              "id": "4a98ee2a",
+              "name": "Retro"
+            },
+            {
+              "id": "a5adf484",
+              "name": "Shaping"
+            },
+            {
+              "id": "96794685",
+              "name": "Verify"
+            }
+          ]
+        },
+        "Status": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-JzhpXY8g",
+          "name": "Status",
+          "options": [
+            {
+              "id": "86ba5ee8",
+              "name": "Awaiting operator input"
+            },
+            {
+              "id": "1aa600b2",
+              "name": "Awaiting verification"
+            },
+            {
+              "id": "f0be75c3",
+              "name": "Backlog"
+            },
+            {
+              "id": "79c15f4e",
+              "name": "Blocked"
+            },
+            {
+              "id": "9239ec92",
+              "name": "Capturing"
+            },
+            {
+              "id": "95ab7d05",
+              "name": "Capturing learnings"
+            },
+            {
+              "id": "fcf6b3c9",
+              "name": "Closeout"
+            },
+            {
+              "id": "ad484043",
+              "name": "Code review"
+            },
+            {
+              "id": "c1f4d3bb",
+              "name": "Defining requirements"
+            },
+            {
+              "id": "ed18dc07",
+              "name": "Deploying to non-production"
+            },
+            {
+              "id": "a2701848",
+              "name": "Design review"
+            },
+            {
+              "id": "83c86a11",
+              "name": "Designing"
+            },
+            {
+              "id": "370f1923",
+              "name": "Discovering"
+            },
+            {
+              "id": "e0e20f12",
+              "name": "Execution planning"
+            },
+            {
+              "id": "feacfdc7",
+              "name": "Gathering evidence"
+            },
+            {
+              "id": "c7334029",
+              "name": "Implementing"
+            },
+            {
+              "id": "6455a585",
+              "name": "Integrating"
+            },
+            {
+              "id": "c6445791",
+              "name": "Needs clarification"
+            },
+            {
+              "id": "a53eca31",
+              "name": "Ready for Active"
+            },
+            {
+              "id": "8c1ce286",
+              "name": "Ready for Planning"
+            },
+            {
+              "id": "b94c96a2",
+              "name": "Ready to close"
+            },
+            {
+              "id": "c49bde44",
+              "name": "Ready to merge"
+            },
+            {
+              "id": "9919204d",
+              "name": "Repairing"
+            },
+            {
+              "id": "ad4588e7",
+              "name": "Triage"
+            },
+            {
+              "id": "0882ff8b",
+              "name": "Verification failed"
+            },
+            {
+              "id": "6f1bf968",
+              "name": "Verifying"
+            }
+          ]
+        },
+        "Sub-issues progress": {
+          "dataType": "SUB_ISSUES_PROGRESS",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXY-s",
+          "name": "Sub-issues progress"
+        },
+        "Title": {
+          "dataType": "TITLE",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXY8Q",
+          "name": "Title"
+        },
+        "Updated": {
+          "dataType": "UPDATED",
+          "id": "PVTF_lADODdfJoc4BrC-JzhpXY_0",
+          "name": "Updated"
+        }
+      },
+      "id": "PVT_kwDODdfJoc4BrC-J",
+      "number": 11,
+      "title": "Infiquetra Company"
+    },
+    "eve-mimir": {
+      "fields": {
+        "Assignees": {
+          "dataType": "ASSIGNEES",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZjk",
+          "name": "Assignees"
+        },
+        "Closed": {
+          "dataType": "CLOSED",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZkc",
+          "name": "Closed"
+        },
+        "Created": {
+          "dataType": "CREATED",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZkQ",
+          "name": "Created"
+        },
+        "Labels": {
+          "dataType": "LABELS",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZjw",
+          "name": "Labels"
+        },
+        "Linked pull requests": {
+          "dataType": "LINKED_PULL_REQUESTS",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZj0",
+          "name": "Linked pull requests"
+        },
+        "Milestone": {
+          "dataType": "MILESTONE",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZj4",
+          "name": "Milestone"
+        },
+        "Objective": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-xzhpXZl4",
+          "name": "Objective",
+          "options": [
+            {
+              "id": "f2fc5a5c",
+              "name": "combat-and-core"
+            },
+            {
+              "id": "ad5e73f9",
+              "name": "industry-and-pi"
+            }
+          ]
+        },
+        "Parent issue": {
+          "dataType": "PARENT_ISSUE",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZkI",
+          "name": "Parent issue"
+        },
+        "Priority": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-xzhpXZmA",
+          "name": "Priority",
+          "options": [
+            {
+              "id": "012f3328",
+              "name": "P0"
+            },
+            {
+              "id": "4e5a8ef5",
+              "name": "P1"
+            },
+            {
+              "id": "bb19aabc",
+              "name": "P2"
+            },
+            {
+              "id": "0b3bb134",
+              "name": "P3"
+            }
+          ]
+        },
+        "Repository": {
+          "dataType": "REPOSITORY",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZj8",
+          "name": "Repository"
+        },
+        "Reviewers": {
+          "dataType": "REVIEWERS",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZkE",
+          "name": "Reviewers"
+        },
+        "Stage": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-xzhpXZmI",
+          "name": "Stage",
+          "options": [
+            {
+              "id": "b8cbb9e8",
+              "name": "Active"
+            },
+            {
+              "id": "6ecd6d99",
+              "name": "Intake"
+            },
+            {
+              "id": "0110ecfb",
+              "name": "Planning"
+            },
+            {
+              "id": "4a98ee2a",
+              "name": "Retro"
+            },
+            {
+              "id": "a5adf484",
+              "name": "Shaping"
+            },
+            {
+              "id": "96794685",
+              "name": "Verify"
+            }
+          ]
+        },
+        "Status": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-xzhpXZjs",
+          "name": "Status",
+          "options": [
+            {
+              "id": "86ba5ee8",
+              "name": "Awaiting operator input"
+            },
+            {
+              "id": "1aa600b2",
+              "name": "Awaiting verification"
+            },
+            {
+              "id": "f0be75c3",
+              "name": "Backlog"
+            },
+            {
+              "id": "79c15f4e",
+              "name": "Blocked"
+            },
+            {
+              "id": "9239ec92",
+              "name": "Capturing"
+            },
+            {
+              "id": "95ab7d05",
+              "name": "Capturing learnings"
+            },
+            {
+              "id": "fcf6b3c9",
+              "name": "Closeout"
+            },
+            {
+              "id": "ad484043",
+              "name": "Code review"
+            },
+            {
+              "id": "c1f4d3bb",
+              "name": "Defining requirements"
+            },
+            {
+              "id": "ed18dc07",
+              "name": "Deploying to non-production"
+            },
+            {
+              "id": "a2701848",
+              "name": "Design review"
+            },
+            {
+              "id": "83c86a11",
+              "name": "Designing"
+            },
+            {
+              "id": "370f1923",
+              "name": "Discovering"
+            },
+            {
+              "id": "e0e20f12",
+              "name": "Execution planning"
+            },
+            {
+              "id": "feacfdc7",
+              "name": "Gathering evidence"
+            },
+            {
+              "id": "c7334029",
+              "name": "Implementing"
+            },
+            {
+              "id": "6455a585",
+              "name": "Integrating"
+            },
+            {
+              "id": "c6445791",
+              "name": "Needs clarification"
+            },
+            {
+              "id": "a53eca31",
+              "name": "Ready for Active"
+            },
+            {
+              "id": "8c1ce286",
+              "name": "Ready for Planning"
+            },
+            {
+              "id": "b94c96a2",
+              "name": "Ready to close"
+            },
+            {
+              "id": "c49bde44",
+              "name": "Ready to merge"
+            },
+            {
+              "id": "9919204d",
+              "name": "Repairing"
+            },
+            {
+              "id": "ad4588e7",
+              "name": "Triage"
+            },
+            {
+              "id": "0882ff8b",
+              "name": "Verification failed"
+            },
+            {
+              "id": "6f1bf968",
+              "name": "Verifying"
+            }
+          ]
+        },
+        "Sub-issues progress": {
+          "dataType": "SUB_ISSUES_PROGRESS",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZkM",
+          "name": "Sub-issues progress"
+        },
+        "Title": {
+          "dataType": "TITLE",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZjc",
+          "name": "Title"
+        },
+        "Updated": {
+          "dataType": "UPDATED",
+          "id": "PVTF_lADODdfJoc4BrC-xzhpXZkY",
+          "name": "Updated"
+        }
+      },
+      "id": "PVT_kwDODdfJoc4BrC-x",
+      "number": 16,
+      "title": "EVE Mimir"
+    },
+    "home-lab": {
+      "fields": {
+        "Assignees": {
+          "dataType": "ASSIGNEES",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZdI",
+          "name": "Assignees"
+        },
+        "Closed": {
+          "dataType": "CLOSED",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZd4",
+          "name": "Closed"
+        },
+        "Created": {
+          "dataType": "CREATED",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZdw",
+          "name": "Created"
+        },
+        "Labels": {
+          "dataType": "LABELS",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZdQ",
+          "name": "Labels"
+        },
+        "Linked pull requests": {
+          "dataType": "LINKED_PULL_REQUESTS",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZdU",
+          "name": "Linked pull requests"
+        },
+        "Milestone": {
+          "dataType": "MILESTONE",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZdY",
+          "name": "Milestone"
+        },
+        "Objective": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-qzhpXZd8",
+          "name": "Objective",
+          "options": [
+            {
+              "id": "c2562350",
+              "name": "Fleet Telemetry Baseline Build-Out"
+            },
+            {
+              "id": "15f1712e",
+              "name": "aws-infra"
+            },
+            {
+              "id": "880de4b2",
+              "name": "home-lab"
+            },
+            {
+              "id": "3abcb84a",
+              "name": "system-updates"
+            },
+            {
+              "id": "d4f907eb",
+              "name": "team-mimir"
+            },
+            {
+              "id": "10bc2575",
+              "name": "voice-forge"
+            }
+          ]
+        },
+        "Parent issue": {
+          "dataType": "PARENT_ISSUE",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZdo",
+          "name": "Parent issue"
+        },
+        "Priority": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-qzhpXZeA",
+          "name": "Priority",
+          "options": [
+            {
+              "id": "012f3328",
+              "name": "P0"
+            },
+            {
+              "id": "4e5a8ef5",
+              "name": "P1"
+            },
+            {
+              "id": "bb19aabc",
+              "name": "P2"
+            },
+            {
+              "id": "0b3bb134",
+              "name": "P3"
+            }
+          ]
+        },
+        "Repository": {
+          "dataType": "REPOSITORY",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZdc",
+          "name": "Repository"
+        },
+        "Reviewers": {
+          "dataType": "REVIEWERS",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZdk",
+          "name": "Reviewers"
+        },
+        "Stage": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-qzhpXZeE",
+          "name": "Stage",
+          "options": [
+            {
+              "id": "b8cbb9e8",
+              "name": "Active"
+            },
+            {
+              "id": "6ecd6d99",
+              "name": "Intake"
+            },
+            {
+              "id": "0110ecfb",
+              "name": "Planning"
+            },
+            {
+              "id": "4a98ee2a",
+              "name": "Retro"
+            },
+            {
+              "id": "a5adf484",
+              "name": "Shaping"
+            },
+            {
+              "id": "96794685",
+              "name": "Verify"
+            }
+          ]
+        },
+        "Status": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-qzhpXZdM",
+          "name": "Status",
+          "options": [
+            {
+              "id": "86ba5ee8",
+              "name": "Awaiting operator input"
+            },
+            {
+              "id": "1aa600b2",
+              "name": "Awaiting verification"
+            },
+            {
+              "id": "f0be75c3",
+              "name": "Backlog"
+            },
+            {
+              "id": "79c15f4e",
+              "name": "Blocked"
+            },
+            {
+              "id": "9239ec92",
+              "name": "Capturing"
+            },
+            {
+              "id": "95ab7d05",
+              "name": "Capturing learnings"
+            },
+            {
+              "id": "fcf6b3c9",
+              "name": "Closeout"
+            },
+            {
+              "id": "ad484043",
+              "name": "Code review"
+            },
+            {
+              "id": "c1f4d3bb",
+              "name": "Defining requirements"
+            },
+            {
+              "id": "ed18dc07",
+              "name": "Deploying to non-production"
+            },
+            {
+              "id": "a2701848",
+              "name": "Design review"
+            },
+            {
+              "id": "83c86a11",
+              "name": "Designing"
+            },
+            {
+              "id": "370f1923",
+              "name": "Discovering"
+            },
+            {
+              "id": "e0e20f12",
+              "name": "Execution planning"
+            },
+            {
+              "id": "feacfdc7",
+              "name": "Gathering evidence"
+            },
+            {
+              "id": "c7334029",
+              "name": "Implementing"
+            },
+            {
+              "id": "6455a585",
+              "name": "Integrating"
+            },
+            {
+              "id": "c6445791",
+              "name": "Needs clarification"
+            },
+            {
+              "id": "a53eca31",
+              "name": "Ready for Active"
+            },
+            {
+              "id": "8c1ce286",
+              "name": "Ready for Planning"
+            },
+            {
+              "id": "b94c96a2",
+              "name": "Ready to close"
+            },
+            {
+              "id": "c49bde44",
+              "name": "Ready to merge"
+            },
+            {
+              "id": "9919204d",
+              "name": "Repairing"
+            },
+            {
+              "id": "ad4588e7",
+              "name": "Triage"
+            },
+            {
+              "id": "0882ff8b",
+              "name": "Verification failed"
+            },
+            {
+              "id": "6f1bf968",
+              "name": "Verifying"
+            }
+          ]
+        },
+        "Sub-issues progress": {
+          "dataType": "SUB_ISSUES_PROGRESS",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZds",
+          "name": "Sub-issues progress"
+        },
+        "Title": {
+          "dataType": "TITLE",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZdE",
+          "name": "Title"
+        },
+        "Updated": {
+          "dataType": "UPDATED",
+          "id": "PVTF_lADODdfJoc4BrC-qzhpXZd0",
+          "name": "Updated"
+        }
+      },
+      "id": "PVT_kwDODdfJoc4BrC-q",
+      "number": 15,
+      "title": "Home Lab"
+    },
+    "sovereign-circuit": {
+      "fields": {
+        "Assignees": {
+          "dataType": "ASSIGNEES",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY2c",
+          "name": "Assignees"
+        },
+        "Closed": {
+          "dataType": "CLOSED",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY3M",
+          "name": "Closed"
+        },
+        "Created": {
+          "dataType": "CREATED",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY3E",
+          "name": "Created"
+        },
+        "Labels": {
+          "dataType": "LABELS",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY2k",
+          "name": "Labels"
+        },
+        "Linked pull requests": {
+          "dataType": "LINKED_PULL_REQUESTS",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY2o",
+          "name": "Linked pull requests"
+        },
+        "Milestone": {
+          "dataType": "MILESTONE",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY2s",
+          "name": "Milestone"
+        },
+        "Objective": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-CzhpXY3Q",
+          "name": "Objective",
+          "options": [
+            {
+              "id": "b6d32871",
+              "name": "sovereign-circuit"
+            }
+          ]
+        },
+        "Parent issue": {
+          "dataType": "PARENT_ISSUE",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY28",
+          "name": "Parent issue"
+        },
+        "Priority": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-CzhpXY3U",
+          "name": "Priority",
+          "options": [
+            {
+              "id": "012f3328",
+              "name": "P0"
+            },
+            {
+              "id": "4e5a8ef5",
+              "name": "P1"
+            },
+            {
+              "id": "bb19aabc",
+              "name": "P2"
+            },
+            {
+              "id": "0b3bb134",
+              "name": "P3"
+            }
+          ]
+        },
+        "Repository": {
+          "dataType": "REPOSITORY",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY2w",
+          "name": "Repository"
+        },
+        "Reviewers": {
+          "dataType": "REVIEWERS",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY24",
+          "name": "Reviewers"
+        },
+        "Stage": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-CzhpXY3Y",
+          "name": "Stage",
+          "options": [
+            {
+              "id": "b8cbb9e8",
+              "name": "Active"
+            },
+            {
+              "id": "6ecd6d99",
+              "name": "Intake"
+            },
+            {
+              "id": "0110ecfb",
+              "name": "Planning"
+            },
+            {
+              "id": "4a98ee2a",
+              "name": "Retro"
+            },
+            {
+              "id": "a5adf484",
+              "name": "Shaping"
+            },
+            {
+              "id": "96794685",
+              "name": "Verify"
+            }
+          ]
+        },
+        "Status": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-CzhpXY2g",
+          "name": "Status",
+          "options": [
+            {
+              "id": "86ba5ee8",
+              "name": "Awaiting operator input"
+            },
+            {
+              "id": "1aa600b2",
+              "name": "Awaiting verification"
+            },
+            {
+              "id": "f0be75c3",
+              "name": "Backlog"
+            },
+            {
+              "id": "79c15f4e",
+              "name": "Blocked"
+            },
+            {
+              "id": "9239ec92",
+              "name": "Capturing"
+            },
+            {
+              "id": "95ab7d05",
+              "name": "Capturing learnings"
+            },
+            {
+              "id": "fcf6b3c9",
+              "name": "Closeout"
+            },
+            {
+              "id": "ad484043",
+              "name": "Code review"
+            },
+            {
+              "id": "c1f4d3bb",
+              "name": "Defining requirements"
+            },
+            {
+              "id": "ed18dc07",
+              "name": "Deploying to non-production"
+            },
+            {
+              "id": "a2701848",
+              "name": "Design review"
+            },
+            {
+              "id": "83c86a11",
+              "name": "Designing"
+            },
+            {
+              "id": "370f1923",
+              "name": "Discovering"
+            },
+            {
+              "id": "e0e20f12",
+              "name": "Execution planning"
+            },
+            {
+              "id": "feacfdc7",
+              "name": "Gathering evidence"
+            },
+            {
+              "id": "c7334029",
+              "name": "Implementing"
+            },
+            {
+              "id": "6455a585",
+              "name": "Integrating"
+            },
+            {
+              "id": "c6445791",
+              "name": "Needs clarification"
+            },
+            {
+              "id": "a53eca31",
+              "name": "Ready for Active"
+            },
+            {
+              "id": "8c1ce286",
+              "name": "Ready for Planning"
+            },
+            {
+              "id": "b94c96a2",
+              "name": "Ready to close"
+            },
+            {
+              "id": "c49bde44",
+              "name": "Ready to merge"
+            },
+            {
+              "id": "9919204d",
+              "name": "Repairing"
+            },
+            {
+              "id": "ad4588e7",
+              "name": "Triage"
+            },
+            {
+              "id": "0882ff8b",
+              "name": "Verification failed"
+            },
+            {
+              "id": "6f1bf968",
+              "name": "Verifying"
+            }
+          ]
+        },
+        "Sub-issues progress": {
+          "dataType": "SUB_ISSUES_PROGRESS",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY3A",
+          "name": "Sub-issues progress"
+        },
+        "Title": {
+          "dataType": "TITLE",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY2Y",
+          "name": "Title"
+        },
+        "Updated": {
+          "dataType": "UPDATED",
+          "id": "PVTF_lADODdfJoc4BrC-CzhpXY3I",
+          "name": "Updated"
+        }
+      },
+      "id": "PVT_kwDODdfJoc4BrC-C",
+      "number": 10,
+      "title": "Sovereign Circuit"
+    },
+    "talaria": {
+      "fields": {
+        "Assignees": {
+          "dataType": "ASSIGNEES",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZOg",
+          "name": "Assignees"
+        },
+        "Closed": {
+          "dataType": "CLOSED",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZQA",
+          "name": "Closed"
+        },
+        "Created": {
+          "dataType": "CREATED",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZPs",
+          "name": "Created"
+        },
+        "Labels": {
+          "dataType": "LABELS",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZOw",
+          "name": "Labels"
+        },
+        "Linked pull requests": {
+          "dataType": "LINKED_PULL_REQUESTS",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZO4",
+          "name": "Linked pull requests"
+        },
+        "Milestone": {
+          "dataType": "MILESTONE",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZPA",
+          "name": "Milestone"
+        },
+        "Objective": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-czhpXZRU",
+          "name": "Objective",
+          "options": [
+            {
+              "id": "bb5a078e",
+              "name": "auralis"
+            },
+            {
+              "id": "76173761",
+              "name": "talaria-core"
+            }
+          ]
+        },
+        "Parent issue": {
+          "dataType": "PARENT_ISSUE",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZPc",
+          "name": "Parent issue"
+        },
+        "Priority": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-czhpXZRY",
+          "name": "Priority",
+          "options": [
+            {
+              "id": "012f3328",
+              "name": "P0"
+            },
+            {
+              "id": "4e5a8ef5",
+              "name": "P1"
+            },
+            {
+              "id": "bb19aabc",
+              "name": "P2"
+            },
+            {
+              "id": "0b3bb134",
+              "name": "P3"
+            }
+          ]
+        },
+        "Repository": {
+          "dataType": "REPOSITORY",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZPE",
+          "name": "Repository"
+        },
+        "Reviewers": {
+          "dataType": "REVIEWERS",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZPU",
+          "name": "Reviewers"
+        },
+        "Stage": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-czhpXZRg",
+          "name": "Stage",
+          "options": [
+            {
+              "id": "b8cbb9e8",
+              "name": "Active"
+            },
+            {
+              "id": "6ecd6d99",
+              "name": "Intake"
+            },
+            {
+              "id": "0110ecfb",
+              "name": "Planning"
+            },
+            {
+              "id": "4a98ee2a",
+              "name": "Retro"
+            },
+            {
+              "id": "a5adf484",
+              "name": "Shaping"
+            },
+            {
+              "id": "96794685",
+              "name": "Verify"
+            }
+          ]
+        },
+        "Status": {
+          "dataType": "",
+          "id": "PVTSSF_lADODdfJoc4BrC-czhpXZOo",
+          "name": "Status",
+          "options": [
+            {
+              "id": "86ba5ee8",
+              "name": "Awaiting operator input"
+            },
+            {
+              "id": "1aa600b2",
+              "name": "Awaiting verification"
+            },
+            {
+              "id": "f0be75c3",
+              "name": "Backlog"
+            },
+            {
+              "id": "79c15f4e",
+              "name": "Blocked"
+            },
+            {
+              "id": "9239ec92",
+              "name": "Capturing"
+            },
+            {
+              "id": "95ab7d05",
+              "name": "Capturing learnings"
+            },
+            {
+              "id": "fcf6b3c9",
+              "name": "Closeout"
+            },
+            {
+              "id": "ad484043",
+              "name": "Code review"
+            },
+            {
+              "id": "c1f4d3bb",
+              "name": "Defining requirements"
+            },
+            {
+              "id": "ed18dc07",
+              "name": "Deploying to non-production"
+            },
+            {
+              "id": "a2701848",
+              "name": "Design review"
+            },
+            {
+              "id": "83c86a11",
+              "name": "Designing"
+            },
+            {
+              "id": "370f1923",
+              "name": "Discovering"
+            },
+            {
+              "id": "e0e20f12",
+              "name": "Execution planning"
+            },
+            {
+              "id": "feacfdc7",
+              "name": "Gathering evidence"
+            },
+            {
+              "id": "c7334029",
+              "name": "Implementing"
+            },
+            {
+              "id": "6455a585",
+              "name": "Integrating"
+            },
+            {
+              "id": "c6445791",
+              "name": "Needs clarification"
+            },
+            {
+              "id": "a53eca31",
+              "name": "Ready for Active"
+            },
+            {
+              "id": "8c1ce286",
+              "name": "Ready for Planning"
+            },
+            {
+              "id": "b94c96a2",
+              "name": "Ready to close"
+            },
+            {
+              "id": "c49bde44",
+              "name": "Ready to merge"
+            },
+            {
+              "id": "9919204d",
+              "name": "Repairing"
+            },
+            {
+              "id": "ad4588e7",
+              "name": "Triage"
+            },
+            {
+              "id": "0882ff8b",
+              "name": "Verification failed"
+            },
+            {
+              "id": "6f1bf968",
+              "name": "Verifying"
+            }
+          ]
+        },
+        "Sub-issues progress": {
+          "dataType": "SUB_ISSUES_PROGRESS",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZPg",
+          "name": "Sub-issues progress"
+        },
+        "Title": {
+          "dataType": "TITLE",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZOc",
+          "name": "Title"
+        },
+        "Updated": {
+          "dataType": "UPDATED",
+          "id": "PVTF_lADODdfJoc4BrC-czhpXZP8",
+          "name": "Updated"
+        }
+      },
+      "id": "PVT_kwDODdfJoc4BrC-c",
+      "number": 13,
+      "title": "Talaria"
     }
   }
 }

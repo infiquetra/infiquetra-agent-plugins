@@ -12,11 +12,11 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PLUGIN_ROOT / "config" / "sdlc-schema.json"
 SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
-EXPECTED_VERSION = "2026-09-07.5"
+EXPECTED_VERSION = "2026-11-10"
 REMOVED_KEYS = ("wip_limits", "component_slices")
 
 
-def test_t999_01_vendored_schema_version_is_2026_09_07_5() -> None:
+def test_t999_01_vendored_schema_version_is_current() -> None:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     assert schema["schema_version"] == EXPECTED_VERSION
     text = SCHEMA_PATH.read_text(encoding="utf-8")

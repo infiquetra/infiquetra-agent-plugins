@@ -11,9 +11,14 @@ alone, by the manager the lockfile belongs to, with install scripts off, into
 - ``yarn.lock`` (classic, version 1): ``yarn install --frozen-lockfile``;
 - ``bun.lock``: ``bun install --frozen-lockfile``.
 
-No lockfile is ever written. Before anything runs, saga reads the lockfile itself and refuses any
-package that does not come from the public npm registry (a git, file, link or tarball source,
-another registry), so a commit cannot point the install at an operator file or another host. The
+Without a root manifest, up to four projects owning changed files are installed separately
+under ``dependencies/node/projects/<project>/node_modules``. Each project and every skipped
+reason is recorded; all selected installs share one deadline.
+
+No lockfile is ever written. Before anything runs, saga reads the lockfile itself and allows
+public npm registry packages or tracked in-repository tarballs whose bytes match the lock's
+integrity hash. Git, file directories, unverified archives, links and other registries remain
+refused, so a commit cannot point the install at an operator file or another host. The
 install works on an export of the head with every manager configuration file removed (``.npmrc``,
 ``.yarnrc``, ``.yarnrc.yml``, ``.yarn/``, ``.pnpmfile.cjs``, ``bunfig.toml``), with a fresh
 ``HOME``, ``TMPDIR`` and cache, no operator variable beyond a short allow-list, corepack barred from
@@ -33,7 +38,10 @@ vitest and jest; ``NODE_PATH`` would reach CommonJS only.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import hmac
 import json
 import os
 import posixpath
@@ -51,6 +59,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import review_dependencies as D  # noqa: E402
+import review_node_projects as P  # noqa: E402
 
 KEY = "node"
 DIRECTORY = "dependencies/node/node_modules"
@@ -61,6 +70,8 @@ REASONS = frozenset({
     "no-lockfile", "binary-lockfile", "unsupported-lockfile", "non-registry-source",
     "symlinked-input", "lockfile-mismatch", "manager-missing", "network", "timeout",
     "size-limit", "install-failed", "head-export", "subfolder-project",
+    "project-limit", "not-changed", "unsafe-project",
+    "missing-integrity", "integrity-mismatch", "untracked-tarball", "missing-tarball",
 })
 #: Lockfiles in the order one is chosen when a head has several, and the manager for each.
 LOCKFILES = (
@@ -109,14 +120,43 @@ class _Failure(Exception):
 
 
 def entry(runner: D.Process, repo: Path, head: str, packet: Path,
-          export: D.Export) -> dict[str, Any] | None:
+          export: D.Export, *, changed: list[str] | None = None) -> dict[str, Any] | None:
     """The ``node`` entry for the head, or ``None`` when it holds no npm project at all."""
     root = D._tree(runner, repo, head)
     if "package.json" not in root:
-        projects = _subfolder_projects(runner, repo, head)
-        if projects is not None:
-            return {"state": "not-installed", "reason": "subfolder-project", "projects": projects}
-        return None
+        tree = D._tree(runner, repo, head, recursive=True)
+        folders = sorted({path.rpartition("/")[0] for path in tree
+                          if path.endswith("/package.json")
+                          and "node_modules" not in path.split("/")})
+        if not folders:
+            return None
+        wanted = P.selected(folders, changed) if changed is not None else folders
+        records = []
+        count = 0
+        deadline = time.monotonic() + TIMEOUT
+        for folder in folders:
+            record: dict[str, Any]
+            if not P.safe_folder(folder):
+                record = {"state": "not-installed", "reason": "unsafe-project"}
+            elif folder not in wanted:
+                record = {"state": "not-installed", "reason": "not-changed"}
+            elif count >= P.MAX_PROJECTS:
+                record = {"state": "not-installed", "reason": "project-limit"}
+            else:
+                count += 1
+                names = {path[len(folder) + 1:]: mode for path, mode in tree.items()
+                         if path.startswith(folder + "/")}
+                chosen = next(((name, manager) for name, manager in LOCKFILES if name in names), None)
+                if chosen is None:
+                    reason = "binary-lockfile" if BINARY_LOCKFILE in names else "no-lockfile"
+                    record = {"state": "not-installed", "reason": reason}
+                elif names["package.json"] == "120000" or names[chosen[0]] == "120000":
+                    record = {"state": "not-installed", "reason": "symlinked-input"}
+                else:
+                    record = _install(runner, packet, export, *chosen, folder=folder,
+                                      deadline=deadline, tracked=tree)
+            records.append({"project": folder, **record})
+        return {"state": "projects", "projects": records}
     chosen = next(((name, manager) for name, manager in LOCKFILES if name in root), None)
     if chosen is None:
         reason = "binary-lockfile" if BINARY_LOCKFILE in root else "no-lockfile"
@@ -124,7 +164,8 @@ def entry(runner: D.Process, repo: Path, head: str, packet: Path,
     lockfile, manager = chosen
     if root["package.json"] == "120000" or root[lockfile] == "120000":
         return {"state": "not-installed", "reason": "symlinked-input"}
-    return _install(runner, packet, export, lockfile, manager)
+    return _install(runner, packet, export, lockfile, manager,
+                    tracked=D._tree(runner, repo, head, recursive=True))
 
 
 def node_modules(packet: Path) -> Path | None:
@@ -132,6 +173,42 @@ def node_modules(packet: Path) -> Path | None:
     entry must say ``installed`` and name a relative folder inside the packet that exists, with
     no symlink along the way."""
     return D._packet_directory(packet, KEY, frozenset({"installed"}))
+
+
+def installed_projects(packet: Path) -> tuple[tuple[str, Path], ...]:
+    """Validated project -> modules bindings, including the legacy root record."""
+    root = node_modules(packet)
+    if root is not None:
+        return ((".", root),)
+    try:
+        data = json.loads((packet / D.FILE).read_text("utf-8"))
+        records = data.get(KEY, {}).get("projects", [])
+    except (OSError, ValueError, AttributeError):
+        return ()
+    if not isinstance(records, list):
+        return ()
+    found = {}
+    for record in records:
+        if not isinstance(record, dict) or record.get("state") != "installed":
+            continue
+        folder, directory = record.get("project"), record.get("directory")
+        if not isinstance(folder, str) or not P.safe_folder(folder):
+            continue
+        expected = f"dependencies/node/projects/{folder}/node_modules"
+        if directory != expected:
+            continue
+        path = packet / expected
+        if path.is_dir() and not any(p.is_symlink() for p in [path, *path.parents]
+                                     if p.is_relative_to(packet)):
+            found[folder] = path
+    return tuple(sorted(found.items()))
+
+
+def link_projects(copy: Path, projects: tuple[tuple[str, Path], ...]) -> None:
+    for folder, modules in projects:
+        target = copy / folder
+        if target.is_dir() and target.resolve().is_relative_to(copy.resolve()):
+            link_into(target, modules)
 
 
 def link_into(copy: Path, modules: Path) -> bool:
@@ -177,15 +254,23 @@ def needs_node(argv0: str) -> bool:
 
 
 def _install(runner: D.Process, packet: Path, export: D.Export, lockfile: str,
-             manager: str) -> dict[str, Any]:
-    target = packet / DIRECTORY
-    deadline = time.monotonic() + TIMEOUT
+             manager: str, *, folder: str = ".", deadline: float | None = None,
+             tracked: Mapping[str, str] | None = None) -> dict[str, Any]:
+    directory = DIRECTORY if folder == "." else f"dependencies/node/projects/{folder}/node_modules"
+    target = packet / directory
+    deadline = deadline if deadline is not None else time.monotonic() + TIMEOUT
     with D._temporary("saga-review-node-") as work:
         source = work / "head"
         source.mkdir()
         try:
             if not export(source):
                 raise _Failure("head-export")
+            export_root = source
+            source = export_root / folder
+            if not source.resolve().is_relative_to(export_root.resolve()) or any(
+                    path.is_symlink() for path in [source, *source.parents]
+                    if path.is_relative_to(export_root)):
+                raise _Failure("symlinked-input")
             for name in ("package.json", lockfile):
                 if (source / name).is_symlink() or not (source / name).is_file():
                     raise _Failure("symlinked-input")
@@ -194,11 +279,12 @@ def _install(runner: D.Process, packet: Path, export: D.Export, lockfile: str,
                 text = raw.decode("utf-8")
             except UnicodeDecodeError:
                 raise _Failure("unsupported-lockfile") from None
-            problem = vet(lockfile, text)
+            tarballs = _Tarballs(export_root, folder, tracked or {}, deadline)
+            problem = vet(lockfile, text, tarballs=tarballs)
             if problem is not None:
                 raise _Failure(problem)
-            _strip_configuration(source)
-            problem = vet_manifests(source)
+            _strip_configuration(export_root)
+            problem = vet_manifests(source, tarballs=tarballs)
             if problem is not None:
                 raise _Failure(problem)
             found = shutil.which(manager, path=os.environ.get("PATH", ""))
@@ -215,7 +301,7 @@ def _install(runner: D.Process, packet: Path, export: D.Export, lockfile: str,
             dropped += _prune_escaping_links(target)
             record: dict[str, Any] = {
                 "state": "installed",
-                "directory": DIRECTORY,
+                "directory": directory,
                 "manager": manager,
                 "lockfile": lockfile,
                 "packages": _packages(target),
@@ -462,19 +548,99 @@ def _inside_link(roots: set[str], rel: Path, target: str) -> str | None:
 # --- vetting the lockfile -----------------------------------------------------------------------
 
 
-def vet(lockfile: str, text: str) -> str | None:
-    """``None`` when every package *text* names comes from the public npm registry, otherwise
-    the fixed reason: ``unsupported-lockfile`` for a format saga does not read, and
-    ``non-registry-source`` for a git, file, link, tarball or other-registry package."""
+def vet(lockfile: str, text: str, *, tarballs: _Tarballs | None = None) -> str | None:
+    """Vet registry packages and optional authenticated local archives. Without a head export
+    context, local sources stay refused. Errors are fixed reason words, never manager output.
+    """
     if lockfile in ("package-lock.json", "npm-shrinkwrap.json"):
-        return _vet_npm(text)
+        return _vet_npm(text, tarballs)
     if lockfile == "pnpm-lock.yaml":
-        return _vet_pnpm(text)
+        return _vet_pnpm(text, tarballs)
     if lockfile == "yarn.lock":
-        return _vet_yarn(text)
+        return _vet_yarn(text, tarballs)
     if lockfile == "bun.lock":
-        return _vet_bun(text)
+        return _vet_bun(text, tarballs)
     return "unsupported-lockfile"
+
+
+class _Tarballs:
+    """One head export's local archives, admitted only after their lock hash is verified.
+
+    Paths are walked component by component before normalising: `link/../vendor/a.tgz`
+    must not hide a symlink. Nothing above the export root is opened or inspected.
+    """
+
+    def __init__(self, root: Path, project: str, tracked: Mapping[str, str], deadline: float) -> None:
+        self.root, self.project, self.tracked, self.deadline = root, project, tracked, deadline
+        self.verified: set[str] = set()
+        self._hashes: dict[tuple[str, str], bytes] = {}
+
+    def path(self, spec: str, base: str | None = None) -> tuple[str | None, str]:
+        relative = spec.removeprefix("file:")
+        if (not spec.startswith("file:") or not relative or posixpath.isabs(relative)
+                or "~" in relative.split("/")  # npm may expand this to the home directory
+                or any(char in relative for char in ("\\", "\0", "%", "?", "#", ":"))
+                or not relative.endswith((".tgz", ".tar.gz"))):
+            return "non-registry-source", ""
+        parts = list(PurePosixPath(self.project if base is None else base).parts)
+        for part in relative.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if not parts:
+                    return "non-registry-source", ""
+                parts.pop()
+                continue
+            parts.append(part)
+            path = "/".join(parts)
+            if self.tracked.get(path) == "120000" or (self.root / path).is_symlink():
+                return "symlinked-input", ""
+        path = "/".join(parts)
+        if self.tracked.get(path) not in {"100644", "100755"}:
+            return "untracked-tarball", ""
+        try:
+            mode = (self.root / path).lstat().st_mode
+        except OSError:
+            return "missing-tarball", ""
+        if not stat.S_ISREG(mode):
+            return "non-registry-source", ""
+        return None, path
+
+    def allows(self, spec: str) -> bool:
+        problem, path = self.path(spec)
+        return problem is None and path in self.verified
+
+    def verify(self, spec: str, integrity: Any) -> str | None:
+        problem, path = self.path(spec)
+        if problem is not None:
+            return problem
+        if not isinstance(integrity, str) or not _INTEGRITY.fullmatch(integrity):
+            return "missing-integrity"
+        algorithm, _, encoded = integrity.partition("-")
+        try:
+            expected = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error):
+            return "integrity-mismatch"
+        key = path, algorithm
+        if key not in self._hashes:
+            try:
+                digest = hashlib.new(algorithm)
+                count = 0
+                with (self.root / path).open("rb") as archive:
+                    while block := archive.read(1024 * 1024):
+                        count += len(block)
+                        if count > D.FETCH_MAX_BYTES:
+                            return "size-limit"
+                        if time.monotonic() >= self.deadline:
+                            return "timeout"
+                        digest.update(block)
+                self._hashes[key] = digest.digest()
+            except OSError:
+                return "missing-tarball"
+        if not hmac.compare_digest(self._hashes[key], expected):
+            return "integrity-mismatch"
+        self.verified.add(path)
+        return None
 
 
 _FOREIGN_SPEC = re.compile(r"^(?:file:|link:|git|github:|gitlab:|bitbucket:|https?:|npm:|/|\.)")
@@ -493,10 +659,11 @@ def _inside_head(base: str, relative: Any) -> bool:
     return not (joined == ".." or joined.startswith("../"))
 
 
-def _vet_npm(text: str) -> str | None:
+def _vet_npm(text: str, tarballs: _Tarballs | None = None) -> str | None:
     """Every ``node_modules/...`` entry, the lockfile's own ``inBundle`` flag ignored (npm works
     bundling out for itself): a plain version, and either a public-registry ``resolved`` with an
-    ``integrity``, or, for an entry that says it is bundled, no ``resolved`` at all."""
+    ``integrity``, an independently verified local tarball, or, for an entry that says it is
+    bundled, no ``resolved`` at all."""
     try:
         data = json.loads(text)
     except ValueError:
@@ -523,6 +690,13 @@ def _vet_npm(text: str) -> str | None:
         resolved = item.get("resolved")
         if resolved is None and item.get("inBundle") is True:
             continue  # it arrives inside its parent's registry tarball
+        if isinstance(resolved, str) and resolved.startswith("file:"):
+            if tarballs is None:
+                return "non-registry-source"
+            problem = tarballs.verify(resolved, item.get("integrity"))
+            if problem is not None:
+                return problem
+            continue
         if not _registry_url(resolved) or not _INTEGRITY.fullmatch(str(item.get("integrity"))):
             return "non-registry-source"
     return None
@@ -555,9 +729,10 @@ def _split_key(key: str) -> tuple[str, str] | None:
     return (name, spec) if _NAME.fullmatch(name) else None
 
 
-def vet_manifests(source: Path) -> str | None:
+def vet_manifests(source: Path, *, tarballs: _Tarballs | None = None) -> str | None:
     """Every ``package.json`` in the export, outside ``node_modules``: each dependency it names
-    is a registry range, an ``npm:`` alias or a ``workspace:`` reference inside the head."""
+    is a registry range, an ``npm:`` alias, a ``workspace:`` reference inside the head, or a
+    local archive already authenticated by its lock entry."""
     for folder, dirs, files in os.walk(source):
         dirs[:] = sorted(d for d in dirs if d != "node_modules")
         if "package.json" not in files:
@@ -591,6 +766,15 @@ def vet_manifests(source: Path) -> str | None:
                         return "non-registry-source"
                 elif spec.startswith("$"):
                     continue  # an npm override naming a direct dependency's own range
+                elif spec.startswith("file:"):
+                    if tarballs is None:
+                        return "non-registry-source"
+                    base = Path(folder).relative_to(tarballs.root).as_posix()
+                    problem, path = tarballs.path(spec, base)
+                    if problem is not None:
+                        return problem
+                    if path not in tarballs.verified:
+                        return "missing-integrity"
                 elif not _plain_spec(spec):
                     return "non-registry-source"
     return None
@@ -615,7 +799,7 @@ _YARN_TABLES = frozenset({"dependencies", "optionalDependencies"})
 _YARN_FIELDS = frozenset({"version", "resolved", "integrity", "uid"})
 
 
-def _vet_yarn(text: str) -> str | None:
+def _vet_yarn(text: str, tarballs: _Tarballs | None = None) -> str | None:
     if re.search(r"^__metadata:", text, re.MULTILINE):
         return "unsupported-lockfile"  # yarn berry, whatever comment precedes it
     if not text.startswith("# ") or "# yarn lockfile v1" not in text.splitlines()[:3]:
@@ -641,14 +825,19 @@ def _vet_yarn(text: str) -> str | None:
             keys = _yarn_keys(body[:-1])
             if keys is None:
                 return "unsupported-lockfile"
+            local_specs = []
             for key in keys:
                 if key in seen:
                     return "unsupported-lockfile"
                 seen.add(key)
                 parts = _split_key(key)
-                if parts is None or not _plain_spec(parts[1]):
+                if parts is None:
                     return "non-registry-source"
-            entry, table = {}, False
+                if parts[1].startswith("file:") and tarballs is not None:
+                    local_specs.append(parts[1])
+                elif not _plain_spec(parts[1]):
+                    return "non-registry-source"
+            entry, table = {"_file_specs": local_specs}, False
             entries.append(entry)
         elif entry is None:
             return "unsupported-lockfile"
@@ -672,7 +861,19 @@ def _vet_yarn(text: str) -> str | None:
     for item in entries:
         resolved = item.get("resolved", [""])[0]
         integrity = item.get("integrity", [""])[0]
-        if not _registry_url(resolved) or not _INTEGRITY.fullmatch(integrity):
+        if resolved.startswith("file:") or item["_file_specs"]:
+            if tarballs is None:
+                return "non-registry-source"
+            # Yarn classic appends a SHA-1 fragment to the resolved file URL. Require the
+            # separate integrity field and verify the bytes, including each file header.
+            source, marker, fragment = resolved.partition("#")
+            if marker and not re.fullmatch(r"[0-9a-f]{40}", fragment):
+                return "non-registry-source"
+            for spec in [source, *item["_file_specs"]]:
+                problem = tarballs.verify(spec, integrity)
+                if problem is not None:
+                    return problem
+        elif not _registry_url(resolved) or not _INTEGRITY.fullmatch(integrity):
             return "non-registry-source"
         if not _PLAIN_VERSION.fullmatch(item.get("version", [""])[0]):
             return "non-registry-source"
@@ -845,7 +1046,7 @@ _PNPM_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]*)?(?:\(
 _PNPM_IMPORTER_TABLES = ("dependencies", "devDependencies", "optionalDependencies")
 
 
-def _vet_pnpm(text: str) -> str | None:
+def _vet_pnpm(text: str, tarballs: _Tarballs | None = None) -> str | None:
     try:
         data = _pnpm_parse(text)
     except (_Unsupported, RecursionError):
@@ -855,6 +1056,22 @@ def _vet_pnpm(text: str) -> str | None:
         return "unsupported-lockfile"
     if set(data) - _PNPM_TOP:
         return "unsupported-lockfile"
+    packages = data.get("packages") or {}
+    if not isinstance(packages, dict):
+        return "unsupported-lockfile"
+    # Local resolutions must be authenticated before importer and snapshot references can
+    # name them. A directory resolution (or any additional resolution key) is still refused.
+    for package in packages.values():
+        resolution = package.get("resolution") if isinstance(package, dict) else None
+        if isinstance(resolution, dict) and "tarball" in resolution:
+            if tarballs is None or set(resolution) - {"tarball", "integrity"}:
+                return "non-registry-source"
+            source = resolution["tarball"]
+            if not isinstance(source, str):
+                return "non-registry-source"
+            problem = tarballs.verify(source, resolution.get("integrity"))
+            if problem is not None:
+                return problem
     importers = data.get("importers") if "importers" in data else {".": {
         name: data[name] for name in _PNPM_IMPORTER_TABLES if name in data}}
     if not isinstance(importers, dict):
@@ -873,32 +1090,46 @@ def _vet_pnpm(text: str) -> str | None:
                 if spec.startswith("link:"):
                     if not _inside_head(path, spec[len("link:"):]):
                         return "non-registry-source"
-                elif not _pnpm_version(spec):
+                elif not _pnpm_version(spec, tarballs):
                     return "non-registry-source"
     packages = data.get("packages") or {}
     if not isinstance(packages, dict):
         return "unsupported-lockfile"
     for key, item in packages.items():
-        if not isinstance(item, dict) or set(item.get("resolution") or {}) != {"integrity"} or (
-                not isinstance(item.get("resolution"), dict)):
+        if not isinstance(item, dict) or not isinstance(item.get("resolution"), dict):
             return "non-registry-source"
-        if not _INTEGRITY.fullmatch(item["resolution"]["integrity"]):
+        resolution = item["resolution"]
+        local = "tarball" in resolution
+        if set(resolution) != ({"integrity", "tarball"} if local else {"integrity"}):
+            return "non-registry-source"
+        if not _INTEGRITY.fullmatch(resolution["integrity"]):
             return "non-registry-source"
         bare = key.lstrip("/")
         parts = _split_key(bare)
-        if parts is None or not _PNPM_VERSION.fullmatch(parts[1]):
+        spec = parts[1] if parts is not None else bare
+        if local:
+            if tarballs is None:
+                return "non-registry-source"
+            problem = tarballs.verify(spec, resolution["integrity"])
+            if problem is not None:
+                return problem
+        elif parts is None or not _PNPM_VERSION.fullmatch(spec):
             return "non-registry-source"
     snapshots = data.get("snapshots") or {}
     if not isinstance(snapshots, dict):
         return "unsupported-lockfile"
     for key, item in snapshots.items():
         parts = _split_key(key)
-        if parts is None or not _PNPM_VERSION.fullmatch(parts[1]):
+        if parts is None:
+            if tarballs is None or not key.startswith("file:") or not tarballs.allows(key):
+                return "non-registry-source"
+        elif not (_PNPM_VERSION.fullmatch(parts[1]) or (tarballs is not None
+                  and parts[1].startswith("file:") and tarballs.allows(parts[1]))):
             return "non-registry-source"
         for table_name in ("dependencies", "optionalDependencies"):
             table = (item or {}).get(table_name) if isinstance(item, dict) else None
             for spec in (table or {}).values():
-                if not isinstance(spec, str) or not _pnpm_version(spec):
+                if not isinstance(spec, str) or not _pnpm_version(spec, tarballs):
                     return "non-registry-source"
     problem = _vet_pnpm_settings(data)
     if problem is not None:
@@ -955,15 +1186,19 @@ def _vet_pnpm_settings(data: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _pnpm_version(spec: str) -> bool:
+def _pnpm_version(spec: str, tarballs: _Tarballs | None = None) -> bool:
     """A resolved version, maybe with a peer suffix, or an alias ``name@version``."""
+    if tarballs is not None and spec.startswith("file:"):
+        return tarballs.allows(spec)
     if _PNPM_VERSION.fullmatch(spec.lstrip("/")):
         return True
     parts = _split_key(spec.lstrip("/"))
+    if parts is not None and tarballs is not None and parts[1].startswith("file:"):
+        return tarballs.allows(parts[1])
     return parts is not None and bool(_PNPM_VERSION.fullmatch(parts[1]))
 
 
-def _vet_bun(text: str) -> str | None:
+def _vet_bun(text: str, tarballs: _Tarballs | None = None) -> str | None:
     try:
         data = json.loads(re.sub(r",(\s*[}\]])", r"\1", text))
     except ValueError:
@@ -976,6 +1211,14 @@ def _vet_bun(text: str) -> str | None:
             return "unsupported-lockfile"
         spec = item[0][1:].partition("@")[2] if item[0].startswith("@") else (
             item[0].partition("@")[2])
+        if spec.endswith((".tgz", ".tar.gz")) or spec.startswith("file:"):
+            if tarballs is None:
+                return "non-registry-source"
+            source = spec if spec.startswith("file:") else "file:" + spec
+            problem = tarballs.verify(source, item[-1] if len(item) > 2 else None)
+            if problem is not None:
+                return problem
+            continue
         if spec.startswith("workspace:"):
             if not _inside_head(".", spec[len("workspace:"):]):
                 return "non-registry-source"

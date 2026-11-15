@@ -109,38 +109,41 @@ def test_returns_empty_dict_when_all_three_fail(tmp_path, fake_vendored_path) ->
 
 
 def test_vendored_project_mappings_has_expected_canonical_state() -> None:
-    """The vendored project-mappings.json must declare the canonical
-    org-wide state: the ACTIVE boards are Operations (#3), Asgard (#2),
-    and CAMPPS (#4). Mount Olympus (former project #1) was retired
-    2026-06-17 and removed from active routing, so it must NOT appear as a
-    project. No board carries a repo-based default routing list (KTD17 —
-    board commands require an explicit --project), so every `repositories`
-    list is empty. If this test fails, either the vendored file was edited
-    or the org's active board set has drifted — both are events the
-    operator should know about.
-
-    NOTE: This test reads the REAL vendored file (not the fixture) — it's
-    the canonical-state guard, not a hermetic unit test."""
+    """The vendored project-mappings.json must declare the canonical 10-board
+    per-project state (#4 CAMPPS plus Projects #10-#18). Retired boards
+    (Mount Olympus #1, Asgard #2, Operations #3) must NOT appear as active
+    projects, and each active repository maps to at most one project board."""
     vendored = sdlc_manager._VENDORED_PROJECT_MAPPINGS_PATH
     assert vendored.exists(), f"Vendored file missing at {vendored}"
     data = json.loads(vendored.read_text())
     assert data["organization"] == "infiquetra"
-    # Olympus is retired and must not be an active routing target.
-    assert "mount-olympus" not in data["projects"]
-    assert "operations" in data["projects"]
-    assert "asgard" in data["projects"]
-    assert "campps" in data["projects"]
-    assert data["projects"]["operations"]["number"] == 3
-    assert data["projects"]["asgard"]["number"] == 2
-    assert data["projects"]["campps"]["number"] == 4
+    for retired in ("mount-olympus", "asgard", "operations"):
+        assert retired not in data["projects"]
+        assert retired in data["retired_projects"]
+        assert data["retired_projects"][retired]["active_routing"] is False
 
-    # No repo-based default routing (KTD17): every board's repositories list
-    # is empty so work is never silently routed to a board.
-    for key, proj in data["projects"].items():
-        assert proj.get("repositories", []) == [], (
-            f"Project {key!r} carries repo-based default routing; "
-            f"KTD17 removed default routing (lists must be empty)."
-        )
+    expected_numbers = {
+        "campps": 4,
+        "sovereign-circuit": 10,
+        "company": 11,
+        "argus": 12,
+        "talaria": 13,
+        "agent-platform": 14,
+        "home-lab": 15,
+        "eve-mimir": 16,
+        "cognitive-ai-research": 17,
+        "ai-native-engine": 18,
+    }
+    assert set(data["projects"].keys()) == set(expected_numbers.keys())
+    seen_repos: set[str] = set()
+    for key, num in expected_numbers.items():
+        proj = data["projects"][key]
+        assert proj["number"] == num
+        repos = proj.get("repositories", [])
+        assert repos, f"Per-project board {key!r} must declare its mapped repositories"
+        overlap = seen_repos & set(repos)
+        assert not overlap, f"Duplicate repository mapping on {key!r}: {overlap}"
+        seen_repos.update(repos)
 
 
 def test_sdlc_schema_remote_main_wins_over_local_and_vendored(
@@ -237,10 +240,11 @@ def test_vendored_sdlc_schema_declares_current_live_boards() -> None:
     assert vendored.exists(), f"Vendored schema missing at {vendored}"
     data = json.loads(vendored.read_text())
 
-    assert data["boards"]["operations"]["status"] == "active"
-    assert data["boards"]["operations"]["live_creation"] == "created_2026-05-29_project_3"
-    assert data["boards"]["asgard"]["status"] == "active"
-    assert data["boards"]["asgard"]["live_creation"] == "created_2026-05-29_project_2"
+    assert data["boards"]["operations"]["status"] == "retired_historical"
+    assert data["boards"]["asgard"]["status"] == "retired_historical"
+    assert data["boards"]["campps"]["status"] == "active"
+    assert data["boards"]["agent-platform"]["status"] == "active"
+    assert data["boards"]["agent-platform"]["live_creation"] == "created_2026-11-10_project_14"
     assert data["workflows"]["stage_flow"]["stages"] == [
         "Intake",
         "Shaping",

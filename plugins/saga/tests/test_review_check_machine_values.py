@@ -137,6 +137,27 @@ def test_inert_values_yield_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert H.read(output, "where-to-look.json") == []
 
 
+def test_repeated_kind_on_one_line_is_one_item(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _identity(monkeypatch, "fixture-user", "fixture-host")
+    text = "note = '/var/log/example-app /var/log/example-app /var/log/example-app'\n"
+    code, output, *_rest = H.one(
+        tmp_path,
+        {"readme.txt": "a\n"},
+        {"readme.txt": "a\n", "sample.py": text},
+        "machine-values",
+        "echo ok",
+    )
+    assert code == 0
+    items = H.read(output, "where-to-look.json")
+    assert len(items) == 1
+    assert _kinds(items) == {"unix-path"}
+    assert items[0]["location"]["file"] == "sample.py"
+    assert items[0]["location"]["lines"] == {"start": 1, "end": 1}
+    _omits(items)
+
+
 def test_a_confirmed_hit_stays_fix_later_when_the_relocated_run_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -781,10 +781,56 @@ def _set_field_landed_detail(stdout: str, assignments: list[tuple[str, str]]) ->
     return "; ".join(parts)
 
 
+def resolve_project_for_repo(
+    repo: str,
+    *,
+    mission_control_root: Path | None = None,
+) -> str:
+    """Resolve the owning active project board key for ``repo`` from ``project-mappings.json``."""
+    import os  # noqa: PLC0415
+
+    bare = repo.rsplit("/", 1)[-1]
+    candidates: list[Path] = []
+    sdlc_env = os.environ.get("INFIQUETRA_SDLC_PATH", "").strip()
+    sdlc_root = (
+        Path(sdlc_env).expanduser()
+        if sdlc_env
+        else Path.home() / "workspace" / "infiquetra" / "infiquetra-sdlc"
+    )
+    candidates.append(sdlc_root / "config" / "project-mappings.json")
+    if mission_control_root is not None:
+        candidates.append(Path(mission_control_root) / "config" / "project-mappings.json")
+    candidates.append(
+        Path(__file__).resolve().parents[2] / "mission-control" / "config" / "project-mappings.json"
+    )
+    with contextlib.suppress(RuntimeError):
+        mc_root, _rung = resolve_mission_control_root()
+        candidates.append(Path(mc_root) / "config" / "project-mappings.json")
+
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        projects = data.get("projects")
+        if not isinstance(projects, dict):
+            continue
+        for key, spec in projects.items():
+            if isinstance(spec, dict) and bare in (spec.get("repositories") or []):
+                return str(key)
+        break
+
+    raise ValueError(
+        f"Repository {bare!r} is not mapped to any active project board; pass --project explicitly"
+    )
+
+
 def default_board_writer(
     *,
     mission_control_root: Path,
-    project: str = "operations",
+    project: str = "",
     runner: Callable[..., Any] | None = None,
 ) -> Callable[..., None]:
     """The production board_writer (#279/#344): drive a reversibility-authorized op via mission-control.
@@ -865,11 +911,14 @@ def default_board_writer(
                     raise ValueError(
                         f"set-field submission rejects field {field_name!r}; allowed: {allowed}"
                     )
+            target_project = project or resolve_project_for_repo(
+                repo, mission_control_root=mission_control_root
+            )
             cmd = base + [
                 "flow",
                 "set-field",
                 "--project",
-                project,
+                target_project,
                 "--repo",
                 repo,
                 "--number",
@@ -1053,7 +1102,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     # Shared with the `write` subcommand's own copies; the subparser's value wins when a
     # subcommand is used, and these are what the boundary path reads.
-    parser.add_argument("--project", default="operations")
+    parser.add_argument("--project", default="")
     parser.add_argument("--ledger-dir", default="")
     parser.add_argument("--repo-root", default="")
     sub = parser.add_subparsers(dest="cmd", required=False)
@@ -1067,7 +1116,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_write.add_argument("--number", required=True, type=int)
     p_write.add_argument("--target-state", default="", help="e.g. Done (for set-field-status)")
-    p_write.add_argument("--project", default="operations")
+    p_write.add_argument("--project", default="")
     p_write.add_argument("--payload", default="", help='JSON object, e.g. {"body": "..."}')
     p_write.add_argument(
         "--ledger-dir", default="", help="override the default board-progression ledger dir"

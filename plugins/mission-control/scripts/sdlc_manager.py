@@ -297,11 +297,37 @@ _VENDORED_PROJECT_MAPPINGS_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "project-mappings.json"
 )
 _VENDORED_SDLC_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "config" / "sdlc-schema.json"
-# Active boards only (KTD17): Operations, Asgard, CAMPPS. Mount Olympus
-# (former project #1) is retired historical context and is NOT an active board
-# choice; legacy Olympus card reads are still handled by the status/WIP helpers
-# below for any external override that points at the old project.
-PROJECT_CHOICES = ("operations", "asgard", "campps")
+# Active per-project boards (2026-11-10 migration). Operations (#3), Asgard (#2),
+# and Mount Olympus (#1) are retired historical context and NOT active board
+# choices. Callers and CLI parsers resolve active choices dynamically via
+# ``_active_project_choices()`` from ``project-mappings.json`` so adding or
+# retiring future project boards is pure configuration.
+DEFAULT_PROJECT_CHOICES = (
+    "campps",
+    "sovereign-circuit",
+    "company",
+    "argus",
+    "talaria",
+    "agent-platform",
+    "home-lab",
+    "eve-mimir",
+    "cognitive-ai-research",
+    "ai-native-engine",
+)
+PROJECT_CHOICES = DEFAULT_PROJECT_CHOICES
+
+
+def _active_project_choices(config: dict[str, Any] | None = None) -> tuple[str, ...]:
+    """Return active project board keys from ``project-mappings.json``."""
+    mappings = (
+        config.get("project_mappings", {})
+        if isinstance(config, dict) and "project_mappings" in config
+        else _resolve_project_mappings(get_sdlc_path())
+    )
+    projects = mappings.get("projects", {}) if isinstance(mappings, dict) else {}
+    if isinstance(projects, dict) and projects:
+        return tuple(str(k) for k in projects.keys())
+    return PROJECT_CHOICES
 LIVE_LEGACY_STATUS_ALIASES = {
     "In Progress": "Assigned",
     "In Development": "Assigned",
@@ -5868,7 +5894,7 @@ def _readiness_for_prepared_issue(
                 f"statuses {sorted(cross_cutting)!r}, not {issue.status!r}"
             )
 
-    if issue.project not in PROJECT_CHOICES:
+    if issue.project not in _active_project_choices():
         blocking.append(f"Unknown project {issue.project!r}")
 
     expected_labels = set(_issue_expected_labels(issue.issue_type))
@@ -6266,9 +6292,10 @@ def issue_prepare(
         raise RuntimeError(f"Unknown team {team!r}; expected one of {', '.join(_TEAM_CHOICES)}")
     if issue_type not in _ISSUE_TYPES:
         raise RuntimeError(f"Unknown issue type {issue_type!r}")
-    if project not in PROJECT_CHOICES:
+    active_projects = _active_project_choices()
+    if project not in active_projects:
         raise RuntimeError(
-            f"Unknown project {project!r}; expected one of {', '.join(PROJECT_CHOICES)}"
+            f"Unknown project {project!r}; expected one of {', '.join(active_projects)}"
         )
 
     # W10 repair (R49): the default Status is the entry option of the DECLARED
@@ -7714,6 +7741,7 @@ def issue_create(
 
 
 def main() -> None:
+    project_choices = _active_project_choices()
     parser = argparse.ArgumentParser(
         description="Infiquetra SDLC Manager — Unified CLI for Infiquetra SDLC automation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -7731,19 +7759,18 @@ def main() -> None:
     board_sp = board_p.add_subparsers(dest="action", required=True)
 
     board_view_p = board_sp.add_parser("view", help="View board items by column")
-    board_view_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    board_view_p.add_argument("--project", required=True, choices=project_choices)
     board_view_p.add_argument("--status", help="Filter by status column")
 
     board_add_p = board_sp.add_parser("add", help="Add issue/PR to project(s)")
     board_add_p.add_argument(
         "--project",
         action="append",
-        choices=PROJECT_CHOICES,
+        choices=project_choices,
         help=(
             "Target a specific project instead of repo-based default routing. "
             "Repeatable: pass --project more than once to place the item on "
-            "multiple boards as independent memberships "
-            "(e.g. --project operations --project asgard)."
+            "multiple boards as independent memberships."
         ),
     )
     board_add_p.add_argument(
@@ -7757,7 +7784,7 @@ def main() -> None:
     board_move_p = board_sp.add_parser("move", help="Move item to different column")
     board_move_p.add_argument(
         "--project",
-        choices=PROJECT_CHOICES,
+        choices=project_choices,
         help=(
             "Name a board to VALIDATE against (it must already carry the "
             "issue) — Status is still written on EVERY board carrying the "
@@ -7774,21 +7801,21 @@ def main() -> None:
     )
 
     board_archive_p = board_sp.add_parser("archive", help="Archive terminal workflow items")
-    board_archive_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    board_archive_p.add_argument("--project", required=True, choices=project_choices)
     board_archive_p.add_argument("--dry-run", action="store_true")
 
     board_wip_p = board_sp.add_parser("wip", help="Show WIP counts and limits")
-    board_wip_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    board_wip_p.add_argument("--project", required=True, choices=project_choices)
 
     board_standup_p = board_sp.add_parser(
         "standup", help="Standup prep — right-to-left board review"
     )
-    board_standup_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    board_standup_p.add_argument("--project", required=True, choices=project_choices)
 
     board_fields_p = board_sp.add_parser(
         "discover-fields", help="Discover all project fields and options"
     )
-    board_fields_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    board_fields_p.add_argument("--project", required=True, choices=project_choices)
 
     # ===========================
     # ISSUE
@@ -7828,7 +7855,7 @@ def main() -> None:
         choices=_ISSUE_TYPES,
     )
     issue_prepare_p.add_argument("--team", required=True, choices=_TEAM_CHOICES)
-    issue_prepare_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    issue_prepare_p.add_argument("--project", required=True, choices=project_choices)
     issue_prepare_p.add_argument("--title", default=None)
     issue_prepare_p.add_argument("--status", default=None)
     issue_prepare_p.add_argument("--risk", default=None)
@@ -8016,7 +8043,7 @@ def main() -> None:
             "set is overwritten whole)"
         ),
     )
-    fields_create_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    fields_create_p.add_argument("--project", required=True, choices=project_choices)
     fields_create_p.add_argument(
         "--field", required=True, help="Field name (e.g. initiative, objective)"
     )
@@ -8034,7 +8061,7 @@ def main() -> None:
             "helper (complete desired list required; existing ids preserved)"
         ),
     )
-    fields_setopts_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    fields_setopts_p.add_argument("--project", required=True, choices=project_choices)
     fields_setopts_p.add_argument(
         "--field", required=True, help="Field name (e.g. Status, Objective)"
     )
@@ -8051,7 +8078,7 @@ def main() -> None:
     )
 
     fields_discover_p = fields_sp.add_parser("discover", help="Discover all fields and options")
-    fields_discover_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    fields_discover_p.add_argument("--project", required=True, choices=project_choices)
 
     # ===========================
     # METRICS
@@ -8060,23 +8087,23 @@ def main() -> None:
     metrics_sp = metrics_p.add_subparsers(dest="action", required=True)
 
     metrics_ct_p = metrics_sp.add_parser("cycle-time", help="Cycle time percentiles")
-    metrics_ct_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    metrics_ct_p.add_argument("--project", required=True, choices=project_choices)
     metrics_ct_p.add_argument("--days", type=int, default=30)
     metrics_ct_p.add_argument(
         "--type", choices=["capability", "enhancement", "defect", "exploration"]
     )
 
     metrics_th_p = metrics_sp.add_parser("throughput", help="Items deployed per week")
-    metrics_th_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    metrics_th_p.add_argument("--project", required=True, choices=project_choices)
     metrics_th_p.add_argument("--weeks", type=int, default=4)
 
     metrics_age_p = metrics_sp.add_parser("wip-age", help="Age of in-progress items")
-    metrics_age_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    metrics_age_p.add_argument("--project", required=True, choices=project_choices)
 
     metrics_col_p = metrics_sp.add_parser(
         "column-time", help="Time in each column for a specific item"
     )
-    metrics_col_p.add_argument("--project", required=True, choices=PROJECT_CHOICES)
+    metrics_col_p.add_argument("--project", required=True, choices=project_choices)
     metrics_col_p.add_argument("--number", required=True, type=int)
 
     # ===========================

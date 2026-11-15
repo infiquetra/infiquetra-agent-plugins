@@ -741,7 +741,7 @@ tools:
     rules: []
     env_dirs: ["node_modules"]
     lockfiles: ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "npm-shrinkwrap.json"]
-    base_files: ["stryker.conf.json", "stryker.conf.js", "stryker.conf.mjs", "stryker.conf.cjs", "tsconfig.json", "package.json"]
+    base_files: ["stryker.conf.json", "stryker.conf.js", "stryker.conf.mjs", "stryker.conf.cjs", "tsconfig.json", "package.json", "vitest.config.ts", "vitest.config.js", "vitest.config.mjs", "vitest.config.cjs", "vitest.config.mts", "vitest.config.cts", "vite.config.ts", "vite.config.js", "vite.config.mjs", "vite.config.cjs", "vite.config.mts", "vite.config.cts", "jest.config.ts", "jest.config.js", "jest.config.mjs", "jest.config.cjs", "jest.config.json", "babel.config.js", "babel.config.cjs", "babel.config.mjs", "babel.config.json", ".babelrc", ".babelrc.js", ".babelrc.json", ".swcrc", ".swcrc.json"]
     local_bins: ["node_modules/.bin"]
   - id: vitest-shuffle
     tool: vitest

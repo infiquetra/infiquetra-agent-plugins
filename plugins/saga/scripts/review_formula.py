@@ -244,8 +244,14 @@ _PATTERN_CHECKS = (
 ROWS: Mapping[str, Row] = _rows(
     # Testing
     Row("testing.uncovered-branch", "testing", "blocks", excused_by="coverage-gap"),
-    Row("testing.surviving-mutant", "testing", "blocks", excused_by="surviving-mutant"),
-    Row("testing.test-passes-before-change", "testing", "blocks",
+    # A lead for the reviewer, not a block: survivors on changed lines are as common on clean
+    # changes as on defective ones. The reviewer escalates a survivor on the line the change
+    # exists for as testing.accepts-broken-code.
+    Row("testing.surviving-mutant", "testing", "fix-later", excused_by="surviving-mutant"),
+    # A lead for the reviewer, not a block: a new test that passes before the change is as often
+    # one pinning behaviour the change keeps as one that fails to check what the change adds. The
+    # reviewer escalates the second kind as testing.accepts-broken-code.
+    Row("testing.test-passes-before-change", "testing", "fix-later",
         excused_by="test-passes-before-change"),
     Row("testing.test-skipped-in-ci", "testing", "blocks", excused_by="test-skipped-in-ci"),
     Row("testing.accepts-broken-code", "testing", "blocks"),
@@ -535,6 +541,7 @@ def outcome(
     builder_records: Sequence[Mapping[str, Any]] = (),
     may_block: Mapping[str, Any] | None = None,
     changed_lines: Mapping[str, Any] | None = None,
+    required_lead_findings: frozenset[tuple[str, str, str]] = frozenset(),
 ) -> dict[str, Any]:
     """The computed fields for one input finding: severity, its basis, flags and enforcement.
 
@@ -565,6 +572,9 @@ def outcome(
 
     modifiers: list[str] = list(pick_modifiers)
     severity = row.outcome
+    if (row_id, str(finding.get("language")), str(finding.get("id") or "")) in required_lead_findings:
+        severity = "blocks"
+        modifiers.append("unanswered-testing-lead")
     if row.blocks_when_reproduced and evidence == "reproduced":
         severity = "blocks"
         modifiers.append("reproduced")
@@ -644,7 +654,8 @@ def compute(inputs: Mapping[str, Any]) -> dict[str, Any]:
     *inputs* holds ``findings`` and ``measurements`` in their input form, ``builder_records``,
     ``may_block`` (``{lens: {language: bool}}``; absent means every lens reports only) and
     ``degraded_inputs`` (``[{lens, language, input, tool, reason}]``, a re-run reason may add
-    ``exit_code`` and ``output_tail``; none of them changes a grade) and ``changed_lines``
+    ``exit_code`` and ``output_tail``; an unlocated testing lead carries ``finding_ids``
+    and ``count`` and restores blocking severity only for those findings) and ``changed_lines``
     (``{path: [[start, end], ...]}``; absent means no finding is capped as pre-existing).
     Everything returned is sorted, so the same inputs in any order give the same output.
     """
@@ -652,9 +663,20 @@ def compute(inputs: Mapping[str, Any]) -> dict[str, Any]:
     may_block = dict(inputs.get("may_block") or {})
     changed = inputs.get("changed_lines")
     changed_ranges(changed)  # refuse a malformed value once, before any finding is computed
+    # Persist exact identities in the degraded entry so prepare and finish apply the same
+    # fallback, without changing other findings in that row or another language. Capped leads
+    # stay fix-later; normal excusal, calibration and may_block rules still apply.
+    required_lead_findings = frozenset(
+        (str(entry.get("input")), str(entry.get("language")), str(finding_id))
+        for entry in inputs.get("degraded_inputs") or []
+        if entry.get("input") in {"testing.test-passes-before-change", "testing.surviving-mutant"}
+        and entry.get("reason") == "unlocated-lead"
+        for finding_id in entry.get("finding_ids", [])
+    )
     findings: list[dict[str, Any]] = []
     for finding in inputs.get("findings") or []:
-        findings.append({**finding, **outcome(finding, builder_records, may_block, changed)})
+        findings.append({**finding, **outcome(finding, builder_records, may_block, changed,
+                                                    required_lead_findings)})
     findings.sort(key=lambda item: (str(item.get("id")), _canonical(item)))
 
     measurements = []

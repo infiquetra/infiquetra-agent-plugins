@@ -4081,3 +4081,562 @@ def test_node_a_confined_rerun_resolves_commonjs_and_esm_and_writes_its_own_temp
             assert ran.code == 0, ran.stderr
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_prepare_hands_the_tools_the_python_environment_the_re_runs_get(tmp_path: Path) -> None:
+    """The scripted testing checks run the change's tests in prepare. They get the same
+    saga-written environment over the packet's packages as the reviewer's re-runs, so a test that
+    imports a locked dependency can be listed and run at all."""
+    repo, base, head = _python_change(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    seen: list[Any] = []
+    imported: list[str] = []
+
+    def invoke(context: Any) -> list[str]:
+        seen.append(context.python_env)
+        if context.python_env is not None:
+            ran = subprocess.run(
+                [str(context.python_env / "bin" / "python3"), "-c",
+                 "import inertdep; print(inertdep.two())"],
+                capture_output=True, text=True, timeout=60, check=False,
+            )
+            imported.append(ran.stdout.strip())
+        return ["stub", "scan"]
+
+    adapter = T.Adapter(
+        id="stub", tool="stub", invoke=invoke, parse=lambda _text: T.ParseResult(),
+        default_version="1.0.0", rows=("security.scanner-high",), lens="security",
+        comparison="lines",
+    )
+    out = tmp_path / "packet"
+    code, err = _main([
+        "prepare", "--repo", str(repo), "--base", base, "--head", head,
+        "--profile", str(_profile(tmp_path / "outside")),
+        "--builder-record", str(_builder(tmp_path / "builder.json")),
+        "--out", str(out), "--home", str(home),
+    ], adapters=[adapter], runner=_UvRunner(exported=_UV.EXPORTED, compiled=_UV.PYTEST))
+    assert code == 0, err
+    assert seen and seen[0] is not None
+    assert imported == ["2"]
+    # The environment is saga's temporary one, gone once the tools have run; the packet keeps
+    # only the packages.
+    assert not seen[0].exists()
+    assert (out / "dependencies" / "python" / "site-packages" / "inertdep").is_dir()
+
+
+def test_prepare_without_python_dependencies_hands_the_tools_no_environment(
+    tmp_path: Path,
+) -> None:
+    repo, base, head = _repo(tmp_path, function=False)
+    seen: list[Any] = []
+
+    def invoke(context: Any) -> list[str]:
+        seen.append(context.python_env)
+        return ["stub", "scan"]
+
+    adapter = T.Adapter(
+        id="stub", tool="stub", invoke=invoke, parse=lambda _text: T.ParseResult(),
+        default_version="1.0.0", rows=("security.scanner-high",), lens="security",
+        comparison="lines",
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    code, err = _main([
+        "prepare", "--repo", str(repo), "--base", base, "--head", head,
+        "--profile", str(_profile(tmp_path / "outside")),
+        "--builder-record", str(_builder(tmp_path / "builder.json")),
+        "--out", str(tmp_path / "packet"), "--home", str(home),
+    ], adapters=[adapter], runner=_Runner())
+    assert code == 0, err
+    assert seen == [None]
+
+
+def test_the_environment_uses_the_interpreter_the_packet_was_installed_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prepare may install for an interpreter other than the operator's ``python3`` (one the
+    project's ``requires-python`` covers); the environment, and the sandbox's read list, follow
+    the interpreter the packet records, found again by its version."""
+    packet, _runner = _python_packet(tmp_path)
+    data = _read(packet / "dependencies.json")
+    data["python"]["interpreter"]["version"] = "3.0.0"
+    _dump(packet / "dependencies.json", data)
+    asked: list[str] = []
+    real = C.review_dependencies.interpreter_version
+
+    def find(request: str) -> str | None:
+        asked.append(request)
+        return sys.executable
+
+    monkeypatch.setattr(C.review_dependencies, "find_python", find)
+    monkeypatch.setattr(C.review_dependencies, "interpreter_version",
+                        lambda python: "3.0.0" if python == sys.executable else real(python))
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None and offline.python is not None
+        linked = (offline.python / "bin" / "python3").resolve()
+        assert linked == Path(sys.executable).resolve()
+        prefix = linked.parent.parent
+        assert any(path == prefix / "lib" for path in offline.toolchain) or not (
+            prefix / "lib").is_dir()
+    assert asked == ["3.0"]
+
+
+def test_the_python_environment_never_writes_bytecode_into_the_packet(tmp_path: Path) -> None:
+    """The re-run, and prepare's testing checks, import the packet's packages with bytecode
+    writes off, so the packet's dependency folder stays what the fetch wrote."""
+    packet, _runner = _python_packet(tmp_path)
+    site = packet / "dependencies" / "python" / "site-packages"
+    before = sorted(path.relative_to(site).as_posix() for path in site.rglob("*"))
+    with C._offline_dependencies(packet) as offline:
+        assert offline is not None and offline.python is not None
+        assert offline.env["PYTHONDONTWRITEBYTECODE"] == "1"
+        env = {**C.child_environment(tmp_path), **offline.env}
+        ran = subprocess.run(
+            [str(offline.python / "bin" / "python3"), "-c", "import inertdep"],
+            env=env, capture_output=True, text=True, timeout=60, check=False,
+        )
+        assert ran.returncode == 0, ran.stderr
+    assert sorted(path.relative_to(site).as_posix() for path in site.rglob("*")) == before
+
+
+_LEAD_APP = (
+    "def parse_header(text):\n"
+    "    if text.startswith('#'):\n"
+    "        return text[1:]\n"
+    "    return text\n"
+)
+_LEAD_NAMES = ["parse_header_strips_marker", "unrelated_cleanup", *[f"extra_{n}" for n in range(9)]]
+_LEAD_TESTS = "".join(f"def test_{name}():\n    assert True\n\n\n" for name in _LEAD_NAMES)
+
+
+def _lead_change(tmp: Path) -> tuple[Path, str, str, Any]:
+    repo = tmp / "repo"
+    _init(repo)
+    (repo / "app.py").write_text("def parse_header(text):\n    return text\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "app.py").write_text(_LEAD_APP, encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_app.py").write_text(_LEAD_TESTS, encoding="utf-8")
+    head = _commit(repo, "head")
+    return repo, base, head, C.review_diff.read(repo, base, head)
+
+
+def _lead_finding(row: str, ref: str, location: dict[str, Any], statement: str) -> dict[str, Any]:
+    return {
+        "kind": "finding", "lens": "testing", "language": "python", "statement": statement,
+        "rule": {"row": row, "ref": ref}, "location": location,
+        "source": {"kind": "tool", "name": "review-checks", "version": "1.0.0"},
+    }
+
+
+def _two_runs_finding(name: str) -> dict[str, Any]:
+    node = f"tests/test_app.py::test_{name}"
+    return _lead_finding(
+        "testing.test-passes-before-change", node,
+        {"scope": "whole-project", "file": "tests/test_app.py", "anchor": node},
+        "The new test passes on the code before the change.",
+    )
+
+
+def _mutant_finding(line: int, operator: str) -> dict[str, Any]:
+    return _lead_finding(
+        "testing.surviving-mutant", "surviving-mutant",
+        {"scope": "lines", "file": "app.py", "anchor": f"app.py:{line}",
+         "lines": {"start": line, "end": line}, "function": None},
+        f"A mutant survived ({operator}).",
+    )
+
+
+def test_testing_leads_become_where_to_look_items_at_the_test_and_the_mutated_line(
+    tmp_path: Path,
+) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    findings = [_two_runs_finding("parse_header_strips_marker"), _mutant_finding(2, "core/Not")]
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    assert degraded == []
+    test_item, mutant_item = items
+    assert test_item["classifier"] == {"name": "two-runs", "model": "review-checks 1.0.0"}
+    assert test_item["questions"] == [{"id": "testing.accepts-broken-code", "probability": 1}]
+    assert test_item["location"] == {
+        "scope": "lines", "file": "tests/test_app.py", "lines": {"start": 1, "end": 2},
+        "function": "test_parse_header_strips_marker",
+        "anchor": "two-runs:tests/test_app.py::test_parse_header_strips_marker",
+    }
+    assert mutant_item["location"] == {
+        "scope": "lines", "file": "app.py", "lines": {"start": 2, "end": 2},
+        "function": "parse_header", "anchor": "surviving-mutant:core/Not:2",
+    }
+    for item in items:
+        assert item["lens"] == "testing" and item["degraded"] is False
+        assert item["kind"] == "where_to_look" and item["schema"] == R.SCHEMA
+
+
+def test_testing_leads_are_capped_and_ranked_by_words_shared_with_the_change(
+    tmp_path: Path,
+) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    names = ["unrelated_cleanup", *[f"extra_{n}" for n in range(9)], "parse_header_strips_marker"]
+    findings = [_two_runs_finding(name) for name in names]
+    findings += [_mutant_finding(line, f"core/Op{n}") for n in range(5) for line in (2, 3)]
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    tests = [item for item in items if item["classifier"]["name"] == "two-runs"]
+    mutants = [item for item in items if item["classifier"]["name"] == "surviving-mutant"]
+    assert len(tests) == C.LEAD_CAP == 8 and len(mutants) == 8
+    # The test whose name shares words with the edited function comes first.
+    assert tests[0]["location"]["function"] == "test_parse_header_strips_marker"
+    assert [(entry["tool"], entry["reason"], entry["detail"]) for entry in degraded] == [
+        ("two-runs", "lead-cap", "listed 8 of 11 leads as where-to-look items"),
+        ("surviving-mutant", "lead-cap", "listed 8 of 10 leads as where-to-look items"),
+    ]
+    again, again_degraded = C._lead_items(
+        list(reversed(findings)), change, C.review_tools.subprocess_runner, repo, head,
+    )
+    assert json.dumps(again, sort_keys=True) == json.dumps(items, sort_keys=True)
+    assert again_degraded == degraded
+
+
+def test_no_testing_leads_means_no_items(tmp_path: Path) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    other = _lead_finding("testing.uncovered-branch", "x", {"scope": "lines", "file": "app.py",
+                          "anchor": "a", "lines": {"start": 1, "end": 1}, "function": None}, "s")
+    assert C._lead_items([other], change, C.review_tools.subprocess_runner, repo, head) == ([], [])
+
+
+def test_a_lead_item_repeated_by_the_sweep_is_kept_once(tmp_path: Path) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    items, _degraded = C._lead_items(
+        [_mutant_finding(2, "core/Not"), _mutant_finding(2, "core/Not")], change,
+        C.review_tools.subprocess_runner, repo, head,
+    )
+    assert len(items) == 1
+    merged = C._merge_where_items(items, [dict(items[0])], [])
+    assert merged == items
+
+
+def test_prepare_writes_the_lead_items_into_the_packet_the_same_way_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two builds from the same inputs give the same packet bytes, lead items included."""
+    repo, base, head, _change = _lead_change(tmp_path)
+    finding = T.Hit(
+        rule_id="tests/test_app.py::test_parse_header_strips_marker", path="tests/test_app.py",
+        statement="The new test passes on the code before the change.",
+        anchor="tests/test_app.py::test_parse_header_strips_marker", whole_project=True,
+        row="testing.test-passes-before-change", language="python",
+    )
+    adapter = T.Adapter(
+        id="two-runs", tool="review-checks", invoke=lambda _context: ["stub", "scan"],
+        parse=lambda _text: T.ParseResult((finding,)), default_version="1.0.0",
+        rows=("testing.test-passes-before-change",), lens="testing", comparison="lines",
+    )
+    packets = []
+    for name in ("first", "second"):
+        home = tmp_path / f"home-{name}"
+        home.mkdir()
+        out = tmp_path / name
+        code, err = _main([
+            "prepare", "--repo", str(repo), "--base", base, "--head", head,
+            "--profile", str(_profile(tmp_path / f"outside-{name}")),
+            "--builder-record", str(_builder(tmp_path / f"builder-{name}.json")),
+            "--out", str(out), "--home", str(home),
+        ], adapters=[adapter], runner=_Runner())
+        assert code == 0, err
+        packets.append({path.relative_to(out).as_posix(): path.read_bytes()
+                        for path in sorted(out.rglob("*")) if path.is_file()})
+    assert packets[0] == packets[1]
+    where = json.loads(packets[0]["where-to-look.json"])
+    assert [item["classifier"]["name"] for item in where if item["lens"] == "testing"].count(
+        "two-runs") == 1
+
+
+@pytest.mark.parametrize(('language', 'path', 'node', 'source'), [
+    ('rust', 'src/lib.rs', 'tests::test_ok', '#[cfg(test)]\nmod tests {\n    #[test]\n    fn test_ok() { assert!(true); }\n}\n'),
+    ('swift', 'tests/AppTests.swift', 'AppTests.AppTests/testOK', 'import XCTest\nfinal class AppTests: XCTestCase {\n    func testOK() { XCTAssertTrue(true) }\n}\n'),
+])
+def test_native_two_runs_lead_finds_the_changed_test_definition(
+    tmp_path: Path, language: str, path: str, node: str, source: str,
+) -> None:
+    repo, base, _head, _change = _lead_change(tmp_path)
+    target = repo / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source, encoding='utf-8')
+    head = _commit(repo, 'native tests')
+    change = C.review_diff.read(repo, base, head)
+    finding = _lead_finding(C.ROW_TWO_RUNS, node,
+                            {'scope': 'whole-project', 'file': '.', 'anchor': node}, 'passes')
+    finding['language'] = language
+    items, degraded = C._lead_items([finding], change, C.review_tools.subprocess_runner, repo, head)
+    assert degraded == []
+    assert len(items) == 1
+    assert items[0]['location']['file'] == path
+    assert items[0]['location']['lines']['start'] == (4 if language == 'rust' else 3)
+
+
+@pytest.mark.parametrize('row', [C.ROW_TWO_RUNS, C.ROW_MUTANT])
+def test_unlocated_testing_leads_stay_blocking_with_a_degraded_reason(tmp_path: Path, row: str) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    finding = _lead_finding(row, 'unlocated', {'scope': 'whole-project', 'file': '.',
+                                             'anchor': 'unlocated'}, 'survived')
+    finding['id'] = 'unlocated'
+    items, degraded = C._lead_items([finding], change, C.review_tools.subprocess_runner, repo, head)
+    assert items == []
+    assert degraded[0]['reason'] == 'unlocated-lead'
+    result = C.review_formula.compute({'findings': [finding], 'degraded_inputs': degraded,
+                                      'may_block': {'testing': {'python': True}}})
+    assert result['findings'][0]['severity'] == 'blocks'
+    assert result['findings'][0]['enforced'] is True
+
+
+def test_capped_testing_leads_stay_fix_later(tmp_path: Path) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    findings = [_two_runs_finding(f'extra_{n}') for n in range(C.LEAD_CAP + 1)]
+    for n, finding in enumerate(findings):
+        finding['id'] = str(n)
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    assert len(items) == C.LEAD_CAP
+    assert [entry['reason'] for entry in degraded] == ['lead-cap']
+    result = C.review_formula.compute({'findings': findings, 'degraded_inputs': degraded})
+    assert all(finding['severity'] == 'fix-later' for finding in result['findings'])
+
+
+
+@pytest.mark.parametrize(('language', 'statements', 'expected'), [
+    ('python', ['A mutant survived (core/Not).', 'A mutant survived (core/And).'],
+     ['core/Not', 'core/And']),
+    ('typescript', ['StrykerJS mutant survived: ConditionalExpression in src/a.ts.',
+                    'StrykerJS mutant survived: EqualityOperator in src/a.ts.'],
+     ['ConditionalExpression', 'EqualityOperator']),
+    ('dart', ['mutate4dart mutant survived: BinaryExpression in lib/a.dart.',
+              'mutate4dart mutant survived: NegateCondition in lib/a.dart.'],
+     ['BinaryExpression', 'NegateCondition']),
+    ('swift', ['Muter mutant survived: RemoveSideEffects.',
+               'Muter mutant survived: RelationalOperatorReplacement.'],
+     ['RemoveSideEffects', 'RelationalOperatorReplacement']),
+    ('rust', ['cargo-mutants mutant survived: replace a -> Option<i32> with Some(42).',
+              'cargo-mutants mutant survived: replace a -> Option<i32> with Some(43).'],
+     []),
+])
+def test_survivor_anchors_preserve_each_tools_distinct_statements(
+    tmp_path: Path, language: str, statements: list[str], expected: list[str],
+) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    findings = [_mutant_finding(2, 'unused') for _ in statements]
+    for finding, statement in zip(findings, statements, strict=True):
+        finding['language'] = language
+        finding['statement'] = statement
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    assert degraded == [] and len(items) == 2
+    anchors = [item['location']['anchor'] for item in items]
+    assert len(set(anchors)) == 2
+    if expected:
+        assert all(any(operator in anchor for anchor in anchors) for operator in expected)
+    else:
+        assert all('statement-' in anchor for anchor in anchors)
+        assert all(':42:' not in anchor and ':43:' not in anchor for anchor in anchors)
+    assert (items, degraded) == C._lead_items(list(reversed(findings)), change,
+                                            C.review_tools.subprocess_runner, repo, head)
+
+
+def test_two_runs_python_class_qualifier_selects_the_right_method(tmp_path: Path) -> None:
+    repo, base, _head, _change = _lead_change(tmp_path)
+    (repo / 'tests/test_classes.py').write_text(
+        'class TestA:\n    def test_ok(self):\n        assert True\n\n'
+        'class TestB:\n    def test_ok(self):\n        assert True\n', encoding='utf-8')
+    head = _commit(repo, 'classes')
+    node = 'tests/test_classes.py::TestB::test_ok'
+    finding = _lead_finding(C.ROW_TWO_RUNS, node,
+                            {'scope': 'whole-project', 'file': 'tests/test_classes.py',
+                             'anchor': node}, 'passes')
+    items, degraded = C._lead_items([finding], C.review_diff.read(repo, base, head),
+                                    C.review_tools.subprocess_runner, repo, head)
+    assert degraded == []
+    assert items[0]['location']['lines'] == {'start': 6, 'end': 7}
+
+
+@pytest.mark.parametrize('row', [C.ROW_TWO_RUNS, C.ROW_MUTANT])
+def test_prepare_publishes_the_blocking_fallback_in_both_outcome_files(tmp_path: Path, row: str) -> None:
+    repo, base, head, _change = _lead_change(tmp_path)
+    hit = T.Hit(rule_id='unlocated', path='.', statement='Unlocated testing result.',
+                anchor='unlocated', whole_project=True, row=row, language='rust')
+    adapter = T.Adapter(id='two-runs' if row == C.ROW_TWO_RUNS else 'cosmic-ray',
+                        tool='review-checks', invoke=lambda _context: ['stub', 'scan'],
+                        parse=lambda _text: T.ParseResult((hit,)), default_version='1.0.0',
+                        rows=(row,), lens='testing', comparison='lines')
+    packets = []
+    for name in ('first', 'second'):
+        home = tmp_path / f'home-{name}'
+        home.mkdir()
+        out = tmp_path / name
+        code, err = _main([
+            'prepare', '--repo', str(repo), '--base', base, '--head', head,
+            '--profile', str(_profile(tmp_path / f'outside-{name}')),
+            '--builder-record', str(_builder(tmp_path / f'builder-{name}.json')),
+            '--out', str(out), '--home', str(home),
+        ], adapters=[adapter], runner=_Runner())
+        assert code == 0, err
+        assert any(entry['reason'] == 'unlocated-lead' for entry in _read(out / 'degraded.json'))
+        assert _read(out / 'grades.json')['findings'][0]['severity'] == 'blocks'
+        assert _read(out / 'outcomes.json')['findings'][0]['severity'] == 'blocks'
+        packets.append({path.relative_to(out).as_posix(): path.read_bytes()
+                        for path in out.rglob('*') if path.is_file()})
+    assert packets[0] == packets[1]
+
+
+@pytest.mark.parametrize('row', [C.ROW_TWO_RUNS, C.ROW_MUTANT])
+def test_unlocated_lead_fallback_is_scoped_to_each_finding(tmp_path: Path, row: str) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    located = _two_runs_finding('parse_header_strips_marker') if row == C.ROW_TWO_RUNS else _mutant_finding(2, 'core/Not')
+    located['id'] = 'located'
+    missing = []
+    for language in ('python', 'rust'):
+        for n in range(2):
+            finding = _lead_finding(row, f'missing-{language}-{n}',
+                                    {'scope': 'whole-project', 'file': '.', 'anchor': 'missing'},
+                                    'Unlocated testing result.')
+            finding.update(id=f'missing-{language}-{n}', language=language)
+            missing.append(finding)
+    findings = [located, *missing]
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    result = C.review_formula.compute({'findings': findings, 'degraded_inputs': degraded,
+                                      'may_block': {'testing': {'python': True, 'rust': False}}})
+    computed = {finding['id']: finding for finding in result['findings']}
+    assert len(items) == 1
+    assert computed['located']['severity'] == 'fix-later'
+    assert len(degraded) == 2
+    for entry in degraded:
+        assert entry['count'] == 2
+        assert entry['finding_ids'] == [f"missing-{entry['language']}-{n}" for n in range(2)]
+    for finding in missing:
+        assert computed[finding['id']]['severity'] == 'blocks'
+        assert computed[finding['id']]['enforced'] is (finding['language'] == 'python')
+    for lens_grade in result['lens_grades']:
+        assert R.validate(lens_grade) == []
+    # The fallback follows ordinary builder excusal and calibration rules.
+    builder = {'reasons': [{'kind': row.split('.', 1)[1], 'finding_id': missing[0]['id'],
+                            'text': 'This result is expected.'}]}
+    excused = C.review_formula.compute({'findings': findings, 'degraded_inputs': degraded,
+                                       'builder_records': [builder]})
+    assert next(f for f in excused['findings'] if f['id'] == missing[0]['id'])['severity'] == 'note'
+    assert not excused['merge']['blocking']
+    assert C._lead_items(list(reversed(findings)), change, C.review_tools.subprocess_runner,
+                         repo, head) == (items, degraded)
+
+
+@pytest.mark.parametrize('row', [C.ROW_TWO_RUNS, C.ROW_MUTANT])
+def test_unlocated_lead_scope_survives_prepare_and_finish(tmp_path: Path, row: str) -> None:
+    repo, base, head, _change = _lead_change(tmp_path)
+    hits = (
+        T.Hit(rule_id='tests/test_app.py::test_parse_header_strips_marker', path='tests/test_app.py',
+              statement='Located testing result.', anchor='located', whole_project=False,
+              row=row, language='python', start=1, end=1),
+        T.Hit(rule_id='missing', path='.', statement='Unlocated testing result.', anchor='missing',
+              whole_project=True, row=row, language='rust'),
+    )
+    adapter = T.Adapter(id='two-runs', tool='review-checks',
+                        invoke=lambda _context: ['stub', 'scan'],
+                        parse=lambda _text: T.ParseResult(hits), default_version='1.0.0',
+                        rows=(row,), lens='testing', comparison='lines')
+    home = tmp_path / 'home'
+    home.mkdir()
+    packet = tmp_path / 'packet'
+    code, err = _main([
+        'prepare', '--repo', str(repo), '--base', base, '--head', head,
+        '--profile', str(_profile(tmp_path / 'outside')),
+        '--builder-record', str(_builder(tmp_path / 'builder.json')),
+        '--out', str(packet), '--home', str(home),
+    ], adapters=[adapter], runner=_Runner())
+    assert code == 0, err
+    prepared = _read(packet / 'grades.json')
+    assert {f['language']: f['severity'] for f in prepared['findings']} == {
+        'python': 'fix-later', 'rust': 'blocks'}
+    assert _read(packet / 'outcomes.json') == prepared
+    where = _read(packet / 'where-to-look.json')
+    answers = [{'index': n, 'file': item['location']['file'],
+                'answer': {'kind': 'cleared', 'reason': 'The test pins intended behavior.'}}
+               for n, item in enumerate(where)]
+    scratch, changes = _scratch(tmp_path, with_test=False)
+    code, err = _finish(packet, [(_answer([], answers), _result(scratch, changes))],
+                        home, _Runner())
+    assert code == 0, err
+    run = _read(packet / 'review-run.json')
+    assert {f['language']: f['severity'] for f in run['findings']} == {
+        'python': 'fix-later', 'rust': 'blocks'}
+    assert run['merge']['allowed'] is True
+
+
+@pytest.mark.parametrize(('language', 'path', 'node', 'source', 'line'), [
+    ('rust', 'src/lib.rs', 'tests::test_ok',
+     '// fn test_ok() {}\n/* outer /* fn test_ok() {} */ comment */\n'
+     'const TEXT: &str = r###"fn test_ok() {}"###;\n'
+     'mod tests {\n    fn test_ok\n    () {}\n}\n', 5),
+    ('swift', 'tests/AppTests.swift', 'AppTests.AppTests/testOK()',
+     '// func testOK() {}\n/* outer /* func testOK() {} */ comment */\n'
+     'let text = #"func testOK() {}"#\n'
+     'final class AppTests: XCTestCase {\n    func testOK\n    () {}\n}\n', 5),
+    ('rust', 'src/lib.rs', 'test_ok',
+     '// fn test_ok() {}\nconst TEXT: &str = \"fn test_ok() {}\";\n'
+     'fn test_ok() {}\n', 3),
+    ('swift', 'tests/AppTests.swift', 'testOK()',
+     'let text = \"\"\"\nfunc testOK() {}\n\"\"\"\nfunc testOK() {}\n', 4),
+    ('swift', 'tests/AppTests.swift', 'testOK()',
+     'let text = #"escaped \\#"# func testOK() {}"#\nfunc testOK() {}\n', 2),
+    ('rust', 'src/lib.rs', 'second::test_ok',
+     'mod first { fn test_ok() {} }\nmod second { fn test_ok() {} }\n', 2),
+    ('swift', 'tests/AppTests.swift', 'Package.Second/testOK',
+     'class First { func testOK() {} }\nclass Second { func testOK() {} }\n', 2),
+])
+def test_native_lookup_ignores_non_code_and_preserves_scope(
+    tmp_path: Path, language: str, path: str, node: str, source: str, line: int,
+) -> None:
+    repo, base, _head, _change = _lead_change(tmp_path)
+    target = repo / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source, encoding='utf-8')
+    head = _commit(repo, 'native lookup')
+    result = C._native_test_location(node, language, C.review_diff.read(repo, base, head),
+                                     C.review_tools.subprocess_runner, repo, head, {})
+    assert result == (path, 'test_ok' if language == 'rust' else 'testOK', (line, line))
+
+
+def test_native_rust_lookup_uses_file_modules_and_keeps_ambiguity(tmp_path: Path) -> None:
+    repo, base, _head, _change = _lead_change(tmp_path)
+    (repo / 'src').mkdir()
+    for module in ('b', 'c'):
+        (repo / f'src/{module}.rs').write_text(
+            'mod tests {\n    fn test_dup() {}\n}\n', encoding='utf-8')
+    head = _commit(repo, 'module tests')
+    change = C.review_diff.read(repo, base, head)
+    for module in ('b', 'c'):
+        assert C._native_test_location(f'{module}::tests::test_dup', 'rust', change,
+                                       C.review_tools.subprocess_runner, repo, head, {}) == (
+                                           f'src/{module}.rs', 'test_dup', (2, 2))
+    assert C._native_test_location('test_dup', 'rust', change, C.review_tools.subprocess_runner,
+                                   repo, head, {}) is None
+
+
+@pytest.mark.parametrize('document', ['review-command.md', 'review-tools.md'])
+def test_testing_lead_documentation_keeps_capped_results_advisory(document: str) -> None:
+    reference = (SCRIPTS.parent / 'references' / document).read_text(encoding='utf-8')
+    assert 'Capped leads stay fix-later.' in reference
+    assert '`unlocated-lead` or `lead-cap` restores blocking severity' not in reference
+    assert 'Either reason keeps the affected' not in reference
+
+
+@pytest.mark.parametrize('row', [C.ROW_TWO_RUNS, C.ROW_MUTANT])
+def test_lead_cap_counts_only_the_languages_that_overflow(tmp_path: Path, row: str) -> None:
+    repo, _base, head, change = _lead_change(tmp_path)
+    findings = [(_two_runs_finding(f'extra_{n:02}') if row == C.ROW_TWO_RUNS
+                 else _mutant_finding(2, f'core/Op{n:02}')) for n in range(C.LEAD_CAP + 4)]
+    for n, finding in enumerate(findings):
+        finding['id'] = f'lead-{n}'
+        finding['language'] = 'python' if n < C.LEAD_CAP else ('typescript' if n % 2 else 'dart')
+    items, degraded = C._lead_items(findings, change, C.review_tools.subprocess_runner, repo, head)
+    assert len(items) == C.LEAD_CAP
+    assert [(entry['language'], entry['reason'], entry['count']) for entry in degraded] == [
+        ('dart', 'lead-cap', 2), ('typescript', 'lead-cap', 2)]
+    assert all(entry['input'] == row for entry in degraded)
+    computed = C.review_formula.compute({'findings': findings, 'degraded_inputs': degraded})
+    assert all(finding['severity'] == 'fix-later' for finding in computed['findings'])
+    assert C._lead_items(list(reversed(findings)), change, C.review_tools.subprocess_runner,
+                         repo, head) == (items, degraded)

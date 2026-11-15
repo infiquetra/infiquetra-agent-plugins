@@ -179,3 +179,23 @@ class TestTheCardMovesAtPhaseBoundaries:
 
     def test_a_plan_with_no_issue_does_not_try_to_move_a_card(self, plan_text: str) -> None:
         assert "no issue" in plan_text
+
+    def test_resolve_project_for_repo_maps_active_repos_and_rejects_unmapped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("INFIQUETRA_SDLC_PATH", str(tmp_path / "no-external-sdlc"))
+        assert BP.resolve_project_for_repo("infiquetra-agent-plugins") == "agent-platform"
+        assert BP.resolve_project_for_repo("infiquetra/infiquetra-herdr-console") == "agent-platform"
+        assert BP.resolve_project_for_repo("sovereign-circuit") == "sovereign-circuit"
+        assert BP.resolve_project_for_repo("infiquetra-company") == "company"
+        assert BP.resolve_project_for_repo("argus") == "argus"
+        assert BP.resolve_project_for_repo("talaria") == "talaria"
+        assert BP.resolve_project_for_repo("home-lab") == "home-lab"
+        assert BP.resolve_project_for_repo("mimir") == "eve-mimir"
+        assert BP.resolve_project_for_repo("cognitive-ai-research") == "cognitive-ai-research"
+        assert BP.resolve_project_for_repo("ai-native-engine") == "ai-native-engine"
+        assert BP.resolve_project_for_repo("campps-web-app") == "campps"
+        with pytest.raises(ValueError, match="not mapped to any active project board"):
+            BP.resolve_project_for_repo("infiquetra-website")
+        with pytest.raises(ValueError, match="not mapped to any active project board"):
+            BP.resolve_project_for_repo("nonexistent-repo-xyz")

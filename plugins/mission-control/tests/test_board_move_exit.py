@@ -354,7 +354,7 @@ def test_cli_exits_one_only_after_board_move_reports_failure() -> None:
         "board",
         "move",
         "--project",
-        "operations",
+        "agent-platform",
         "--repo",
         "demo-repo",
         "--number",
@@ -370,4 +370,6 @@ def test_cli_exits_one_only_after_board_move_reports_failure() -> None:
         sdlc_manager.main()
 
     assert exc_info.value.code == 1
-    move.assert_called_once_with("demo-repo", 609, "Unavailable", "text", project_name="operations")
+    move.assert_called_once_with(
+        "demo-repo", 609, "Unavailable", "text", project_name="agent-platform"
+    )
