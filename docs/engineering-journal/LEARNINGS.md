@@ -1,5 +1,23 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-15
+
+### An empty baseline enables whole-tree reporting, but a copy must preserve the tree and bound history
+
+**Evidence.** At source revision `ebc263ed91e1c50f2e90fbacd8ef0572232f3ffb`, a disposable planning probe retained one canned finding through the changed-line path and through each of the six security base/head invocation builders in `plugins/saga/scripts/review_tools.py`: osv-scanner, pip-audit, cdk-nag, checkov-cdk, npm-audit and cargo-deny. The probe used the existing invocation builders with stub process/parser results; no scanner binary or advisory service was called. The unchanged review-runner suite also passed all 127 collected tests. The [plan](../plans/2026-11-15-saga-whole-repository-security-scan-plan.md) records the permanent behavior tests still required.
+
+**Mechanism.** Every line is new against an empty tree, and no earlier finding identity exists to subtract. A disposable copy still needs a selected-tree history boundary because gitleaks uses `detect`; an ordinary clone can expose earlier commits. The Architect required comparing snapshot and source tree IDs before scanning, since a file-export rule can otherwise omit tracked input silently.
+
+**Generalizable rule.** When reusing a differential scanner for a snapshot audit, verify both comparison kinds, the copied tree's identity and the reachable history. A stubbed runner probe establishes a seam, not real detection coverage.
+
+### Normalized secret records and unpinned versions need separate scan checks
+
+**Evidence.** `plugins/saga/scripts/review_adapters_all_languages.py` drops Match/Secret from parsed gitleaks findings, but its `_stable_gitleaks` raw-output function preserves those bytes. The empty-base probe also observed the review runner label osv-scanner's `default_version: not-recorded` as a version mismatch against a supplied observed version.
+
+**Mechanism.** The normalized record and stored raw report travel different paths, and the review version comparator treats a placeholder string as an expected value. Reusing either behavior without checking its scan meaning can leak a match into a cache or misdescribe an unpinned executable.
+
+**Generalizable rule.** Check every persistence surface for secret text and distinguish an absent pin from an actual pin mismatch. Preserve review's existing defaults while implementing the scan's separate reporting policy; this planning entry does not claim either scan behavior has shipped.
+
 ## 2026-11-10
 
 ### A launcher skill that names old Herdr keeps agents there after the move
