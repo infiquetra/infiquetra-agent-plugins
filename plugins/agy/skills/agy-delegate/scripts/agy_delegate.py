@@ -804,6 +804,75 @@ def create_supervised_bundle(
     )
 
 
+def _agy_company_launch(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """Return the isolated company environment inherited from a company caller.
+
+    The launcher already proved this layout with Gate 0: changing only the
+    Gemini dir reuses the personal keyring login, while also switching HOME
+    starts signed out and stores the second account under the company root.
+    Personal callers keep their environment and argv unchanged.
+    """
+    if env.get("AGY_ACCOUNT_LABEL") != "company":
+        return dict(env), []
+
+    real_home = env.get("AGY_REAL_HOME") or env.get("HOME") or str(Path.home())
+    raw_root = env.get("AGY_COMPANY_HOME")
+    if raw_root:
+        if raw_root == "~":
+            root = Path(real_home)
+        elif raw_root.startswith("~/"):
+            root = Path(real_home) / raw_root[2:]
+        else:
+            root = Path(raw_root)
+        if not root.is_absolute():
+            root = Path(real_home) / root
+    elif Path(real_home).name == "home" and Path(real_home).parent.name == ".agy-company":
+        root = Path(real_home).parent
+    else:
+        root = Path(real_home) / ".agy-company"
+
+    if root == Path(real_home) or root == Path(real_home) / ".gemini":
+        raise ValueError(
+            "AGY_COMPANY_HOME must not be the real home or personal Gemini dir: "
+            f"{root}"
+        )
+    if any(path.is_symlink() for path in (root, root / "home", root / "gemini")):
+        raise ValueError(f"AGY_COMPANY_HOME must not use a symlinked company root: {root}")
+
+    child = dict(env)
+    for name in (
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "GOOGLE_GENAI_API_KEY",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_CLOUD_PROJECT",
+        "GOOGLE_CLOUD_PROJECT_ID",
+        "GCLOUD_PROJECT",
+        "AGY_ADC_AUTH",
+    ):
+        child.pop(name, None)
+    fake_home = root / "home"
+    gemini_dir = root / "gemini"
+    child["AGY_COMPANY_HOME"] = str(root)
+    child["HOME"] = str(fake_home)
+    child["AGY_AUTO_TRUST_SETTINGS_FILE"] = str(
+        gemini_dir / "antigravity-cli" / "settings.json"
+    )
+    # The statusline reads this; vendor isolation comes from HOME + flags.
+    child["GEMINI_CONFIG_DIR"] = str(gemini_dir)
+    if sys.platform.startswith("linux"):
+        child.pop("DBUS_SESSION_BUS_ADDRESS", None)
+        child["XDG_RUNTIME_DIR"] = str(root / "runtime")
+        child["XDG_CONFIG_HOME"] = str(fake_home / ".config")
+        child["XDG_CACHE_HOME"] = str(fake_home / ".cache")
+        child["XDG_DATA_HOME"] = str(fake_home / ".local" / "share")
+        child["XDG_STATE_HOME"] = str(fake_home / ".local" / "state")
+    return child, [
+        f"--gemini_dir={gemini_dir}",
+        "--app_data_dir=antigravity-cli",
+    ]
+
+
 def run_agy_supervised(
     envelope: Envelope,
     *,
@@ -851,6 +920,32 @@ def run_agy_supervised(
         prompt=prompt,
         log_path=bundle_path / "agy.log",
     )
+    try:
+        company_env, company_args = _agy_company_launch(os.environ.copy())
+    except ValueError as exc:
+        ended_at = datetime.now(UTC)
+        return SupervisedRunResult(
+            status=parse_status("error"),
+            agy_launched=False,
+            resolved_agy=resolved_agy,
+            argv=argv,
+            process_id=None,
+            return_code=None,
+            started_at=started_at,
+            ended_at=ended_at,
+            shutdown="not_started",
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            timeout_class=None,
+            stdout_bytes=0,
+            stderr_bytes=0,
+            error=str(exc),
+        )
+    if company_args:
+        argv = [*argv[:-2], *company_args, *argv[-2:]]
+        company_env["AGY_AUTO_TRUST_REAL_BIN"] = str(
+            Path(resolved_agy).parent / "agy.pre-auto-trust"
+        )
     stdout_bytes = 0
     stderr_bytes = 0
     timeout_class: str | None = None
@@ -878,7 +973,7 @@ def run_agy_supervised(
             stderr_path.open("ab") as stderr_log,
         ):
             try:
-                child_env = os.environ.copy()
+                child_env = company_env
                 child_env["CMUX_AGENT_BYPASS"] = "1"
                 process = subprocess.Popen(
                     argv,
