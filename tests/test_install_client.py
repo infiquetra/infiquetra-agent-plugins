@@ -1179,6 +1179,128 @@ class AgyTest(InstallFixture):
         self.assertIn("unifi", document["packages"])
 
 
+class AgyCompanyTest(InstallFixture):
+    def company(self) -> Path:
+        return self.base / "company"
+
+    def test_company_dry_run_plans_into_company_gemini_only(self) -> None:
+        company = self.company()
+        code, out, err = self.invoke(
+            "--client", "agy", "--package", "voice",
+            "--agy-account", "company", "--agy-company-home", str(company), "--dry-run",
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn(str(company / "gemini/config/plugins/.infiquetra-install.json"), out)
+        self.assertIn(str(company / "gemini/skills/voice"), out)
+        self.assertIn(str(company / "gemini/.infiquetra-skills.json"), out)
+        self.assertNotIn(str(self.home / ".gemini"), out)
+        self.assertEqual(self.logged(), "")
+        self.assertFalse((self.home / ".gemini").exists())
+        self.assertFalse(company.exists())
+
+    def test_company_check_reads_company_manifest_only(self) -> None:
+        company = self.company()
+        root = str((self.catalog / "plugins/voice").resolve())
+        (company / "gemini/config/plugins/voice").mkdir(parents=True)
+        write_json(
+            company / "gemini/config/plugins/.infiquetra-install.json",
+            {"schema": installer.AGY_SCHEMA, "packages": {"voice": {"source": root}}},
+        )
+        code, out, err = self.invoke(
+            "--client", "agy", "--package", "voice",
+            "--agy-account", "company", "--agy-company-home", str(company), "--check",
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("agy voice installed-from-catalog", out)
+        self.assertFalse((self.home / ".gemini").exists())
+
+    def test_company_env_var_selects_company(self) -> None:
+        company = self.company()
+        with patch.dict(os.environ, {"AGY_COMPANY_HOME": str(company)}):
+            code, out, err = self.invoke(
+                "--client", "agy", "--package", "voice", "--agy-account", "company", "--dry-run"
+            )
+        self.assertEqual(code, 0, err)
+        self.assertIn(str(company / "gemini"), out)
+
+    def test_company_execute_is_refused_and_runs_nothing(self) -> None:
+        code, _out, err = self.invoke(
+            "--client", "agy", "--package", "voice",
+            "--agy-account", "company", "--agy-company-home", str(self.company()), "--execute",
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("company Agy --execute is not supported", err)
+        self.assertEqual(self.logged(), "")
+
+    def test_company_missing_home_is_an_error(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AGY_COMPANY_HOME", None)
+            code, _out, err = self.invoke(
+                "--client", "agy", "--agy-account", "company", "--dry-run"
+            )
+        self.assertEqual(code, 2)
+        self.assertIn("requires --agy-company-home or AGY_COMPANY_HOME", err)
+
+    def test_company_degenerate_and_symlinked_roots_fail_closed(self) -> None:
+        real = self.company()
+        (real / "gemini").mkdir(parents=True)
+        link = self.base / "company-link"
+        link.symlink_to(real, target_is_directory=True)
+        personal_link = self.base / "company-personal"
+        (personal_link / "gemini").mkdir(parents=True)
+        (personal_link / "gemini").rmdir()
+        (personal_link / "gemini").symlink_to(
+            self.home / ".gemini", target_is_directory=True
+        )
+        ancestor_link = self.base / "ancestor-link"
+        (self.home / ".gemini").mkdir(parents=True, exist_ok=True)
+        ancestor_link.symlink_to(self.home / ".gemini", target_is_directory=True)
+        for bad in (
+            "~",
+            str(self.home),
+            str(self.home / ".gemini"),
+            str(self.home / ".gemini/company"),
+            str(link),
+            str(personal_link),
+            str(ancestor_link / "company"),
+        ):
+            code, _out, err = self.invoke(
+                "--client", "agy", "--agy-account", "company",
+                "--agy-company-home", bad, "--dry-run",
+            )
+            self.assertEqual(code, 2, bad)
+            self.assertTrue(
+                "must not be the real home" in err or "must not use a symlinked" in err,
+                (bad, err),
+            )
+        self.assertEqual(self.logged(), "")
+
+    def test_company_skill_plan_and_check_helpers(self) -> None:
+        gemini_dir = installer.resolve_agy_company_gemini_dir(
+            self.company(), home=self.home
+        )
+        self.assertEqual(gemini_dir, self.company() / "gemini")
+        self.assertEqual(
+            installer.agy_company_skill_destinations(gemini_dir),
+            (gemini_dir / "skills", gemini_dir / ".infiquetra-skills.json", installer.GEMINI_SCHEMA),
+        )
+        packages = installer.select_packages(self.catalog, ["voice"])
+        actions = installer.plan_agy_company_skills(packages, gemini_dir, self.home)
+        self.assertIn(str(gemini_dir / "skills/voice"), [a.path for a in actions])
+        dest = gemini_dir / "skills/voice"
+        dest.parent.mkdir(parents=True)
+        target = (self.catalog / "plugins/voice/skills/voice").resolve()
+        dest.symlink_to(target, target_is_directory=True)
+        write_json(
+            gemini_dir / ".infiquetra-skills.json",
+            {"schema": installer.GEMINI_SCHEMA, "links": [{"target": str(target), "link": str(dest)}]},
+        )
+        rows = installer.check_agy_company_skills(packages, gemini_dir, self.home, self.catalog)
+        self.assertEqual(
+            [installer.format_readback(r) for r in rows], ["agy voice installed-from-catalog"]
+        )
+
+
 class InvocationTest(InstallFixture):
     def test_binary_override_refuses_the_launcher_on_path(self) -> None:
         code, _out, err = self.invoke(
