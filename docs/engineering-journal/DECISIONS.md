@@ -1,5 +1,21 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-15
+
+### Plan a selected-tree security scan without changing review behavior
+
+**Decision.** The [issue 321 plan](../plans/2026-11-15-saga-whole-repository-security-scan-plan.md) records eight implementation choices, amended after independent plan review. KTD1 uses an independent disposable repository containing an empty base and one snapshot commit, preserving gitlink (`160000`) entries unchanged and checking tree-ID equality before tools run, without checking out or reading target submodule working trees or fetching content. KTD2 selects security rows and their existing adapters from the catalogue; KTD3 runs them with the framework disabled and scan-owned reporting; KTD4 uses a keyword-only seam with unchanged review defaults, resolving every scan pin from an external operator profile or the catalogue and treating resolved `not-recorded` as unpinned without degradation by itself. KTD5 retains per-row bounds with a scan-only override and treats every tracked gitlink/submodule as a summary-reported unscanned submodule gap requiring exit `2`; KTD6 distinguishes complete/clean, complete/findings and incomplete through exits 0/1/2, with incomplete taking precedence. KTD7 keeps findings external and private, uses the existing credential-free environment and validated local rule cache, and removes matched secret text before persistence. KTD8 requires named CDK opt-in and scan-only pip-audit no-resolution flags declared in the Python adapter beside its unchanged review invocation. Only exactly pinned requirement files are audited, the listed-only scope is disclosed, other files degrade the scan, and no option re-enables resolution.
+
+**Rationale.** An empty baseline gives both changed-line and base/head adapters the whole tree, while a snapshot-only history keeps gitleaks within the named commit's scope. The existing runner already supplies adapter/process injection and a framework-off mode, so a second command catalogue or a changed review default would add avoidable divergence. The runtime command and readable results are delivered together at U2, after a separately committed independent red suite; skill discovery and documentation follow in U3.
+
+**Rejected alternatives.** Creating objects/worktrees in the target; scanning a history-bearing clone; trusting an archive without checking tree equality; treating the runner's exit 0 as proof all tools ran; inventing pins for `not-recorded`; retaining raw secret matches; executing target synthesis by default; and waiting for documentation before delivering a usable command.
+
+**Validation boundary.** This is a planning decision, not a claim of implemented behavior or client compatibility. The plan enumerates 24 expected-red feature tests plus one passing review control; the existing 127 collected review-runner tests passed unchanged during planning. Runtime, packaging and planted-flaw acceptance remain with the implementation and independent testing roles.
+
+**Revisit when.** The independent plan review or implementation proves the existing seam insufficient, an adapter changes its execution/network behavior, a new security row cannot be selected automatically, or the operator requests history scanning. Any change to existing review output, tools, dependencies, pins or scope returns for an Architect ruling.
+
+---
+
 ## 2026-11-13
 
 ### Authenticate tracked local dependency archives before invoking a Node manager

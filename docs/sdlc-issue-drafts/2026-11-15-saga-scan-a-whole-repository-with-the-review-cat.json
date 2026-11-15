@@ -1,0 +1,212 @@
+{
+  "approval_state": "approved",
+  "approved_at": "2026-11-15T17:09:04.124401+00:00",
+  "created_at": "2026-11-15T17:09:07.940870+00:00",
+  "created_issue_number": 321,
+  "created_issue_url": "https://github.com/infiquetra/infiquetra-agent-plugins/issues/321",
+  "draft_path": "docs/sdlc-issue-drafts/2026-11-15-saga-scan-a-whole-repository-with-the-review-cat.md",
+  "handoff_maturity": "requirements-ready",
+  "issue_type": "capability",
+  "labels": [
+    "capability",
+    "needs-plan"
+  ],
+  "mapping_pr_url": null,
+  "mode": null,
+  "mutation_summary": [
+    {
+      "action": "issue",
+      "detail": "Create capability in infiquetra/infiquetra-agent-plugins"
+    },
+    {
+      "action": "board-add",
+      "detail": "Add issue to agent-platform"
+    },
+    {
+      "action": "set-stage",
+      "detail": "Set Stage to Shaping"
+    },
+    {
+      "action": "set-status",
+      "detail": "Set Status to Discovering"
+    },
+    {
+      "action": "mark-draft",
+      "detail": "Record created issue on draft and sidecar"
+    }
+  ],
+  "pending_mapping": false,
+  "project": "agent-platform",
+  "project_fields": {
+    "Issue Type": "capability",
+    "Lifecycle Origin": "requirements-ready",
+    "Objective": "improve-agent-plugins"
+  },
+  "readiness": {
+    "blocking_gaps": [
+      "Missing Stage metadata; Stage is author-supplied on every prepared draft and must be set before the issue is created"
+    ],
+    "passed": false,
+    "profile": "asgard",
+    "warnings": []
+  },
+  "remaining_steps": [],
+  "repo": "infiquetra-agent-plugins",
+  "risk": "medium",
+  "risk_suggestion": {
+    "asked": true,
+    "chosen": "medium",
+    "confidence": 0.93,
+    "distribution": {
+      "high": 0.03,
+      "low": 0.04,
+      "medium": 0.93,
+      "very-high": 0.0
+    },
+    "floor": 0.6,
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "very-high"
+    ],
+    "low_confidence": false,
+    "overridden": false,
+    "score": 0.99,
+    "suggested": "medium"
+  },
+  "schema_version": "1.0",
+  "sidecar_path": "docs/sdlc-issue-drafts/2026-11-15-saga-scan-a-whole-repository-with-the-review-cat.json",
+  "source_artifact": {
+    "branch": null,
+    "content_excerpt": "# saga: scan a whole repository with the review catalogue's security tools\n\n### Objective\n\nGive an operator, or any agent that can run a shell command, one command that runs the security rows of saga's\nreview tool catalogue over a whole repository at one commit and writes the results outside that repository.\n\n### Intent\n\nThe runner in `plugins/saga/scripts/review_tools.py` reports only what a change introduces. It takes a base commit\nand a head commit, and `filter_to_change` drops every tool hit that falls outside the changed lines. That is right\nfor code review. It leaves a gap for an audit: a dependency with a known advisory, a secret already in history, or\nan infrastructure or workflow misconfiguration that predates the change under review is never reported.\n\nThe catalogue in `plugins/saga/references/review-tools.yaml` already holds eleven working security rows:\nsemgrep-security, gitleaks, osv-scanner, bandit, pip-audit, cdk-nag, checkov-cdk, checkov-cfn, zizmor, npm-audit and\ncargo-deny. Each has a pinned version and the flags that keep it offline or metric-free where the tool allows it. A\nwhole-repository scan should reuse those rows, so there is one list of tool invocations a",
+    "inferred_maturity": "requirements-ready",
+    "kind": "brainstorm",
+    "path": "docs/brainstorms/2026-11-15-saga-whole-repository-security-scan/capability.md",
+    "readiness_diagnostic": null,
+    "readiness_next_action": "/plan docs/brainstorms/2026-11-15-saga-whole-repository-security-scan/capability.md",
+    "ref": "docs/brainstorms/2026-11-15-saga-whole-repository-security-scan/capability.md",
+    "title": "saga: scan a whole repository with the review catalogue's security tools",
+    "url": null
+  },
+  "stage": null,
+  "state": "created",
+  "status": "Discovering",
+  "suggestions": {
+    "floor": 0.6,
+    "judgments": {
+      "issue_type": {
+        "asked": true,
+        "chosen": "capability",
+        "confidence": 1.0,
+        "distribution": {
+          "capability": 1.0,
+          "context-update": 0.0,
+          "defect": 0.0,
+          "enhancement": 0.0,
+          "exploration": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": false,
+        "suggested": "capability"
+      },
+      "objective": {
+        "asked": true,
+        "chosen": "improve-agent-plugins",
+        "confidence": 0.39,
+        "distribution": {
+          "Fleet Telemetry Baseline Build-Out": 0.0,
+          "Herdr-app-customization": 0.02,
+          "improve-agent-plugins": 0.51,
+          "none": 0.42,
+          "sdlc-and-standards": 0.05
+        },
+        "floor": 0.6,
+        "low_confidence": true,
+        "overridden": false,
+        "suggested": "improve-agent-plugins"
+      },
+      "risk": {
+        "asked": true,
+        "chosen": "medium",
+        "confidence": 0.93,
+        "distribution": {
+          "high": 0.03,
+          "low": 0.04,
+          "medium": 0.93,
+          "very-high": 0.0
+        },
+        "floor": 0.6,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "very-high"
+        ],
+        "low_confidence": false,
+        "overridden": false,
+        "score": 0.99,
+        "suggested": "medium"
+      },
+      "status": {
+        "asked": true,
+        "chosen": "Discovering",
+        "confidence": 0.91,
+        "distribution": {
+          "Awaiting operator input": 0.01,
+          "Awaiting verification": 0.0,
+          "Backlog": 0.0,
+          "Capturing": 0.0,
+          "Capturing learnings": 0.0,
+          "Closeout": 0.0,
+          "Code review": 0.0,
+          "Defining requirements": 0.03,
+          "Deploying to non-production": 0.0,
+          "Design review": 0.0,
+          "Designing": 0.0,
+          "Discovering": 0.0,
+          "Execution planning": 0.01,
+          "Gathering evidence": 0.0,
+          "Implementing": 0.0,
+          "Integrating": 0.0,
+          "Needs clarification": 0.0,
+          "Ready for Active": 0.04,
+          "Ready for Planning": 0.91,
+          "Ready to close": 0.0,
+          "Ready to merge": 0.0,
+          "Repairing": 0.0,
+          "Triage": 0.0,
+          "Verification failed": 0.0,
+          "Verifying": 0.0
+        },
+        "floor": 0.6,
+        "low_confidence": false,
+        "overridden": true,
+        "suggested": "Ready for Planning"
+      }
+    },
+    "resolved_model": "jev-1.14.0",
+    "status": "ok",
+    "truncation": []
+  },
+  "team": "asgard",
+  "title": "saga: scan a whole repository with the review catalogue's security tools",
+  "type_suggestion": {
+    "asked": true,
+    "chosen": "capability",
+    "confidence": 1.0,
+    "distribution": {
+      "capability": 1.0,
+      "context-update": 0.0,
+      "defect": 0.0,
+      "enhancement": 0.0,
+      "exploration": 0.0
+    },
+    "floor": 0.6,
+    "low_confidence": false,
+    "overridden": false,
+    "suggested": "capability"
+  },
+  "updated_at": "2026-11-15T17:09:18.326823+00:00"
+}
