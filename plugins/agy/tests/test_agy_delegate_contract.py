@@ -477,6 +477,74 @@ def test_run_agy_supervised_forces_cmux_bypass(
     assert stdout_path.read_text(encoding="utf-8") == "1\n"
 
 
+def test_run_agy_supervised_inherits_company_home(
+    agy_delegate: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_agy = tmp_path / "fake-agy"
+    fake_agy.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        "print('HOME=' + os.environ.get('HOME', ''), flush=True)\n"
+        "print('GEMINI_CONFIG_DIR=' + os.environ.get('GEMINI_CONFIG_DIR', ''), flush=True)\n"
+        "print('GEMINI_API_KEY_SET=' + str('GEMINI_API_KEY' in os.environ), flush=True)\n"
+        "print('AGY_AUTO_TRUST_REAL_BIN=' + os.environ.get('AGY_AUTO_TRUST_REAL_BIN', ''), flush=True)\n"
+        "print('ARGS=' + ' '.join(sys.argv[1:]), flush=True)\n",
+        encoding="utf-8",
+    )
+    fake_agy.chmod(0o755)
+    root = tmp_path / "company"
+    monkeypatch.setenv("AGY_ACCOUNT_LABEL", "company")
+    monkeypatch.setenv("AGY_COMPANY_HOME", str(root))
+    monkeypatch.setenv("HOME", str(root / "home"))
+    monkeypatch.setenv("GEMINI_API_KEY", "personal-secret")
+
+    envelope = agy_delegate.Envelope.from_mapping(_valid_payload())
+    stdout_path = tmp_path / "stdout.log"
+    run_result = agy_delegate.run_agy_supervised(
+        envelope,
+        prompt="do the thing",
+        repo_root=tmp_path,
+        bundle_path=tmp_path,
+        stdout_path=stdout_path,
+        stderr_path=tmp_path / "stderr.log",
+        agy_bin=str(fake_agy),
+    )
+
+    output = stdout_path.read_text(encoding="utf-8")
+    assert run_result.status == "success"
+    assert f"HOME={root / 'home'}" in output
+    assert f"GEMINI_CONFIG_DIR={root / 'gemini'}" in output
+    assert f"--gemini_dir={root / 'gemini'}" in output
+    assert "--app_data_dir=antigravity-cli" in output
+    assert "GEMINI_API_KEY_SET=False" in output
+    assert f"AGY_AUTO_TRUST_REAL_BIN={tmp_path / 'agy.pre-auto-trust'}" in output
+
+
+def test_run_agy_supervised_company_degenerate_root_fails_closed(
+    agy_delegate: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_agy = tmp_path / "fake-agy"
+    fake_agy.write_text("#!/usr/bin/env python3\nprint('should not run')\n", encoding="utf-8")
+    fake_agy.chmod(0o755)
+    home = tmp_path / "home"
+    monkeypatch.setenv("AGY_ACCOUNT_LABEL", "company")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("AGY_COMPANY_HOME", "~")
+
+    run_result = agy_delegate.run_agy_supervised(
+        agy_delegate.Envelope.from_mapping(_valid_payload()),
+        prompt="do the thing",
+        repo_root=tmp_path,
+        bundle_path=tmp_path,
+        stdout_path=tmp_path / "stdout.log",
+        stderr_path=tmp_path / "stderr.log",
+        agy_bin=str(fake_agy),
+    )
+
+    assert run_result.agy_launched is False
+    assert "must not be the real home" in (run_result.error or "")
+
+
 def test_run_agy_supervised_oserror_on_launch_emits_no_receipt(
     agy_delegate: ModuleType, tmp_path: Path
 ) -> None:
