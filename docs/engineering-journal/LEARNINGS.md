@@ -1,5 +1,42 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-16
+
+### A moving runner label can change process supervision
+
+**Evidence.** Main's successful workflow run `43807743621` used Ubuntu 24.04;
+PR #312 run `43945170642` used Ubuntu 26.04 for the same `ubuntu-latest` label.
+Every unchanged installer-boundary control returned signal 9 with no surviving child
+on the former. On the latter it returned 124, left the child sleeping, and observed
+its forbidden late write. The macOS root run skips that Linux-specific control.
+
+**Mechanism.** The runner label changed the execution platform beneath a command whose
+process-group behavior is part of the installer contract. This is a real supervision
+failure under the newly selected platform, not permission to relax the child-liveness check.
+
+**Fix.** Pin all five CI job definitions to the qualified Ubuntu 24.04 image and assert
+the pins in the workflow tests. Keep the production timeout flags and live Linux controls.
+
+**Generalizable rule.** Qualify runner upgrades against operational behavior, including
+process supervision; passing tests on another operating system cannot establish it.
+
+### Redelivery must not require a session-creation executable
+
+**Evidence.** PR #312's Linux plugin lane refused the Codex placeholder recovery with
+`no 'agents' on PATH`, although its fixture already supplied the existing session through `hc`.
+The same run rejected the port plan for missing its three required section markers.
+
+**Mechanism.** Redelivery built a fresh launch command only to populate preflight arguments.
+That unnecessarily resolved the creation wrapper and attributed a reconstructed command as
+launch evidence. A host with `agents` installed concealed the dependency.
+
+**Fix.** Redelivery supplies no new launch arguments; session identity, readiness, account and
+composer checks still run. The subprocess regression names an absent creation wrapper, and the
+plan now carries `Key Technical Decisions`, `Implementation Units` and its `U1` prefix.
+
+**Generalizable rule.** Recovery into an existing resource must exercise only the dependencies
+it needs, and must not present a reconstructed request as evidence of an earlier action.
+
 ## 2026-11-15
 
 ### A Git object read can fetch into a partial clone
@@ -524,6 +561,97 @@ environment as every other place that executes it, and a launcher it cannot see 
 degraded reason must name what actually stopped the run, never a catch-all.
 
 ## 2026-11-10
+
+### A new terminal's workspace name is still moving when a launch checks it; its id is not
+
+**Evidence.** The smoke test of the herdr core port, 2026-11-10: after the folder was trusted, a
+launch into workspace "HC Smoke" failed with "session workspace 'hc-smoke-repo' does not match
+requested workspace 'HC Smoke'" and closed its own session. The team lead's probe measured the
+cause: a `--no-focus` launch is placed with labels `herdr.space=<id>` and
+`herdr-console.space-name=HC Smoke` and no `where`; about 3 s later the window writes `where` =
+"<folder> / 1"; a few seconds after that the seat-board mod renames it to "HC Smoke / <tab>". The
+fix compares `herdr.space` with the launcher's `space` (`verify_unit_identity`,
+`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`), proved by
+`test_a_new_terminal_still_showing_its_folder_name_is_not_a_workspace_mismatch`.
+
+**Mechanism.** The shown name is written by two later actors (the window, then a mod) after
+placement; the space id is written once, at placement, by whoever placed it, and the launcher's
+result names the same id.
+
+**Generalizable rule.** Verify where something was placed by the identifier written at placement,
+never by a display name another process may still be rewriting.
+
+### An agent that has not reported a status may be holding a question, and Enter answers it
+
+**Evidence.** The live smoke test of the herdr core port, run on the Studio on 2026-11-10 from PR
+#312 (terminals t9t and t9v). In a new scratch folder Claude Code opened its folder-trust question
+and reported no hc status. `await_ready` waited its 30 s, the launcher read the silence as "this
+agent does not report readiness" and sent the prompt with `hc send`, and the send's Enter answered
+the question with its highlighted "No, exit". Claude quit, twice. The fix is `VENDORS_WITHOUT_STATUS`,
+`refuse_without_status` and the gate in `_deliver`
+(`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`), proved by
+`test_a_session_silent_through_the_readiness_window_is_not_ready_and_nothing_is_sent`.
+
+**Mechanism.** Claude, Codex, Antigravity, Muse and OpenCode report a status word only once they
+are past their startup screens, so "no status yet" and "never reports a status" look identical from hc.
+`hc send` pastes and presses Enter whatever is on screen; on a selection menu (folder trust, an MCP
+server approval, a theme or login picker) that Enter picks the default.
+
+**Generalizable rule.** Treat a missing status from an agent known to report one as "not ready",
+never as "cannot report"; send blind only to a vendor proved silent, and read the screen for a
+menu first.
+
+### A plain-text screen read cannot tell an agent's placeholder from a person's draft
+
+**Evidence.** `hc read` (herdr core 0.1.20) prints plain text only. The launcher's composer parser
+classifies the checked-in Codex capture `codex_closed_placeholder`
+(`plugins/agent-launcher/tests/fixtures/composer-panes.json`) as `unclassifiable` with its colour
+codes and as `staged` without them; the three Claude captures read `empty` either way. The first
+port kept the stop on any text, and the smoke-test re-run of 2026-11-10 showed the cost: after
+Codex's trust question was answered, `launcher.py redeliver` refused "pane t102 already holds
+staged input (24 chars)" -- the box held Codex 0.167.1's "› Ask Codex to do anything". The fix
+reads a box whose whole content is a placeholder taken from the installed binary as empty
+(`KNOWN_PLACEHOLDERS`, `test_codexs_own_placeholder_reads_as_an_empty_box_and_the_write_goes_in`)
+and keeps every near miss a stop (`test_a_placeholder_with_anything_else_in_the_box_still_stops`).
+
+**Mechanism.** The guard proved typed text by its being unstyled; a client-drawn placeholder is
+styled. Old Herdr's `pane read --format ansi` kept the styling, and herdr core's command line has
+no styled read, so every non-empty box looks typed. A vendor's placeholder strings are fixed in its
+binary (Codex's does not rotate; Claude's rotates among eight `Try "..."` examples), so a
+whole-box comparison against them separates "the vendor's empty box" from "a person's draft"
+without the colours.
+
+**Generalizable rule.** When a terminal backend changes, check whether any parser relied on styling
+the new read drops; replace the lost signal with an exact, sourced list (here, placeholder strings
+read from the installed binaries) rather than a looser heuristic, and re-read the list when the
+vendor updates.
+
+### A send from inside an agent's terminal is tagged, so commands must go out untagged
+
+**Evidence.** `hc send` from a process with `HC_TERMINAL_ID` set wraps the text in
+`<hc from="tN ...">...</hc>` (the `herdr` skill, "Typing a shell command into a plain shell").
+Orchestrate's tasks begin with a saga command (`/saga:work ...`), which an agent reads as a command
+only at the start of its input. `launcher.run` now strips `HC_TERMINAL_ID` and `HC_SCOPE` for every
+`hc` argv (`test_run_strips_the_caller_variables_for_hc_argv_only`).
+
+**Mechanism.** hc treats a send from inside a terminal as a message between agents and adds the
+sender's address; the same variable also makes `hc wait` end when someone messages the caller.
+
+**Generalizable rule.** A program that drives agents through hc on someone's behalf sends without
+the caller variables; only an agent speaking for itself keeps them.
+
+### A test suite that stubs a terminal backend must also shadow it
+
+**Evidence.** The agent-launcher tests had no conftest, and Orchestrate's shadowed only `herdr`.
+After the move to hc a missed stub would have run the host's `hc send` or `hc kill`; one roster
+test did reach the host's `hc wait`. Both conftests now put a refusing `hc` and `herdr` first on
+`PATH` (`plugins/agent-launcher/tests/conftest.py`, `plugins/orchestrate/tests/conftest.py`).
+
+**Mechanism.** Fakes match on argv; when production argv changes, a fake that forwards unmatched
+calls to the real runner sends them to the live program.
+
+**Generalizable rule.** Shadow every live control program a suite stubs, at the session level,
+before changing the argv the fakes match on.
 
 ### Ambient ~/workspace/infiquetra/infiquetra-sdlc checkouts mask vendored project-mapping changes in local tests
 

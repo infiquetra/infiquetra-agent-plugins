@@ -1,13 +1,14 @@
 """Wait's debounce: idle must persist across consecutive observations before a unit has settled.
 
 An agent is also idle *between* turns -- it finishes a tool call, returns to the prompt, thinks,
-and continues. One idle event from herdr once returned ``wait`` in that gap; the session was still
-working, with uncommitted paths in its worktree. ``settle`` already required two readings; ``wait``
-did not.
+and continues. One idle event from old Herdr once returned ``wait`` in that gap; the session was
+still working, with uncommitted paths in its worktree. ``settle`` already required two readings;
+``wait`` did not.
 
-The agreement rule is driven through the real wait helpers with a fake event source and a fake
-``herdr agent wait`` -- the production module is loaded by path, the way the other orchestrate
-tests do. Only herdr itself is canned.
+``wait`` now starts one ``hc wait`` per running unit (herdr core returns from it when a session
+stops working, which is a wake, not a settlement). The agreement rule is driven through the real
+helpers and through the real child-process boundary with a fake ``hc`` on ``PATH`` -- the
+production module is loaded by path, the way the other orchestrate tests do. Only hc is canned.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from typing import Any
 
 import orchestrate_support as _support
@@ -46,7 +47,7 @@ def orchestrate() -> ModuleType:
     return module
 
 
-def _unit(orchestrate: ModuleType, name: str = "alpha", pane_id: str = "p1") -> Any:
+def _unit(orchestrate: ModuleType, name: str = "alpha", pane_id: str = "t1") -> Any:
     return orchestrate.Unit(
         name=name,
         vendor="claude",
@@ -55,10 +56,6 @@ def _unit(orchestrate: ModuleType, name: str = "alpha", pane_id: str = "p1") -> 
         agent_name=name,
         status=orchestrate.RUNNING,
     )
-
-
-def _event(pane_id: str, status: str) -> SimpleNamespace:
-    return SimpleNamespace(pane_id=pane_id, agent_status=status)
 
 
 def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **overrides: Any) -> None:
@@ -80,10 +77,10 @@ def _write_run(repo: Path, units: list[dict[str, Any]] | None = None, **override
     )
 
 
-def _install_fake_herdr(root: Path) -> Path:
+def _install_fake_hc(root: Path) -> Path:
     fake_bin = root / "bin"
     fake_bin.mkdir()
-    fake = fake_bin / "herdr"
+    fake = fake_bin / "hc"
     fake.write_text(
         "#!" + sys.executable + "\n"
         r"""import json
@@ -93,11 +90,11 @@ import time
 from pathlib import Path
 
 args = sys.argv[1:]
-log = Path(os.environ["FAKE_HERDR_LOG"])
+log = Path(os.environ["FAKE_HC_LOG"])
 with log.open("a") as stream:
-    stream.write(json.dumps(args) + "\n")
+    stream.write(json.dumps({"argv": args, "caller": os.environ.get("HC_TERMINAL_ID")}) + "\n")
 
-state_dir = Path(os.environ["FAKE_HERDR_STATE"])
+state_dir = Path(os.environ["FAKE_HC_STATE"])
 
 
 def next_value(name: str, default: str) -> str:
@@ -108,20 +105,23 @@ def next_value(name: str, default: str) -> str:
     return values[min(index, len(values) - 1)]
 
 
-if args[:2] == ["agent", "wait"]:
-    timeout_ms = int(args[args.index("--timeout") + 1])
-    required = os.environ.get("FAKE_HERDR_REQUIRED_UNTIL", "")
-    untils = [args[index + 1] for index, arg in enumerate(args) if arg == "--until"]
-    if required and required not in untils:
-        time.sleep(timeout_ms / 1000)
-        raise SystemExit(2)
-    delay = float(next_value("FAKE_HERDR_WAIT_DELAYS", "0"))
-    time.sleep(min(delay, timeout_ms / 1000))
-    raise SystemExit(int(next_value("FAKE_HERDR_WAIT_EXITS", "0")))
+if args[:1] == ["wait"]:
+    timeout = float(args[args.index("--timeout") + 1])
+    delay = float(next_value("FAKE_HC_WAIT_DELAYS", "0"))
+    time.sleep(min(delay, timeout))
+    code = int(next_value("FAKE_HC_WAIT_EXITS", "0"))
+    if code == 0:
+        print(json.dumps({"children": [], "ended": True, "reason": "status", "status": "idle",
+                          "terminal": args[1], "turn": 1}))
+    raise SystemExit(code)
 
-if args[:2] == ["agent", "list"]:
-    status = next_value("FAKE_HERDR_STATUSES", "working")
-    print(json.dumps({"result": {"agents": [{"name": "alpha", "agent_status": status}]}}))
+if args[:1] == ["ls"]:
+    status = next_value("FAKE_HC_STATUSES", "working")
+    rows = [] if status == "gone" else [
+        {"address": "t1", "agent": "claude-code", "cwd": "/repo", "state": "live",
+         "status": status, "turn": 1, "where": "Run / alpha"}
+    ]
+    print(json.dumps({"terminals": rows, "machines": [], "hidden_finished": 0}))
     raise SystemExit(0)
 
 raise SystemExit(2)
@@ -137,7 +137,7 @@ def _run_wait(
     wait_exits: str = "0",
     wait_delays: str = "0",
     statuses: str = "working",
-    required_until: str = "",
+    pane_id: str = "t1",
 ) -> tuple[subprocess.CompletedProcess[str], float, list[list[str]]]:
     root = tmp_path / "repo"
     root.mkdir()
@@ -149,6 +149,8 @@ def _run_wait(
                 "vendor": "claude",
                 "task": "test wait",
                 "agent_name": "alpha",
+                "pane_id": pane_id,
+                "tab_id": pane_id,
                 "status": "running",
                 "branch": None,
             }
@@ -157,20 +159,21 @@ def _run_wait(
         base="HEAD",
         branch="",
     )
-    fake_bin = _install_fake_herdr(root)
-    log = root / "herdr.jsonl"
+    fake_bin = _install_fake_hc(root)
+    log = root / "hc.jsonl"
     state = root / "state"
     state.mkdir()
     env = os.environ.copy()
     env.update(
         {
             "PATH": str(fake_bin) + os.pathsep + env["PATH"],
-            "FAKE_HERDR_LOG": str(log),
-            "FAKE_HERDR_STATE": str(state),
-            "FAKE_HERDR_WAIT_EXITS": wait_exits,
-            "FAKE_HERDR_WAIT_DELAYS": wait_delays,
-            "FAKE_HERDR_STATUSES": statuses,
-            "FAKE_HERDR_REQUIRED_UNTIL": required_until,
+            "FAKE_HC_LOG": str(log),
+            "FAKE_HC_STATE": str(state),
+            "FAKE_HC_WAIT_EXITS": wait_exits,
+            "FAKE_HC_WAIT_DELAYS": wait_delays,
+            "FAKE_HC_STATUSES": statuses,
+            # The operator's own session: the wait children must not carry it (D5).
+            "HC_TERMINAL_ID": "t99",
         }
     )
     started = time.monotonic()
@@ -192,7 +195,9 @@ def _run_wait(
         timeout=3,
     )
     elapsed = time.monotonic() - started
-    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    entries = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    calls = [entry["argv"] for entry in entries]
+    assert all(entry["caller"] is None for entry in entries), "an hc call carried HC_TERMINAL_ID"
     return result, elapsed, calls
 
 
@@ -209,71 +214,46 @@ class PollQueue:
         return self.answers.pop(0)
 
 
-class TestEventPathRequiresAgreeingObservations:
-    """A single idle from the socket is the think-pause, not a settlement."""
+class TestAWakeRequiresAgreeingObservations:
+    """A single idle after ``hc wait`` returns is the think-pause, not a settlement."""
 
     def test_one_idle_does_not_return(self, orchestrate: ModuleType) -> None:
-        unit = _unit(orchestrate)
         slept: list[float] = []
         poll = PollQueue(["working"])
-        result = orchestrate.wait_on_events(
-            {unit.pane_id: unit},
-            iter([_event(unit.pane_id, "idle")]),
-            interval=20,
-            needed=2,
-            poll_unit=poll,
-            sleep=slept.append,
+        result = orchestrate.confirmed_stop(
+            "idle", lambda: poll(None), interval=20, needed=2, sleep=slept.append
         )
         assert result is None
         assert slept == [20]
         assert poll.calls == 1
 
-    def test_idle_then_working_does_not_return(self, orchestrate: ModuleType) -> None:
-        unit = _unit(orchestrate)
-        slept: list[float] = []
-        result = orchestrate.wait_on_events(
-            {unit.pane_id: unit},
-            iter([_event(unit.pane_id, "idle"), _event(unit.pane_id, "working")]),
-            interval=20,
-            needed=2,
-            poll_unit=PollQueue(["working"]),
-            sleep=slept.append,
-        )
-        assert result is None
-        assert slept == [20]
-
     def test_consecutive_agreeing_idles_do_return(self, orchestrate: ModuleType) -> None:
-        unit = _unit(orchestrate)
         slept: list[float] = []
-        result = orchestrate.wait_on_events(
-            {unit.pane_id: unit},
-            iter([_event(unit.pane_id, "idle")]),
-            interval=20,
-            needed=2,
-            poll_unit=PollQueue(["idle"]),
-            sleep=slept.append,
+        result = orchestrate.confirmed_stop(
+            "idle", lambda: PollQueue(["idle"])(None), interval=20, needed=2, sleep=slept.append
         )
-        assert result is not None
-        assert result[0] is unit
-        assert result[1] == "idle"
+        assert result == "idle"
         assert slept == [20]
 
-    def test_blocked_returns_promptly_and_is_named(self, orchestrate: ModuleType) -> None:
-        unit = _unit(orchestrate)
+    @pytest.mark.parametrize("status", ["blocked", "error"])
+    def test_a_person_needed_status_returns_promptly_and_is_named(
+        self, orchestrate: ModuleType, status: str
+    ) -> None:
+        """hc returns from a wait on ``error`` as well as ``blocked``; both need a person."""
         slept: list[float] = []
         poll = PollQueue([])
-        result = orchestrate.wait_on_events(
-            {unit.pane_id: unit},
-            iter([_event(unit.pane_id, "blocked")]),
-            interval=20,
-            needed=2,
-            poll_unit=poll,
-            sleep=slept.append,
+        result = orchestrate.confirmed_stop(
+            status, lambda: poll(None), interval=20, needed=2, sleep=slept.append
         )
-        assert result is not None
-        assert result[1] == "blocked"
+        assert result == status
         assert slept == []
         assert poll.calls == 0
+
+    def test_error_seen_while_confirming_is_named(self, orchestrate: ModuleType) -> None:
+        result = orchestrate.confirmed_stop(
+            "idle", lambda: "error", interval=0, needed=2, sleep=lambda _s: None
+        )
+        assert result == "error"
 
 
 class TestWaitRejectsSingleObservation:
@@ -301,7 +281,7 @@ class TestWaitRejectsSingleObservation:
                 needed=1,
             )
 
-    def test_fallback_does_not_return_after_one_idle(self, tmp_path: Path) -> None:
+    def test_wait_does_not_return_after_one_idle(self, tmp_path: Path) -> None:
         result, _elapsed, calls = _run_wait(
             tmp_path,
             "--timeout",
@@ -311,16 +291,16 @@ class TestWaitRejectsSingleObservation:
             wait_exits="0,2",
             statuses="idle,working",
         )
-        wait_calls = [call for call in calls if call[:2] == ["agent", "wait"]]
-        list_calls = [call for call in calls if call[:2] == ["agent", "list"]]
+        wait_calls = [call for call in calls if call[:1] == ["wait"]]
+        list_calls = [call for call in calls if call[:1] == ["ls"]]
         assert result.returncode == 0
         assert "no unit settled" in result.stdout
         assert len(wait_calls) == 2
         assert len(list_calls) == 2
 
 
-class TestFallbackProcessContract:
-    """The fallback is exercised through the actual child-process boundary."""
+class TestHcWaitProcessContract:
+    """The ``hc wait`` children are exercised through the actual child-process boundary."""
 
     def test_nonzero_child_is_not_respawned_or_polled(self, tmp_path: Path) -> None:
         result, elapsed, calls = _run_wait(
@@ -331,8 +311,8 @@ class TestFallbackProcessContract:
             "0",
             wait_exits="2",
         )
-        wait_calls = [call for call in calls if call[:2] == ["agent", "wait"]]
-        list_calls = [call for call in calls if call[:2] == ["agent", "list"]]
+        wait_calls = [call for call in calls if call[:1] == ["wait"]]
+        list_calls = [call for call in calls if call[:1] == ["ls"]]
         assert result.returncode == 0
         assert len(wait_calls) == 1
         assert list_calls == []
@@ -349,13 +329,13 @@ class TestFallbackProcessContract:
             wait_delays="0.05",
             statuses="working",
         )
-        wait_calls = [call for call in calls if call[:2] == ["agent", "wait"]]
-        timeout_values = [int(call[call.index("--timeout") + 1]) for call in wait_calls]
+        wait_calls = [call for call in calls if call[:1] == ["wait"]]
+        timeout_values = [float(call[call.index("--timeout") + 1]) for call in wait_calls]
         assert result.returncode == 0
         assert "no unit settled" in result.stdout
         assert 0.8 <= elapsed <= 2.0
         assert wait_calls
-        assert all(1 <= value <= 1000 for value in timeout_values)
+        assert all(0.001 <= value <= 1.0 for value in timeout_values)
         if len(timeout_values) >= 2:
             assert all(
                 earlier > later
@@ -377,13 +357,13 @@ class TestFallbackProcessContract:
             wait_delays="0",
             statuses="working",
         )
-        wait_calls = [call for call in calls if call[:2] == ["agent", "wait"]]
-        timeout_values = [int(call[call.index("--timeout") + 1]) for call in wait_calls]
+        wait_calls = [call for call in calls if call[:1] == ["wait"]]
+        timeout_values = [float(call[call.index("--timeout") + 1]) for call in wait_calls]
         assert result.returncode == 0
         assert "no unit settled" in result.stdout
         assert 0.8 <= elapsed <= 2.0
         assert len(wait_calls) > 10
-        assert all(1 <= value <= 1000 for value in timeout_values)
+        assert all(0.001 <= value <= 1.0 for value in timeout_values)
         if len(timeout_values) >= 2:
             assert all(
                 earlier > later
@@ -391,28 +371,38 @@ class TestFallbackProcessContract:
             )
             assert timeout_values[-1] < timeout_values[0]
 
-    def test_blocked_is_in_real_wait_argv_and_returns_promptly(self, tmp_path: Path) -> None:
-        result, elapsed, calls = _run_wait(
-            tmp_path,
-            "--timeout",
-            "1",
-            required_until="blocked",
-            statuses="blocked",
-        )
-        wait_calls = [call for call in calls if call[:2] == ["agent", "wait"]]
+    def test_blocked_returns_promptly_with_the_real_wait_argv(self, tmp_path: Path) -> None:
+        result, elapsed, calls = _run_wait(tmp_path, "--timeout", "1", statuses="blocked")
+        wait_calls = [call for call in calls if call[:1] == ["wait"]]
         assert result.returncode == 0
         assert "alpha is blocked" in result.stdout
         assert elapsed < 0.75
         assert len(wait_calls) == 1
-        assert wait_calls[0][:-1] == [
-            "agent",
-            "wait",
-            "alpha",
-            "--until",
-            "idle",
-            "--until",
-            "done",
-            "--until",
-            "blocked",
-            "--timeout",
-        ]
+        assert wait_calls[0][:3] == ["wait", "t1", "--timeout"]
+        assert wait_calls[0][-1] == "--json"
+
+    def test_error_returns_promptly_and_is_named(self, tmp_path: Path) -> None:
+        result, elapsed, calls = _run_wait(tmp_path, "--timeout", "1", statuses="error")
+        assert result.returncode == 0
+        assert "alpha reports an error" in result.stdout
+        assert elapsed < 0.75
+        assert len([call for call in calls if call[:1] == ["wait"]]) == 1
+
+    def test_a_unit_hc_no_longer_lists_is_dropped_not_waited_on_again(
+        self, tmp_path: Path
+    ) -> None:
+        """hc returns at once from a wait on an exited terminal; re-waiting would spin."""
+        result, elapsed, calls = _run_wait(
+            tmp_path, "--timeout", "1", "--interval", "0", statuses="gone"
+        )
+        assert result.returncode == 0
+        assert "no unit settled" in result.stdout
+        assert len([call for call in calls if call[:1] == ["wait"]]) == 1
+        assert elapsed < 0.75
+
+    def test_an_old_herdr_unit_is_named_and_not_waited_on(self, tmp_path: Path) -> None:
+        result, _elapsed, calls = _run_wait(tmp_path, "--timeout", "1", pane_id="w1:p3")
+        assert result.returncode == 0
+        assert "records no herdr core terminal (w1:p3)" in result.stdout
+        assert "no running unit has a herdr core terminal" in result.stdout
+        assert calls == []

@@ -1,5 +1,93 @@
 # Changelog
 
+## [Unreleased]
+
+Breaking: the release that ships this is a major version. Herdr is now herdr core (`hc`, the terminals on each machine) plus the Herdr app (the window), and
+old Herdr (`herdr agent|tab|pane|workspace`) is being removed; a session it starts does not appear
+in the window. `launcher.py` and `roster.py` now start sessions through the `agents` launcher's
+Herdr app path and do everything after that with `hc`. The plan, with its inventory of every old
+Herdr call and the decisions below, is `docs/plans/2026-11-10-orchestrate-hc-port-plan.md`.
+
+### Changed
+
+- **Breaking: sessions start in the Herdr app.** `agent_argv` passes `--app --no-focus --task
+  --cwd [--workspace]` and no longer passes `--current`, `--herdr` or `--herdr-control-only`. The
+  wrapper's result is agent-app's JSON line; its `terminal` (an hc address such as `t7`) becomes
+  both `tab_id` and `pane` in the receipt, and the window's own tab id is kept as `app_tab`. A
+  result naming another machine's terminal (`mini/t7`) or none at all is a named stop.
+- **Breaking: every Herdr call is an `hc` call.** The session list and the ownership snapshot are
+  `hc ls --json` (this machine's terminals only; other machines' rows are dropped on read).
+  Readiness is one bounded `hc wait`. Screen reads are `hc read --lines N`. Both write doors are
+  `hc send`. A close is `hc kill` then `hc rm`; a terminal hc no longer has, or one already
+  finished, counts as closed, and an id that is not a terminal on this machine's core (an old
+  Herdr tab) is never handed to hc.
+- Every `hc` call runs without `HC_TERMINAL_ID` and `HC_SCOPE`. From inside an agent's terminal
+  `hc send` otherwise wraps the text in an `<hc from=...>` tag, which stops a leading `/saga:...`
+  command being read as a command.
+- Ownership is the pre-launch snapshot of this machine's terminal addresses (finished ones
+  included). hc never reuses an address, so a terminal absent from it was created by the launch.
+- `launcher.py preview` and `launch` refuse unless the dry run reports `backend=herdr-app`, so
+  nothing silently lands in old Herdr. `confirm_preview` now takes the requested workspace name.
+- The identity preflight reads the agent's own name for itself from hc (`claude-code`, `codex`,
+  `antigravity`, `muse` and `opencode`, and the console's name for Grok). Before an agent reports,
+  hc shows a shell or a version string instead: that stops an unowned session, as before, and is
+  recorded as an unconfirmed kind for a session the launch created.
+- The workspace is checked by id: the terminal's `herdr.space` label against the `space` in the
+  launcher's result (or, when the result names none, the id `herdr-app ls` gives the one workspace
+  of that name). A new terminal's shown name moves while the window adopts it -- "<folder> / 1"
+  first, the requested name a few seconds later -- and a name read in that gap closed a session
+  that was in the right workspace during the smoke test. The shown name is kept in the receipt as
+  `workspace_shown`.
+- Each `hc` status is read in its own command's shape: `hc get` prints the Status record
+  (`{"app", "state", ...}`, null until the program reports), while `hc ls` rows and `hc wait`
+  print the bare word. Roster's status read follows the same rule.
+- The input-box guard reads plain text, because `hc read` has no styled form. Any text in the box
+  is a staged-input stop, except a placeholder the vendor itself draws in an empty box, matched
+  against the whole box: Codex 0.167.1's "Ask Codex to do anything" and "Ask a follow-up
+  question", Claude Code 2.1.322's `Try "<example>"` hints, and OpenCode v2.2.7's
+  `Ask anything… "<example>"` and shell-mode hints, all read from the installed binaries (the
+  parser has no marker for OpenCode's box, so OpenCode writes are sent with an
+  `unsupported_vendor` note and never stop on staged input). The receipt records the match as
+  `input_box_placeholder`. The placeholder with any
+  typed text beside it is still a stop. Found by the smoke test: a redeliver into a Codex session
+  refused its own placeholder as staged input.
+- `launcher.py redeliver` takes `--vendor`, `--task`, `--cwd` and `--workspace` from the receipt
+  when they are not passed, and refuses a `--vendor` the receipt contradicts (exit 2).
+- A blocked session refuses a send (hc exit 9) and the launcher never forces it.
+- `PANE_WRITE_SECONDS` is 90 (was 30): `hc send` holds a send for up to 60 seconds while a
+  person's draft is open.
+- A session that reports no status is not sent anything. Claude, Codex, Antigravity and Muse
+  report one once they are past their startup screens, so silence after the 30-second readiness
+  window means "not ready" (Claude says nothing while its folder-trust question is open, and a
+  send's Enter would answer it with its default). The launch stops with "<task> has not reported a
+  status after 30 s; a startup question such as folder trust may be open: read it with
+  `hc read tN`", leaves the session open, and records `status_reported: false` and
+  `prompt_delivered: false` in the receipt; every later write is held to the same rule. Only a
+  vendor confirmed never to report a status (`VENDORS_WITHOUT_STATUS`, none today) is sent a line
+  without one, after its screen shows no selection menu, and a long task to it is handed over as a
+  file. Found by the live smoke test of 2026-11-10, where a prompt answered Claude's trust
+  question "No, exit".
+- `roster.py` requires `HC_TERMINAL_ID` instead of `HERDR_ENV`, waits on each seat's terminal with
+  `hc wait`, reads status with `hc get` and a blocked screen with `hc read`, and records the
+  workspace from the receipt's `space`.
+
+### Removed
+
+- `workspace_id_for_name` and every old Herdr call (`herdr agent list|prompt|get|read|wait`,
+  `herdr pane read|run|current`, `herdr tab list|close`, `herdr workspace list`).
+
+### Fixed
+
+- The note a no-status send leaves is written once, not once per send: its old text carried the
+  note separator, so its de-duplication never matched.
+
+### Tests
+
+- The contract and roster suites fake `hc`, and a package `conftest.py` shadows the host's `hc`
+  and `herdr` so a missed stub fails instead of reaching a live terminal.
+
+The roles library is unchanged at infiquetra-sdlc revision `f8d0994`.
+
 ## [1.7.3] - 2026-10-14
 
 The roles library moves to infiquetra-sdlc revision `f8d0994` (X1a: the lifecycle records saga's

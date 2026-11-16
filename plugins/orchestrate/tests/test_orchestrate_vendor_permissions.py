@@ -196,6 +196,8 @@ class TestNoBarePermissionEnumCanBecomePromptText:
         assert emitted <= PERMISSION_ENUMS
 
 
+# Qwen is absent: the launcher this suite runs against retired its qwen path (2026-10-17), so
+# `VENDOR_PERMISSION` no longer carries it.
 # Today's bypass tails, pinned literally: a test that re-derives its expectation from the table
 # would pass a mutation that changes the flags while keeping the guard green.
 BYPASS_TAILS = {
@@ -205,7 +207,6 @@ BYPASS_TAILS = {
     "grok": ["--permission-mode", "bypassPermissions"],
     "muse": ["--yolo"],
     "opencode": ["--auto"],
-    "qwen": ["--yolo"],
 }
 
 

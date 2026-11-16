@@ -1,12 +1,12 @@
 ---
 name: orchestrate
-description: Spread one piece of work across several herdr agent sessions — plan it with the operator, run each unit in its own git worktree with any configured agent and any saga capability, then merge the results back. Triggers on "/orchestrate", "orchestrate this", "split this across agents", "run these issues in parallel", "fan this out to multiple sessions", "orchestrate across vendors".
+description: Spread one piece of work across several Herdr agent sessions — plan it with the operator, run each unit in its own git worktree with any configured agent and any saga capability, then merge the results back. Triggers on "/orchestrate", "orchestrate this", "split this across agents", "run these issues in parallel", "fan this out to multiple sessions", "orchestrate across vendors".
 ---
 
 # orchestrate
 
 Take one piece of work — a prompt, an issue, a parent issue's children, or a document — decide with
-the operator how to split it, and run the pieces across herdr agent sessions.
+the operator how to split it, and run the pieces across Herdr agent sessions.
 
 Each unit gets its own git worktree and branch, so sessions cannot overwrite each other. Each unit
 can invoke any saga capability (`/plan`, `/brainstorm`, `/doc-review`, `/work`, `/code-review`,
@@ -105,8 +105,11 @@ created. Ordinary units launch only through `go` via the shared `agent-launcher`
 (`agent_argv`). `targeted-reviewer` and `external-reviewer` are not pane-launched by `go`. The
 controller starts them through `review-launch` after the packet exists.
 Never create worktrees manually or invoke `agents` directly for a run unit. Direct wrapper calls
-bypass the background launch flags (`--no-focus --current --herdr --herdr-control-only`) and steal
-operator UI focus. The launch contract lives in the sibling package `plugins/agent-launcher`. That
+bypass the launch flags (`--app --no-focus`), the ownership snapshot and the preflight, and steal
+operator UI focus. Herdr is herdr core (`hc`, the terminals) plus the Herdr app (the window): a
+unit starts through the `agents` launcher's Herdr app path, and every read, send, wait and close
+after that is an `hc` call. Old Herdr (`herdr agent|tab|pane|workspace`) is not called. The
+launch contract lives in the sibling package `plugins/agent-launcher`. That
 sibling is the default. `AGENT_LAUNCHER_ROOT` overrides it and must be the
 package root (the directory that contains `skills/agent-launcher/scripts/launcher.py`).
 There is no search of a Claude plugin cache. Orchestrate does not keep a private
@@ -278,7 +281,7 @@ Remote branch cleanup adheres strictly to these safety boundaries:
 
 ## Workspaces
 
-A herdr workspace is the unit of attention, not of isolation — isolation is the worktree. Below
+A Herdr workspace is the unit of attention, not of isolation — isolation is the worktree. Below
 about six concurrent units, one workspace is right and a second is overhead; above that, one
 workspace becomes a wall of tabs and the operator can no longer see what is waiting on them. One
 issue is one lifecycle and a lifecycle is the natural workspace, so a parent with nine children is
@@ -342,8 +345,8 @@ wrapper and vendor-native live catalogs or help (such as `roster --models` query
 - **Live catalog discovery & vendor recognition:** `python3 "$S" roster` verifies installed wrapper tools
   (exit 0 listing available vendors). `python3 "$S" roster --models` queries live vendor subcommands
   and displays operator favourites without creating worktrees, git branches, Herdr sessions, or run state.
-- **Herdr verification bounds:** Herdr proves only the workspace, pane, working-directory (`cwd`), and
-  readiness facts its own API exposes (`herdr agent list`) — nothing about models.
+- **Herdr verification bounds:** herdr core proves only the agent kind, terminal, working-directory
+  (`cwd`), workspace name and readiness facts it publishes (`hc ls`, `hc get`) — nothing about models.
 - **Internal tier decoupling:** Fleet Commons retains internal Team Execution tier semantics intact, but
   never gates or renames external Herdr routes.
 - **Provider route preservation:** `opencode-go` is an OpenCode provider (e.g.,
@@ -376,15 +379,30 @@ actually offered*, which on Muse is `xhigh` rather than a literal `max`.
 **A launch receipt records what was checked, not what was asked for.** Each unit's `launch_receipt`
 carries the provider, model, variant, account, working directory, worktree, workspace, pane and readiness it
 launched with, plus `confirmed_against_herdr` and `requested_only` naming which of those were held
-against `herdr agent list` and which were not. `herdr agent list` publishes `cwd`, `workspace_id`
-and `interactive_ready` per session and **publishes no model at all**, so a model is always
-`requested_only` — the receipt says so rather than implying a check nothing could perform. A
-working directory or workspace that disagrees with the plan closes that run-owned tab and fails the
-unit before its task is submitted.
+against herdr core and which were not. hc publishes each terminal's agent name, launch folder,
+status word and the window's "Workspace / tab" label, and **publishes no model at all**, so a model
+is always `requested_only` — the receipt says so rather than implying a check nothing could
+perform. A working directory or workspace that disagrees with the plan closes that run-owned
+session and fails the unit before its task is submitted.
 
-An agent not listed launches with no model flags. One that does not report interactive readiness
-has `herdr agent prompt` refuse it; the script falls back to typing into its pane, which is what
-an operator would do by hand.
+An agent not listed launches with no model flags. Every line reaches a session through one door,
+`hc send`, which pastes and presses Enter. A session that is blocked (asking a person something)
+refuses the send, and Orchestrate never forces it. A session that has reported no status at all
+is not sent anything either: Claude, Codex, Antigravity, Muse and OpenCode say nothing until they
+are past their startup screens, so silence after the 30-second readiness window means a question such as
+folder trust may be open, and an Enter would answer it with its default. The unit fails with
+"<unit> has not reported a status after 30 s ... read it with `hc read tN`" and its tab is left
+open; answer the question there, then redeliver by hand with `launcher.py redeliver`. Every unit
+runs in a new worktree beside the repository (`<repo parent>/orch-<run>-<unit>`), so a fresh setup
+meets the folder-trust question on every unit. Trust the folder that holds the worktrees once
+before `go`: Claude accepts a trusted parent folder, so that covers every unit after it.
+
+`hc read` returns plain text, so the input-box guard cannot tell a placeholder an agent draws from
+text a person typed by its colour. It reads a box whose whole content is exactly one of the
+vendor's known placeholders (Codex's "Ask Codex to do anything" or "Ask a follow-up question",
+Claude's `Try "..."` hints) as empty, and any other text as a staged-input stop, including a
+placeholder with anything typed beside it. A stopped unit is redelivered by hand with
+`launcher.py redeliver`, once the box is cleared.
 
 ## Writing, and saga commands
 
@@ -402,28 +420,28 @@ opencode. A bare `/plan` is a command nowhere and arrives as prose.
 
 **Three supported waiting shapes.** When an agent session needs to wait for work in flight, use the
 supported mechanism for the specific waiting shape. Follow the explicit rule: **never chained sleep**
-polling in a foreground turn (for example, `sleep 25 && gh pr checks` or `sleep 45 && herdr agent
-read`). The execution guard intercepts and rejects chained sleep commands immediately, costing a
+polling in a foreground turn (for example, `sleep 25 && gh pr checks` or `sleep 45 && hc read`). The execution guard intercepts and rejects chained sleep commands immediately, costing a
 turn per occurrence, and its own remedy is to wait through a mechanism that blocks somewhere other
 than the turn — a native wait, a Monitor, or a backgrounded run whose completion notifies the
 session. Use the supported pattern instead:
 
 1. **Sibling Herdr agent output or unit settlement:** For whole-unit settlement waits across an
    orchestration run, use `orchestrate.py wait` (described below). For a specific sibling Herdr
-   session or pane, use Herdr's native `herdr agent wait` or `herdr pane wait-output`. Both wait
-   indefinitely without `--timeout`, so pass one. `herdr agent wait` returns on a single `idle`,
-   which an agent also shows between turns — for settlement rather than a pause, prefer
-   `orchestrate.py wait`, which confirms the reading before it believes it.
+   session, use herdr core's native `hc wait` (`hc wait <t>` until it stops working, or
+   `hc wait <t> --output X` until it prints X). Pass `--timeout` in seconds; a timeout is a
+   check-in, not a failure. `hc wait` returns on a single `idle`, which an agent also shows between
+   turns — for settlement rather than a pause, prefer `orchestrate.py wait`, which confirms the
+   reading before it believes it.
 
    ```bash
    # Wait for any running unit in the orchestration to settle
    python3 "$S" wait
 
-   # Or wait for a specific sibling Herdr session to settle
-   herdr agent wait worker-session-name --timeout 600000
+   # Or wait for a specific sibling Herdr session (its terminal address) to stop working
+   hc wait t7 --timeout 600
 
-   # Or wait for a pane to match a specific output pattern
-   herdr pane wait-output "$PANE_ID" --match "UNIT-DONE" --timeout 600000
+   # Or wait for a session to print a specific marker
+   hc wait t7 --output "UNIT-DONE" --timeout 600
    ```
 
 2. **Pull request checks and external asynchronous state:** `gh pr checks` waits natively with
@@ -452,14 +470,13 @@ session. Use the supported pattern instead:
    cat /tmp/gate-run/result.txt
    ```
 
-**Settlement waits with `orchestrate.py wait`.** `orchestrate.py wait` subscribes to herdr's event socket
-and blocks until one of the running units settles — nothing is polled for the wake, but a single `idle`
-is not a settlement. An agent is also idle between turns, so `wait` confirms across consecutive
-observations the same way `settle` does (`--interval`, plus `--confirmations` on `wait` and `--once`
-on `settle`). `blocked` returns on
-the first sighting and is named. Subscriptions are keyed by pane, which is why a unit records its `pane_id`
-at launch; if the socket is unreachable it falls back to one `herdr agent wait` per unit, under the same
-confirmation rule.
+**Settlement waits with `orchestrate.py wait`.** `orchestrate.py wait` starts one `hc wait` per
+running unit's terminal and blocks until one returns — nothing is polled for the wake, but a single
+`idle` is not a settlement. An agent is also idle between turns, so `wait` confirms across
+consecutive observations the same way `settle` does (`--interval`, plus `--confirmations` on `wait`
+and `--once` on `settle`). `blocked` and `error` return on the first sighting and are named. The
+waits are keyed by terminal, which is why a unit records its `pane_id` (the terminal address) at
+launch; a unit that recorded none, or recorded an old Herdr id, is named and left out of the wait.
 
 **Evidence-based settlement.** `orchestrate.py settle` marks running units `done` only when there
 is completion evidence on the unit branch (`produced_anything`). A session that is merely idle

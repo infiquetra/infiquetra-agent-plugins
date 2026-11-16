@@ -158,6 +158,43 @@ def _agents(*states: tuple[str, str]) -> list[dict[str, str]]:
     return [{"name": name, "agent_status": status} for name, status in states]
 
 
+def _no_status_core(
+    cmd: list[str], *, launch: bool = False, **_kwargs: Any
+) -> subprocess.CompletedProcess[str]:
+    """herdr core with one terminal, ``t5``, whose program has never reported a status word.
+
+    The launcher sends to such a terminal only when its vendor is confirmed never to report a
+    status (``VENDORS_WITHOUT_STATUS``; each test below marks claude as one) and its screen shows
+    no selection menu; then it hands a long task over as a file. ``hc ls`` shows an empty core
+    before the launch (the ownership snapshot), ``hc read`` shows a blank screen and ``hc send``
+    succeeds.
+    """
+    terminal = {
+        "address": "t5",
+        "state": "live",
+        "cwd": "/wt",
+        "labels": {"where": "WS / review"},
+        "status": None,
+    }
+    if cmd[:2] == ["hc", "ls"]:
+        return subprocess.CompletedProcess(
+            cmd, 0, '{"terminals": [], "machines": [], "hidden_finished": 0}', ""
+        )
+    if cmd[:2] == ["hc", "get"]:
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(terminal), "")
+    if cmd[:2] in (["hc", "send"], ["hc", "read"]):
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    if launch:
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            '{"created_space": false, "space": "sp1", "tab": "tb1", "terminal": "t5", '
+            '"agent_name": "review"}\n',
+            "",
+        )
+    raise AssertionError(f"unexpected call: {cmd}")
+
+
 def test_delivery_warning_appends_to_the_file_handover_note(
     orchestrate: ModuleType,
     tmp_path: Path,
@@ -169,34 +206,31 @@ def test_delivery_warning_appends_to_the_file_handover_note(
     launcher.write_text("#!/bin/sh\nexit 0\n")
     launcher.chmod(0o755)
     monkeypatch.setenv("ORCHESTRATE_AGENT_LAUNCHER", str(launcher))
-    unit = orchestrate.Unit(name="review", vendor="qwen", task="x" * 900)
-    orchestrate.pane_text(unit, unit.task)
-    handover_note = unit.note
+    unit = orchestrate.Unit(name="review", vendor="claude", task="x" * 900)
 
-    completed = subprocess.CompletedProcess(
-        ["agents"],
-        returncode=0,
-        stdout='{"tab_id":"tab-1","agent_name":"review","pane_id":"pane-1"}\n',
-        stderr="",
+    monkeypatch.setattr(
+        orchestrate, "run", lambda cmd, **kw: _no_status_core(list(cmd), launch=True, **kw)
     )
-    monkeypatch.setattr(orchestrate, "run", lambda *_args, **_kwargs: completed)
+    monkeypatch.setattr(orchestrate, "VENDORS_WITHOUT_STATUS", frozenset({"claude"}))
     monkeypatch.setattr(orchestrate, "await_ready", lambda _unit: True)
     monkeypatch.setattr(orchestrate, "took_the_task", lambda _unit: False)
     monkeypatch.setattr(
         orchestrate,
         "agent_row",
         lambda _unit, _agents=None: {
-            "pane_id": "pane-1",
-            "agent": "qwen",
+            "pane_id": "t5",
+            "agent": "claude",
             "interactive_ready": True,
         },
     )
 
     orchestrate.launch(unit)
 
-    assert unit.note.split("; ") == [
-        handover_note,
-        "input box not_found, prompted without a conclusive inspection",
+    # The launch itself hands the long task over as a file: this terminal reports no status.
+    notes = unit.note.split("; ")
+    assert notes[0].startswith("task handed over as a file, too long to type:")
+    assert notes[1:] == [
+        "prompted without a status: this agent does not report readiness",
         orchestrate.DELIVERY_WARNING,
     ]
 
@@ -210,25 +244,18 @@ def test_long_task_handover_appends_after_the_setup_prompt_fallback_note(
     monkeypatch.chdir(tmp_path)
     unit = orchestrate.Unit(
         name="review",
-        vendor="qwen",
+        vendor="claude",
         task="x" * 900,
         setup=["/effort high"],
     )
 
-    def pane_fallback(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            cmd,
-            returncode=1 if cmd[:3] == ["herdr", "agent", "prompt"] else 0,
-            stdout="",
-            stderr="prompt unavailable",
-        )
-
-    monkeypatch.setattr(orchestrate, "run", pane_fallback)
+    monkeypatch.setattr(orchestrate, "run", lambda cmd, **kw: _no_status_core(list(cmd), **kw))
+    monkeypatch.setattr(orchestrate, "VENDORS_WITHOUT_STATUS", frozenset({"claude"}))
     unit.launch_receipt = {"owned": True}
 
-    orchestrate.send(unit, orchestrate.PaneWriter(unit, "pane-1", wrote_before=False))
+    orchestrate.send(unit, orchestrate.PaneWriter(unit, "t5", wrote_before=False))
 
-    assert unit.note.startswith("prompted through its pane")
+    assert unit.note.startswith("prompted without a status")
     assert "; task handed over as a file, too long to type:" in unit.note
 
 
@@ -237,27 +264,18 @@ def test_long_task_without_setup_keeps_both_pane_fallback_diagnostics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The task-file writer runs before the pane-fallback writer on the default setup path."""
+    """The task-file writer runs before the no-status writer on the default setup path."""
     monkeypatch.chdir(tmp_path)
-    unit = orchestrate.Unit(name="review", vendor="qwen", task="x" * 900)
+    unit = orchestrate.Unit(name="review", vendor="claude", task="x" * 900)
 
-    def pane_fallback(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            cmd,
-            returncode=1 if cmd[:3] == ["herdr", "agent", "prompt"] else 0,
-            stdout="",
-            stderr="prompt unavailable",
-        )
-
-    monkeypatch.setattr(orchestrate, "run", pane_fallback)
+    monkeypatch.setattr(orchestrate, "run", lambda cmd, **kw: _no_status_core(list(cmd), **kw))
+    monkeypatch.setattr(orchestrate, "VENDORS_WITHOUT_STATUS", frozenset({"claude"}))
     unit.launch_receipt = {"owned": True}
 
-    orchestrate.send(unit, orchestrate.PaneWriter(unit, "pane-1", wrote_before=False))
+    orchestrate.send(unit, orchestrate.PaneWriter(unit, "t5", wrote_before=False))
 
     assert unit.note.startswith("task handed over as a file, too long to type:")
-    assert (
-        "; prompted through its pane; this agent does not report interactive readiness" in unit.note
-    )
+    assert "; prompted without a status: this agent does not report readiness" in unit.note
 
 
 def test_status_shows_recorded_but_unrouted_result(

@@ -768,12 +768,12 @@ def test_two_scoped_controllers_do_not_share_one_live_unscoped_fixer(
         task="/saga:work build",
         role="review-fixer",
         paths=["src/"],
-        pane_id="pane-shared",
+        pane_id="t5",
         agent_name="agent-shared",
     )
     run = _run(orchestrate, c2, c4, shared)
     run.save()
-    live = [{"name": "agent-shared", "agent_status": "idle"}]
+    live = [{"name": "agent-shared", "pane_id": "t5", "agent_status": "idle"}]
 
     def _result(fix_id: str) -> str:
         return json.dumps(
@@ -847,11 +847,10 @@ def test_cmd_merge_resubmits_a_scoped_pending_controller(
     _support.ensure_origin(repo)
     monkeypatch.chdir(repo)
 
-    run = _run(
-        orchestrate,
-        _controller(orchestrate, "cr-c2", lifecycle="c2", status=orchestrate.DONE),
-        ceiling=1,
-    )
+    scoped = _controller(orchestrate, "cr-c2", lifecycle="c2", status=orchestrate.DONE)
+    # A controller is a herdr core terminal; hc has no way in except its address.
+    scoped.pane_id = "t5"
+    run = _run(orchestrate, scoped, ceiling=1)
     run.branch = "orch/proof-run"
     run.write_review_slot(run.review_controllers()[0], review_resubmit_pending=True)
     run.save()
@@ -863,11 +862,15 @@ def test_cmd_merge_resubmits_a_scoped_pending_controller(
     real_run = orchestrate.run
 
     def prompt_door(cmd: list[str], *a: Any, **k: Any) -> Any:
-        if cmd[:3] == ["herdr", "agent", "prompt"]:
-            sent.append(cmd[3])
+        if cmd[:2] == ["hc", "send"]:
+            sent.append(cmd[2])
             return subprocess.CompletedProcess(cmd, 0, "", "")
-        if cmd[:3] == ["herdr", "pane", "read"]:
+        if cmd[:2] == ["hc", "read"]:
             return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["hc", "get"]:
+            status = {"app": "claude-code", "state": "idle"}
+            reporting = {"address": cmd[2], "state": "live", "status": status}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(reporting), "")
         return real_run(cmd, *a, **k)
 
     monkeypatch.setattr(orchestrate, "run", prompt_door)
@@ -875,7 +878,7 @@ def test_cmd_merge_resubmits_a_scoped_pending_controller(
 
     after = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     controller = after.review_controllers()[0]
-    assert sent == [controller.agent_name or controller.name], (
+    assert sent == [controller.pane_id], (
         "land must tell the scoped controller to resubmit"
     )
     assert after.review_slot(after.review_controllers()[0])["review_resubmit_pending"] is False
@@ -979,7 +982,7 @@ def test_one_scoped_controller_also_mints_rather_than_sharing(
         task="/saga:work build",
         role="review-fixer",
         paths=["src/"],
-        pane_id="pane-plain",
+        pane_id="t6",
         agent_name="agent-plain",
     )
     run = _run(orchestrate, only, plain)
@@ -1002,7 +1005,7 @@ def test_one_scoped_controller_also_mints_rather_than_sharing(
                 ],
             }
         ),
-        agents=[{"name": "agent-plain", "agent_status": "idle"}],
+        agents=[{"name": "agent-plain", "pane_id": "t6", "agent_status": "idle"}],
         controller=only,
     )
 
@@ -1032,7 +1035,7 @@ def test_expanding_a_second_controller_does_not_orphan_the_first_ones_repairs(
         task="/saga:work build",
         role="review-fixer",
         paths=["src/"],
-        pane_id="pane-plain",
+        pane_id="t6",
         agent_name="agent-plain",
     )
     run = _run(orchestrate, first, plain)
@@ -1053,7 +1056,7 @@ def test_expanding_a_second_controller_does_not_orphan_the_first_ones_repairs(
                 ],
             }
         ),
-        agents=[{"name": "agent-plain", "agent_status": "idle"}],
+        agents=[{"name": "agent-plain", "pane_id": "t6", "agent_status": "idle"}],
         controller=first,
     )
     holders_before = {u.name for u in run.units if u.fix_requests}

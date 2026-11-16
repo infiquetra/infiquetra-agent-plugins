@@ -1,7 +1,7 @@
 """End-to-end review repair flow through Orchestrate and real Git.
 
 The Git repository is real. The review result is canned JSON: either ``review_result.v2`` or a
-review run. A tiny ``herdr`` executable stands in only for the transport that delivers
+review run. A tiny ``hc`` (herdr core) executable stands in only for the transport that delivers
 already-routed instructions; transport behavior is outside this test's contract.
 """
 
@@ -55,25 +55,62 @@ def _commit(cwd: Path, message: str, *paths: str) -> str:
     return _git_out(cwd, "rev-parse", "HEAD")
 
 
-def _install_herdr_transport(tmp_path: Path, monkeypatch: Any) -> Path:
-    """Install a real process boundary for routing while keeping Herdr outside this test."""
+WORKER_ADDRESS = "t5"
+CONTROLLER_ADDRESS = "t6"
+
+
+def _install_hc_transport(tmp_path: Path, monkeypatch: Any) -> Path:
+    """Install a real process boundary for routing while keeping herdr core outside this test.
+
+    The fake answers ``hc ls`` with the one live worker, ``hc get`` with an agent that reports
+    a status, and ``hc read`` with an empty composer, and logs every call's arguments.
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    log = tmp_path / "herdr.log"
-    executable = bin_dir / "herdr"
+    log = tmp_path / "hc.log"
+    executable = bin_dir / "hc"
+    ls_json = json.dumps(
+        {
+            "terminals": [
+                {
+                    "address": WORKER_ADDRESS,
+                    "agent": "claude-code",
+                    "cwd": str(tmp_path / "worker"),
+                    "state": "live",
+                    "status": "idle",
+                    "turn": 1,
+                    "where": "WS / worker-agent",
+                }
+            ],
+            "machines": [],
+            "hidden_finished": 0,
+        }
+    )
+    # ``hc get`` names the terminal it describes, as the real one does; a record without an
+    # address is read as "hc cannot describe it", which refuses the send.
+    get_json = json.dumps(
+        {"address": "%s", "state": "live", "status": {"app": "claude-code", "state": "idle"}}
+    )
     executable.write_text(
         "#!/bin/sh\n"
-        'printf "%s\\n" "$*" >> "$FAKE_HERDR_LOG"\n'
-        'if [ "$1" = "agent" ] && [ "$2" = "list" ]; then\n'
-        "  printf '%s\\n' "
-        '\'{"result":{"agents":[{"name":"worker-agent",'
-        '"pane_id":"pane-worker","agent_status":"idle"}]}}\'\n'
+        'printf "%s\\n" "$*" >> "$FAKE_HC_LOG"\n'
+        'if [ "$1" = "ls" ]; then\n'
+        f"  printf '%s\\n' '{ls_json}'\n"
+        'elif [ "$1" = "get" ]; then\n'
+        f"  printf '{get_json}\\n' \"$2\"\n"
+        'elif [ "$1" = "read" ]; then\n'
+        "  printf '%s\\n' '──────────────' '❯ ' '──────────────'\n"
         "fi\n"
     )
     executable.chmod(0o755)
-    monkeypatch.setenv("FAKE_HERDR_LOG", str(log))
+    monkeypatch.setenv("FAKE_HC_LOG", str(log))
     monkeypatch.setenv("PATH", str(bin_dir), prepend=os.pathsep)
     return log
+
+
+def _sends(log: Path) -> list[str]:
+    """The ``hc send`` calls the fake logged: ``send ADDRESS LINE --json``."""
+    return [line for line in log.read_text().splitlines() if line.startswith("send t")]
 
 
 def _v2(outcome: str, *requests: dict[str, Any]) -> str:
@@ -99,7 +136,7 @@ def _prepare(orchestrate: ModuleType, tmp_path: Path, monkeypatch: Any) -> dict[
     worker_tree = tmp_path / "worker"
     _git(repo, "worktree", "add", str(worker_tree), "-b", worker_branch, run_branch)
     ensure_origin(repo)
-    transport_log = _install_herdr_transport(tmp_path, monkeypatch)
+    transport_log = _install_hc_transport(tmp_path, monkeypatch)
     monkeypatch.chdir(repo)
     store = tmp_path / "store"
     write_record(store, ISSUE, units=[], branch=run_branch, base=base_revision)
@@ -112,7 +149,7 @@ def _prepare(orchestrate: ModuleType, tmp_path: Path, monkeypatch: Any) -> dict[
         worktree=str(worker_tree),
         branch=worker_branch,
         branched_from=base_revision,
-        pane_id="pane-worker",
+        pane_id=WORKER_ADDRESS,
         agent_name="worker-agent",
         status=orchestrate.DONE,
     )
@@ -122,7 +159,7 @@ def _prepare(orchestrate: ModuleType, tmp_path: Path, monkeypatch: Any) -> dict[
         task="/saga:code-review review the run branch",
         role="review-controller",
         merge=False,
-        pane_id="pane-review",
+        pane_id=CONTROLLER_ADDRESS,
         agent_name="review-agent",
         status=orchestrate.DONE,
     )
@@ -167,7 +204,7 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
     routed_worker = routed.unit("worker")
     assert [item["fix_id"] for item in routed_worker.fix_requests] == ["service-ready"]
     assert routed.review_resubmit_pending is True
-    assert "agent prompt worker-agent" in world["log"].read_text()
+    assert [line.split(" ", 2)[1] for line in _sends(world["log"])] == [WORKER_ADDRESS]
 
     (world["worker_tree"] / "service.py").write_text("def ready() -> bool:\n    return True\n")
     repaired_revision = _commit(world["worker_tree"], "fix service ready value", "service.py")
@@ -189,9 +226,12 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
     assert landed.unit("worker").fix_requests == []
     assert landed.review_resubmit_pending is False
     assert landed.review_controller().status == orchestrate.RUNNING
-    log_after_resubmit = world["log"].read_text()
-    assert "agent prompt review-agent" in log_after_resubmit
-    assert landed_revision in log_after_resubmit
+    sends_after_resubmit = _sends(world["log"])
+    assert [line.split(" ", 2)[1] for line in sends_after_resubmit] == [
+        WORKER_ADDRESS,
+        CONTROLLER_ADDRESS,
+    ]
+    assert landed_revision in sends_after_resubmit[-1]
 
     changed_paths = _git_out(repo, "diff", "--name-only", f"{world['base']}..{landed_revision}")
     assert changed_paths.splitlines() == ["service.py"]
@@ -200,7 +240,7 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
     completed = orchestrate.Run.load(ISSUE, store)
     assert completed.review_outcome == "accepted"
     assert json.loads(completed.review_result)["schema"] == "review_result.v2"
-    assert world["log"].read_text().count("agent prompt") == 2
+    assert len(_sends(world["log"])) == 2
 
 
 def test_an_end_to_end_repair_comes_from_a_review_run(tmp_path: Path, monkeypatch: Any) -> None:
