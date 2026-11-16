@@ -1013,7 +1013,8 @@ def test_jest_shuffle_failure_carries_seed_and_flags(
     assert "--runInBand" in argv
     assert "--json" in argv and "--reporters=default" in argv
     assert any(arg.startswith("--outputFile=") for arg in argv)
-    assert "--config" not in argv
+    assert "--config" in argv
+    assert Path(argv[argv.index("--config") + 1]).name == "jest.config.saga.json"
     findings = _read(output, "findings.json")
     assert len(findings) == 1
     assert findings[0]["rule"]["ref"] == "shuffle-failure"
@@ -2155,3 +2156,243 @@ def test_stryker_report_order_and_volatile_values_do_not_change_survivor_ids_or_
     b = json.dumps({"files": {"src/app.ts": {"mutants": list(reversed(mutants))}}, "time": 2})
     assert A._parse_stryker(a) == A._parse_stryker(b)
     assert _adapter("stryker").stable_raw(a) == _adapter("stryker").stable_raw(b)
+
+
+# ---------------------------------------------------------------------------
+# Issue 324: pre-calibration hardening of the TypeScript adapters.
+#
+# These tests call adapter functions directly with a hand-built scan context, so
+# they pin the adapter's own behavior without a repository or a process runner.
+# ---------------------------------------------------------------------------
+
+
+def _scan_context(
+    tmp_path: Path,
+    *,
+    head: dict[str, str],
+    base: dict[str, str] | None = None,
+) -> Any:
+    """A scan context whose tree holds ``head`` and whose base files hold ``base``."""
+    root = tmp_path / "scan"
+    root.mkdir()
+    for name, text in head.items():
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    staged_root = tmp_path / "staged-base"
+    staged_root.mkdir()
+    staged: list[tuple[str, Path | None]] = []
+    for name, text in (base or {}).items():
+        target = staged_root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        staged.append((name, target))
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    return T.ScanContext(
+        repo=root, root=root, home=tmp_path / "home", base_files=tuple(staged),
+        base="a" * 40, head="b" * 40, scratch=scratch,
+    )
+
+
+_CONFIG_IMPORTING_HEAD_CONTROLLED_FILES = [
+    pytest.param("export default (await import(`./head-controlled.mjs`)).default;\n", id="backtick-dynamic-import"),
+    pytest.param("module.exports = require(`../head.cjs`);\n", id="backtick-require"),
+    pytest.param("import local from `./local`;\nexport default local;\n", id="backtick-from"),
+    pytest.param("const specifier = './x.js';\nexport default await import(specifier);\n", id="computed-import"),
+    pytest.param("const targetPath = './x.js';\nmodule.exports = require(targetPath);\n", id="computed-require"),
+    pytest.param("const dir = '.';\nexport default await import(`${dir}/x.js`);\n", id="interpolated-import"),
+    pytest.param("module.exports = require(`${__dirname}/x.js`);\n", id="interpolated-require"),
+]
+
+
+@pytest.mark.parametrize("text", _CONFIG_IMPORTING_HEAD_CONTROLLED_FILES)
+def test_relative_or_computed_config_imports_are_refused(tmp_path: Path, text: str) -> None:
+    staged = tmp_path / "eslint.config.mjs"
+    staged.write_text(text, encoding="utf-8")
+    with pytest.raises(T.ToolGap) as caught:
+        A._refuse_relative_imports(staged, "correctness.tool-error")
+    assert caught.value.reason == "config-imports-head"
+    assert caught.value.row == "correctness.tool-error"
+
+
+@pytest.mark.parametrize("text", [
+    pytest.param('import eslint from "@eslint/js";\nexport default [eslint.configs.recommended];\n', id="static-scoped"),
+    pytest.param("const { defineConfig } = require('vitest/config');\nmodule.exports = defineConfig({});\n", id="require-subpath"),
+    pytest.param("import { defineConfig } from 'vitest/config';\nexport default defineConfig({});\n", id="static-subpath"),
+    pytest.param('export default await import("eslint-plugin-example");\n', id="literal-bare-dynamic-import"),
+    pytest.param('module.exports = require("jest-preset-example");\n', id="literal-bare-require"),
+])
+def test_bare_package_config_imports_stay_allowed(tmp_path: Path, text: str) -> None:
+    staged = tmp_path / "eslint.config.mjs"
+    staged.write_text(text, encoding="utf-8")
+    A._refuse_relative_imports(staged, "correctness.tool-error")
+
+
+@pytest.mark.parametrize("text", _CONFIG_IMPORTING_HEAD_CONTROLLED_FILES[:2] + _CONFIG_IMPORTING_HEAD_CONTROLLED_FILES[3:4])
+@pytest.mark.parametrize("tool", ["dependency-cruiser", "knip", "vitest", "eslint"])
+def test_staging_callers_refuse_relative_or_computed_base_config_imports(
+    tmp_path: Path, tool: str, text: str,
+) -> None:
+    config = {
+        "dependency-cruiser": ".dependency-cruiser.js",
+        "knip": "knip.config.js",
+        "vitest": "vitest.config.js",
+        "eslint": "eslint.config.js",
+    }[tool]
+    package = json.dumps({"name": "example", "devDependencies": {"vitest": "1.0.0"}})
+    context = _scan_context(
+        tmp_path,
+        head={"package.json": package, "src/example.js": "export const a = 1;\n"},
+        base={"package.json": package, config: text},
+    )
+    invoke = {
+        "dependency-cruiser": A._invoke_dependency_cruiser,
+        "knip": A._invoke_knip,
+        "vitest": A._invoke_vitest_shuffle,
+        "eslint": A._invoke_eslint,
+    }[tool]
+    with pytest.raises(T.ToolGap) as caught:
+        invoke(context)
+    assert caught.value.reason == "config-imports-head"
+
+
+_NODE20_TSCONFIG = '{"compilerOptions": {"target": "es2022", "lib": ["es2023"], "skipLibCheck": true}}'
+
+
+def _extends_context(tmp_path: Path, extends: str, parent_path: str) -> Any:
+    """A base tsconfig that extends ``extends``, whose package file is ``parent_path``."""
+    base_tsconfig = json.dumps({
+        "extends": extends,
+        "compilerOptions": {"outDir": "dist"},
+    })
+    return _scan_context(
+        tmp_path,
+        head={
+            "package.json": json.dumps({"name": "example"}),
+            "tsconfig.json": "{}",
+            parent_path: _NODE20_TSCONFIG,
+        },
+        base={"tsconfig.json": base_tsconfig},
+    )
+
+
+def test_tsconfig_extends_naming_a_json_file_inside_a_package_is_merged(tmp_path: Path) -> None:
+    """Issue 324: ``@tsconfig/node20/tsconfig.json`` is a file, not ``...tsconfig.json.json``."""
+    context = _extends_context(
+        tmp_path, "@tsconfig/node20/tsconfig.json",
+        "node_modules/@tsconfig/node20/tsconfig.json",
+    )
+    assert (context.root / "node_modules/@tsconfig/node20/tsconfig.json").is_file()
+    options, name = A._base_compiler_options(context)
+    assert name == "tsconfig.json"
+    assert options["target"] == "es2022"
+    assert options["lib"] == ["es2023"]
+    assert options["skipLibCheck"] is True
+    assert options["outDir"] == "dist"
+
+
+def test_invoke_tsc_merges_an_extends_that_names_a_json_file(tmp_path: Path) -> None:
+    context = _extends_context(
+        tmp_path, "@tsconfig/node20/tsconfig.json",
+        "node_modules/@tsconfig/node20/tsconfig.json",
+    )
+    (context.root / "src").mkdir()
+    (context.root / "src" / "example.ts").write_text("export const a: number = 1;\n", encoding="utf-8")
+    argv = A._invoke_tsc(context)
+    assert argv[:2] == ["tsc", "-p"]
+    staged = json.loads((context.root / argv[2]).read_text(encoding="utf-8"))
+    assert staged["compilerOptions"]["target"] == "es2022"
+    assert staged["compilerOptions"]["outDir"] == "dist"
+
+
+@pytest.mark.parametrize(("extends", "parent_path"), [
+    pytest.param("@tsconfig/node20", "node_modules/@tsconfig/node20/tsconfig.json", id="package-directory"),
+    pytest.param("@tsconfig/node20/base", "node_modules/@tsconfig/node20/base.json", id="suffixless-file"),
+])
+def test_tsconfig_extends_forms_that_already_resolve_keep_resolving(
+    tmp_path: Path, extends: str, parent_path: str,
+) -> None:
+    options, _name = A._base_compiler_options(_extends_context(tmp_path, extends, parent_path))
+    assert options["target"] == "es2022"
+    assert options["outDir"] == "dist"
+
+
+def test_tsconfig_extends_a_missing_package_file_is_still_unresolved(tmp_path: Path) -> None:
+    context = _extends_context(
+        tmp_path, "@tsconfig/node20/missing.json", "node_modules/@tsconfig/node20/tsconfig.json",
+    )
+    with pytest.raises(T.ToolGap) as caught:
+        A._base_compiler_options(context)
+    assert caught.value.reason == "config-unresolved"
+
+
+def test_jest_shuffle_ignores_a_head_only_package_json_jest_block(tmp_path: Path) -> None:
+    """Issue 324: with no base jest config, head's ``package.json#jest`` must not steer jest."""
+    base_package = json.dumps({"name": "example", "devDependencies": {"jest": "30.0.0"}})
+    head_package = json.dumps({
+        "name": "example",
+        "devDependencies": {"jest": "30.0.0"},
+        "jest": {"setupFilesAfterEnv": ["./pwn.js"]},
+    })
+    context = _scan_context(
+        tmp_path,
+        head={
+            "package.json": head_package,
+            "pwn.js": "throw new Error('head controlled');\n",
+            "src/example.js": "exports.add = (a, b) => a + b;\n",
+            "src/example.test.js": "test('adds', () => {});\n",
+        },
+        base={"package.json": base_package},
+    )
+    argv = A._invoke_jest_shuffle(context)
+    assert argv[0] == "jest"
+    assert "--config" in argv, "jest would read the reviewed tree's package.json#jest"
+    config = Path(argv[argv.index("--config") + 1])
+    assert config.name != "package.json"
+    assert config.is_file()
+    text = config.read_text(encoding="utf-8")
+    assert "pwn" not in text
+    assert "setupFilesAfterEnv" not in text
+
+
+def test_jest_shuffle_still_uses_a_base_package_json_jest_block(tmp_path: Path) -> None:
+    base_package = json.dumps({
+        "name": "example",
+        "devDependencies": {"jest": "30.0.0"},
+        "jest": {"testEnvironment": "node"},
+    })
+    context = _scan_context(
+        tmp_path,
+        head={"package.json": base_package, "src/example.js": "exports.a = 1;\n"},
+        base={"package.json": base_package},
+    )
+    argv = A._invoke_jest_shuffle(context)
+    config = Path(argv[argv.index("--config") + 1])
+    assert json.loads(config.read_text(encoding="utf-8")) == {"testEnvironment": "node"}
+
+
+def test_tsc_detects_dependencies_that_only_head_declares(tmp_path: Path) -> None:
+    """Issue 324: base declares none, head adds some, and no node_modules is present."""
+    context = _scan_context(
+        tmp_path,
+        head={
+            "package.json": json.dumps({"name": "example", "dependencies": {"left-pad": "1.3.0"}}),
+            "src/example.ts": "export const a: number = 1;\n",
+        },
+        base={"package.json": json.dumps({"name": "example"})},
+    )
+    with pytest.raises(T.ToolGap) as caught:
+        A._invoke_tsc(context)
+    assert caught.value.reason == "deps-missing"
+    assert caught.value.row == "correctness.type-error"
+
+
+def test_tsc_with_no_dependencies_anywhere_still_runs(tmp_path: Path) -> None:
+    package = json.dumps({"name": "example"})
+    context = _scan_context(
+        tmp_path,
+        head={"package.json": package, "src/example.ts": "export const a: number = 1;\n"},
+        base={"package.json": package},
+    )
+    assert A._invoke_tsc(context)[:2] == ["tsc", "-p"]

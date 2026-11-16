@@ -70,6 +70,10 @@ _ROW_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("judgment",),
     ),
     (
+        "Targeted review of a prepared packet",
+        ("targeted-review",),
+    ),
+    (
         "Implementing a settled plan unit, including its tests",
         ("implementation",),
     ),

@@ -19,7 +19,7 @@ build if a second vocabulary source appears in production Python.
 | Block | What it answers |
 |---|---|
 | `models`, `efforts`, `scalar_efforts` | the Claude model and effort vocabulary, and the portable scalar superset; each model carries an `effort_ceiling` (what it can run) and may carry a lower `raise_ceiling` (the strongest effort an automatic raise lands on within it) |
-| `work_shapes` | the tier default per work shape — the ten rows `tier_resolver.resolve()` reads; a row may carry `claude_only` and `unattended_step_down` |
+| `work_shapes` | the tier default per work shape — the eleven rows `tier_resolver.resolve()` reads; a row may carry `claude_only` and `unattended_step_down` |
 | `vendors` | the per-vendor palette: models, accepted efforts, effort collapse, effort application |
 | `capability_ratings` | per model family and per engine variant, with trust tiers and cost-and-speed ranks |
 | `roles` | per-role staffing defaults: the work shape a role's tier comes from, and the capability its candidates are ranked by |
@@ -65,6 +65,7 @@ The default output is short and human, and its shape depends on what you asked:
 |---|---|
 | `resolve --shape judgment` | `opus/high` |
 | `resolve --role functional-tester` | `claude opus/high` |
+| `resolve --shape targeted-review` | `sonnet/high` |
 | `resolve --role lens-reviewer --lens security` | `claude opus/high documented-policy` |
 
 The third token is the qualification status, and it is one of three: `qualified`,
@@ -93,6 +94,12 @@ nobody decided. `implementation` (the `worker` role's shape, `opus/medium`) is t
 today. A role pinned to another vendor through it fails loud, naming the vendor; pin that role to a
 shape without the flag, or unpin the vendor. The flag lives outside the portable subset shared with
 the Codex plugin repository, so it needs no schema version change.
+
+**Targeted review has its own work shape.** `targeted-reviewer` uses `targeted-review`,
+whose default is `sonnet/high` and whose `unattended_step_down` is false. Other judgment
+and review roles retain their defaults. The shape remains portable: a pinned non-Claude
+vendor follows the normal palette translation. Orchestrate's high-risk second reviewer
+uses an already-recorded staffing trio from another vendor when one is available.
 
 **The translation has a hole, and it is the weakest rung.** The portable vocabulary has three names
 (`gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`) and the Claude palette has four, so `haiku` has nothing

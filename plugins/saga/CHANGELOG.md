@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Default targeted reviews to Claude Sonnet at high effort. Refuse relative or computed
+  JS/TS config imports, preserve package tsconfig file extensions, pin Jest defaults,
+  and isolate Rust mutation settings to the base commit. Dependency checks now notice
+  first dependencies added by a change; dependency-audit base caches expire after 24 hours.
+
 - Add a portable whole-repository `security-scan` command and skill over the existing
   security catalogue. It scans one commit in an independent snapshot, prints local
   findings, writes private external records, and distinguishes complete, findings

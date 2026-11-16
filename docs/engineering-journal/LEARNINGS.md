@@ -36,6 +36,25 @@ plan now carries `Key Technical Decisions`, `Implementation Units` and its `U1` 
 
 **Generalizable rule.** Recovery into an existing resource must exercise only the dependencies
 it needs, and must not present a reconstructed request as evidence of an earlier action.
+### Base configuration needs explicit discovery and freshness boundaries
+
+**Evidence.** The regression tests for [issue #324](https://github.com/infiquetra/infiquetra-agent-plugins/issues/324)
+exercise computed JS/TS config imports, Jest configuration discovery, Rust mutation
+configuration replacement, package tsconfig resolution, first dependency declarations,
+and dependency-audit cache expiry. They preserve static bare-package imports, base
+mutation timeout controls, projects without dependencies, and fresh cache reuse.
+
+**Mechanism.** The targeted reviewer previously inherited the general judgment tier,
+so changing its launch file alone disagreed with the staffing resolver. A dedicated
+work shape aligns the two while preserving other roles and vendor translation.
+A base config can still evaluate a path into the reviewed tree, and an
+omitted config argument lets a tool discover new settings there. Dependency requirements
+can first appear in the reviewed manifest, while advisory data can change without a new
+base commit or tool version.
+
+**Generalizable rule.** Pin configuration discovery to the base, decline imports that
+cannot be resolved as static package references, check both manifests for resolution
+requirements, and expire cached results whose external inputs change over time.
 
 ## 2026-11-15
 

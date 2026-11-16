@@ -359,6 +359,15 @@ def test_launch_settings_equal_what_staffing_resolves(
     )
 
 
+def test_targeted_reviewer_defaults_to_the_sonnet_high_launch_tier() -> None:
+    """Issue 324: the default targeted-reviewer launch tier is sonnet at high effort."""
+    settings = json.loads(A.LAUNCH_SETTINGS_FILE.read_text(encoding="utf-8"))
+    assert settings["role"] == "targeted-reviewer"
+    assert settings["vendor"] == "claude"
+    assert settings["model"] == "sonnet"
+    assert settings["effort"] == "high"
+
+
 def test_the_jev_verb_offers_the_closed_list_in_order() -> None:
     verb = FLEET.load("jev_verbs").VERBS[A.JEV_VERB]
     assert list(verb.question_set()["consequence"]["criteria"]) == list(F.CONSEQUENCES)

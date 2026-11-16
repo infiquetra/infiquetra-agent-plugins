@@ -61,6 +61,12 @@
       "default_effort": "high",
       "rationale": "Judgment, design, adversarial review, architectural decisions \u2014 deep reasoning needed; cost-justified."
     },
+    "targeted-review": {
+      "default_model": "sonnet",
+      "default_effort": "high",
+      "unattended_step_down": false,
+      "rationale": "Targeted review of a prepared packet at the Sonnet high launch tier (issue #324). Keep the same tier for unattended runs; other review and judgment roles retain their own defaults."
+    },
     "implementation": {
       "default_model": "sonnet",
       "default_effort": "high",
@@ -637,7 +643,7 @@
       "capability": "adversarial-review"
     },
     "targeted-reviewer": {
-      "work_shape": "judgment",
+      "work_shape": "targeted-review",
       "capability": "adversarial-review"
     },
     "functional-tester": {

@@ -24,7 +24,8 @@ from typing import Any
 # data with no file I/O; test_staffing_suggest.py's drift test reads staffing.json and fails in
 # both directions when a shape is missing here, named here and not there, or tiered differently.
 TIER_POLICY = (
-    "Staffing defaults by work shape: judgment -> opus/high; implementation -> sonnet/high; "
+    "Staffing defaults by work shape: judgment -> opus/high; targeted-review -> sonnet/high; "
+    "implementation -> sonnet/high; "
     "implementation-test-gated -> haiku/xhigh; mechanical -> haiku/xhigh; purely-mechanical -> "
     "haiku/medium; read-only-survey -> haiku/max; offload-test-gated -> haiku/medium; offload -> "
     "sonnet/high; second-opinion -> opus/high; divergence -> opus/high. Models from weakest to "

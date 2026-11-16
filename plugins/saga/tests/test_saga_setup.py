@@ -665,7 +665,7 @@ def test_sandbox_failure_marks_reproduction_unavailable(
     assert sandbox["available"] is False
     assert sandbox["reproduction"] == "unavailable"
     assert sandbox["reason"] == "probe-unavailable"
-    assert calls == [("claude", "opus", "high")]
+    assert calls == [("claude", "sonnet", "high")]
     assert "unavailable" in raw
 
 

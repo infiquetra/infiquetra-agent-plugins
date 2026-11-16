@@ -1121,7 +1121,7 @@ tools:
     rules: []
     env_dirs: []
     lockfiles: ["Cargo.lock"]
-    base_files: ["rust-toolchain.toml", "rust-toolchain"]
+    base_files: ["rust-toolchain.toml", "rust-toolchain", ".cargo/mutants.toml"]
     local_bins: []
   - id: cargo-machete
     tool: cargo-machete
