@@ -14,9 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Qualified GNU timeout/process-group behavior; requalify before an OS upgrade.
   vendor-selection:
     name: Vendor compatibility selection
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     outputs:
       evidence: ${{ steps.select.outputs.evidence }}
@@ -36,7 +37,7 @@ jobs:
 
   validate:
     name: Repository validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check out repository
@@ -67,7 +68,7 @@ jobs:
 
   plugin-tests:
     name: Ported plugin tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       PIP_DISABLE_PIP_VERSION_CHECK: '1'
@@ -152,7 +153,7 @@ jobs:
     name: Vendor compatibility validation
     if: always()
     needs: [vendor-selection, validate, plugin-tests, claude-mods]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Check out candidate
@@ -168,7 +169,7 @@ jobs:
   # Phase one never conditions this original matrix on selector output.
   claude-mods:
     name: Claude Code mods (${{ matrix.claude-code }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # A separate job because the Claude Code CLI is a dependency, and the
     # `validate` job above stays the hermetic, standard-library-only baseline.

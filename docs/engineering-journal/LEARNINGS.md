@@ -2,6 +2,24 @@
 
 ## 2026-11-16
 
+### A moving runner label can change process supervision
+
+**Evidence.** Main's successful workflow run `43807743621` used Ubuntu 24.04;
+PR #312 run `43945170642` used Ubuntu 26.04 for the same `ubuntu-latest` label.
+Every unchanged installer-boundary control returned signal 9 with no surviving child
+on the former. On the latter it returned 124, left the child sleeping, and observed
+its forbidden late write. The macOS root run skips that Linux-specific control.
+
+**Mechanism.** The runner label changed the execution platform beneath a command whose
+process-group behavior is part of the installer contract. This is a real supervision
+failure under the newly selected platform, not permission to relax the child-liveness check.
+
+**Fix.** Pin all five CI job definitions to the qualified Ubuntu 24.04 image and assert
+the pins in the workflow tests. Keep the production timeout flags and live Linux controls.
+
+**Generalizable rule.** Qualify runner upgrades against operational behavior, including
+process supervision; passing tests on another operating system cannot establish it.
+
 ### Redelivery must not require a session-creation executable
 
 **Evidence.** PR #312's Linux plugin lane refused the Codex placeholder recovery with

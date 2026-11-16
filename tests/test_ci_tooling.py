@@ -401,6 +401,13 @@ class WorkflowPreservationControls(unittest.TestCase):
         self.assertNotIn("continue-on-error", text)
         self.assertNotIn("cache-hit", text)
 
+    def test_jobs_use_the_qualified_runner_image(self):
+        # ubuntu-latest moved to 26.04, whose timeout left the TERM-resistant
+        # installer child alive in the production boundary control. All five
+        # job definitions stay on the image that passed that control.
+        runners = re.findall(r"^    runs-on: (.+)$", WORKFLOW.read_text(encoding="utf-8"), re.M)
+        self.assertEqual(runners, ["ubuntu-24.04"] * 5)
+
     def test_download_cache_boundaries_and_failure_reporting(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertNotIn("restore-keys:", text)
