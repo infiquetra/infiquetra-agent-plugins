@@ -302,6 +302,8 @@ class ScanContext:
     project: str = "."
     mutation_budget: int = 10
     tool_version: str = "not-recorded"
+    #: Whole-repository scans disable dependency resolution without altering review invocations.
+    repository_scan: bool = False
 
 
 @dataclass(frozen=True)
@@ -1140,6 +1142,7 @@ def run(
     diagnostics_directory: Path | str | None = None,
     python_env: Path | str | None = None,
     node_projects: tuple[tuple[str, Path], ...] = (),
+    repository_scan: bool = False,
 ) -> int:
     """Write the record files, including where-to-look items.
 
@@ -1158,6 +1161,7 @@ def run(
             Path(diagnostics_directory) if diagnostics_directory is not None else None,
             Path(python_env) if python_env is not None else None,
             node_projects,
+            repository_scan,
         )
     except RunnerFailure as exc:
         print(str(exc), file=sys.stderr)
@@ -1178,13 +1182,17 @@ def _run(
     diagnostics_directory: Path | None = None,
     python_env: Path | None = None,
     node_projects: tuple[tuple[str, Path], ...] = (),
+    repository_scan: bool = False,
 ) -> int:
     base_sha = _require_sha(repo, base)
     head_sha = _require_sha(repo, head)
     _rev.cache_clear()
     _blob.cache_clear()
     _clean_tree.cache_clear()
-    profile, profile_notes = _profile_for_run(repo, base_sha, head_sha, profile_path)
+    profile, profile_notes = (
+        (_load_profile(profile_path), []) if repository_scan
+        else _profile_for_run(repo, base_sha, head_sha, profile_path)
+    )
     builder_record = _load_builder(builder)
     try:
         change = review_diff.read(repo, base_sha, head_sha)
@@ -1240,6 +1248,7 @@ def _run(
                             process, tool_env, deadline, degraded, items, base_markers,
                             head_markers, head_languages,
                             diagnostics_directory, rule_sources, python_env,
+                            repository_scan=repository_scan,
                         )
                         if _mutation_past_deadline(adapter, deadline):
                             del degraded[degraded_start:]
@@ -1583,6 +1592,8 @@ def _run_adapter(
     python_env: Path | None = None,
     project: str | None = None,
     mutation_budget: int = 10,
+    *,
+    repository_scan: bool = False,
 ) -> list[Hit]:
     if project is None and "typescript" in adapter.languages:
         import review_node_projects
@@ -1600,7 +1611,8 @@ def _run_adapter(
                     adapter, repo, base_sha, head_sha, head_root / folder, scoped, home,
                     profile, process, env, deadline, degraded, items, base_markers,
                     head_markers, head_languages, diagnostics_directory, rule_sources,
-                    python_env, folder, 10 // len(folders) + (index < 10 % len(folders)))
+                    python_env, folder, 10 // len(folders) + (index < 10 % len(folders)),
+                    repository_scan=repository_scan)
                 project_hits.extend(replace(hit, path=f"{folder}/{hit.path}" if hit.path != "." else folder)
                             for hit in found)
             return project_hits
@@ -1658,6 +1670,7 @@ def _run_adapter(
                 version, problem = _read_version(
                     adapter, profile, process, env, head_root,
                     timeout=probe_timeout, deadline=deadline,
+                    allow_unpinned=repository_scan,
                 )
             except Exception:
                 if not _mutation_past_deadline(adapter, deadline):
@@ -1706,6 +1719,7 @@ def _run_adapter(
                 mutation_budget=mutation_budget,
                 mutation_deadline=deadline if adapter.mutation else None,
                 tool_version=ran,
+                repository_scan=repository_scan,
             )
             if comparison == "base-head":
                 hits, digests = _base_and_head(
@@ -2320,6 +2334,8 @@ def _read_version(
     root: Path,
     timeout: float | None = None,
     deadline: float | None = None,
+    *,
+    allow_unpinned: bool = False,
 ) -> tuple[str | None, str | None]:
     pinned = _pinned_version(adapter, profile)
     if not adapter.tool:
@@ -2367,11 +2383,11 @@ def _read_version(
     if result.code != 0:
         # A probe that failed is not a version, whatever dotted number its
         # traceback prints (``python@3.14`` read as 3.14, issue 253).
-        return None, "missing"
+        return None, "version-unreadable" if allow_unpinned else "missing"
     version = _found_version(result.stdout or result.stderr or "")
     if version is None:
         return pinned, "version-unreadable"
-    if version != pinned:
+    if version != pinned and not (allow_unpinned and pinned == "not-recorded"):
         return version, "version-mismatch"
     return version, None
 

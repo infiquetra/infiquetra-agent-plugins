@@ -12,6 +12,12 @@
 
 **Validation boundary.** This is a planning decision, not a claim of implemented behavior or client compatibility. The plan enumerates 24 expected-red feature tests plus one passing review control; the existing 127 collected review-runner tests passed unchanged during planning. Runtime, packaging and planted-flaw acceptance remain with the implementation and independent testing roles.
 
+**Implementation evidence.** U2 is implemented at `116c81886fbf5612fbda7f3b777b7c673cd0ddf1`: the command works before skill discovery, with 24 independent runtime tests and three additional runtime checks passing. The review-runner/Python-adapter run passed 244 tests with two skips; both frozen acceptance/regression files are unchanged. The [work session](../work-sessions/2026-11-15-saga-whole-repository-security-scan.md) records U3 and the build-loop handoff; real planted-flaw detection and delivered-client compatibility remain separate evidence.
+
+**Read-only follow-up.** A supplemental partial-clone regression exposed Git's lazy fetching during object reads. Scan-owned Git commands now disable lazy fetching and deny transports, so missing local objects produce an incomplete result without changing the target. All four supplemental runtime checks pass after that correction.
+
+**Operator scope ruling.** Secret redaction remains strictly gitleaks-only under issue 321 Notes/conventions and KTD7/T21; non-gitleaks adapter reporting retains existing semantics. The portable entry script and skill stay co-located in `plugins/saga/`.
+
 **Revisit when.** The independent plan review or implementation proves the existing seam insufficient, an adapter changes its execution/network behavior, a new security row cannot be selected automatically, or the operator requests history scanning. Any change to existing review output, tools, dependencies, pins or scope returns for an Architect ruling.
 
 ---

@@ -79,6 +79,30 @@ Destination sets how far a run goes: `plan-only`, `pr`, `merge`, or
 Issue and board mutation belongs to mission-control. Saga submits those moves.
 It does not call GitHub's project fields itself.
 
+## Whole-repository security scan
+
+The portable [security-scan skill](skills/security-scan/SKILL.md) runs the catalogue's
+security rows against one committed tree, including findings outside the latest change:
+
+```bash
+python3 plugins/saga/scripts/security_scan.py --repo ../scratch-security-scan --output ../security-scan-results/run-001
+```
+
+The command prints findings and writes `summary.md`, `summary.json` and normalized
+`findings.json` outside the target. Exit `0` means complete/no findings, `1` means
+complete/findings, and `2` means incomplete or invalid input; incomplete wins when
+findings also exist. Every row says `ran`, `skipped` or `degraded`, with its reason,
+version, pin and level counts. Keep results private and out of Git.
+
+HEAD is the default; `--commit` selects another committed tree, and `--profile` accepts
+an external operator profile. Dirty files, prior history and submodule contents are
+excluded; tracked submodules are reported gaps requiring exit `2`. CDK synthesis
+requires each row's named `--include-synthesized` opt-in. pip-audit audits exact pins
+only, without dependency resolution. Tools are never installed automatically;
+dependency rows retain their existing advisory-service requests, disclosed in the
+summary. See [review-tools.md](references/review-tools.md#whole-repository-scans)
+for the runner boundary and [the skill](skills/security-scan/SKILL.md) for all flags.
+
 ## State
 
 Saga stores `lifecycle_phase`, `phase_status`, and `status` in local,

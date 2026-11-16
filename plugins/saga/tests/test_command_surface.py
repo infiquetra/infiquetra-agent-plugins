@@ -100,8 +100,9 @@ def test_a_removed_command_has_no_skill_directory(skill: str) -> None:
     )
 
 
-def test_the_skill_directories_are_exactly_the_fourteen_that_remain() -> None:
-    expected = tuple(sorted(set(SURVIVING_COMMANDS) - ALIAS_COMMANDS))
+def test_the_skill_directories_are_exactly_the_commands_and_portable_scan() -> None:
+    """The portable scan adds one skill without adding a vendor command wrapper."""
+    expected = tuple(sorted((set(SURVIVING_COMMANDS) - ALIAS_COMMANDS) | {"security-scan"}))
     assert tuple(sorted(p.name for p in SKILLS.iterdir() if p.is_dir())) == expected
 
 

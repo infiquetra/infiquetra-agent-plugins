@@ -4,6 +4,45 @@ The runner in `plugins/saga/scripts/review_tools.py` turns pinned tools into rev
 
 Importing the module reads no tool and starts no process. `load_tool_list` reads `plugins/saga/references/review-tools.yaml`. The every-language adapters live in `plugins/saga/scripts/review_adapters_all_languages.py` and are imported only when a run asks for the default list.
 
+## Whole-repository scans
+
+`plugins/saga/scripts/security_scan.py` selects security rows from the same catalogue
+and reuses their existing adapters. It creates an independent repository containing
+an empty base and one snapshot of the chosen commit's tree, checks tree-ID equality,
+and runs `review_tools.run(..., framework=False, repository_scan=True)` against that
+copy. Source commits, configuration, hooks, dependency environments and uncommitted
+files are not copied. The selected tree must already be available locally; missing
+partial-clone objects yield an incomplete scan without fetching into the target.
+Gitlink entries survive unchanged, but submodule contents are
+not fetched or read; each is an incomplete unscanned gap.
+
+The keyword-only `repository_scan` seam defaults to `False`, preserving review's
+existing profile handling, version checks and pip-audit invocation. In a scan,
+pins/rules come from the catalogue or an external operator profile; resolved
+`not-recorded` versions are reported as unpinned without degrading them solely for
+that absence. Real mismatches and unreadable versions remain degraded.
+
+pip-audit's scan arguments live beside its ordinary invocation in
+`review_adapters_python.py`: `--disable-pip --no-deps` permits only fully exact-pinned
+requirement files, while other files are named as degraded. It audits only listed
+packages, not resolved transitive dependencies. CDK synthesis rows are excluded
+unless named explicitly with `--include-synthesized`.
+
+Unlike the review runner's exit `0` for written records, the scan returns `0` for
+complete/no findings, `1` for complete/findings, and `2` for incomplete or invalid
+input. Its terminal output and `summary.md` list finding locations; `summary.json`
+names the original target commit, every row's status/version/pin/counts and invoked
+advisory-service rows. Existing record files retain their shape; computed levels
+remain `blocks`, `fix-later` and `note`, relative to the synthetic empty base.
+
+Output must be absent or empty and resolve outside target files and Git storage.
+New reports/caches are private and scan-owned; the existing machine rule cache is
+read and staged without modifying it. Gitleaks output is sanitized before raw
+storage, not only when normalized findings are written; terminal control characters
+in reported paths/rules are displayed as data. The scan adds no model call,
+dependency, tool pin, credential grant, automatic findings upload or review wiring.
+See the [security-scan skill](../skills/security-scan/SKILL.md) for the command.
+
 ## Level map and thresholds
 
 The first fence is the same data as the yaml. A test parses both and fails when the values differ.

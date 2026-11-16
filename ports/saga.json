@@ -40,6 +40,7 @@
       "scripts/review_roster.py",
       "scripts/run_record.py",
       "scripts/saga.py",
+      "scripts/security_scan.py",
       "scripts/shaping_judgments.py"
     ],
     "skill_units": [
@@ -53,6 +54,7 @@
       "skills/plan",
       "skills/qa",
       "skills/retro",
+      "skills/security-scan",
       "skills/spec",
       "skills/strategy",
       "skills/work"
