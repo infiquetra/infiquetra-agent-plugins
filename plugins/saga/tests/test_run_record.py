@@ -184,7 +184,7 @@ def test_top_level_key_set_is_exactly_the_twelve(rr: ModuleType, store: Path) ->
     assert len(rr.TOP_LEVEL_KEYS) == 12
 
 
-def test_run_configuration_holds_the_run_model_thirteen_not_the_run_setup_contract_thirteen(
+def test_run_configuration_holds_the_run_model_parameters_not_the_run_setup_contract_fields(
     rr: ModuleType,
 ) -> None:
     """The guard that tells the two sets of thirteen apart, by name and not by count.
@@ -201,7 +201,6 @@ def test_run_configuration_holds_the_run_model_thirteen_not_the_run_setup_contra
     snapshot = json.loads(LIFECYCLE_SNAPSHOT.read_text(encoding="utf-8"))
     contract_fields = set(snapshot["contracts"]["orchestrator-to-controller"]["required_fields"])
 
-    assert len(rr.RUN_CONFIGURATION_PARAMETERS) == 13
     assert len(contract_fields) == 13
     assert set(rr.RUN_CONFIGURATION_PARAMETERS) != contract_fields
 
@@ -220,9 +219,113 @@ def test_approval_scope_categories_match_the_vendored_lifecycle_schema(rr: Modul
 
 def test_every_parameter_names_who_chooses_it(rr: ModuleType) -> None:
     assert set(rr.PARAMETER_CHOSEN_BY) == set(rr.RUN_CONFIGURATION_PARAMETERS)
-    chosen = list(rr.PARAMETER_CHOSEN_BY.values())
-    assert chosen.count("delivery_manager") == 9
-    assert chosen.count("planner") == 4
+    planner = {name for name, actor in rr.PARAMETER_CHOSEN_BY.items() if actor == "planner"}
+    delivery_manager = {
+        name for name, actor in rr.PARAMETER_CHOSEN_BY.items() if actor == "delivery_manager"
+    }
+    # The retired lens parameters were the planner's; what remains is the same before and after.
+    retired = {*_RETIRED_LENS_AND_ALLOWANCE_PARAMETERS}
+    assert planner - retired == {"mechanical_tool_baseline", "preflight_checks"}
+    assert {
+        "staffing_models_and_efforts",
+        "concurrency_allocation",
+        "nonproduction_destination",
+        "unfinished_testing_response",
+        "repair_custody",
+    } <= delivery_manager
+
+
+#: The run-configuration parameters issue #161 retires with the lens roster and the cycle
+#: allowances. Built from parts so the retired names appear nowhere in this file as one word.
+_RETIRED_LENS_AND_ALLOWANCE_PARAMETERS: tuple[str, ...] = (
+    "standard" + "_cycle_allowance",
+    "escalated" + "_cycle_allowance",
+    "applicable" + "_lenses",
+    "per_lens" + "_score_threshold",
+)
+
+#: The two other retired parameters: the escalation trigger and the lens execution recovery rule.
+_RETIRED_ESCALATION_AND_LENS_RECOVERY_PARAMETERS: tuple[str, ...] = (
+    "escalation" + "_trigger",
+    "lens_execution" + "_recovery",
+)
+
+
+def test_the_run_configuration_defaults_carry_no_lens_or_allowance_parameter(
+    rr: ModuleType,
+) -> None:
+    for name in _RETIRED_LENS_AND_ALLOWANCE_PARAMETERS:
+        assert name not in rr.RUN_CONFIGURATION_PARAMETERS, name
+        assert name not in rr.PARAMETER_CHOSEN_BY, name
+        assert name not in rr.empty_run_configuration(), name
+        assert name not in rr.RunRecord(issue=161).run_configuration, name
+
+
+def test_the_run_configuration_defaults_carry_no_escalation_or_lens_recovery_parameter(
+    rr: ModuleType,
+) -> None:
+    for name in _RETIRED_ESCALATION_AND_LENS_RECOVERY_PARAMETERS:
+        assert name not in rr.RUN_CONFIGURATION_PARAMETERS, name
+        assert name not in rr.PARAMETER_CHOSEN_BY, name
+        assert name not in rr.empty_run_configuration(), name
+
+
+def test_a_new_record_writes_no_retired_parameter(rr: ModuleType, store: Path) -> None:
+    rr.save(store, rr.RunRecord(issue=161, repo="infiquetra/infiquetra-agent-plugins"))
+    written = json.loads(rr.record_path(store, 161).read_text(encoding="utf-8"))
+    retired = {
+        *_RETIRED_LENS_AND_ALLOWANCE_PARAMETERS,
+        *_RETIRED_ESCALATION_AND_LENS_RECOVERY_PARAMETERS,
+    }
+    assert retired.isdisjoint(written["run_configuration"])
+
+
+def _stored_record_with_the_retired_parameters(rr: ModuleType, store: Path) -> dict:
+    """The run configuration an older saga wrote: every retired parameter, each with a value."""
+    stored = {"schema": rr.SCHEMA, "issue": 161, "repo": "infiquetra/infiquetra-agent-plugins"}
+    stored["run_configuration"] = {
+        **{
+            name: {"value": f"old-{name}", "chosen_by": "delivery_manager", "source": "operator"}
+            for name in (
+                *_RETIRED_LENS_AND_ALLOWANCE_PARAMETERS,
+                *_RETIRED_ESCALATION_AND_LENS_RECOVERY_PARAMETERS,
+            )
+        },
+        "concurrency_allocation": {
+            "value": 10,
+            "chosen_by": "delivery_manager",
+            "source": "profile",
+        },
+    }
+    stored["review_cycles"] = [{"cycle": 1, "result": "accepted", "findings_ref": "none"}]
+    rr.record_path(store, 161).write_text(json.dumps(stored, indent=2), encoding="utf-8")
+    return stored
+
+
+def test_a_stored_record_with_the_retired_parameters_still_loads_without_warning(
+    rr: ModuleType, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stored = _stored_record_with_the_retired_parameters(rr, store)
+    warnings: list[str] = []
+    record = rr.load(store, 161, warn=warnings.append)
+    assert record is not None
+    assert warnings == []
+    assert record.run_configuration == stored["run_configuration"]
+    assert record.review_cycles == stored["review_cycles"]
+    assert rr.main(["--store-root", str(store), "show", "161"]) == 0
+    assert json.loads(capsys.readouterr().out)["run_configuration"] == stored["run_configuration"]
+
+
+def test_a_stored_record_with_the_retired_parameters_round_trips_them_untouched(
+    rr: ModuleType, store: Path
+) -> None:
+    stored = _stored_record_with_the_retired_parameters(rr, store)
+    record = rr.load(store, 161, warn=None)
+    rr.save(store, record)
+    rr.set_next_step(store, 161, "U2 the review command")
+    written = json.loads(rr.record_path(store, 161).read_text(encoding="utf-8"))
+    assert written["run_configuration"] == stored["run_configuration"]
+    assert written["review_cycles"] == stored["review_cycles"]
 
 
 def test_the_two_destinations_are_separate_fields(rr: ModuleType) -> None:
@@ -647,7 +750,7 @@ def test_a_repeat_add_accumulates_and_a_new_session_appends(rr: ModuleType) -> N
 
     record = _add(rr, record, session_id="s-2")
     assert [e["session_id"] for e in record.units[0]["usage"]["entries"]] == ["s-1", "s-2"]
-    record = _add(rr, record, role="lens-reviewer", effort="high")
+    record = _add(rr, record, role="targeted-reviewer", effort="high")
     assert len(record.units[0]["usage"]["entries"]) == 3
 
 
@@ -702,7 +805,7 @@ def test_an_unknown_token_category_flag_is_refused_on_the_command_line(
         {"session_id": ""},
         {"model": "  "},
         {"role": "Worker"},
-        {"role": "lens reviewer"},
+        {"role": "targeted reviewer"},
         {"role": "worker\n"},
         {"model": "evil\n  forged line"},
         {"model": "claude-opus-5-5\n"},

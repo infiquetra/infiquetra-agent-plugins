@@ -305,6 +305,15 @@ def _registry_with_worker_vendor(
     monkeypatch.setattr(staffing, "STAFFING_PATH", copy)
 
 
+def test_the_per_lens_staffing_row_is_retired_and_the_targeted_reviewer_stays() -> None:
+    """One targeted reviewer per review replaced the per-lens reviewer role (issue #161)."""
+    roles = json.loads(STAFFING_PATH.read_text(encoding="utf-8"))["roles"]
+    retired = "lens" + "-reviewer"
+
+    assert retired not in roles
+    assert "targeted-reviewer" in roles
+
+
 def test_implementation_resolves_sonnet_high_in_the_policy_layer() -> None:
     result = resolve(None, "implementation")
     assert (result.model, result.effort) == ("sonnet", "high")

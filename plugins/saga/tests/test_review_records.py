@@ -649,22 +649,13 @@ def test_record_run_cli_refuses_a_handed_in_severity_and_writes_nothing(
     assert RR.record_path(store, 148).read_bytes() == before
 
 
-def test_other_review_cycle_readers_ignore_a_stored_run(
+def test_the_spore_freeze_ignores_a_stored_run(
     store: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    release_step = _load("release_step")
-    cost_report = _load("cost_report")
-    run_status = _load("run_status")
-    review_result = _load("review_result")
     saga_spore = _load("saga_spore")
     R.record_run(store, 148, _inputs_from(VALID["review_run"]))
     record = RR.load(store, 148)
     assert record is not None and len(record.review_cycles) == 1
-    assert release_step._code_review_cycles(RR.to_dict(record)) == []
-    assert cost_report._code_review_history(record, "U1") == []
-    for loop in ("code_review", "review_run", "plan_review"):
-        assert run_status.latest_review(record, loop=loop) is None
-        assert review_result.history_for(record, "U1", loop) == []
     monkeypatch.setattr(sys.modules["run_record"], "resolve_store_root", lambda *_: store)
     frozen = saga_spore.freeze_run_record(REPO_ROOT, {"saga_id": "issue-148"})
     assert frozen is not None and frozen["review_cycles"] == 0

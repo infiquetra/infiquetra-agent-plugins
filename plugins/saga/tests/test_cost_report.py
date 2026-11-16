@@ -123,12 +123,43 @@ def _row(unit: str, *entries: dict[str, Any], green: bool = True, key: str = "id
     return {key: unit, "build_loop": build_loop, "usage": {"entries": list(entries)}}
 
 
-def _review(unit: str, outcome: str, cycle: int = 1, loop: str = "code_review") -> dict:
+_RETIRED_RESULT = "review_" + "result"
+
+
+def _clear(round_no: int = 1) -> dict:
+    """A stored C1 review run whose merge answer allows the merge: every lens at C or better."""
     return {
-        "schema": "review_result.v2",
-        "unit": unit,
-        "loop": loop,
-        "cycle": cycle,
+        "kind": "review_run",
+        "schema": "review_records.v1",
+        "card": 95,
+        "round": round_no,
+        "head": SHA,
+        "merge": {"allowed": True, "blocking": [], "report_only_blocks": []},
+    }
+
+
+def _blocked(round_no: int = 1, *, decision: str | None = None) -> dict:
+    """A review run with blocking items left; ``decision`` is the operator's recorded answer."""
+    entry = {
+        "kind": "review_run",
+        "schema": "review_records.v1",
+        "card": 95,
+        "round": round_no,
+        "head": SHA,
+        "merge": {"allowed": False, "blocking": ["rf:1"], "report_only_blocks": []},
+    }
+    if decision is not None:
+        entry["merge_decision"] = {"decision": decision, "reason": "known", "filed_issues": [301]}
+    return entry
+
+
+def _legacy(outcome: str, schema_suffix: str = "v2") -> dict:
+    """An entry of the retired result shape. It stays in the record and is never read."""
+    return {
+        "schema": f"{_RETIRED_RESULT}.{schema_suffix}",
+        "unit": "u",
+        "loop": "code_review",
+        "cycle": 1,
         "revision": SHA,
         "outcome": outcome,
     }
@@ -146,7 +177,7 @@ def _write(store: Path, issue: int, units: list[dict], reviews: list[dict]) -> P
 
 
 def _fixture(store: Path) -> Path:
-    """Two completed units (Opus builder, Sonnet builder), one lens review each, one incomplete."""
+    """Two completed units (Opus builder, Sonnet builder) under one review, one unit not green."""
     units = [
         _row(
             "u1",
@@ -158,7 +189,7 @@ def _fixture(store: Path) -> Path:
                 uncached_input=1_000_000,
                 output=1_000_000,
             ),
-            _entry("r1", "lens-reviewer", "claude-opus-5-5", "high", cache_read=1_000_000),
+            _entry("r1", "targeted-reviewer", "claude-opus-5-5", "high", cache_read=1_000_000),
         ),
         _row(
             "u2",
@@ -170,17 +201,12 @@ def _fixture(store: Path) -> Path:
                 uncached_input=1_000_000,
                 output=1_000_000,
             ),
-            _entry("r2", "lens-reviewer", "claude-opus-5-5", "high", cache_read=3_000_000),
+            _entry("r2", "targeted-reviewer", "claude-opus-5-5", "high", cache_read=3_000_000),
             key="name",
         ),
-        _row("u3", _entry("w3", "worker", "claude-opus-5-5", "medium", output=500_000)),
+        _row("u3", _entry("w3", "worker", "claude-opus-5-5", "medium", output=500_000), green=False),
     ]
-    reviews = [
-        _review("u1", "repairs_requested", 1),
-        _review("u1", "accepted", 2),
-        _review("u2", "cycle_cap_best_available", 1),
-        _review("u3", "repairs_requested", 1),
-    ]
+    reviews = [_blocked(1), _clear(2)]
     return _write(store, 95, units, reviews)
 
 
@@ -216,18 +242,18 @@ def test_cost_per_completed_unit_is_grouped_by_role_and_tier(
     assert set(groups) == {
         ("worker", "claude opus/medium"),
         ("worker", "claude sonnet/medium"),
-        ("lens-reviewer", "claude opus/high"),
+        ("targeted-reviewer", "claude opus/high"),
     }
     opus = groups[("worker", "claude opus/medium")]
     assert Decimal(opus["per_completed_unit_usd"]) == Decimal("24.00")  # 1M x $4 + 1M x $20
     assert opus["completed_units"] == 1
     sonnet = groups[("worker", "claude sonnet/medium")]
     assert Decimal(sonnet["per_completed_unit_usd"]) == Decimal("12.00")  # 1M x $2 + 1M x $10
-    lens = groups[("lens-reviewer", "claude opus/high")]
+    lens = groups[("targeted-reviewer", "claude opus/high")]
     assert lens["completed_units"] == 2
     assert Decimal(lens["total_usd"]) == Decimal("0.80")  # 4M cache reads x $0.20
     assert Decimal(lens["per_completed_unit_usd"]) == Decimal("0.40")
-    assert lens["mean_code_review_cycles"] == 1.5  # u1 took two cycles, u2 one
+    assert lens["mean_code_review_cycles"] == 2  # the card took two review rounds
     assert lens["mean_build_loop_iterations"] == 2
     assert report["completed_unit_count"] == 2
     assert Decimal(report["overall"]["total_usd"]) == Decimal("36.80")
@@ -243,7 +269,7 @@ def test_the_report_prints_the_groups_on_a_fixture_record(store: Path, prices: P
     assert "Cost per completed unit (2 completed units)" in out
     assert "claude opus/medium" in out and "$24.00" in out
     assert "claude sonnet/medium" in out and "$12.00" in out
-    assert "lens-reviewer" in out and "$0.40" in out
+    assert "targeted-reviewer" in out and "$0.40" in out
     assert "WARNING" not in out and result.stderr == ""
 
 
@@ -253,50 +279,44 @@ def test_the_report_prints_the_groups_on_a_fixture_record(store: Path, prices: P
 
 
 @pytest.mark.parametrize(
-    ("green", "reviews", "completed", "reason"),
+    ("green", "reviews", "completed"),
     [
-        (True, [_review("u", "accepted")], True, ""),
-        (True, [_review("u", "cycle_cap_best_available")], True, ""),
-        (
-            True,
-            [_review("u", "accepted", 1), _review("u", "repairs_requested", 2)],
-            False,
-            "latest code review is repairs_requested",
-        ),
-        (
-            True,
-            [_review("u", "review_incomplete")],
-            False,
-            "latest code review is review_incomplete",
-        ),
-        (False, [_review("u", "accepted")], False, "build loop not green"),
-        (True, [], False, "no code-review result"),
-        (True, [_review("u", "accepted", loop="post_merge")], False, "no code-review result"),
-        (
-            True,
-            [{**_review("u", "accepted"), "schema": "review_result.v1"}],
-            False,
-            "no code-review result",
-        ),
-        (True, [_review("other", "accepted")], False, "no code-review result"),
+        (True, [_clear()], True),
+        (True, [_blocked(3, decision="merge-with-reason")], True),
+        (True, [_blocked(1), _clear(2)], True),
+        (True, [_clear(1), _blocked(2)], False),
+        (True, [_blocked(3)], False),
+        (True, [_blocked(3, decision="stop-card")], False),
+        (False, [_clear()], False),
+        (True, [], False),
+        (True, [_legacy("accepted")], False),
+        (True, [_legacy("cycle_cap_best_available")], False),
+        (True, [_legacy("accepted", "v1")], False),
+        (True, [_legacy("accepted"), _blocked(1)], False),
+        (True, [_legacy("repairs_requested"), _clear()], True),
     ],
 )
 def test_the_completed_unit_rule(
-    cr: ModuleType, green: bool, reviews: list, completed: bool, reason: str
+    cr: ModuleType, green: bool, reviews: list, completed: bool
 ) -> None:
+    """Issue #161: a unit is complete when its build loop is green and the review run says merge."""
     rr = sys.modules["run_record"]
     row = _row("u", green=green)
     record = rr.RunRecord(issue=1, units=[row], review_cycles=reviews)
-    assert cr.unit_completed(record, row) == (completed, reason)
+    answer, reason = cr.unit_completed(record, row)
+    assert answer is completed
+    assert (reason == "") is completed
+    if not green:
+        assert reason == "build loop not green"
 
 
 def test_unit_identity_matches_by_id_then_name(cr: ModuleType) -> None:
     rr = sys.modules["run_record"]
     by_name = _row("u", key="name")
-    record = rr.RunRecord(issue=1, units=[by_name], review_cycles=[_review("u", "accepted")])
+    record = rr.RunRecord(issue=1, units=[by_name], review_cycles=[_clear()])
     assert cr.unit_completed(record, by_name) == (True, "")
     both = {**_row("u"), "name": "ignored"}
-    record = rr.RunRecord(issue=1, units=[both], review_cycles=[_review("u", "accepted")])
+    record = rr.RunRecord(issue=1, units=[both], review_cycles=[_clear()])
     assert cr.unit_completed(record, both) == (True, "")
 
 
@@ -309,14 +329,14 @@ def test_spend_on_incomplete_units_is_shown_apart(
         {
             "issue": 95,
             "unit": "u3",
-            "reason": "latest code review is repairs_requested",
+            "reason": "build loop not green",
             "cost_usd": "10.000000",
             "pricing": "priced",
         }
     ]
     out = cr.render(report)
     assert "Not completed (excluded from the figures above)" in out
-    assert "issue 95 unit u3: latest code review is repairs_requested; spent $10.00" in out
+    assert "issue 95 unit u3: build loop not green; spent $10.00" in out
 
 
 def test_no_completed_units_says_so_and_never_prints_zero_dollars(
@@ -381,7 +401,7 @@ def test_unpriced_and_unknown_models_are_named_and_never_shown_as_zero(
             _entry("x", "worker", "claude-unknown-9", "low", output=1_000_000),
         )
     ]
-    _write(store, 3, units, [_review("u1", "accepted")])
+    _write(store, 3, units, [_clear()])
     result = _run(store, prices, "--today", VERIFIED.isoformat(), "--json")
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
@@ -417,7 +437,7 @@ def test_all_roles_divides_only_over_fully_priced_completed_units(
         _row("u2", _entry("w2", "worker", "claude-opus-4-1", "medium", output=1_000_000)),
         _row("u3"),
     ]
-    reviews = [_review(unit, "accepted") for unit in ("u1", "u2", "u3")]
+    reviews = [_clear()]
     _write(store, 7, units, reviews)
     result = _run(store, prices, "--today", VERIFIED.isoformat(), "--json")
     assert result.returncode == 0, result.stderr
@@ -453,7 +473,7 @@ def test_a_group_divides_only_by_the_units_it_fully_priced_and_marks_its_total(
         _row("u1", _entry("w1", "worker", "claude-opus-5-5", "medium", uncached_input=1_000_000)),
         _row("u2", _entry("w2", "worker", "claude-opus-4-8", "medium", uncached_input=1_000_000)),
     ]
-    _write(store, 8, units, [_review(unit, "accepted") for unit in ("u1", "u2")])
+    _write(store, 8, units, [_clear()])
     result = _run(store, prices, "--today", VERIFIED.isoformat(), "--json")
     assert result.returncode == 0, result.stderr
     (group,) = json.loads(result.stdout)["groups"]
@@ -492,7 +512,7 @@ def test_record_strings_with_control_characters_cannot_forge_report_lines(
 ) -> None:
     forged = "evil\n  forged line"
     units = [_row("u1", _entry("w", "worker", forged, "low", output=5))]
-    _write(store, 7, units, [_review("u1", "accepted")])
+    _write(store, 7, units, [_clear()])
     text = _run(store, prices, "--today", VERIFIED.isoformat()).stdout
     assert not any(line.startswith("  forged line") for line in text.splitlines())
     assert repr(forged) in text
@@ -503,7 +523,7 @@ def test_a_usage_entry_with_a_non_integer_count_refuses_with_one_line(
 ) -> None:
     entry = _entry("w", "worker", "claude-opus-5-5", "low")
     entry["counts"]["output"] = "lots"
-    _write(store, 7, [_row("u1", entry)], [_review("u1", "accepted")])
+    _write(store, 7, [_row("u1", entry)], [_clear()])
     result = _run(store, prices)
     assert result.returncode == 2
     assert result.stderr.count("\n") == 1 and "Traceback" not in result.stderr
@@ -633,14 +653,15 @@ def test_the_shipped_table_carries_the_verified_rates(cr: ModuleType) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_terminal_outcomes_are_review_consensus_outcomes(cr: ModuleType) -> None:
-    consensus = _load("review_consensus")
-    assert set(cr.TERMINAL_REVIEW_OUTCOMES) <= set(typing.get_args(consensus.ReviewOutcome))
-    assert "review_incomplete" not in cr.TERMINAL_REVIEW_OUTCOMES
+def test_the_retired_review_outcomes_and_schema_are_gone(cr: ModuleType) -> None:
+    assert not hasattr(cr, "TERMINAL_REVIEW_OUTCOMES")
+    assert getattr(cr, "REVIEW_SCHEMA", "review_records.v1") == "review_records.v1"
 
 
-def test_review_schema_is_the_review_result_schema(cr: ModuleType) -> None:
-    assert cr.REVIEW_SCHEMA == _load("review_result").RESULT_SCHEMA
+def test_the_report_reads_no_retired_module() -> None:
+    text = SCRIPT.read_text(encoding="utf-8")
+    for name in ("review_" + "result", "review_" + "consensus", "review_" + "roster"):
+        assert name not in text, name
 
 
 def test_the_shipped_table_prices_exactly_the_record_categories(cr: ModuleType) -> None:
@@ -688,7 +709,7 @@ def test_json_output_carries_the_groups_and_the_staleness_fields(store: Path, pr
     assert {(g["role"], g["tier"]) for g in report["groups"]} == {
         ("worker", "claude opus/medium"),
         ("worker", "claude sonnet/medium"),
-        ("lens-reviewer", "claude opus/high"),
+        ("targeted-reviewer", "claude opus/high"),
     }
     assert "WARNING" in result.stderr
 

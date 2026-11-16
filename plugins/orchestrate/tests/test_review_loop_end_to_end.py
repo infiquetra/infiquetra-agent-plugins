@@ -1,7 +1,7 @@
 """End-to-end review repair flow through Orchestrate and real Git.
 
-The Git repository is real. The review result is canned JSON: either ``review_result.v2`` or a
-review run. A tiny ``hc`` (herdr core) executable stands in only for the transport that delivers
+The Git repository is real. The review result is canned JSON: always a
+``review_records.v1`` review run, the only result Orchestrate routes. A tiny ``hc`` (herdr core) executable stands in only for the transport that delivers
 already-routed instructions; transport behavior is outside this test's contract.
 """
 
@@ -16,6 +16,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
 from orchestrate_support import args as record_args
 from orchestrate_support import ensure_origin, save_run, write_record
 
@@ -113,9 +114,20 @@ def _sends(log: Path) -> list[str]:
     return [line for line in log.read_text().splitlines() if line.startswith("send t")]
 
 
-def _v2(outcome: str, *requests: dict[str, Any]) -> str:
+def _run_record(allowed: bool, *paths: str) -> str:
+    """A ``review_records.v1`` review run blocking on one finding per touched path."""
+    ids = [f"rf:{index:032x}" for index, _ in enumerate(paths, start=1)]
     return json.dumps(
-        {"schema": "review_result.v2", "outcome": outcome, "fix_requests": list(requests)},
+        {
+            "schema": "review_records.v1",
+            "kind": "review_run",
+            "round": 1,
+            "merge": {"allowed": allowed, "blocking": ids},
+            "findings": [
+                {"id": fid, "location": {"scope": "file", "file": path}}
+                for fid, path in zip(ids, paths, strict=True)
+            ],
+        },
         ensure_ascii=False,
         sort_keys=True,
     )
@@ -194,15 +206,12 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
     world = _prepare(orchestrate, tmp_path, monkeypatch)
     store = world["store"]
     repo = world["repo"]
-    first = _v2(
-        "repairs_requested",
-        {"owner": "review-fixer", "fix_id": "service-ready", "touched_paths": ["service.py"]},
-    )
+    first = _run_record(False, "service.py")
     _submit(orchestrate, store, tmp_path, first, "first-review.json")
 
     routed = orchestrate.Run.load(ISSUE, store)
     routed_worker = routed.unit("worker")
-    assert [item["fix_id"] for item in routed_worker.fix_requests] == ["service-ready"]
+    assert [item["fix_id"] for item in routed_worker.fix_requests] == [f"rf:{1:032x}"]
     assert routed.review_resubmit_pending is True
     assert [line.split(" ", 2)[1] for line in _sends(world["log"])] == [WORKER_ADDRESS]
 
@@ -235,11 +244,11 @@ def test_failed_review_is_repaired_landed_resubmitted_and_accepted(
 
     changed_paths = _git_out(repo, "diff", "--name-only", f"{world['base']}..{landed_revision}")
     assert changed_paths.splitlines() == ["service.py"]
-    final = _v2("accepted")
+    final = _run_record(True)
     _submit(orchestrate, store, tmp_path, final, "final-review.json")
     completed = orchestrate.Run.load(ISSUE, store)
     assert completed.review_outcome == "accepted"
-    assert json.loads(completed.review_result)["schema"] == "review_result.v2"
+    assert json.loads(completed.review_result)["schema"] == "review_records.v1"
     assert len(_sends(world["log"])) == 2
 
 
@@ -282,3 +291,31 @@ def test_an_end_to_end_repair_comes_from_a_review_run(tmp_path: Path, monkeypatc
     assert _git_out(repo, "show", f"{world['run_branch']}:service.py") == (
         "def ready() -> bool:\n    return True"
     )
+
+
+def test_an_end_to_end_retired_result_shape_is_refused_and_sends_nothing(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    orchestrate = _load_module("_review_loop_end_to_end_retired", ORCHESTRATE_SCRIPT)
+    world = _prepare(orchestrate, tmp_path, monkeypatch)
+    store = world["store"]
+    retired = json.dumps(
+        {
+            "schema": "review_result" + ".v2",
+            "outcome": "repairs_requested",
+            "fix_requests": [
+                {"owner": "review-fixer", "fix_id": "service-ready", "touched_paths": ["service.py"]}
+            ],
+        },
+        sort_keys=True,
+    )
+    path = tmp_path / "retired-review.json"
+    path.write_text(retired)
+
+    with pytest.raises(SystemExit, match="unsupported schema"):
+        orchestrate.cmd_review_result(record_args(ISSUE, store, file=str(path), controller=None))
+
+    refused = orchestrate.Run.load(ISSUE, store)
+    assert refused.unit("worker").fix_requests == []
+    assert refused.review_outcome is None
+    assert _sends(world["log"]) == []

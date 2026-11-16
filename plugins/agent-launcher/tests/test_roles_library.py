@@ -45,37 +45,37 @@ ROLES_DIR = PACKAGE / "roles"
 
 #: The ``infiquetra-sdlc`` revision the pinned fallbacks and the prompts' ``source:`` were taken
 #: from. Asserted against every prompt, so a prompt cannot drift to another revision unnoticed.
-SDLC_PIN = "f8d0994"
+SDLC_PIN = "1d2e33e"
 
 #: The one file exempt from the per-prompt rules, by name. The README is the directory's contract
 #: document: it carries no stop rule and it is the only file allowed to name the retired plugin,
 #: because it accounts for where each retired prompt went.
 README_NAME = "README.md"
 
-#: The only roles allowed an empty ``emits`` list: the Lens Reviewer's result is
-#: aggregated into the Review Controller's contract, and the Targeted Reviewer's into the review
-#: command's run, rather than posted as their own. Keyed on the role identifier, not the
-#: filename -- keying on the filename let any role become exempt by being renamed.
-AGGREGATED_PROMPT = "lens-reviewer.md"
-AGGREGATED_ROLE_IDS = ("lens_reviewer", "targeted_reviewer")
+#: The only role allowed an empty ``emits`` list: the Targeted Reviewer's answer goes to the review
+#: command's run (issue #158), rather than being posted as its own handoff. Keyed on the role
+#: identifier, not the filename -- keying on the filename let any role become exempt by being renamed.
+AGGREGATED_ROLE_IDS = ("targeted_reviewer",)
 
 #: The machine-readable map, so a consumer never parses the README's Markdown table to select a
-#: prompt or slice a lens section.
+#: prompt.
 INDEX_NAME = "index.json"
 
-#: The slicing rule is read from ``index.json`` rather than restated here. A consumer cuts by the
-#: index; if the test cut by its own copy, the two would agree only by coincidence and the suite
-#: would stay green while every lens session received a prompt nothing had checked.
-LENS_INDEX = json.loads((ROLES_DIR / "index.json").read_text(encoding="utf-8"))["lens_reviewer"]
-LENS_SHARED_HALF_ENDS_BEFORE = LENS_INDEX["shared_half_ends_before"]
-LENS_SECTION_PREFIX = LENS_INDEX["section_heading_prefix"]
-LENS_SECTION_TERMINATOR = re.compile(LENS_INDEX["section_terminator_pattern"])
+#: What issue #161 retired, spelled by concatenation so a repository-wide search for the retired
+#: names stays empty. The lens roster, its lens-sliced reviewer prompt and the escalated repair
+#: implementer left with the lifecycle's lens catalogue (infiquetra-sdlc 1d2e33e).
+_LENS = "lens"
+_EXPERT = "expert"
+RETIRED_PROMPT_FILES = (f"{_LENS}-reviewer.md", f"{_EXPERT}-repair-implementer.md")
+RETIRED_ROLE_IDS = (f"{_LENS}_reviewer", f"{_EXPERT}_repair_implementer")
+RETIRED_SNAPSHOT_KEYS = (f"{_LENS}es", f"{_LENS}_reviewer")
 
-#: The two roles the lifecycle licenses to reuse another role's contract. The
+#: The one role the lifecycle licenses to reuse another role's contract. The
 #: ``implementation-result`` contract's own ``sender_note`` says a repair implementer produces the
-#: same contract for the batch it finishes.
+#: same contract for the batch it finishes. Only the standard repair implementer is left: the
+#: escalated one served escalation rounds, and rounds no longer escalate.
 REUSED_CONTRACT = "implementation-result"
-REUSE_LICENSED_ROLES = ("standard_repair_implementer", "expert_repair_implementer")
+REUSE_LICENSED_ROLES = ("standard_repair_implementer",)
 
 REQUIRED_HEADINGS = (
     "## Role",
@@ -118,20 +118,18 @@ FORBIDDEN_STATUS_WORDS = (
 #: The lifecycle roles that get a prompt: all of them except the Human Operator, who is a person.
 NON_STAFFABLE_ROLE = "operator"
 
-#: The four lenses the roster always selects. The other eleven are conditional and, until the
-#: lifecycle ships scoring fixtures for them, report findings without scoring.
-ALWAYS_ON_LENSES = ("architecture-maintainability", "correctness", "security", "testing")
-
 #: What may be a frontmatter key. A colon alone is not enough: prose inside the block that happens
 #: to contain one would otherwise parse as a key.
 KEY_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 
-#: A strictness value from the catalogue's ladder, in any spelling. The catalogue owns the ladder;
-#: a copy in a prompt would be a second source.
-THRESHOLD_PATTERN = re.compile(r"\b(?:8|8\.0|8\.5|9|9\.0|9\.5|0\.8|0\.9)\b")
+#: The snapshot's top-level keys at the pin. No ``lenses`` section: the lifecycle no longer ships a
+#: lens catalogue, so a copy of its floors would be a second source with no first.
+SNAPSHOT_KEYS = frozenset(
+    {"schema", "source_repo", "sdlc_revision", "note", "roles", "contracts", "content_sha256"}
+)
+#: The sections the tamper-evidence digest covers.
+SNAPSHOT_HASHED_SECTIONS = ("roles", "contracts")
 
-VENDORED_LENS_FLOORS: dict[str, str] = SNAPSHOT["lenses"]
-VENDORED_LENS_IDS: tuple[str, ...] = tuple(VENDORED_LENS_FLOORS)
 VENDORED_ROLE_NAMES: dict[str, str] = SNAPSHOT["roles"]
 VENDORED_ROLE_IDS: tuple[str, ...] = tuple(VENDORED_ROLE_NAMES)
 VENDORED_CONTRACT_SENDERS: dict[str, str] = {
@@ -179,14 +177,6 @@ def _sdlc_root() -> pathlib.Path | None:
         if (candidate / "config" / "run-model.json").is_file():
             return candidate
     return None
-
-
-def _live_lens_ids(root: pathlib.Path) -> tuple[str, ...] | None:
-    path = root / "config" / "lens-catalogue.json"
-    if not path.is_file():
-        return None
-    catalogue = json.loads(path.read_text(encoding="utf-8"))
-    return tuple(lens["id"] for lens in catalogue["lenses"])
 
 
 def _live_role_ids(root: pathlib.Path) -> tuple[str, ...] | None:
@@ -290,18 +280,16 @@ def _live_snapshot(root: pathlib.Path) -> dict | None:
     file. That is reported as a parity failure rather than swallowed, because a per-reader
     fallback is how a check silently reverts to comparing the prompts against their own source.
     """
-    lenses = _live_lens_ids(root)
     senders = _live_contract_senders(root)
     roles = _live_role_ids(root)
     fields = _live_contract_fields(root)
     names = _live_contract_names(root)
     role_names = _live_role_names(root)
     descriptions = _live_field_descriptions(root)
-    if any(x is None for x in (lenses, senders, roles, fields, names, role_names, descriptions)):
+    if any(x is None for x in (senders, roles, fields, names, role_names, descriptions)):
         return None
     assert senders is not None and fields is not None
     assert names is not None and role_names is not None and descriptions is not None
-    catalogue = json.loads((root / "config" / "lens-catalogue.json").read_text(encoding="utf-8"))
     return {
         "roles": dict(role_names),
         "contracts": {
@@ -313,7 +301,6 @@ def _live_snapshot(root: pathlib.Path) -> dict | None:
             }
             for cid in senders
         },
-        "lenses": {x["id"]: x["floor_level"] for x in catalogue["lenses"]},
     }
 
 
@@ -321,7 +308,6 @@ def _live_snapshot(root: pathlib.Path) -> dict | None:
 #: things everywhere -- on a runner with no sibling checkout and on a machine with one. Drift
 #: between the snapshot and the lifecycle is a separate, explicit parity check, which is the
 #: pattern this repository already uses for lifecycle-generated data.
-LENS_IDS = VENDORED_LENS_IDS
 CONTRACT_SENDERS = VENDORED_CONTRACT_SENDERS
 ROLE_IDS = VENDORED_ROLE_IDS
 CONTRACT_FIELDS = VENDORED_CONTRACT_FIELDS
@@ -499,7 +485,7 @@ def missing_headings(text: str) -> list[str]:
 
     # Each section ends at the next heading of ANY level, not at the next *required* one. Bounding
     # the last required heading at end-of-file instead counted everything after it as its body --
-    # so in the Lens Reviewer, where 170 lines of lens sections follow, the stop rule's body could
+    # so in a prompt with a long appendix after the stop rule, the stop rule's body could
     # be deleted entirely and this still returned clean. The stop rule is the one thing that makes
     # an autonomous session terminate, so it was the worst possible section to leave unenforced.
     heading_starts = [m.start() for m in re.finditer(r"^#{1,6} ", body, re.MULTILINE)]
@@ -524,15 +510,6 @@ def retired_vocabulary(text: str) -> list[str]:
     if "team-execution" in text:
         found.append("team-execution")
     return found
-
-
-def missing_lens_sections(text: str, lens_ids: tuple[str, ...]) -> list[str]:
-    """Catalogue lenses with no ``#### <lens-id>`` section."""
-    return [
-        lens
-        for lens in lens_ids
-        if re.search(rf"^#### {re.escape(lens)}\s*$", text, re.MULTILINE) is None
-    ]
 
 
 def emits_violations(role_id: str, emits: object, filename: str) -> list[str]:
@@ -568,7 +545,7 @@ def test_roles_glob_finds_files() -> None:
 
 def test_role_map_is_populated() -> None:
     """The README's map is the expected-set source; an unparsed table would disable the suite."""
-    assert len(ROLE_MAP) >= 14, f"expected at least 14 mapped roles, parsed {len(ROLE_MAP)}"
+    assert len(ROLE_MAP) >= 13, f"expected at least 13 mapped roles, parsed {len(ROLE_MAP)}"
 
 
 def test_card_acceptance_prompt_count() -> None:
@@ -576,9 +553,9 @@ def test_card_acceptance_prompt_count() -> None:
 
     Counted on ``PROMPT_FILES``, not on every file in the directory: the README is one of the
     files, so a floor of fourteen over the whole directory would still hold after a prompt was
-    deleted.
+    deleted. Thirteen since issue #161 retired the two lens-era prompts.
     """
-    assert len(PROMPT_FILES) >= 14
+    assert len(PROMPT_FILES) >= 13
 
 
 def test_map_and_files_agree_exactly() -> None:
@@ -637,16 +614,39 @@ def test_index_agrees_with_the_files_and_the_readme() -> None:
         assert row["role_id"] == frontmatter["role_id"]
         assert row["emits"] == frontmatter["emits"]
 
-    lens = index["lens_reviewer"]
-    assert lens["lens_ids"] == list(LENS_IDS), "index lens ids disagree with the catalogue"
-    assert lens["file"] == AGGREGATED_PROMPT
+    # No slicing rule: a prompt is one file per role now that no role is cut per lens.
+    expected_keys = {"schema", "sdlc_revision", "roles"}
+    assert set(index) == expected_keys, (
+        f"the index carries keys beyond the role map: {sorted(set(index) - expected_keys)}"
+    )
 
-    # The slicing rule the index publishes must be the one this suite validates slices with.
-    # Otherwise a consumer cuts by the index, the tests cut by their own copy, the two agree only
-    # by coincidence, and changing either leaves the suite green over a prompt nothing checked.
-    assert lens["shared_half_ends_before"] == LENS_SHARED_HALF_ENDS_BEFORE
-    assert lens["section_heading_prefix"] == LENS_SECTION_PREFIX
-    assert lens["section_terminator_pattern"] == LENS_SECTION_TERMINATOR.pattern
+
+def test_the_retired_lens_era_roles_are_gone_everywhere_in_the_library() -> None:
+    """Issue #161: the lens reviewer and the escalated repair implementer left in one change.
+
+    Spelled by concatenation above, so this assertion does not itself keep the retired names in
+    the repository. Checks every place a role is declared: the file, the README's map, the index,
+    and the vendored snapshot's roles.
+    """
+    for name in RETIRED_PROMPT_FILES:
+        assert not (ROLES_DIR / name).exists(), f"{name} must be deleted"
+        assert name not in ROLE_MAP, f"the README's role map still lists {name}"
+    index = json.loads((ROLES_DIR / INDEX_NAME).read_text(encoding="utf-8"))
+    assert not {row["file"] for row in index["roles"]} & set(RETIRED_PROMPT_FILES)
+    assert not {row["role_id"] for row in index["roles"]} & set(RETIRED_ROLE_IDS)
+    assert not set(SNAPSHOT["roles"]) & set(RETIRED_ROLE_IDS)
+    assert not set(ROLES_DIR.glob("*.md")) & {ROLES_DIR / n for n in RETIRED_PROMPT_FILES}
+    names = (
+        *RETIRED_PROMPT_FILES,
+        *RETIRED_ROLE_IDS,
+        *(n.removesuffix(".md") for n in RETIRED_PROMPT_FILES),
+    )
+    mentions = {
+        path.name: [name for name in names if name in path.read_text(encoding="utf-8")]
+        for path in EVERY_FILE
+    }
+    mentions = {name: found for name, found in mentions.items() if found}
+    assert not mentions, f"retired role names still appear in the library: {mentions}"
 
 
 def test_release_surfaces_agree_and_advanced() -> None:
@@ -794,9 +794,15 @@ def test_vendored_snapshot_is_stamped_with_the_pin() -> None:
         f"{SNAPSHOT_PATH.name} was taken from {SNAPSHOT['sdlc_revision']}, the prompts name"
         f" {SDLC_PIN}"
     )
-    assert SNAPSHOT["roles"] and SNAPSHOT["contracts"] and SNAPSHOT["lenses"], (
+    assert SNAPSHOT["roles"] and SNAPSHOT["contracts"], (
         "an empty snapshot would make every check against it vacuous"
     )
+    assert set(SNAPSHOT) == SNAPSHOT_KEYS, (
+        f"snapshot keys {sorted(SNAPSHOT)} differ from {sorted(SNAPSHOT_KEYS)}; the lens catalogue"
+        " is gone from the lifecycle, so its section leaves the snapshot and the digest"
+    )
+    for key in RETIRED_SNAPSHOT_KEYS:
+        assert key not in SNAPSHOT, f"the snapshot still carries a retired section: {key}"
 
     # Bound to something upstream, so the snapshot is not a free-floating assertion about itself.
     assert SNAPSHOT["source_repo"] == "https://github.com/infiquetra/infiquetra-sdlc"
@@ -810,7 +816,7 @@ def test_vendored_snapshot_is_stamped_with_the_pin() -> None:
     # trustworthy is the parity check below, run wherever the lifecycle is reachable; this only
     # stops a careless edit from passing quietly in the places that check cannot run.
     payload = json.dumps(
-        {k: SNAPSHOT[k] for k in ("roles", "contracts", "lenses")},
+        {k: SNAPSHOT[k] for k in SNAPSHOT_HASHED_SECTIONS},
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -854,7 +860,10 @@ def test_vendored_snapshot_matches_the_live_lifecycle() -> None:
         " schema moved, and the snapshot must be regenerated against the new shape"
     )
 
-    for section in ("roles", "contracts", "lenses"):
+    assert set(live) == set(SNAPSHOT_HASHED_SECTIONS), (
+        f"the live reader returns sections {sorted(live)}; it must read no lens catalogue"
+    )
+    for section in SNAPSHOT_HASHED_SECTIONS:
         assert live[section] == SNAPSHOT[section], (
             f"vendored {section} differ from the lifecycle at {head[:12]};"
             f" regenerate {SNAPSHOT_PATH.name} and re-check the prompts against it"
@@ -907,7 +916,6 @@ _POLICY_PATH = "plugins/saga/references/question-banks/policy-questions.json"
 _IMPLEMENTER_PROMPTS = (
     "implementer.md",
     "standard-repair-implementer.md",
-    "expert-repair-implementer.md",
 )
 
 
@@ -928,7 +936,7 @@ def _policy_input_section(path: pathlib.Path) -> str:
 
 
 def test_policy_questions_are_named_in_each_implementer_prompt() -> None:
-    """The three builders are told where the questions live, in the input, not only the output."""
+    """The two builders are told where the questions live, in the input, not only the output."""
     for name in _IMPLEMENTER_PROMPTS:
         path = ROLES_DIR / name
         section = _policy_input_section(path)
@@ -1013,81 +1021,6 @@ def test_prompt_shows_the_handoff_comment_shape(path: pathlib.Path) -> None:
             )
 
 
-def test_lens_reviewer_covers_every_catalogue_lens() -> None:
-    text = (ROLES_DIR / AGGREGATED_PROMPT).read_text(encoding="utf-8")
-    assert LENS_IDS, "the lens id list is empty, which would make this check vacuous"
-    missing = missing_lens_sections(text, LENS_IDS)
-    assert not missing, f"{AGGREGATED_PROMPT} has no section for: {missing}"
-
-
-def lens_slice(lens_id: str) -> str:
-    """Rebuild what a consumer actually sends for one lens: shared half plus one section.
-
-    This is the artifact that matters. Checking the file as a whole hid a real defect: the block
-    between ``# The lenses`` and the first grouping heading was in neither piece, so the permission
-    for a conditional lens to report without scoring was dropped at the cut, leaving eleven of
-    fifteen sessions with a stop rule demanding a score and no way to satisfy it.
-    """
-    text = (ROLES_DIR / AGGREGATED_PROMPT).read_text(encoding="utf-8")
-    lines = text.splitlines()
-
-    # Line-anchored, like the other two rules. An unanchored substring search would match the
-    # phrase quoted anywhere earlier in the shared half and silently shorten it -- and a shared
-    # half truncated after the stop rule still satisfies every heading check.
-    cut = next(
-        (i for i, line in enumerate(lines) if line.strip() == LENS_SHARED_HALF_ENDS_BEFORE), None
-    )
-    assert cut is not None, f"no {LENS_SHARED_HALF_ENDS_BEFORE!r} line to cut the shared half at"
-    shared = "\n".join(lines[:cut]).rstrip("\n")
-
-    heading = f"{LENS_SECTION_PREFIX}{lens_id}"
-    start = next((i for i, line in enumerate(lines) if line.strip() == heading), None)
-    assert start is not None, f"no section for {lens_id}"
-
-    # The terminator scan runs over fence-stripped lines, so a heading-shaped line inside a fenced
-    # example cannot end a section early and silently drop the rest of what a session receives.
-    stripped = strip_fenced_blocks(text).splitlines()
-    end = len(lines)
-    for offset in range(start + 1, len(lines)):
-        if LENS_SECTION_TERMINATOR.match(stripped[offset]):
-            end = offset
-            break
-
-    section = "\n".join(lines[start:end]).rstrip("\n")
-    return f"{shared}\n\n{section}\n"
-
-
-@pytest.mark.parametrize("lens_id", LENS_IDS)
-def test_lens_slice_is_a_complete_prompt(lens_id: str) -> None:
-    """Every lens a consumer can staff must receive a prompt that satisfies the whole contract."""
-    sliced = lens_slice(lens_id)
-
-    problems = missing_headings(sliced)
-    assert not problems, f"the {lens_id} slice has heading problems: {problems}"
-    assert has_stop_rule_heading(sliced), f"the {lens_id} slice has no stop-rule heading"
-    assert not retired_vocabulary(sliced), f"the {lens_id} slice carries retired vocabulary"
-
-    # Anchored, so a lens id that is a prefix of another cannot read as a leak.
-    assert re.search(rf"^#### {re.escape(lens_id)}\s*$", sliced, re.MULTILINE), (
-        f"the {lens_id} slice does not carry its own section"
-    )
-    others = [
-        other
-        for other in LENS_IDS
-        if other != lens_id and re.search(rf"^#### {re.escape(other)}\s*$", sliced, re.MULTILINE)
-    ]
-    assert not others, f"the {lens_id} slice leaked other lens sections: {others}"
-
-    # A section that lost its body to an early terminator would still pass every check above.
-    body = sliced[sliced.index(f"#### {lens_id}") :]
-    assert len(body.strip()) > 120, f"the {lens_id} section is too short to be a real brief"
-
-    for grouping in ("## Always on", "## Conditional"):
-        assert grouping not in sliced, (
-            f"the {lens_id} slice carries the grouping heading {grouping}"
-        )
-
-
 #: The blocks every prompt carries verbatim, each identified by its opening line. They are copied
 #: rather than referenced because a prompt is the whole briefing a session gets and a session
 #: cannot resolve a repository-relative pointer -- see the superseding decision in the journal.
@@ -1123,7 +1056,7 @@ DISPATCHLESS_OPENER = "**Where these come from.**"
 def test_every_prompt_can_reach_the_lifecycle(path: pathlib.Path) -> None:
     """A prompt that cites a lifecycle document must tell its session how to get there.
 
-    Thirteen of the fourteen cited lifecycle artifacts with no locator: only the Lens Reviewer
+    Thirteen of the fourteen cited lifecycle artifacts with no locator: only one reviewer
     carried the resolution ladder, and the other roles were told to read documents they had no way
     to find. A session that cannot reach a document it is required to read either stops, which is
     the good case, or proceeds from memory, which is the bad one and looks identical downstream.
@@ -1260,7 +1193,7 @@ def test_plan_reviewer_points_at_the_document_that_holds_the_questions() -> None
 #: snapshot and held to the live lifecycle by the parity test.
 ENUMERATED_FIELDS = (
     ("planner.md", "planner-to-orchestrator", "preflight_results"),
-    ("review-controller.md", "code-review-result", "per_lens_results"),
+    ("review-controller.md", "code-review-result", "repair_accounting"),
 )
 
 
@@ -1369,60 +1302,12 @@ def test_shared_blocks_are_byte_identical_across_every_prompt(opener: str) -> No
     )
 
 
-def test_shared_half_permits_reporting_without_a_score() -> None:
-    """A conditional lens with no fixture must be told it may report findings and not score.
-
-    Asserted once, on the shared half, because that is where the permission lives and where it has
-    to live: a per-lens parametrization of this same string claimed eleven cases of coverage that
-    did not exist, since every slice carries the identical shared text.
-    """
-    shared = lens_slice(LENS_IDS[0]).split(f"{LENS_SECTION_PREFIX}{LENS_IDS[0]}")[0]
-    assert "without scores" in shared, (
-        "the shared half never says a conditional lens may report without scoring; without it the"
-        " stop rule demands a score for every applicable dimension and eleven of fifteen sessions"
-        " either fabricate one or never terminate"
-    )
-
-
-@pytest.mark.parametrize("lens_id", LENS_IDS)
-def test_lens_section_is_about_its_own_lens(lens_id: str) -> None:
-    """Something genuinely per-lens: the section names its own lens and its own subject matter.
-
-    This is what the conditional-permission test used to pretend to check. A section copied from
-    another lens, or left as a stub, fails here.
-    """
-    sliced = lens_slice(lens_id)
-    section = sliced[sliced.index(f"{LENS_SECTION_PREFIX}{lens_id}") :]
-    assert VENDORED_LENS_FLOORS[lens_id] in section, (
-        f"the {lens_id} section does not name its own floor level ({VENDORED_LENS_FLOORS[lens_id]})"
-    )
-    assert "Dimension" in section, f"the {lens_id} section lists no dimensions"
-
-
-def test_lens_reviewer_states_no_thresholds() -> None:
-    """The catalogue owns the strictness ladder; a copy here would be a second source.
-
-    Matched as a pattern rather than three exact strings, so ``8``, ``8.5`` and ``0.8`` are
-    caught too -- the earlier form checked only the three spellings the catalogue happens to use
-    today.
-    """
-    text = (ROLES_DIR / AGGREGATED_PROMPT).read_text(encoding="utf-8")
-    found = THRESHOLD_PATTERN.findall(text)
-    assert not found, (
-        f"{AGGREGATED_PROMPT} names strictness values {found}; the ladder lives in the catalogue"
-    )
-
-
 def test_planner_and_delivery_manager_emit_several_contracts() -> None:
     """The two roles that forced ``emits`` to be a list, asserted on the real files."""
     planner = parse_frontmatter(ROLES_DIR / "planner.md")["emits"]
     delivery_manager = parse_frontmatter(ROLES_DIR / "delivery-manager.md")["emits"]
     assert isinstance(planner, list) and len(planner) == 2
     assert isinstance(delivery_manager, list) and len(delivery_manager) == 5
-
-
-def test_lens_reviewer_emits_nothing_of_its_own() -> None:
-    assert parse_frontmatter(ROLES_DIR / AGGREGATED_PROMPT)["emits"] == []
 
 
 # --- seeded fixtures: each one calls the same checker the real test calls ----------------
@@ -1468,14 +1353,13 @@ def test_seeded_empty_last_section_fires_even_with_trailing_content() -> None:
     """The stop rule's body must be checked, not the whole remainder of the file.
 
     Bounding the last required heading at end-of-file counted every later section as its body, so
-    a prompt with content after the stop rule -- which the Lens Reviewer has 170 lines of -- could
-    have an empty stop rule and pass.
+    a prompt with content after the stop rule could have an empty stop rule and pass.
     """
     filler = "Enough prose here to clear the emptiness floor for this section, comfortably.\n"
     text = (
         f"## Role\n\n{filler}\n## Inputs from the run record\n\n{filler}\n"
         f"## Output contract\n\n{filler}\n### Stop rule\n\n"  # deliberately empty
-        f"# The lenses\n\n#### correctness\n\n{filler}{filler}"
+        f"# Appendix\n\n#### example\n\n{filler}{filler}"
     )
     assert missing_headings(text) == ["### Stop rule <empty>"]
 
@@ -1493,20 +1377,17 @@ def test_seeded_retired_vocabulary_fires() -> None:
     assert retired_vocabulary("A clean prompt that passes and warns.") == []
 
 
-def test_seeded_missing_lens_section_fires() -> None:
-    body = "".join(f"#### {lens}\n\ntext\n\n" for lens in LENS_IDS[:-1])
-    assert missing_lens_sections(body, LENS_IDS) == [LENS_IDS[-1]]
-    assert missing_lens_sections(body, LENS_IDS[:-1]) == []
-
-
 def test_seeded_emits_rules_fire() -> None:
     """Shape, membership, producership and the empty-list rule, each proven to fire."""
     assert emits_violations("planner", "dispatch", "planner.md")[0].startswith("emits must be")
     assert emits_violations("planner", [], "planner.md")[0].startswith("emits is empty")
-    assert emits_violations("lens_reviewer", [], AGGREGATED_PROMPT) == []
     assert emits_violations("targeted_reviewer", [], "targeted-reviewer.md") == []
     # The exemption is the role's, not the filename's: renaming a file must not confer it.
-    assert emits_violations("planner", [], AGGREGATED_PROMPT)[0].startswith("emits is empty")
+    assert emits_violations("planner", [], "targeted-reviewer.md")[0].startswith("emits is empty")
+    for retired in RETIRED_ROLE_IDS:
+        assert "emits is empty" in emits_violations(retired, [], "r.md")[0], (
+            "a retired role must not keep the empty-emits exemption"
+        )
     assert "not a lifecycle handoff contract" in emits_violations("planner", ["nope"], "p.md")[0]
     assert "produced by" in emits_violations("product", ["run-record"], "product.md")[0]
     assert "repeats a contract" in emits_violations("controller", ["dispatch", "dispatch"], "d")[0]
@@ -1514,10 +1395,13 @@ def test_seeded_emits_rules_fire() -> None:
 
 
 def test_seeded_repair_reuse_is_licensed() -> None:
-    """Both repair roles may claim the initial worker's contract; nobody else may."""
+    """The standard repair role may claim the initial worker's contract; nobody else may."""
+    assert REUSE_LICENSED_ROLES == ("standard_repair_implementer",)
     for role in REUSE_LICENSED_ROLES:
         assert emits_violations(role, [REUSED_CONTRACT], "r.md") == []
     assert emits_violations("release_worker", [REUSED_CONTRACT], "r.md") != []
+    for retired in RETIRED_ROLE_IDS:
+        assert emits_violations(retired, [REUSED_CONTRACT], "r.md") != []
 
 
 def test_seeded_parser_keeps_oddly_indented_list_items() -> None:
@@ -1565,7 +1449,7 @@ def test_only_the_parity_test_needs_a_sibling_checkout() -> None:
     on_disk = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
     assert tuple(on_disk["roles"]) == ROLE_IDS
     assert on_disk["roles"] == ROLE_NAMES
-    assert tuple(on_disk["lenses"]) == LENS_IDS
+    assert "lenses" not in on_disk
     assert set(CONTRACT_SENDERS) == set(on_disk["contracts"])
     for cid, row in on_disk["contracts"].items():
         assert CONTRACT_SENDERS[cid] == row["sender_role"]
@@ -1617,7 +1501,8 @@ def test_seeded_parser_returns_empty_for_no_frontmatter() -> None:
 
 
 def test_only_the_contractless_roles_may_emit_nothing() -> None:
-    """Issue #158: every role but the two contract-less reviewers must send a contract."""
+    """Every role but the contract-less targeted reviewer (issue #158) must send a contract."""
+    assert AGGREGATED_ROLE_IDS == ("targeted_reviewer",)
     for role_id in AGGREGATED_ROLE_IDS:
         assert emits_violations(role_id, [], f"{role_id}.md") == []
     for role_id in sorted(set(ROLE_IDS) - set(AGGREGATED_ROLE_IDS) - {"operator"}):

@@ -2,7 +2,7 @@
 
 One review phase is still one controller.  What this proves is the *other* shape: a run carrying
 several independent child lifecycles, each with its own frozen review target and its own typed
-``review_result.v2``.  Before this, Orchestrate refused that at both load and expand, so a campaign
+``review_records.v1`` review run.  Before this, Orchestrate refused that at both load and expand, so a campaign
 with three ready targets could only review them serially through a single run-global controller --
 and that controller carries ``review_outcome``, ``review_resubmit_pending`` and
 ``operator_fix_requests``, so serial reuse risks reading one target's typed state as another's.
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -27,6 +28,39 @@ from typing import Any
 
 import orchestrate_support as _support
 import pytest
+
+def _fid(name: str) -> str:
+    """The review run finding id a readable fix name stands for."""
+    return "rf:" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:32]
+
+
+def _blocking_run(fix_name: str, path: str = "src/") -> str:
+    """A ``review_records.v1`` review run blocking on one finding located at ``path``."""
+    return json.dumps(
+        {
+            "schema": "review_records.v1",
+            "kind": "review_run",
+            "round": 1,
+            "merge": {"allowed": False, "blocking": [_fid(fix_name)]},
+            "findings": [
+                {"id": _fid(fix_name), "location": {"scope": "file", "file": path}}
+            ],
+        }
+    )
+
+
+def _accepted_run() -> str:
+    return json.dumps(
+        {
+            "schema": "review_records.v1",
+            "kind": "review_run",
+            "round": 1,
+            "merge": {"allowed": True, "blocking": []},
+            "findings": [],
+        },
+        sort_keys=True,
+    )
+
 
 # --- issue #1025: every stateful subcommand takes --issue and --store-root -----------------------
 
@@ -599,7 +633,7 @@ def test_late_lifecycle_assignment_migrates_run_global_review_state(
     """#898: a controller reviewed unscoped, then gained a lifecycle, must still see its result."""
     controller = _controller(orchestrate, "cr-late")
     run = _run(orchestrate, controller)
-    raw = json.dumps({"schema": "review_result.v2", "outcome": "accepted"}, sort_keys=True)
+    raw = _accepted_run()
     requests = [{"fix_id": "held"}]
     run.write_review_slot(
         controller,
@@ -624,11 +658,8 @@ def test_late_lifecycle_assignment_refuses_a_conflicting_named_slot(
     """#898: a named slot that already holds different bytes is a stop, not an overwrite."""
     controller = _controller(orchestrate, "cr-late", lifecycle="c2")
     run = _run(orchestrate, controller)
-    named = json.dumps({"schema": "review_result.v2", "outcome": "accepted"}, sort_keys=True)
-    global_raw = json.dumps(
-        {"schema": "review_result.v2", "outcome": "cycle_cap_best_available"},
-        sort_keys=True,
-    )
+    named = _accepted_run()
+    global_raw = _blocking_run("global-cap")
     run.review_states[controller.name] = {
         "review_result": named,
         "review_outcome": "accepted",
@@ -775,25 +806,8 @@ def test_two_scoped_controllers_do_not_share_one_live_unscoped_fixer(
     run.save()
     live = [{"name": "agent-shared", "pane_id": "t5", "agent_status": "idle"}]
 
-    def _result(fix_id: str) -> str:
-        return json.dumps(
-            {
-                "schema": "review_result.v2",
-                "outcome": "repairs_requested",
-                "best_available_revision": "a" * 40,
-                "fix_requests": [
-                    {
-                        "fix_id": fix_id,
-                        "owner": "review-fixer",
-                        "touched_paths": ["src/"],
-                        "summary": "s",
-                    }
-                ],
-            }
-        )
-
-    orchestrate.route_review_result(run, _result("fix-c2"), agents=live, controller=c2)
-    orchestrate.route_review_result(run, _result("fix-c4"), agents=live, controller=c4)
+    orchestrate.route_review_result(run, _blocking_run("fix-c2"), agents=live, controller=c2)
+    orchestrate.route_review_result(run, _blocking_run("fix-c4"), agents=live, controller=c4)
 
     # The shared worker must not be carrying both targets' repairs.
     assert len(shared.fix_requests) <= 1, "one live worker must not hold two targets' repairs"
@@ -802,7 +816,7 @@ def test_two_scoped_controllers_do_not_share_one_live_unscoped_fixer(
         for unit in run.units
         for req in unit.fix_requests
     }
-    assert holders.get("fix-c2") != holders.get("fix-c4"), "each target needs its own holder"
+    assert holders.get(_fid("fix-c2")) != holders.get(_fid("fix-c4")), "each target needs its own holder"
     for unit in run.units:
         if unit.fix_requests and unit is not shared:
             assert unit.lifecycle in {"c2", "c4"}, "a minted holder must carry a lifecycle"
@@ -990,21 +1004,7 @@ def test_one_scoped_controller_also_mints_rather_than_sharing(
 
     orchestrate.route_review_result(
         run,
-        json.dumps(
-            {
-                "schema": "review_result.v2",
-                "outcome": "repairs_requested",
-                "best_available_revision": "b" * 40,
-                "fix_requests": [
-                    {
-                        "fix_id": "fix-solo",
-                        "owner": "review-fixer",
-                        "touched_paths": ["src/"],
-                        "summary": "s",
-                    }
-                ],
-            }
-        ),
+        _blocking_run("fix-solo"),
         agents=[{"name": "agent-plain", "pane_id": "t6", "agent_status": "idle"}],
         controller=only,
     )
@@ -1041,21 +1041,7 @@ def test_expanding_a_second_controller_does_not_orphan_the_first_ones_repairs(
     run = _run(orchestrate, first, plain)
     orchestrate.route_review_result(
         run,
-        json.dumps(
-            {
-                "schema": "review_result.v2",
-                "outcome": "repairs_requested",
-                "best_available_revision": "c" * 40,
-                "fix_requests": [
-                    {
-                        "fix_id": "fix-first",
-                        "owner": "review-fixer",
-                        "touched_paths": ["src/"],
-                        "summary": "s",
-                    }
-                ],
-            }
-        ),
+        _blocking_run("fix-first"),
         agents=[{"name": "agent-plain", "pane_id": "t6", "agent_status": "idle"}],
         controller=first,
     )

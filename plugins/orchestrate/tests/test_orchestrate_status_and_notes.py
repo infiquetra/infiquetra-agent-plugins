@@ -278,6 +278,17 @@ def test_long_task_without_setup_keeps_both_pane_fallback_diagnostics(
     assert "; prompted without a status: this agent does not report readiness" in unit.note
 
 
+
+#: A stored ``review_records.v1`` review run. Status reads only the slot's recorded outcome.
+_REVIEW_RUN_ALLOWED = {
+    "schema": "review_records.v1",
+    "kind": "review_run",
+    "round": 1,
+    "merge": {"allowed": True, "blocking": []},
+    "findings": [],
+}
+
+
 def test_status_shows_recorded_but_unrouted_result(
     orchestrate: ModuleType,
     tmp_path: Path,
@@ -299,7 +310,7 @@ def test_status_shows_recorded_but_unrouted_result(
         base="base",
         units=[controller],
     )
-    raw = json.dumps({"schema": "review_result.v1", "outcome": "accepted"}, sort_keys=True)
+    raw = json.dumps(_REVIEW_RUN_ALLOWED, sort_keys=True)
     run.write_review_slot(controller, review_result=raw, review_outcome=None)
     _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
@@ -332,10 +343,7 @@ def test_status_typed_outcome_outranks_a_contradictory_note(
         base="base",
         units=[controller],
     )
-    raw = json.dumps(
-        {"schema": "review_result.v2", "outcome": "cycle_cap_best_available"},
-        sort_keys=True,
-    )
+    raw = json.dumps(_REVIEW_RUN_ALLOWED, sort_keys=True)
     run.write_review_slot(controller, review_result=raw, review_outcome="cycle_cap_best_available")
     _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
@@ -656,7 +664,7 @@ def test_status_json_carries_reviews_and_unrecorded_branches(
     _write_run(repo, [_unit("alpha", status="done")])
     run = orchestrate.Run.load(TEST_ISSUE, test_store())
     run.units.append(controller)
-    raw = json.dumps({"schema": "review_result.v1", "outcome": "cycle_cap_best_available"})
+    raw = json.dumps(_REVIEW_RUN_ALLOWED, sort_keys=True)
     run.write_review_slot(controller, review_result=raw, review_outcome="cycle_cap_best_available")
     run.save()
     monkeypatch.chdir(repo)
@@ -686,7 +694,7 @@ def test_status_json_marks_a_recorded_but_unrouted_result(
         status="done",
     )
     run = orchestrate.Run(run_id="review-run", source="test", base="base", units=[controller])
-    raw = json.dumps({"schema": "review_result.v1", "outcome": "accepted"}, sort_keys=True)
+    raw = json.dumps(_REVIEW_RUN_ALLOWED, sort_keys=True)
     run.write_review_slot(controller, review_result=raw, review_outcome=None)
     _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)

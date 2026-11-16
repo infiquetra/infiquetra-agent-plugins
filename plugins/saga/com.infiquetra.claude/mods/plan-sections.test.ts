@@ -346,8 +346,8 @@ describe('fitting tables to the pane', () => {
     const again = linkifyRefs(GOLDEN_PAGE, ROOT)
     const fitted = fitTables(linked.text, 89)
     const href = linked.refs[0]?.href
-    expect(href).toContain('review_roster.py')
-    expect(fitted).toContain(`[\`plugins/saga/scripts/review_roster.py\`](${href})`)
+    expect(href).toContain('review_checks.py')
+    expect(fitted).toContain(`[\`plugins/saga/scripts/review_checks.py\`](${href})`)
     expect(linked.refs).toEqual(again.refs)
   })
 

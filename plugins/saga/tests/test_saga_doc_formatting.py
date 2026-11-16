@@ -49,7 +49,7 @@ DOC_OUTPUT_FILES: dict[str, list[str]] = {
     "strategy": ["references/strategy-template.md"],
     "retro": ["references/retro-report.md"],
     "doc-review": ["SKILL.md"],
-    "code-review": ["references/findings-schema.md"],
+    "code-review": ["SKILL.md"],
     "founder-review": ["references/review-modes.md"],
 }
 

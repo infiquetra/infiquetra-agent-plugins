@@ -246,12 +246,12 @@ describe('usage capture', () => {
   test("a saga agent type records its own role; the row's role names the main thread", async ($, on) => {
     const fakes = fake(on)
     fakes.match = { ...TARGET, role: 'functional-tester' }
-    fakes.agents = [{ id: 'r1', type: 'saga:lens-reviewer' }]
+    fakes.agents = [{ id: 'r1', type: 'saga:targeted-reviewer' }]
     await start($)
     await step($)
     await step($, { agentId: 'r1' })
     await end($)
-    expect(adds(fakes).map((flags) => flags.get('--role'))).toEqual(['functional-tester', 'lens-reviewer'])
+    expect(adds(fakes).map((flags) => flags.get('--role'))).toEqual(['functional-tester', 'targeted-reviewer'])
   })
 })
 

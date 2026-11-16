@@ -207,11 +207,17 @@ def test_the_mapping_is_rosters_own(repo: Path, store: Path) -> None:
 # --------------------------------------------------------------------------- skipped roles
 
 
-def test_merging_worker_and_the_lens_reviewer_are_skipped_by_name(repo: Path, store: Path) -> None:
-    _staff(store, {**FULL, "lens-reviewer": _row("opus", "high")})
+def test_merging_worker_is_skipped_by_name(repo: Path, store: Path) -> None:
+    _staff(store, FULL)
     skipped = {s["role"]: s["reason"] for s in _answer(repo, store)["skipped"]}
     assert skipped["merging-worker"] == "no role prompt in the roles library"
-    assert "sliced per lens" in skipped["lens-reviewer"]
+
+
+def test_the_targeted_reviewer_is_the_only_mapped_role_without_a_subagent_type() -> None:
+    """Issue #161: the per-lens skip goes with the lens role; the targeted reviewer needs none."""
+    assert set(role_agent_types.NO_TYPE_REASONS) == {"targeted-reviewer"}
+    assert not hasattr(role_agent_types, "LENS_ROLE")
+    assert "sliced per lens" not in SCRIPT.read_text(encoding="utf-8")
 
 
 def test_the_targeted_reviewer_gets_no_subagent_type(repo: Path, store: Path) -> None:

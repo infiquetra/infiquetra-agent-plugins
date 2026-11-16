@@ -1,7 +1,7 @@
 """#776: Orchestrate owns reviewer-session transport; saga's runner is gone.
 
 The required regression is one Opus review-controller plus one Grok 4.6 reviewer
-seat, both launched as Orchestrate-owned named units, one typed review_result.v2,
+seat, both launched as Orchestrate-owned named units, one typed review_records.v1 review run,
 and no engine_session_runner process. Mutation: a plain review prompt or a direct
 reviewer launch is refused before any session is created.
 """
@@ -171,9 +171,11 @@ def _grok_seat_row(
 def _accepted_result() -> str:
     return json.dumps(
         {
-            "schema": "review_result.v2",
-            "outcome": "accepted",
-            "fix_requests": [],
+            "schema": "review_records.v1",
+            "kind": "review_run",
+            "round": 1,
+            "merge": {"allowed": True, "blocking": []},
+            "findings": [],
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -241,7 +243,7 @@ def test_review_transport_records_one_typed_result_and_no_duplicate_review(
     assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 0
     restored = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert restored.review_outcome == "accepted"
-    assert json.loads(restored.review_result)["schema"] == "review_result.v2"
+    assert json.loads(restored.review_result)["schema"] == "review_records.v1"
     with pytest.raises(SystemExit, match="exactly one top-level Code Review controller"):
         orchestrate.plan_units(
             {
@@ -1338,7 +1340,7 @@ def test_review_transport_records_a_review_run(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A review run is stored verbatim and routes to the same outcome words as review_result.v2."""
+    """A review run is stored verbatim and routes to the outcome words the note check knows."""
     _write_run(repo, [_controller_row()])
     monkeypatch.chdir(repo)
     raw = json.dumps(
