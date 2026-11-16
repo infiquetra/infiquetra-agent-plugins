@@ -1579,6 +1579,104 @@ def test_mutants_keep_the_fixed_timeout_when_the_config_does_not_set_one(
     assert "--timeout" in _mutant_argv(tmp_path, config)
 
 
+_MUTANTS_CONFIG_PATH = ".cargo/mutants.toml"
+
+
+def _mutants_run_with_configs(
+    tmp_path: Path, *, base_config: str | None, head_config: str | None,
+) -> tuple[list[str], dict[str, str | None]]:
+    """Run cargo-mutants over a change. Returns its argv and the config file it saw."""
+    repo, source = _mutants_repo(tmp_path)
+    if base_config is not None:
+        (repo / ".cargo").mkdir(exist_ok=True)
+        (repo / _MUTANTS_CONFIG_PATH).write_text(base_config, encoding="utf-8")
+    base = _commit(repo, "base")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("    a + b\n", "    a + b + 0\n"),
+        encoding="utf-8",
+    )
+    if head_config is not None:
+        (repo / ".cargo").mkdir(exist_ok=True)
+        (repo / _MUTANTS_CONFIG_PATH).write_text(head_config, encoding="utf-8")
+    head = _commit(repo, "head")
+    snapshots: list[tuple[list[str], bool | None, dict[str, str | None]]] = []
+    runner = _Calls(
+        base, "", code=2,
+        files={"mutants.out/outcomes.json": _fixture("mutants-27.1.0-exit-2.json")},
+        watch=(_MUTANTS_CONFIG_PATH,), snapshots=snapshots,
+    )
+    assert _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), tmp_path / "out",
+        tmp_path / "home", [_adapter("cargo-mutants")], runner,
+    ) == 0
+    runs = _mutant_runs(runner)
+    assert len(runs) == 1
+    seen = [
+        state for argv, _at_base, state in snapshots
+        if Path(argv[0]).name == "cargo-mutants" and "--version" not in argv
+    ]
+    assert len(seen) == 1
+    return runs[0], seen[0]
+
+
+def test_mutants_strip_a_config_that_only_head_adds(tmp_path: Path) -> None:
+    """Issue 324: a reviewed branch cannot add .cargo/mutants.toml to steer cargo-mutants."""
+    argv, seen = _mutants_run_with_configs(
+        tmp_path, base_config=None,
+        head_config="timeout_multiplier = 8\nminimum_test_timeout = 90\n",
+    )
+    assert seen[_MUTANTS_CONFIG_PATH] is None
+    assert argv[argv.index("--timeout") + 1] == str(A._MUTANT_TEST_TIMEOUT)
+
+
+def test_mutants_strip_a_head_config_that_would_disable_mutation(tmp_path: Path) -> None:
+    _argv, seen = _mutants_run_with_configs(
+        tmp_path, base_config=None, head_config='exclude_globs = ["**/*.rs"]\n',
+    )
+    assert seen[_MUTANTS_CONFIG_PATH] is None
+
+
+def test_mutants_use_the_base_config_when_head_changes_it(tmp_path: Path) -> None:
+    """Issues 253 and 260 still hold: the base commit's settings reach cargo-mutants."""
+    base_config = 'timeout_multiplier = 8\ntest_tool = "cargo"\n'
+    argv, seen = _mutants_run_with_configs(
+        tmp_path, base_config=base_config, head_config='exclude_globs = ["**/*.rs"]\n',
+    )
+    assert seen[_MUTANTS_CONFIG_PATH] == base_config
+    assert "--timeout" not in argv
+
+
+def test_mutants_use_the_base_config_when_head_adds_a_timeout_to_it(tmp_path: Path) -> None:
+    base_config = 'test_tool = "cargo"\n'
+    argv, seen = _mutants_run_with_configs(
+        tmp_path, base_config=base_config, head_config="timeout_multiplier = 8\n",
+    )
+    assert seen[_MUTANTS_CONFIG_PATH] == base_config
+    assert argv[argv.index("--timeout") + 1] == str(A._MUTANT_TEST_TIMEOUT)
+
+
+def test_mutants_base_config_reaches_cargo_mutants_unchanged(tmp_path: Path) -> None:
+    config = "minimum_test_timeout = 90\n"
+    argv, seen = _mutants_run_with_configs(tmp_path, base_config=config, head_config=None)
+    assert seen[_MUTANTS_CONFIG_PATH] == config
+    assert "--timeout" not in argv
+
+
+def test_strip_settings_removes_the_mutants_config_from_the_scanned_copy(tmp_path: Path) -> None:
+    root = tmp_path / "copy"
+    (root / ".cargo").mkdir(parents=True)
+    (root / ".cargo" / "mutants.toml").write_text("timeout_multiplier = 8\n", encoding="utf-8")
+    (root / "mutants.toml").write_text("kept = true\n", encoding="utf-8")
+    assert A._repository_sets_mutant_timeout(root) is True
+    notes = T._strip_settings(root)
+    assert not (root / ".cargo" / "mutants.toml").exists()
+    assert (root / "mutants.toml").is_file()
+    assert [note["input"] for note in notes if note["input"].endswith("mutants.toml")] == [
+        ".cargo/mutants.toml"
+    ]
+    assert A._repository_sets_mutant_timeout(root) is False
+
+
 def test_mutants_unparseable_report_keeps_the_raw_output(tmp_path: Path) -> None:
     output = _mutants_exit(tmp_path, 1, "not json\n")
     degraded = _degraded(output, "cargo-mutants")

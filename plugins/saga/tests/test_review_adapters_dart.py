@@ -1023,3 +1023,62 @@ def test_dart_shuffle_runs_differing_in_interleaving_record_identical_bytes(
     assert files == {"test/a_test.dart", "test/b_test.dart"}
     for name in ("findings.json", "degraded.json", "outcomes.json"):
         assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+
+
+# ---------------------------------------------------------------------------
+# Issue 324: dependencies that only the reviewed head declares.
+# ---------------------------------------------------------------------------
+
+_BARE_PUBSPEC = "name: example\nenvironment:\n  sdk: ^3.5.0\n"
+_HEAD_DEPENDENCY_PUBSPEC = _BARE_PUBSPEC + "dependencies:\n  path: ^1.9.0\n"
+_HEAD_TEST_PUBSPEC = _BARE_PUBSPEC + "dev_dependencies:\n  test: ^1.25.0\n"
+
+
+def _head_declared_context(tmp_path: Path, *, head_pubspec: str, base_pubspec: str) -> Any:
+    """A scan tree with ``head_pubspec`` and no ``.dart_tool``, over a base pubspec."""
+    root = tmp_path / "scan"
+    (root / "lib").mkdir(parents=True)
+    (root / "pubspec.yaml").write_text(head_pubspec, encoding="utf-8")
+    (root / "lib" / "example.dart").write_text("int add(int a, int b) => a + b;\n", encoding="utf-8")
+    staged = tmp_path / "staged-base" / "pubspec.yaml"
+    staged.parent.mkdir()
+    staged.write_text(base_pubspec, encoding="utf-8")
+    return T.ScanContext(
+        repo=root, root=root, home=tmp_path / "home",
+        base_files=(("pubspec.yaml", staged),), base="a" * 40, head="b" * 40,
+    )
+
+
+def test_dart_analyze_detects_dependencies_that_only_head_declares(tmp_path: Path) -> None:
+    context = _head_declared_context(
+        tmp_path, head_pubspec=_HEAD_DEPENDENCY_PUBSPEC, base_pubspec=_BARE_PUBSPEC,
+    )
+    assert not (context.root / ".dart_tool").exists()
+    with pytest.raises(T.ToolGap) as caught:
+        A._invoke_dart_analyze(context)
+    assert caught.value.reason == "deps-missing"
+    assert caught.value.row == "correctness.type-error"
+
+
+def test_dart_shuffle_detects_a_test_dependency_that_only_head_declares(tmp_path: Path) -> None:
+    context = _head_declared_context(
+        tmp_path, head_pubspec=_HEAD_TEST_PUBSPEC, base_pubspec=_BARE_PUBSPEC,
+    )
+    with pytest.raises(T.ToolGap) as caught:
+        A._invoke_dart_shuffle(context)
+    assert caught.value.reason == "deps-missing"
+    assert caught.value.row == "testing.flaky-order-or-network"
+
+
+def test_dart_analyze_with_no_dependencies_anywhere_still_runs(tmp_path: Path) -> None:
+    context = _head_declared_context(
+        tmp_path, head_pubspec=_BARE_PUBSPEC, base_pubspec=_BARE_PUBSPEC,
+    )
+    assert A._invoke_dart_analyze(context) == ["dart", "analyze"]
+
+
+def test_dart_shuffle_without_a_test_dependency_anywhere_stays_silent(tmp_path: Path) -> None:
+    context = _head_declared_context(
+        tmp_path, head_pubspec=_BARE_PUBSPEC, base_pubspec=_BARE_PUBSPEC,
+    )
+    assert A._invoke_dart_shuffle(context) == []

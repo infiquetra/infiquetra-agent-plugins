@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -3144,3 +3145,92 @@ def test_a_runner_umask_overrides_the_parents_mask_for_the_child_only(tmp_path: 
 def test_a_runner_without_umask_lets_the_child_inherit_the_parents_mask(tmp_path: Path) -> None:
     assert _mode_written_by(None, 0o077, tmp_path) == 0o600
     assert _mode_written_by(None, 0o022, tmp_path) == 0o644
+
+
+# ---------------------------------------------------------------------------
+# Issue 324: a dependency-audit base scan goes stale, because advisories change
+# while the base commit does not.
+# ---------------------------------------------------------------------------
+
+_DEPENDENCY_ROWS = ("security.dependency-high", "security.dependency-medium-low")
+_CACHE_FRESHNESS_SECONDS = 24 * 60 * 60
+
+
+def _age_base_cache(home: Path, seconds: float) -> int:
+    """Make every stored base scan look ``seconds`` old, by file time and by recorded time."""
+    entries = sorted((home / ".saga" / "review-cache").rglob("*.json"))
+    old = time.time() - seconds
+    for entry in entries:
+        body = json.loads(entry.read_text(encoding="utf-8"))
+        stamp = body.get("cached_at")
+        if isinstance(stamp, bool):
+            pass
+        elif isinstance(stamp, (int, float)):
+            body["cached_at"] = old
+        elif isinstance(stamp, str):
+            body["cached_at"] = datetime.fromtimestamp(old, tz=timezone.utc).isoformat()
+        entry.write_text(json.dumps(body, sort_keys=True), encoding="utf-8")
+        os.utime(entry, (old, old))
+    return len(entries)
+
+
+def _dependency_audit_runs(tmp_path: Path, adapter: Any) -> tuple[Any, str, str]:
+    """Returns a function that runs the adapter once and lists the commits it scanned."""
+    repo, base, head = _pair(tmp_path)
+    scanned: list[str] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        scanned.append(_git(cwd, "rev-parse", "HEAD"))
+        return T.ProcessResult(0, "scan\n")
+
+    home = tmp_path / "home"
+    profile = _bare_profile(tmp_path)
+    counter = [0]
+
+    def once() -> list[str]:
+        counter[0] += 1
+        scanned.clear()
+        code = _run(
+            repo, base, head, profile, tmp_path / f"out-{counter[0]}", home,
+            adapters=[adapter], runner=_Calls(handler),
+        )
+        assert code == 0
+        return list(scanned)
+
+    return once, base, head
+
+
+def test_a_dependency_audit_base_scan_written_in_this_run_is_reused(tmp_path: Path) -> None:
+    adapter = _stub(id="dependency-audit", tool="dependency-audit",
+                    comparison="base-head", rows=_DEPENDENCY_ROWS)
+    once, base, head = _dependency_audit_runs(tmp_path, adapter)
+    first = once()
+    assert base in first and head in first
+    second = once()
+    assert base not in second
+    assert head in second
+
+
+def test_a_dependency_audit_base_scan_older_than_a_day_is_scanned_again(tmp_path: Path) -> None:
+    adapter = _stub(id="dependency-audit", tool="dependency-audit",
+                    comparison="base-head", rows=_DEPENDENCY_ROWS)
+    once, base, head = _dependency_audit_runs(tmp_path, adapter)
+    assert base in once()
+    assert base not in once()
+    assert _age_base_cache(tmp_path / "home", _CACHE_FRESHNESS_SECONDS + 60 * 60) == 1
+    stale = once()
+    assert base in stale, "a stale dependency-audit base scan was served from the cache"
+    assert head in stale
+    # The rescan wrote a fresh entry, so the next run reuses it without scanning base.
+    assert base not in once()
+
+
+def test_a_dependency_audit_base_scan_just_inside_a_day_is_still_reused(tmp_path: Path) -> None:
+    adapter = _stub(id="dependency-audit", tool="dependency-audit",
+                    comparison="base-head", rows=_DEPENDENCY_ROWS)
+    once, base, _head = _dependency_audit_runs(tmp_path, adapter)
+    assert base in once()
+    assert _age_base_cache(tmp_path / "home", _CACHE_FRESHNESS_SECONDS - 60 * 60) == 1
+    assert base not in once()
