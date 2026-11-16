@@ -16,6 +16,8 @@
 
 **Read-only follow-up.** A supplemental partial-clone regression exposed Git's lazy fetching during object reads. Scan-owned Git commands now disable lazy fetching and deny transports, so missing local objects produce an incomplete result without changing the target. All four supplemental runtime checks pass after that correction.
 
+**Operator scope ruling.** Secret redaction remains strictly gitleaks-only under issue 321 Notes/conventions and KTD7/T21; non-gitleaks adapter reporting retains existing semantics. The portable entry script and skill stay co-located in `plugins/saga/`.
+
 **Revisit when.** The independent plan review or implementation proves the existing seam insufficient, an adapter changes its execution/network behavior, a new security row cannot be selected automatically, or the operator requests history scanning. Any change to existing review output, tools, dependencies, pins or scope returns for an Architect ruling.
 
 ---
