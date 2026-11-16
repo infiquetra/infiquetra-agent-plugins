@@ -11,6 +11,10 @@ The catalog requires `python>=3.12`.
 
 ## [Unreleased]
 
+- Give `targeted-reviewer` a dedicated `targeted-review` work shape at Sonnet/high,
+  with no unattended step-down, matching Saga's default launch tier. Other judgment
+  roles retain their defaults; the work shape supports normal vendor translation.
+
 ### Fixed
 
 - `answer_confidence` no longer reads a boolean confidence as 1.0; it gives `None`, so a

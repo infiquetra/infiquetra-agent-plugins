@@ -129,11 +129,14 @@ def _base_file(context: ScanContext, name: str) -> Path | None:
 
 
 def _base_json(context: ScanContext, name: str) -> dict[str, object]:
-    staged = _base_file(context, name)
-    if staged is None:
+    return _read_json(_base_file(context, name))
+
+
+def _read_json(path: Path | None) -> dict[str, object]:
+    if path is None:
         return {}
     try:
-        data = json.loads(staged.read_text(encoding="utf-8-sig"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
@@ -159,13 +162,25 @@ def _stage_first_base(context: ScanContext, names: tuple[str, ...]) -> Path | No
 
 
 _JS_CONFIG_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".mts", ".cts")
+# JavaScript also permits comments between a loader, its parentheses and its argument.
+_CONFIG_GAP = r"(?:\s|/\*[\s\S]*?\*/|//[^\n]*(?:\n|$))*"
 _RELATIVE_IMPORT = re.compile(
-    r"(?:from\s+|import\s+|require\s*\(|import\s*\()\s*['\"]\.[./]"
+    rf"(?:\bfrom{_CONFIG_GAP}|\bimport{_CONFIG_GAP}|"
+    rf"\b(?:require|import){_CONFIG_GAP}\({_CONFIG_GAP})['\"`]\.[./]"
 )
+# Only a complete literal argument can be resolved without evaluating the config.
+# Escapes and template substitutions also require evaluation, so decline them.
+_COMPUTED_IMPORT = re.compile(
+    rf"\b(?:import|require){_CONFIG_GAP}\((?!{_CONFIG_GAP}(?:"
+    r"\"[^\"\\]*\"|'[^'\\]*'|`[^`\\$]*`"
+    rf"){_CONFIG_GAP}\))"
+)
+_DYNAMIC_LOADER = re.compile(r"\bcreateRequire\b")
+_INTERPOLATED_IMPORT = re.compile(rf"\b(?:from|import){_CONFIG_GAP}`[^`]*\$\{{")
 
 
 def _refuse_relative_imports(staged: Path | None, row: str) -> None:
-    """Decline a base config that imports a project-relative file.
+    """Decline relative imports and imports that require config evaluation.
 
     The staged copy runs in the scanned tree, so a relative import resolves
     to that tree's file, which the reviewed commit controls. Raw text on
@@ -178,7 +193,9 @@ def _refuse_relative_imports(staged: Path | None, row: str) -> None:
         text = staged.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return
-    if _RELATIVE_IMPORT.search(text):
+    if any(pattern.search(text) for pattern in (
+        _RELATIVE_IMPORT, _COMPUTED_IMPORT, _DYNAMIC_LOADER, _INTERPOLATED_IMPORT,
+    )):
         raise ToolGap("config-imports-head", row)
 
 
@@ -216,11 +233,12 @@ def _stage_tsconfig(context: ScanContext) -> None:
 
 
 def _declared_dependencies(context: ScanContext) -> bool:
-    package = _base_json(context, "package.json")
-    for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
-        value = package.get(key)
-        if isinstance(value, dict) and value:
-            return True
+    packages = (_base_json(context, "package.json"), _read_json(context.root / "package.json"))
+    for package in packages:
+        for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+            value = package.get(key)
+            if isinstance(value, dict) and value:
+                return True
     return False
 
 
@@ -401,7 +419,8 @@ def _base_compiler_options(
     for link in chain:
         if not isinstance(link, str) or link.startswith("."):
             raise ToolGap("config-unresolved", "correctness.type-error")
-        target = context.root / "node_modules" / f"{link}.json"
+        filename = link if link.endswith(".json") else f"{link}.json"
+        target = context.root / "node_modules" / filename
         package_dir = context.root / "node_modules" / link
         if package_dir.is_dir():
             target = package_dir / "tsconfig.json"
@@ -865,13 +884,15 @@ def _invoke_jest_shuffle(context: ScanContext) -> list[str]:
     if staged is None:
         package = _base_json(context, "package.json")
         key = package.get("jest")
-        if isinstance(key, dict):
-            staged = context.root / "jest.config.saga.json"
-            staged.write_text(json.dumps(key, indent=2) + "\n", encoding="utf-8")
-    if staged is not None:
-        argv.extend(["--config", str(staged)])
-    elif _files_with(context.root, (".ts", ".tsx", ".mts", ".cts")):
-        raise ToolGap("not-configured", "testing.flaky-order-or-network")
+        if not isinstance(key, dict):
+            if _files_with(context.root, (".ts", ".tsx", ".mts", ".cts")):
+                raise ToolGap("not-configured", "testing.flaky-order-or-network")
+            key = {}
+        # Always select a base-owned config, including explicit defaults, so Jest
+        # cannot discover a package.json#jest block introduced by the change.
+        staged = context.root / "jest.config.saga.json"
+        staged.write_text(json.dumps(key, indent=2) + "\n", encoding="utf-8")
+    argv.extend(["--config", str(staged)])
     report = _shuffle_report(context, "jest")
     report.unlink(missing_ok=True)
     argv.extend(review_node_reports.report_arguments("jest", report))

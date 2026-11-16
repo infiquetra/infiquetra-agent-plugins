@@ -38,6 +38,7 @@ from fleet_commons.tier_palette import EFFORTS, MODELS  # noqa: E402
 # to preserve the sonnet-vs-haiku distinction the prose table draws within one row.
 SKILL_MD_ROWS = (
     "judgment",
+    "targeted-review",
     "implementation",
     "mechanical",
     "read-only-survey",
@@ -495,14 +496,27 @@ def test_resolve_role_passes_the_raise_through(no_overlay: pathlib.Path) -> None
     assert (decision.tier, decision.source) == ("opus/high", "jev-raise")
 
 
-def test_the_targeted_reviewer_resolves_at_the_judgment_tier(no_overlay: pathlib.Path) -> None:
-    """Issue #158: one reviewer per review, tiered like the lens reviewer it will replace."""
+def test_the_targeted_reviewer_resolves_at_its_own_sonnet_tier(no_overlay: pathlib.Path) -> None:
+    """Issue #324: targeted review has a bounded tier independent of general judgment."""
     decision = staffing.resolve_role("targeted-reviewer", require_lens=False)
-    assert (decision.vendor, decision.model, decision.effort) == ("claude", "opus", "high")
-    assert decision.work_shape == "judgment"
+    assert (decision.vendor, decision.model, decision.effort) == ("claude", "sonnet", "high")
+    assert decision.work_shape == "targeted-review"
+    assert staffing.unattended_step_down("targeted-review") is False
+    assert staffing.resolve_shape("judgment").tier == "opus/high"
     # It reviews, so asking without saying it needs no lens fails loud rather than guessing.
     with pytest.raises(staffing.StaffingError, match="needs a lens"):
         staffing.resolve_role("targeted-reviewer")
+
+
+def test_targeted_review_still_translates_for_a_pinned_vendor(
+    no_overlay: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _registry_with_worker_vendor(no_overlay, monkeypatch, "targeted-reviewer", "codex")
+    decision = staffing.resolve_role("targeted-reviewer", require_lens=False)
+    assert decision.vendor == "codex"
+    assert decision.model == staffing.vendors()["codex"]["models"]["gpt-5.5"]
+    assert decision.effort == "high"
+    assert decision.work_shape == "targeted-review"
 
 
 def test_undeclared_build_units_run_at_the_worker_shape() -> None:

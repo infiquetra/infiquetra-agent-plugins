@@ -171,10 +171,10 @@ _C4C_SETTINGS_NAMES = (
 _STRIP_NAMES = _SETTINGS_NAMES + _C4C_SETTINGS_NAMES
 #: Cargo's config is matched by path, never by the bare name: a bare ``config.toml``
 #: would strip unrelated project files.
-_STRIP_PATHS = (".cargo/config.toml",)
+_STRIP_PATHS = (".cargo/config.toml", ".cargo/mutants.toml")
 #: Directory names whose whole file list is stripped at any depth. Cargo reads
 #: ``.cargo/config`` too and prefers it when both names exist.
-_STRIP_DIR_FILES = {".cargo": ("config", "config.toml")}
+_STRIP_DIR_FILES = {".cargo": ("config", "config.toml", "mutants.toml")}
 _ENV_COPIED = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 _ENV_WINDOWS = ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT")
 # needle, lens, tool, reason. One degraded input per changed file that contains the needle.
@@ -4234,6 +4234,10 @@ def _cache_path(home: Path, adapter: Adapter, version: str, base_sha: str, setti
     return _saga(home) / "review-cache" / adapter.id / version / base_sha / f"{settings}.json"
 
 
+# Advisory data can change while the base commit and tool version stay fixed.
+_DEPENDENCY_CACHE_MAX_AGE = 86400
+
+
 def _write_base_cache(
     home: Path,
     adapter: Adapter,
@@ -4246,7 +4250,10 @@ def _write_base_cache(
 ) -> None:
     target = _cache_path(home, adapter, version, base_sha, settings)
     target.parent.mkdir(parents=True, exist_ok=True)
-    body = {"key": dict(key), "hits": [asdict(hit) for hit in hits], "ran": ran}
+    body = {
+        "key": dict(key), "hits": [asdict(hit) for hit in hits], "ran": ran,
+        "cached_at": time.time(),
+    }
     target.write_text(json.dumps(body, sort_keys=True), encoding="utf-8")
     target.chmod(0o600)
 
@@ -4271,6 +4278,20 @@ def _read_base_cache(
         return None
     if not isinstance(raw.get("ran"), bool):
         return None
+    if any(row.startswith("security.dependency-") for row in adapter.rows):
+        try:
+            # Older entries have no timestamp; their file time is the fallback.
+            # Retain the older clock if a copy or rewrite changed the file time.
+            mtime = target.stat().st_mtime
+            cached_at = raw.get("cached_at", mtime)
+            if isinstance(cached_at, bool) or not isinstance(cached_at, (int, float)):
+                return None
+            now = time.time()
+            if not all(0 <= now - stamp <= _DEPENDENCY_CACHE_MAX_AGE
+                       for stamp in (cached_at, mtime)):
+                return None
+        except OSError:
+            return None
     items = raw.get("hits")
     if not isinstance(items, list):
         return None

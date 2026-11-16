@@ -141,31 +141,36 @@ def _stage_base(context: ScanContext, name: str, dest: str | None = None) -> Pat
 
 
 def _base_pubspec(context: ScanContext) -> dict[str, object]:
-    staged = _base_file(context, _PUBSPEC)
-    if staged is None:
+    return _read_pubspec(_base_file(context, _PUBSPEC))
+
+
+def _read_pubspec(path: Path | None) -> dict[str, object]:
+    if path is None:
         return {}
     try:
-        data = yaml.safe_load(staged.read_text(encoding="utf-8"))
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         return {}
     return data if isinstance(data, dict) else {}
 
 
 def _declared_dependencies(context: ScanContext) -> bool:
-    package = _base_pubspec(context)
-    for key in _PUBSPEC_DEP_KEYS:
-        value = package.get(key)
-        if isinstance(value, dict) and value:
-            return True
+    packages = (_base_pubspec(context), _read_pubspec(context.root / _PUBSPEC))
+    for package in packages:
+        for key in _PUBSPEC_DEP_KEYS:
+            value = package.get(key)
+            if isinstance(value, dict) and value:
+                return True
     return False
 
 
 def _has_test_dep(context: ScanContext) -> bool:
-    package = _base_pubspec(context)
-    for key in ("dependencies", "dev_dependencies"):
-        value = package.get(key)
-        if isinstance(value, dict) and "test" in value:
-            return True
+    packages = (_base_pubspec(context), _read_pubspec(context.root / _PUBSPEC))
+    for package in packages:
+        for key in ("dependencies", "dev_dependencies"):
+            value = package.get(key)
+            if isinstance(value, dict) and "test" in value:
+                return True
     return False
 
 

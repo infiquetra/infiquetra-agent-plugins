@@ -1013,7 +1013,8 @@ def test_jest_shuffle_failure_carries_seed_and_flags(
     assert "--runInBand" in argv
     assert "--json" in argv and "--reporters=default" in argv
     assert any(arg.startswith("--outputFile=") for arg in argv)
-    assert "--config" not in argv
+    assert "--config" in argv
+    assert Path(argv[argv.index("--config") + 1]).name == "jest.config.saga.json"
     findings = _read(output, "findings.json")
     assert len(findings) == 1
     assert findings[0]["rule"]["ref"] == "shuffle-failure"

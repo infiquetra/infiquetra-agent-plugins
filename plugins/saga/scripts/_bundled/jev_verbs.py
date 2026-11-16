@@ -3,8 +3,8 @@
 # source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_verbs.py
-# source-sha256: 0fb48e0a627e2a4e4098ede45a7dd73be8141abc8ea1e878f9b3ce7aa79d6743
-# output-sha256: 0fb48e0a627e2a4e4098ede45a7dd73be8141abc8ea1e878f9b3ce7aa79d6743
+# source-sha256: 56e4173536f7e9a524d956614911642c61a4912fdcaa07669592d72543697653
+# output-sha256: 56e4173536f7e9a524d956614911642c61a4912fdcaa07669592d72543697653
 # --- end generated bundle stamp ---
 """The named-verb registry (plan U5, requirement R14).
 
@@ -32,7 +32,8 @@ from typing import Any
 # data with no file I/O; test_staffing_suggest.py's drift test reads staffing.json and fails in
 # both directions when a shape is missing here, named here and not there, or tiered differently.
 TIER_POLICY = (
-    "Staffing defaults by work shape: judgment -> opus/high; implementation -> sonnet/high; "
+    "Staffing defaults by work shape: judgment -> opus/high; targeted-review -> sonnet/high; "
+    "implementation -> sonnet/high; "
     "implementation-test-gated -> haiku/xhigh; mechanical -> haiku/xhigh; purely-mechanical -> "
     "haiku/medium; read-only-survey -> haiku/max; offload-test-gated -> haiku/medium; offload -> "
     "sonnet/high; second-opinion -> opus/high; divergence -> opus/high. Models from weakest to "

@@ -445,6 +445,7 @@ def _invoke_cargo_mutants(context: ScanContext) -> list[str]:
     ):
         raise ToolGap("nothing-to-mutate", _MUTANT_ROW)
     _stage_toolchain(context)
+    _stage_base(context, _MUTANTS_CONFIG)
     diff = _write_in_diff(context)
     # --workspace: without it cargo-mutants mutates only the package in the
     # current directory, so a change in any other workspace member is never tested.
