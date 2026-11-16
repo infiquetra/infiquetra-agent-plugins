@@ -69,6 +69,7 @@ def _install_hc_transport(tmp_path: Path, monkeypatch: Any) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "hc.log"
+    log.touch()  # a run that makes no hc call still has a log to read
     executable = bin_dir / "hc"
     ls_json = json.dumps(
         {
