@@ -1,5 +1,24 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-16
+
+### Redelivery must not require a session-creation executable
+
+**Evidence.** PR #312's Linux plugin lane refused the Codex placeholder recovery with
+`no 'agents' on PATH`, although its fixture already supplied the existing session through `hc`.
+The same run rejected the port plan for missing its three required section markers.
+
+**Mechanism.** Redelivery built a fresh launch command only to populate preflight arguments.
+That unnecessarily resolved the creation wrapper and attributed a reconstructed command as
+launch evidence. A host with `agents` installed concealed the dependency.
+
+**Fix.** Redelivery supplies no new launch arguments; session identity, readiness, account and
+composer checks still run. The subprocess regression names an absent creation wrapper, and the
+plan now carries `Key Technical Decisions`, `Implementation Units` and its `U1` prefix.
+
+**Generalizable rule.** Recovery into an existing resource must exercise only the dependencies
+it needs, and must not present a reconstructed request as evidence of an earlier action.
+
 ## 2026-11-15
 
 ### A Git object read can fetch into a partial clone

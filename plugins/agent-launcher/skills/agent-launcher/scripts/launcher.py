@@ -1846,7 +1846,7 @@ def _deliver(
     backend: str,
     *,
     review_elsewhere: bool,
-    argv: list[str],
+    argv: list[str] | None,
     since: float | None,
     wrote_before: bool,
 ) -> None:
@@ -2034,7 +2034,9 @@ def redeliver(unit: Any, backend: str = "inline", *, review_elsewhere: bool = Fa
         pane_id,
         backend,
         review_elsewhere=review_elsewhere,
-        argv=agent_argv(unit),
+        # A retry creates no session, so it has no new launch argv to attest.
+        # It must work with hc alone, even when the agents wrapper is absent.
+        argv=None,
         since=None,
         wrote_before=True,
     )

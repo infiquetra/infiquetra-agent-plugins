@@ -187,7 +187,7 @@ event client (2), kind names (1), preview (1).
 
 ---
 
-## Decisions made on Jeff's behalf
+## Key Technical Decisions made on Jeff's behalf
 
 Each one changes how Orchestrate behaves, so each takes the conservative side.
 
@@ -287,15 +287,18 @@ Each one changes how Orchestrate behaves, so each takes the conservative side.
 
 ---
 
-## Units
+## Implementation Units
 
-1. **launcher.py** — rows 1 to 20, with `launcher.run` stripping the two caller variables for
+U1. **launcher.py** — rows 1 to 20, with `launcher.run` stripping the two caller variables for
    `hc` (D5). Tests: `plugins/agent-launcher/tests/test_launcher_contract.py` fakes move from
    `herdr` argv to `hc` argv and hc's JSON shapes.
-2. **roster.py** — rows 21 to 25. Tests: `plugins/agent-launcher/tests/test_roster.py`.
-3. **orchestrate.py** — rows 26 to 39; `herdr_events.py` removed and dropped from
+
+U2. **roster.py** — rows 21 to 25. Tests: `plugins/agent-launcher/tests/test_roster.py`.
+
+U3. **orchestrate.py** — rows 26 to 39; `herdr_events.py` removed and dropped from
    `ports/orchestrate.json`. Tests across `plugins/orchestrate/tests/`.
-4. **Release notes** — `[Unreleased]` CHANGELOG entries (D16), Orchestrate's README, SKILL.md
+
+U4. **Release notes** — `[Unreleased]` CHANGELOG entries (D16), Orchestrate's README, SKILL.md
    and command text, and engineering-journal entries.
 
 ---

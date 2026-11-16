@@ -5396,6 +5396,8 @@ def test_redeliver_cli_into_codex_showing_its_placeholder_takes_its_flags_from_t
         "HC_APP": "codex",
         "HC_SCREEN": CODEX_EMPTY_BOX,
     }
+    # A deliberately missing wrapper makes this regression independent of the host PATH.
+    env["ORCHESTRATE_AGENT_LAUNCHER"] = "missing-launch-wrapper-for-redelivery"
     argv = [sys.executable, str(LAUNCHER), "redeliver", "--prompt", "Reply with the word ready."]
     proc = subprocess.run(
         [*argv, "--receipt-json", str(receipt_path)],
@@ -5410,6 +5412,7 @@ def test_redeliver_cli_into_codex_showing_its_placeholder_takes_its_flags_from_t
     assert receipt["prompt_delivered"] is True
     assert receipt["input_box"] == "empty"
     assert receipt["input_box_placeholder"] == "Ask Codex to do anything"
+    assert receipt["permission_resolved"]["confirmed_from"] is None
     sends = [line.split(" ", 2) for line in log.read_text(encoding="utf-8").splitlines()]
     sends = [c for c in sends if c[:1] == ["send"]]
     assert len(sends) == 1 and sends[0][1] == "t5"
