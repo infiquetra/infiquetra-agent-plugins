@@ -2,6 +2,27 @@
 
 ## 2026-11-16
 
+### Release the prepared-review cutover as coordinated catalog versions
+
+**Decision.** Release Saga 2.0.0, Orchestrate 7.0.0, Agent Launcher 2.0.0 and
+Fleet Core 0.34.0 together. Orchestrate's Claude adapter requires Saga and
+Agent Launcher >=2.0.0. Mission Control 2.21.6, Agy 0.6.6 and Codex 0.1.9
+carry regenerated Fleet Core bundles. This is the catalog release portion of issue 147.
+
+**Rationale.** The prepared-review contract and the session transport replace prior
+interfaces and need matching major releases. Fleet Core's staffing changes receive
+a new source version, and consumers name that version in generated stamps. UniFi's
+retry-module contents are unchanged; only its generated stamp moves, so its package
+version and current assessment remain as in the earlier release pattern.
+
+**Compatibility.** Six new release notices preserve the earlier client assessments
+as history and state that these versions have no fresh multi-client assessment.
+Local repository and native manifest checks do not invent assessment results.
+The calibration remains `no-run`, and every calibration component is unchanged.
+
+**Revisit when.** Client rollout and live smoke evidence complete issue 147, or a
+fresh compatibility assessment replaces a release notice.
+
 ### Switch code review to prepared packets and current review records
 
 **Decision.** [Issue #161](https://github.com/infiquetra/infiquetra-agent-plugins/issues/161)

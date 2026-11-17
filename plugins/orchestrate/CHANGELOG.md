@@ -1,14 +1,14 @@
 # Changelog
 
-## [Unreleased]
+## [7.0.0] - 2026-11-16
 
 ### Changed
 
 - Consume only `review_records.v1` review runs; refuse retired envelopes while preserving their raw input for diagnosis.
 
-Breaking: the release that ships this is a major version. Orchestrate drives sessions through herdr core (`hc`) and the Herdr app instead of old Herdr,
+Breaking: this major release replaces the old session transport. Orchestrate drives sessions through herdr core (`hc`) and the Herdr app instead of old Herdr,
 whose sessions the window does not show. Launches, sends, reads and closes come from
-agent-launcher's matching unreleased change; this one moves Orchestrate's own waits and readings. The plan is
+agent-launcher 2.0.0; this one moves Orchestrate's own waits and readings. The plan is
 `docs/plans/2026-11-10-orchestrate-hc-port-plan.md`.
 
 ### Changed
@@ -26,9 +26,8 @@ agent-launcher's matching unreleased change; this one moves Orchestrate's own wa
 - `clean` no longer closes Herdr workspaces. Workspaces belong to the window, closing one ends every
   terminal in it, and hc cannot close one; a workspace the record lists is reported as kept for the
   window. No code path records one today.
-- The release that ships this must raise the Claude adapter's agent-launcher floor
-  (`>=1.7.2` today) to the agent-launcher version released with it: a launcher below that drives
-  old Herdr.
+- Require agent-launcher `>=2.0.0` and saga `>=2.0.0` in the Claude adapter so the
+  session transport and review-record contract match this release.
 - `tab_id` and `pane_id` on a unit now hold the session's hc terminal address.
 
 ### Removed

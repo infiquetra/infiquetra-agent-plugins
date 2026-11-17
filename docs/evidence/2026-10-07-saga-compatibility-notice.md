@@ -21,3 +21,7 @@ listed in [its changelog](../../plugins/saga/CHANGELOG.md).
 ```json
 {"notice": "no client assessment has been run against saga 1.3.1, 1.3.2 or 1.3.3", "last_assessed": "2026-10-04-saga-compatibility-matrix.md"}
 ```
+
+The 2026-11-16 release is covered by
+[2026-11-16-saga-compatibility-notice.md](2026-11-16-saga-compatibility-notice.md).
+This earlier notice is retained as historical context.

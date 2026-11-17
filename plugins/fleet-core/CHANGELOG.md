@@ -9,7 +9,7 @@ describe the derived slice and are left as the record of those releases.
 
 The catalog requires `python>=3.12`.
 
-## [Unreleased]
+## [0.34.0] - 2026-11-16
 
 - Retire the per-lens reviewer staffing role and allow `targeted-reviewer` to resolve
   directly without a lens argument. The packet owns its lenses; staffing owns its tier.

@@ -1,5 +1,5 @@
 <!-- matrix-status: superseded -->
-<!-- superseded-by: 2026-10-07-saga-compatibility-notice.md -->
+<!-- superseded-by: 2026-11-16-saga-compatibility-notice.md -->
 <!-- superseded-reason: The package version moved from 1.3.0 to 1.3.1 for the 2026-10-07 release that re-tiers the fleet staffing defaults; no client assessment has been run against 1.3.1 yet. -->
 
 # Nine-client compatibility matrix — portable saga package (1.3.0)

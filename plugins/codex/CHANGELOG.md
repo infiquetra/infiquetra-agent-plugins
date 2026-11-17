@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.9] - 2026-11-16
+
+### Changed
+
+- Regenerate the bundled Fleet Core modules with source-version `0.34.0`.
+
 ## [0.1.8] - 2026-10-14
 
 ### Changed
