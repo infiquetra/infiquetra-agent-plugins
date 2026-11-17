@@ -2,6 +2,23 @@
 
 ## 2026-11-16
 
+### Tool locations and coverage gaps need their own boundaries
+
+**Evidence.** Issue #321's regression fixtures use zizmor 1.30.1's native JSON and
+its live workflow scan. They require the primary finding on line 7 to survive
+changed-line filtering. The scan fixture separately requires successful rows to
+remain `ran`, inapplicable rows to remain `skipped`, and only the row missing its
+rule cache to report `rule-cache-missing`.
+
+**Mechanism.** Synthetic location fixtures omitted the native nested local path,
+zero-based row and primary annotation. Separately, each adapter's output included
+repository-wide settings and suppression audit notes; treating every note as a
+coverage gap spread unrelated reasons across all rows.
+
+**Generalizable rule.** Exercise native tool output alongside synthetic fixtures,
+retain source-location priority, and distinguish an adapter's execution gaps from
+repository audit annotations before deriving coverage status.
+
 ### A moving runner label can change process supervision
 
 **Evidence.** Main's successful workflow run `43807743621` used Ubuntu 24.04;

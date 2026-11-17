@@ -70,6 +70,8 @@
   Agy 0.6.6 and Codex 0.1.9 carry regenerated bundles. The six installable
   packages have notices at `evidence/2026-11-16-<package>-compatibility-notice.md`;
   no fresh multi-client assessment is claimed. Fleet Core is a bundled library.
+  Saga subsequently moved to 2.0.1 for the workflow-location and scan-status fixes;
+  its 2026-11-16 notice now covers that patch without claiming a client assessment.
 - [Agent Launcher nine-client compatibility matrix, superseded 2026-10-14](evidence/2026-10-04-agent-launcher-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable
   agent-launcher package across four stages with fingerprint-bound

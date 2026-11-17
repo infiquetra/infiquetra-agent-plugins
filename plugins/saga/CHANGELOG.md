@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1] - 2026-11-16
+
+- Read zizmor 1.30.1's local workflow paths and zero-based source rows, preferring
+  the primary location so findings survive changed-line filtering.
+- Scope whole-repository row degradation to that adapter's actual gaps. Stripped
+  scanner settings and inline suppression audit notes no longer mark rows incomplete.
+
 ## [2.0.0] - 2026-11-16
 
 Breaking: prepared review packets and C1 review records replace the per-lens scoring flow.
