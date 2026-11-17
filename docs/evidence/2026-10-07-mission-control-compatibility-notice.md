@@ -21,3 +21,7 @@ listed in [its changelog](../../plugins/mission-control/CHANGELOG.md).
 ```json
 {"notice": "no client assessment has been run against mission-control 2.21.3, 2.21.4 or 2.21.5", "last_assessed": "2026-10-04-mission-control-compatibility-matrix.md"}
 ```
+
+The 2026-11-16 release is covered by
+[2026-11-16-mission-control-compatibility-notice.md](2026-11-16-mission-control-compatibility-notice.md).
+This earlier notice is retained as historical context.

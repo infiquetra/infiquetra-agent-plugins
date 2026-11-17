@@ -65,6 +65,11 @@
   mission-control, agy and codex moved again, and their 2026-10-07 notices now cover the new
   versions. house-style has no matrix to retire. None of these moves has a fresh client run,
   and the matrix is not a release gate.
+- The 2026-11-16 catalog release moves Saga to 2.0.0, Orchestrate to 7.0.0,
+  Agent Launcher to 2.0.0 and Fleet Core to 0.34.0. Mission Control 2.21.6,
+  Agy 0.6.6 and Codex 0.1.9 carry regenerated bundles. The six installable
+  packages have notices at `evidence/2026-11-16-<package>-compatibility-notice.md`;
+  no fresh multi-client assessment is claimed. Fleet Core is a bundled library.
 - [Agent Launcher nine-client compatibility matrix, superseded 2026-10-14](evidence/2026-10-04-agent-launcher-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable
   agent-launcher package across four stages with fingerprint-bound

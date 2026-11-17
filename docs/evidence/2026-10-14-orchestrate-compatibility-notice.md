@@ -17,3 +17,7 @@ notice as the end of the supersession chain.
 ```json
 {"notice": "no client assessment has been run against orchestrate 6.1.1", "last_assessed": "2026-10-04-orchestrate-compatibility-matrix.md"}
 ```
+
+The 2026-11-16 release is covered by
+[2026-11-16-orchestrate-compatibility-notice.md](2026-11-16-orchestrate-compatibility-notice.md).
+This earlier notice is retained as historical context.

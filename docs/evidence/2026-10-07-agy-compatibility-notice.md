@@ -21,3 +21,7 @@ listed in [its changelog](../../plugins/agy/CHANGELOG.md).
 ```json
 {"notice": "no client assessment has been run against agy 0.6.3, 0.6.4 or 0.6.5", "last_assessed": "2026-09-22-agy-compatibility-matrix.md"}
 ```
+
+The 2026-11-16 release is covered by
+[2026-11-16-agy-compatibility-notice.md](2026-11-16-agy-compatibility-notice.md).
+This earlier notice is retained as historical context.

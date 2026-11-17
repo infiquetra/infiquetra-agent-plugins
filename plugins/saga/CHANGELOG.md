@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## [2.0.0] - 2026-11-16
+
+Breaking: prepared review packets and C1 review records replace the per-lens scoring flow.
+Stored historical reviews remain preserved and unread by the active review path.
 
 - Switch `/code-review` to the prepared-packet review command and C1 review records.
   Retire the lens roster and scoring flow, remove admission lens and allowance questions,

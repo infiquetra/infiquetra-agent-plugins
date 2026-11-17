@@ -17,3 +17,7 @@ notice as the end of the supersession chain.
 ```json
 {"notice": "no client assessment has been run against agent-launcher 1.7.3", "last_assessed": "2026-10-04-agent-launcher-compatibility-matrix.md"}
 ```
+
+The 2026-11-16 release is covered by
+[2026-11-16-agent-launcher-compatibility-notice.md](2026-11-16-agent-launcher-compatibility-notice.md).
+This earlier notice is retained as historical context.

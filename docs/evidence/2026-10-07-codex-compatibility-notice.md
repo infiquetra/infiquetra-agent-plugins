@@ -21,3 +21,7 @@ listed in [its changelog](../../plugins/codex/CHANGELOG.md).
 ```json
 {"notice": "no client assessment has been run against codex 0.1.6, 0.1.7 or 0.1.8", "last_assessed": "2026-09-22-codex-compatibility-matrix.md"}
 ```
+
+The 2026-11-16 release is covered by
+[2026-11-16-codex-compatibility-notice.md](2026-11-16-codex-compatibility-notice.md).
+This earlier notice is retained as historical context.
