@@ -90,23 +90,35 @@ def _zizmor_location(item: dict) -> tuple[str, int | None]:
     if isinstance(locations, dict):
         locations = [locations]
     path = str(item.get("path") or ".github/workflows/workflow.yml")
-    line: int | None = None
+    candidates: list[tuple[bool, str, int | None]] = []
     for location in locations if isinstance(locations, list) else []:
         if not isinstance(location, dict):
             continue
         symbolic = location.get("symbolic") if isinstance(location.get("symbolic"), dict) else {}
         key = symbolic.get("key") if isinstance(symbolic.get("key"), dict) else {}
+        local = key.get("Local") if isinstance(key.get("Local"), dict) else {}
         concrete = location.get("concrete") if isinstance(location.get("concrete"), dict) else {}
-        path = str(
-            concrete.get("path") or key.get("path") or location.get("path") or path
+        candidate_path = str(
+            local.get("verbatim_path") or local.get("given_path")
+            or concrete.get("path") or key.get("path") or location.get("path") or path
         )
         start = concrete.get("start") if isinstance(concrete.get("start"), dict) else {}
         candidate = start.get("line") or location.get("line")
-        if isinstance(candidate, int):
-            line = candidate
-            break
-    if line is None and isinstance(item.get("line"), int):
-        line = int(item["line"])
+        span = concrete.get("location") if isinstance(concrete.get("location"), dict) else {}
+        point = span.get("start_point") if isinstance(span.get("start_point"), dict) else {}
+        row = point.get("row")
+        if type(row) is int and row >= 0:
+            candidate = row + 1
+        line = candidate if isinstance(candidate, int) else None
+        candidates.append((symbolic.get("kind") == "Primary", candidate_path, line))
+    # A related/hidden annotation can precede the actual finding location.
+    candidates.sort(key=lambda candidate: not candidate[0])
+    for _, candidate_path, line in candidates:
+        if line is not None:
+            return _rel(candidate_path), line
+    if candidates:
+        path = candidates[0][1]
+    line = item.get("line") if isinstance(item.get("line"), int) else None
     return _rel(path), line
 
 

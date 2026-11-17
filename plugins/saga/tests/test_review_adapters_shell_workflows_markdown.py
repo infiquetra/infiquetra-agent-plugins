@@ -701,6 +701,128 @@ def test_actionlint_live_reports_a_missing_need(tmp_path: Path) -> None:
     assert "job-needs" in _refs(output)
 
 
+_ZIZMOR_BASE = "name: ci\non: issues\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n"
+_ZIZMOR_HEAD = _ZIZMOR_BASE + '      - run: echo "${{ github.event.issue.title }}"\n'
+_ZIZMOR_SCAN_PATH = "/example/scratch/zizmor-src-head/.github/workflows/ci.yml"
+
+
+def _zizmor_location(kind: str, row: int, column: int, annotation: str) -> dict[str, Any]:
+    """One entry of ``locations`` in the JSON shape zizmor 1.30.1 prints.
+
+    The path is under ``symbolic.key.Local.verbatim_path``. The line is the 0-indexed
+    ``concrete.location.start_point.row``, so file line ``row + 1``.
+    """
+    return {
+        "symbolic": {
+            "key": {"Local": {"verbatim_path": _ZIZMOR_SCAN_PATH}},
+            "annotation": annotation,
+            "route": {"route": [{"Key": "jobs"}, {"Key": "check"}]},
+            "feature_kind": "Normal",
+            "kind": kind,
+        },
+        "concrete": {
+            "location": {
+                "start_point": {"row": row, "column": column},
+                "end_point": {"row": row + 1, "column": 0},
+                "offset_span": {"start": 42, "end": 139},
+            },
+            "feature": "inert feature text",
+            "comments": [],
+        },
+    }
+
+
+def _zizmor_real(
+    ident: str, severity: str, locations: list[dict[str, Any]]
+) -> dict[str, Any]:
+    return {
+        "ident": ident,
+        "desc": "inert description",
+        "url": f"https://docs.zizmor.sh/audits/#{ident}",
+        "determinations": {"confidence": "High", "severity": severity, "persona": "Regular"},
+        "locations": locations,
+        "ignored": False,
+        "fixes": [],
+    }
+
+
+def _zizmor_real_payload() -> str:
+    return json.dumps([
+        # Both locations sit on file line 4.
+        _zizmor_real("excessive-permissions", "Medium", [
+            _zizmor_location("Related", 3, 2, "this job"),
+            _zizmor_location("Primary", 3, 2, "default permissions used"),
+        ]),
+        # The Hidden and Related entries surround the Primary one. All sit on file line 7.
+        _zizmor_real("template-injection", "High", [
+            _zizmor_location("Hidden", 6, 8, "this step"),
+            _zizmor_location("Primary", 6, 23, "may expand into attacker-controllable code"),
+            _zizmor_location("Related", 6, 8, "this run block"),
+        ]),
+        # A Related location on file line 3 comes first. The Primary one is on file line 7.
+        _zizmor_real("unpinned-uses", "Medium", [
+            _zizmor_location("Related", 2, 0, "the job"),
+            _zizmor_location("Primary", 6, 8, "action is not pinned"),
+        ]),
+    ])
+
+
+def _zizmor_locations(output: Path) -> dict[str, tuple[str, Any]]:
+    return {
+        item["rule"]["ref"]: (item["location"]["file"], item["location"].get("lines", {}).get("start"))
+        for item in _read(output, "findings.json")
+    }
+
+
+def test_zizmor_real_json_keeps_the_primary_line_and_drops_unchanged_lines(
+    tmp_path: Path,
+) -> None:
+    repo, base, head = _repo(
+        tmp_path,
+        {".github/workflows/ci.yml": _ZIZMOR_BASE},
+        {".github/workflows/ci.yml": _ZIZMOR_HEAD},
+    )
+    runner = _Calls(base, _zizmor_real_payload())
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("zizmor")], runner,
+    )
+    assert code == 0
+    found = _zizmor_locations(output)
+    # Line 4 did not change in this review, so its finding is rightly dropped. The two
+    # findings on the new line 7 must stay, whatever order their locations come in.
+    assert found == {
+        "template-injection": (".github/workflows/ci.yml", 7),
+        "unpinned-uses": (".github/workflows/ci.yml", 7),
+    }
+    assert _severity(output, "template-injection") == "blocks"
+    assert _severity(output, "unpinned-uses") == "fix-later"
+    _valid(output)
+
+
+def test_zizmor_real_json_findings_on_a_new_workflow_are_all_retained(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path,
+        {"README.md": "base\n"},
+        {".github/workflows/ci.yml": _ZIZMOR_HEAD},
+    )
+    runner = _Calls(base, _zizmor_real_payload())
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output, tmp_path / "home",
+        [_adapter("zizmor")], runner,
+    )
+    assert code == 0
+    assert _zizmor_locations(output) == {
+        "excessive-permissions": (".github/workflows/ci.yml", 3 + 1),
+        "template-injection": (".github/workflows/ci.yml", 6 + 1),
+        "unpinned-uses": (".github/workflows/ci.yml", 6 + 1),
+    }
+    assert not any(item["reason"] == "known-gap" for item in _read(output, "degraded.json"))
+    _valid(output)
+
+
 @pytest.mark.skipif(
     _probed(["zizmor", "--version"]) != "1.30.1",
     reason="zizmor pin is not installed",
@@ -719,6 +841,36 @@ def test_zizmor_live_stays_offline(tmp_path: Path) -> None:
         home=home, adapters=[_adapter("zizmor")], framework=False,
     )
     assert code == 0
+
+
+@pytest.mark.skipif(
+    _probed(["zizmor", "--version"]) != "1.30.1",
+    reason="zizmor pin is not installed",
+)
+def test_zizmor_live_reports_template_injection_with_a_line(tmp_path: Path) -> None:
+    repo, base, head = _repo(
+        tmp_path,
+        {"README.md": "base\n"},
+        {".github/workflows/ci.yml": _ZIZMOR_HEAD},
+    )
+    output = tmp_path / "out"
+    home = tmp_path / "home"
+    home.mkdir()
+    code = T.run(
+        repo, base, head, _profile(tmp_path / "profile.json"), output,
+        home=home, adapters=[_adapter("zizmor")], framework=False,
+    )
+    assert code == 0
+    found = [
+        item for item in _read(output, "findings.json")
+        if item["rule"]["ref"] == "template-injection"
+    ]
+    assert len(found) == 1, "a real zizmor finding on a changed line must not be dropped"
+    location = found[0]["location"]
+    assert location["file"] == ".github/workflows/ci.yml"
+    assert isinstance(location["lines"]["start"], int)
+    assert location["lines"]["start"] == 7
+    _valid(output)
 
 
 @pytest.mark.skipif(

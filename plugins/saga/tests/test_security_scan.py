@@ -1644,3 +1644,108 @@ def test_review_output_unchanged(tmp_path: Path) -> None:
         "input": "security.secret-in-diff", "language": "none", "lens": "security",
         "reason": "version-mismatch", "tool": "gitleaks",
     }]
+
+
+# ---------------------------------------------------------------------------------------
+# Post-merge repair: a row is degraded only by its own tool, never by review-only notes
+# ---------------------------------------------------------------------------------------
+
+_CI_WORKFLOW = (
+    "name: ci\non: issues\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n"
+    '      - run: echo "${{ github.event.issue.title }}"\n'
+)
+_ZIZMOR_SCAN_PATH = "/example/scratch/zizmor-src-head/.github/workflows/ci.yml"
+
+
+def _zizmor_template_injection() -> list[dict[str, Any]]:
+    """The finding zizmor 1.30.1 prints for ``_CI_WORKFLOW``, in its real JSON shape.
+
+    The file is at ``symbolic.key.Local.verbatim_path``. The 0-indexed line is
+    ``concrete.location.start_point.row``, so row 6 is file line 7.
+    """
+    def location(kind: str, column: int, annotation: str) -> dict[str, Any]:
+        return {
+            "symbolic": {
+                "key": {"Local": {"verbatim_path": _ZIZMOR_SCAN_PATH}},
+                "annotation": annotation, "feature_kind": "Normal", "kind": kind,
+                "route": {"route": [{"Key": "jobs"}, {"Key": "check"}]},
+            },
+            "concrete": {
+                "location": {
+                    "start_point": {"row": 6, "column": column},
+                    "end_point": {"row": 7, "column": 0},
+                    "offset_span": {"start": 95, "end": 139},
+                },
+                "feature": "inert feature text", "comments": [],
+            },
+        }
+
+    return [{
+        "ident": "template-injection", "desc": "inert description",
+        "url": "https://docs.zizmor.sh/audits/#template-injection",
+        "determinations": {"confidence": "High", "severity": "High", "persona": "Regular"},
+        "locations": [
+            location("Hidden", 8, "this step"),
+            location("Primary", 23, "may expand into attacker-controllable code"),
+            location("Related", 8, "this run block"),
+        ],
+        "ignored": False, "fixes": [],
+    }]
+
+
+def test_row_status_scopes_degradation_and_ignores_suppression_notes(tmp_path: Path) -> None:
+    repo = tmp_path / "target"
+    _init(repo)
+    _write(repo, {
+        ".github/workflows/ci.yml": _CI_WORKFLOW,
+        "src/app.py": "import os  # noqa: F401\nvalue = 1  # nosec\n",
+        "src/example.py": 'EXAMPLE = "inert"  # gitleaks:allow\n',
+        "notes.txt": "// eslint-disable-next-line no-console\n",
+        ".semgrepignore": "docs/\n",
+    })
+    head = _commit(repo, "add a workflow, silence markers and a scanner settings file")
+
+    def machine_for(base: Path, cache: str) -> Machine:
+        base.mkdir()
+        machine = _machine(base, cache=cache)
+        _python_stubs(machine)
+        machine.stub("zizmor", version="1.30.1",
+                     stdout=_j(_zizmor_template_injection()))
+        return machine
+
+    def expect(rows: dict[str, dict[str, Any]], ran: tuple[str, ...]) -> None:
+        for name in ran:
+            assert rows[name]["status"] == "ran", f"{name}: {rows[name]}"
+            assert rows[name]["reason"] == "", f"{name}: {rows[name]}"
+        for name in ("cargo-deny", "checkov-cfn"):
+            assert rows[name]["status"] == "skipped", f"{name}: {rows[name]}"
+            assert rows[name]["reason"] == "no applicable input", f"{name}: {rows[name]}"
+
+    # Every applicable tool is on its pin and the rule cache is valid. Silence markers and
+    # a stripped settings file are review notes, so they degrade no row. The workflow
+    # finding is the only reason for a nonzero status, and that status is 1, not 2.
+    clean_machine = machine_for(tmp_path / "clean", "ok")
+    clean = _scan(clean_machine, repo, tmp_path / "clean-out")
+    rows = clean.rows()
+    expect(rows, ("semgrep-security", "gitleaks", "bandit", "zizmor"))
+    assert [rows["zizmor"]["counts"][level] for level in LEVELS] == [1, 0, 0]
+    assert [f["rule"]["ref"] for f in clean.findings()] == ["template-injection"]
+    assert clean.findings()[0]["location"]["file"] == ".github/workflows/ci.yml"
+    assert clean.findings()[0]["location"]["lines"]["start"] == 7
+    assert clean.code == 1, clean.terminal
+    assert clean.summary()["exit_code"] == 1
+
+    # One row is genuinely degraded. Its reason is exactly its own, and no other row
+    # inherits it or the review notes.
+    broken_machine = machine_for(tmp_path / "broken", "missing")
+    broken = _scan(broken_machine, repo, tmp_path / "broken-out")
+    rows = broken.rows()
+    assert rows["semgrep-security"]["status"] == "degraded", rows["semgrep-security"]
+    assert rows["semgrep-security"]["reason"] == "rule-cache-missing"
+    expect(rows, ("gitleaks", "bandit", "zizmor"))
+    for name, row in rows.items():
+        for note in ("bandit-nosec", "ruff-noqa", "gitleaks-allow", "eslint-disable",
+                     "scanner-settings"):
+            assert note not in row["reason"], f"{name} reports the review note {note}"
+    assert broken.code == 2 and broken.summary()["exit_code"] == 2
+    assert head == broken.summary()["commit"]

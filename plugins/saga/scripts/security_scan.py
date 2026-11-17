@@ -199,6 +199,7 @@ def _scan_rows(repo: Path, base: str, head: str, profile_path: Path, output: Pat
                scratch: Path, include: set[str], timeout: int | None) -> tuple[list, list, list]:
     profile = tools._load_profile(profile_path)
     adapters = {adapter.id: adapter for adapter in tools.default_adapters()}
+    audit_notes = {"scanner-settings", *(marker[3] for marker in tools._COMMENT_MARKERS)}
     rows, findings, degraded = [], [], []
     for item in tools.load_tool_list():
         if item.get("lens") != "security":
@@ -234,7 +235,9 @@ def _scan_rows(repo: Path, base: str, head: str, profile_path: Path, output: Pat
                 row["counts"][finding["severity"]] += 1
             findings.extend(hits)
             degraded.extend(gaps)
-            reasons = sorted({gap["reason"] for gap in gaps})
+            reasons = sorted({gap["reason"] for gap in gaps
+                              if gap.get("tool") in {adapter.tool, adapter.id}
+                              and gap.get("reason") not in audit_notes})
             if observer.unsupported:
                 reasons.append("requirements-not-exactly-pinned: " + ", ".join(
                     sorted(observer.unsupported)))
