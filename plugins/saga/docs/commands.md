@@ -158,12 +158,12 @@ Pre-PR code-quality gate.
 | Use when | Built work needs pre-PR or PR-boundary review. |
 | Do not use when | The target is a plan/requirements document, or the user wants code changes applied by the reviewer. |
 | Inputs | Diff, branch, PR, or scope. |
-| Outputs | Code review artifact under `docs/code-reviews/`. |
-| Saga state | Appends `review_paths` to active work-thread saga when present; does not advance lifecycle phase. |
+| Outputs | Prepared packet, stored C1 `review_run`, review-state document and one comment per reviewed round. |
+| Saga state | Stores review runs in the issue run record; does not advance lifecycle phase. |
 | Routes in | `/work`, PR boundary. |
 | Routes out | `/work`, PR-ready. |
-| Gates | P0/P1 findings block PR-ready unless overridden. |
-| Boundary | Owns findings, not fixes, commits, PR creation, or issue filing. |
+| Gates | C1 grades and merge state; fixed three-round repair limit, early stop, reproduced-harm and unresolved-thread blocks. |
+| Boundary | Owns review execution and operator choices; Work repairs and mission-control creates linked issues. |
 | Common mistakes | Expecting it to fix findings; running against a stale diff. |
 | Example | `/code-review HEAD~1..HEAD` |
 

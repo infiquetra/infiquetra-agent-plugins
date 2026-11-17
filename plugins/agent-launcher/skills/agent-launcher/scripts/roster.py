@@ -84,14 +84,10 @@ STAFFING_ROLE_TO_ROLE_ID: dict[str, str] = {
     "planner": "planner",
     "plan-reviewer": "plan_reviewer",
     "worker": "implementer",
-    "lens-reviewer": "lens_reviewer",
     "functional-tester": "functional_tester",
     "release-worker": "release_worker",
     "targeted-reviewer": "targeted_reviewer",
 }
-
-#: The staffing role whose seats are multiplied by the run's applicable lenses.
-LENS_ROLE = "lens-reviewer"
 
 #: Staffing roles planned one seat that ``up`` never opens as a pane: the targeted reviewer needs
 #: the review packet, which does not exist at roster time, so ``launcher.py review`` starts it
@@ -304,7 +300,7 @@ def save_record(store_root: Path, record: Any, roster_rows: list[dict[str, Any]]
 
 
 def load_roles_index(path: Path | None = None) -> dict[str, Any]:
-    """Read the roles library index, which publishes the file per role and the lens slicing rule."""
+    """Read the roles library index, which publishes the prompt file for each staffable role."""
     index_path = path or ROLES_INDEX
     if not index_path.is_file():
         raise RosterError(f"roster: the roles library index is not at {index_path}")
@@ -325,45 +321,6 @@ def role_file_name(index: Mapping[str, Any], role_id: str) -> str:
     )
 
 
-def lens_ids(index: Mapping[str, Any]) -> tuple[str, ...]:
-    """The lens identifiers the Lens Reviewer prompt carries a section for."""
-    block = index.get("lens_reviewer")
-    if not isinstance(block, Mapping):
-        return ()
-    return tuple(str(x) for x in block.get("lens_ids", []))
-
-
-def lens_section(text: str, index: Mapping[str, Any], lens: str) -> str:
-    """Cut the Lens Reviewer prompt down to its shared half plus *lens*'s own section (plan R5).
-
-    The slicing rule comes from ``index.json`` — the heading prefix, the terminator pattern, and
-    where the shared half ends — because the roles library publishes it precisely so a consumer
-    does not keep a second copy that can drift from the file it cuts.
-    """
-    block = index.get("lens_reviewer")
-    if not isinstance(block, Mapping):
-        raise RosterError("roster: the roles library index carries no lens_reviewer slicing rule")
-    marker = str(block["shared_half_ends_before"])
-    prefix = str(block["section_heading_prefix"])
-    terminator = re.compile(str(block["section_terminator_pattern"]), re.MULTILINE)
-
-    head, sep, tail = text.partition(marker)
-    if not sep:
-        raise RosterError(
-            f"roster: the Lens Reviewer prompt has no {marker!r} marker, so it cannot be sliced"
-        )
-    start = tail.find(f"{prefix}{lens}\n")
-    if start < 0:
-        raise RosterError(
-            f"roster: the Lens Reviewer prompt carries no section for lens {lens!r}; "
-            f"it has {', '.join(lens_ids(index)) or 'none'}"
-        )
-    rest = tail[start + len(prefix) + len(lens) :]
-    end_match = terminator.search(rest)
-    end = start + len(prefix) + len(lens) + (end_match.start() if end_match else len(rest))
-    return head + tail[start:end].rstrip() + "\n"
-
-
 # --------------------------------------------------------------------------- seats
 
 
@@ -378,7 +335,6 @@ class Seat:
     model: str
     effort: str
     pane_name: str
-    lens: str | None = None
     account: str | None = None
     headless: bool = False
 
@@ -409,8 +365,6 @@ def plan_seats(
             f"roster: issue {record.issue} has no staffing plan; "
             "run_configuration.staffing_models_and_efforts is unset"
         )
-    lenses = _parameter(record, "applicable_lenses")
-    declared_lenses = [str(x) for x in lenses] if isinstance(lenses, Sequence) else []
     prefix = name_prefix if name_prefix is not None else f"issue-{record.issue}-"
 
     seats: list[Seat] = []
@@ -438,40 +392,19 @@ def plan_seats(
         # account — so the caller names the account once for the roster, and a staffing row may
         # override it per role if that registry ever grows the field.
         seat_account = str(row.get("account") or "") or account
-        if role == LENS_ROLE:
-            if not declared_lenses:
-                raise RosterError(
-                    "roster: the staffing plan staffs a lens reviewer but the run declares no "
-                    "applicable lenses; a lens reviewer with no lens has nothing to review"
-                )
-            for lens in declared_lenses:
-                seats.append(
-                    Seat(
-                        role=str(role),
-                        role_id=role_id,
-                        prompt_file=prompt_file,
-                        vendor=vendor,
-                        model=model,
-                        effort=effort,
-                        pane_name=f"{prefix}lens-{lens}",
-                        lens=lens,
-                        account=seat_account,
-                    )
-                )
-        else:
-            seats.append(
-                Seat(
-                    role=str(role),
-                    role_id=role_id,
-                    prompt_file=prompt_file,
-                    vendor=vendor,
-                    model=model,
-                    effort=effort,
-                    pane_name=f"{prefix}{role}",
-                    account=seat_account,
-                    headless=role in HEADLESS_ROLES,
-                )
+        seats.append(
+            Seat(
+                role=str(role),
+                role_id=role_id,
+                prompt_file=prompt_file,
+                vendor=vendor,
+                model=model,
+                effort=effort,
+                pane_name=f"{prefix}{role}",
+                account=seat_account,
+                headless=role in HEADLESS_ROLES,
             )
+        )
 
     names = [seat.pane_name for seat in seats]
     duplicates = sorted({name for name in names if names.count(name) > 1})
@@ -487,16 +420,14 @@ def plan_seats(
 def dispatch_brief(seat: Seat, record: Any, record_path: Path) -> str:
     """The text one session is sent: what it is, where its briefing is, where the run state is.
 
-    The role prompt is named by absolute path rather than pasted (plan KTD4): a lens reviewer's
-    prompt is 15 KB, and a composer write is the riskiest thing this helper does.
+    The role prompt is named by absolute path rather than pasted (plan KTD4): a composer write
+    is the riskiest thing this helper does.
     """
     lines = [
         f"You are the {seat.role_id.replace('_', ' ')} for "
         f"{record.repo or 'this repository'} issue {record.issue}.",
         f"Read your role briefing first: {seat.prompt_path}",
     ]
-    if seat.lens:
-        lines.append(f"Your lens is {seat.lens}; apply only that lens's section of the briefing.")
     lines += [
         f"The run record holding this run's state is {record_path}.",
         "Follow the briefing's stop rule and post the output contract it names. "
@@ -543,7 +474,6 @@ def new_row(
         "schema": ROSTER_ENTRY_SCHEMA,
         "role": seat.role,
         "role_id": seat.role_id,
-        "lens": seat.lens,
         "prompt_file": seat.prompt_file,
         "vendor": seat.vendor,
         "model": seat.model,
@@ -592,8 +522,6 @@ def render_dry_run(seats: Sequence[Seat], record: Any, record_path: Path) -> str
         out.append(f"  model  {seat.model}")
         out.append(f"  effort {seat.effort}")
         out.append(f"  role   {seat.role} ({seat.role_id})")
-        if seat.lens:
-            out.append(f"  lens   {seat.lens}")
         if seat.headless:
             out.append(f"  start  {HEADLESS_START}")
         out.append(f"  brief  {seat.prompt_path}")

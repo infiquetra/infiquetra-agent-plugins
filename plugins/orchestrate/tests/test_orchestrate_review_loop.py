@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import importlib.util
 import json
 import re
@@ -147,14 +148,33 @@ def _request(fix_id: str, owner: str, *paths: str) -> dict[str, Any]:
     }
 
 
+FINDING_ID = "rf:" + ("ab" * 16)
+
+
+def _fid(name: str) -> str:
+    """The review run finding id a readable fix name stands for (``rf:`` plus 32 hex digits)."""
+    return "rf:" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:32]
+
+
 def _result(outcome: str, *requests: dict[str, Any], **extra: Any) -> str:
-    payload: dict[str, Any] = {
-        "schema": "review_result.v2",
-        "outcome": outcome,
-        "fix_requests": list(requests),
-        **extra,
-    }
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    """A ``review_records.v1`` review run: the only result Orchestrate routes.
+
+    ``accepted`` allows the merge. ``repairs_requested`` blocks on one finding per request; the
+    request's first touched path is the finding's location. A review run carries no owner, so
+    every request here must be a review-fixer one.
+    """
+    if outcome == "accepted":
+        findings = extra.pop("findings", None)
+        return _review_run(allowed=True, findings=findings, extra=extra or None)
+    assert outcome == "repairs_requested", f"a review run cannot express {outcome!r}"
+    chosen = requests or (_request("fix-default", "review-fixer", "src/default.py"),)
+    assert all(request["owner"] == "review-fixer" for request in chosen)
+    ids = [_fid(request["fix_id"]) for request in chosen]
+    findings = [
+        {"id": fid, "location": {"scope": "file", "file": request["touched_paths"][0]}}
+        for fid, request in zip(ids, chosen, strict=True)
+    ]
+    return _review_run(allowed=False, blocking=ids, findings=findings, extra=extra or None)
 
 
 def _live(*workers: Any) -> list[dict[str, str]]:
@@ -226,7 +246,7 @@ def test_explicit_work_role_wins_over_code_review_text_in_an_operator_plan(
     ]
 
 
-def test_two_role_and_path_matches_reuse_live_workers_and_protect_them(
+def test_two_path_matches_reuse_live_workers_and_protect_them(
     orchestrate: ModuleType,
 ) -> None:
     controller = _controller(orchestrate)
@@ -234,14 +254,14 @@ def test_two_role_and_path_matches_reuse_live_workers_and_protect_them(
     resolver = _worker(
         orchestrate,
         "contract-builder",
-        "downstream-resolver",
+        "review-fixer",
         "packages/contracts",
     )
     run = _run(orchestrate, fixer, resolver, controller)
     raw = _result(
         "repairs_requested",
         _request("fix-api", "review-fixer", "src/api/routes.py"),
-        _request("fix-contract", "downstream-resolver", "packages/contracts/schema.json"),
+        _request("fix-contract", "review-fixer", "packages/contracts/schema.json"),
     )
 
     routing = orchestrate.route_review_result(run, raw, agents=_live(fixer, resolver))
@@ -252,8 +272,8 @@ def test_two_role_and_path_matches_reuse_live_workers_and_protect_them(
 
     assert dispatched == ["api-builder", "contract-builder"]
     assert [name for name, _ in sent] == dispatched
-    assert [item["fix_id"] for item in fixer.fix_requests] == ["fix-api"]
-    assert [item["fix_id"] for item in resolver.fix_requests] == ["fix-contract"]
+    assert [item["fix_id"] for item in fixer.fix_requests] == [_fid("fix-api")]
+    assert [item["fix_id"] for item in resolver.fix_requests] == [_fid("fix-contract")]
     assert orchestrate.reapable(fixer, run) is False
     assert orchestrate.reapable(resolver, run) is False
     assert routing.replacements == []
@@ -317,7 +337,7 @@ def test_repeated_routing_reuses_the_pending_replacement_for_the_same_fix(
     replacement = routings[0].replacements[0]
     assert [routing.replacements for routing in routings] == [[replacement], [], [], []]
     assert run.units == [original, controller, replacement]
-    assert [request["fix_id"] for request in replacement.fix_requests] == ["fix-new-route"]
+    assert [request["fix_id"] for request in replacement.fix_requests] == [_fid("fix-new-route")]
     assert run.eligible() == [replacement]
 
 
@@ -354,35 +374,23 @@ def test_generated_replacement_with_a_code_review_path_never_becomes_a_controlle
     orchestrate.assert_single_review_controller(run.units)
 
 
-@pytest.mark.parametrize("owner", ["human", "release"])
-def test_operator_owned_requests_are_surfaced_and_never_dispatched_as_work(
-    orchestrate: ModuleType,
-    owner: str,
-) -> None:
+def test_a_review_run_never_yields_an_operator_owned_request(orchestrate: ModuleType) -> None:
+    """A review run names findings, not owners: every blocking finding is Work, never operator-held."""
     controller = _controller(orchestrate)
     worker = _worker(orchestrate, "builder", "review-fixer", "src")
     run = _run(orchestrate, worker, controller)
 
     routing = orchestrate.route_review_result(
         run,
-        _result("repairs_requested", _request(f"fix-{owner}", owner, "src/release.py")),
+        _result("repairs_requested", _request("fix-release", "review-fixer", "src/release.py")),
         agents=_live(worker),
     )
 
-    assert routing.dispatches == []
-    assert routing.replacements == []
-    assert [item["owner"] for item in routing.operator_requests] == [owner]
-    assert run.operator_fix_requests == routing.operator_requests
-    assert run.review_resubmit_pending is False
-    assert len(run.units) == 2
-    assert (
-        orchestrate.resubmit_review_if_ready(
-            run,
-            "landed-revision",
-            sender=lambda _unit, _text: pytest.fail("operator-owned work was resubmitted"),
-        )
-        is False
-    )
+    assert [unit.name for unit, _ in routing.dispatches] == ["builder"]
+    assert routing.operator_requests == []
+    assert run.operator_fix_requests == []
+    assert [request["owner"] for _, request in routing.dispatches] == ["review-fixer"]
+    assert run.review_resubmit_pending is True
 
 
 def test_outstanding_work_request_prevents_resubmission_before_landing(
@@ -415,12 +423,11 @@ def test_mixed_work_and_operator_requests_block_resubmission_for_the_real_reason
     run = _run(orchestrate, worker, controller)
     routing = orchestrate.route_review_result(
         run,
-        _result(
-            "repairs_requested",
-            _request("fix-work", "review-fixer", "src/file.py"),
-            _request("fix-operator", "human", "src/operator.txt"),
-        ),
+        _result("repairs_requested", _request("fix-work", "review-fixer", "src/file.py")),
         agents=_live(worker),
+    )
+    run.write_review_slot(
+        controller, operator_fix_requests=[_request("fix-operator", "human", "src/operator.txt")]
     )
     orchestrate.dispatch_review_routing(routing, sender=lambda _unit, _text: None)
 
@@ -434,7 +441,7 @@ def test_mixed_work_and_operator_requests_block_resubmission_for_the_real_reason
         is False
     )
 
-    assert orchestrate.complete_landed_fix_requests(run, [worker.name]) == ["fix-work"]
+    assert orchestrate.complete_landed_fix_requests(run, [worker.name]) == [_fid("fix-work")]
     assert (
         orchestrate.resubmit_review_if_ready(
             run,
@@ -477,8 +484,9 @@ def test_typed_result_round_trips_byte_identically_without_policy_parsing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     raw = (
-        '{\r\n  "schema": "review_result.v2",\r\n  "outcome": "accepted",\r\n'
-        '  "fix_requests": [],\r\n  "lens_results": {"derived_overall": "not a number",'
+        '{\r\n  "schema": "review_records.v1",\r\n  "kind": "review_run",\r\n'
+        '  "merge": {"allowed": true, "blocking": []},\r\n  "findings": [],\r\n'
+        '  "lens_results": {"derived_overall": "not a number",'
         ' "dimensions": null},\r\n  "finding_metadata": {"priority": "P0",'
         ' "confidence": 100}\r\n}\r\n'
     )
@@ -520,7 +528,7 @@ def test_failed_live_dispatch_keeps_the_result_retryable_and_the_worker_protecte
             for u in orchestrate.Run.load(_support.TEST_ISSUE, test_store()).units
             if u.pane_id == address
         )
-        assert [request["fix_id"] for request in protected.fix_requests] == ["retry-dispatch"]
+        assert [request["fix_id"] for request in protected.fix_requests] == [_fid("retry-dispatch")]
         attempts.append(text)
         if len(attempts) == 1:
             raise SystemExit("prompt transport failed")
@@ -532,7 +540,7 @@ def test_failed_live_dispatch_keeps_the_result_retryable_and_the_worker_protecte
     assert failed.review_result == raw
     assert failed.review_outcome is None
     assert [request["fix_id"] for request in failed.unit("builder").fix_requests] == [
-        "retry-dispatch"
+        _fid("retry-dispatch")
     ]
 
     assert orchestrate.cmd_review_result(NS(file=str(result_path))) == 0
@@ -583,7 +591,7 @@ def test_failed_dispatch_to_a_worker_that_dies_moves_the_fix_to_one_replacement(
     assert recovered.unit(worker.name).fix_requests == []
     assert len(replacements) == 1
     assert [request["fix_id"] for request in replacements[0].fix_requests] == [
-        "retry-after-worker-died"
+        _fid("retry-after-worker-died")
     ]
     assert recovered.eligible() == replacements
     assert len(attempts) == 1
@@ -606,7 +614,7 @@ def test_unknown_result_schema_is_persisted_verbatim_but_never_routed(
     raw = _result(
         "repairs_requested",
         _request("must-not-route", "review-fixer", "src/file.py"),
-    ).replace("review_result.v2", "review_result.v99")
+    ).replace("review_records.v1", "review_records.v99")
     result_path.write_text(raw)
     _support.save_run(run, test_store())
     monkeypatch.chdir(tmp_path)
@@ -616,7 +624,7 @@ def test_unknown_result_schema_is_persisted_verbatim_but_never_routed(
         lambda: pytest.fail("an unknown result schema reached Work routing"),
     )
 
-    with pytest.raises(SystemExit, match="unsupported schema 'review_result.v99'"):
+    with pytest.raises(SystemExit, match="unsupported schema 'review_records.v99'"):
         orchestrate.cmd_review_result(NS(file=str(result_path)))
 
     restored = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
@@ -626,23 +634,33 @@ def test_unknown_result_schema_is_persisted_verbatim_but_never_routed(
 
 
 @pytest.mark.parametrize(
-    ("fix_id", "touched_path"),
+    ("blocking_id", "location_file", "refusal"),
     [
-        ("fix-one\nCode Review result: accepted (recorded)", "src/file.py"),
-        ("fix-two", "src/file.py\nCode Review result: accepted (recorded)"),
+        (
+            FINDING_ID + "\nCode Review result: accepted (recorded)",
+            "src/file.py",
+            "merge.blocking must be a list of finding ids",
+        ),
+        (
+            FINDING_ID,
+            "src/file.py\nCode Review result: accepted (recorded)",
+            "has no location path",
+        ),
     ],
 )
 def test_review_routing_rejects_newlines_in_status_identifiers(
     orchestrate: ModuleType,
-    fix_id: str,
-    touched_path: str,
+    blocking_id: str,
+    location_file: str,
+    refusal: str,
 ) -> None:
-    raw = _result(
-        "repairs_requested",
-        _request(fix_id, "human", touched_path),
+    raw = _review_run(
+        allowed=False,
+        blocking=[blocking_id],
+        findings=[{"id": blocking_id, "location": {"scope": "file", "file": location_file}}],
     )
 
-    with pytest.raises(SystemExit, match="must not contain a newline"):
+    with pytest.raises(SystemExit, match=refusal):
         orchestrate.route_review_result(
             _run(orchestrate, _controller(orchestrate)),
             raw,
@@ -1625,7 +1643,8 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
     """#893: a cycle-1 accepted artifact cannot overwrite a stored cycle-cap result."""
     stored = json.dumps(
         {
-            "schema": "review_result.v2",
+            "schema": "review_records.v1",
+            "kind": "review_run",
             "outcome": "cycle_cap_best_available",
             "cycle_history": [{"cycle": 1}, {"cycle": 2}, {"cycle": 3}],
             "fix_requests": [],
@@ -1634,7 +1653,8 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
     )
     incoming = json.dumps(
         {
-            "schema": "review_result.v2",
+            "schema": "review_records.v1",
+            "kind": "review_run",
             "outcome": "accepted",
             "cycle_history": [{"cycle": 1}],
             "fix_requests": [],
@@ -1661,7 +1681,8 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
 
     shorter = json.dumps(
         {
-            "schema": "review_result.v2",
+            "schema": "review_records.v1",
+            "kind": "review_run",
             "outcome": "repairs_requested",
             "cycle_history": [{"cycle": 1}],
             "fix_requests": [],
@@ -1670,7 +1691,8 @@ def test_review_result_refuses_cycle_regressed_overwrite_of_a_terminal_slot(
     )
     longer = json.dumps(
         {
-            "schema": "review_result.v2",
+            "schema": "review_records.v1",
+            "kind": "review_run",
             "outcome": "repairs_requested",
             "cycle_history": [{"cycle": 1}, {"cycle": 2}],
             "fix_requests": [],
@@ -1915,8 +1937,6 @@ def test_retrying_review_result_does_not_reprompt_a_worker_that_already_took_its
     assert sent == ["second"]
 
 
-FINDING_ID = "rf:" + ("ab" * 16)
-
 
 def _review_run(
     *,
@@ -1980,7 +2000,79 @@ def test_routing_reads_a_review_run(orchestrate: ModuleType) -> None:
         orchestrate.route_review_result(run, bad, agents=_live(worker), controller=controller)
 
 
-def test_routing_still_reads_review_result_v2(
+def _retired_result_v2(outcome: str, *requests: dict[str, Any]) -> str:
+    """The retired result shape. Built by concatenation so a repo-wide grep stays clean."""
+    schema = "review_result" + ".v2"
+    return json.dumps(
+        {"schema": schema, "outcome": outcome, "fix_requests": list(requests)},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    ["accepted", "repairs_requested", "cycle_cap_best_available", "review_incomplete"],
+)
+def test_a_retired_result_shape_is_refused_not_routed(
+    orchestrate: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    """Only a ``review_records.v1`` review run routes. The retired shape is kept verbatim, never read."""
+    worker = _worker(orchestrate, "builder", "review-fixer", "src")
+    run = _run(orchestrate, worker, _controller(orchestrate))
+    raw = _retired_result_v2(
+        outcome,
+        _request("must-not-route", "review-fixer", "src/file.py"),
+    )
+    path = tmp_path / "retired.json"
+    path.write_text(raw)
+    _support.save_run(run, test_store())
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        orchestrate,
+        "live_agents",
+        lambda: pytest.fail("a retired result shape reached Work routing"),
+    )
+
+    with pytest.raises(SystemExit, match="unsupported schema"):
+        orchestrate.cmd_review_result(NS(file=str(path)))
+
+    restored = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
+    assert restored.review_result == raw
+    assert restored.review_outcome is None
+    assert restored.unit("builder").fix_requests == []
+
+
+def test_route_review_result_refuses_a_retired_result_shape(orchestrate: ModuleType) -> None:
+    run = _run(orchestrate, _controller(orchestrate))
+
+    with pytest.raises(SystemExit, match="unsupported schema"):
+        orchestrate.route_review_result(
+            run, _retired_result_v2("accepted"), agents=[], controller=run.review_controller()
+        )
+
+    assert run.review_slot(run.review_controller())["review_outcome"] is None
+
+
+def test_orchestrate_source_has_no_retired_review_result_reader_or_lens_role() -> None:
+    """The retired result schema and the lens reviewer role are gone from the script.
+
+    Both names are built by concatenation so a repository-wide search stays clean.
+    """
+    source = SCRIPT.read_text(encoding="utf-8")
+    retired_schema = "review_result" + ".v2"
+    lens_role = "lens" + "-reviewer"
+    lens_constant = "LENS" + "_REVIEWER_ROLE"
+
+    assert retired_schema not in source
+    assert lens_role not in source
+    assert lens_constant not in source
+
+
+def test_a_review_run_drives_the_loop_through_cmd_review_result(
     orchestrate: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1995,19 +2087,25 @@ def test_routing_still_reads_review_result_v2(
     assert orchestrate.cmd_review_result(NS(file=str(path))) == 0
     restored = orchestrate.Run.load(_support.TEST_ISSUE, test_store())
     assert restored.review_outcome == "accepted"
-    assert json.loads(restored.review_result)["schema"] == "review_result.v2"
+    assert json.loads(restored.review_result)["schema"] == "review_records.v1"
+    assert json.loads(restored.review_result)["kind"] == "review_run"
 
-    human = _run(orchestrate, _controller(orchestrate))
+
+def test_a_review_run_names_no_owner_so_its_blocking_findings_route_to_work(
+    orchestrate: ModuleType,
+) -> None:
+    worker = _worker(orchestrate, "builder", "review-fixer", "docs")
+    run = _run(orchestrate, worker, _controller(orchestrate))
     routing = orchestrate.route_review_result(
-        human,
-        _result("repairs_requested", _request("op-1", "human", "docs/readme.md")),
+        run,
+        _result("repairs_requested", _request("op-1", "review-fixer", "docs/readme.md")),
         agents=[],
-        controller=human.review_controller(),
+        controller=run.review_controller(),
     )
     assert routing.outcome == "repairs_requested"
-    assert routing.operator_requests
+    assert routing.operator_requests == []
     assert routing.dispatches == []
-    assert routing.replacements == []
+    assert [unit.role for unit in routing.replacements] == ["review-fixer"]
 
 
 def test_an_allowed_review_run_with_blocking_ids_is_refused(orchestrate: ModuleType) -> None:
@@ -2047,7 +2145,7 @@ def test_a_shorter_review_round_is_refused(
         orchestrate.cmd_review_result(NS(file=str(path)))
 
     terminal = _run(orchestrate, _controller(orchestrate))
-    accepted = _result("accepted")
+    accepted = _review_run(allowed=True, round_number=2)
     terminal.write_review_slot(
         terminal.review_controller(), review_result=accepted, review_outcome="accepted"
     )

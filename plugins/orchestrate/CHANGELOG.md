@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Consume only `review_records.v1` review runs; refuse retired envelopes while preserving their raw input for diagnosis.
+
 Breaking: the release that ships this is a major version. Orchestrate drives sessions through herdr core (`hc`) and the Herdr app instead of old Herdr,
 whose sessions the window does not show. Launches, sends, reads and closes come from
 agent-launcher's matching unreleased change; this one moves Orchestrate's own waits and readings. The plan is

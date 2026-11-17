@@ -638,10 +638,6 @@
       "work_shape": "implementation",
       "capability": "code-generation"
     },
-    "lens-reviewer": {
-      "work_shape": "judgment",
-      "capability": "adversarial-review"
-    },
     "targeted-reviewer": {
       "work_shape": "targeted-review",
       "capability": "adversarial-review"

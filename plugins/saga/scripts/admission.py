@@ -63,21 +63,8 @@ MISSION_CONTROL_MARKERS = (
 )
 MISSION_CONTROL_ENV_VAR = "INFIQUETRA_MISSION_CONTROL_PATH"
 
-#: The lifecycle repository's decided defaults, at revision 5efc869f. Five parameters whose value
-#: the lifecycle settled once for everyone, so no run is asked for them.
+#: The lifecycle-owned default retained after the review cutover.
 LIFECYCLE_DEFAULTS: dict[str, Any] = {
-    "standard_cycle_allowance": 3,
-    "escalated_cycle_allowance": 2,
-    "escalation_trigger": (
-        "exhausting the standard-tier allowance without every selected lens meeting its "
-        "acceptance, or two consecutive standard cycles with no progress on the same "
-        "below-threshold lens"
-    ),
-    "lens_execution_recovery": (
-        "two backoff retries on the same verified executor, after 30 seconds and then 120 "
-        "seconds, then one substitution to a pre-declared verified fallback; none consumes a "
-        "review cycle"
-    ),
     "repair_custody": "repairs go to dedicated repair roles chosen up front",
 }
 
@@ -101,11 +88,6 @@ FUNCTIONAL_TEST_KEY = functional_environment.PROFILE_KEY
 #: The answers-file key for a repository-level waiver: the alternative to the environment block.
 FUNCTIONAL_TEST_WAIVER_KEY = functional_environment.WAIVER_KEY
 
-#: The lens catalogue supplies these two; the staffing component reads the catalogue, so they are
-#: filled from the same call that fills staffing.
-CATALOGUE_PARAMETERS: tuple[str, ...] = ("applicable_lenses", "per_lens_score_threshold")
-
-
 @dataclass(frozen=True)
 class Question:
     """One question admission may put to the operator, exactly once."""
@@ -115,7 +97,7 @@ class Question:
     default: Any = None
 
 
-#: The ten questions the card names as not defaultable, in the order they are asked. Two of them —
+#: The eight questions the card names as not defaultable, in the order they are asked. Two of them —
 #: the two repository facts — drop out when a profile answers them.
 QUESTIONS: tuple[Question, ...] = (
     Question("risk_tier", "Risk tier (low, medium, high, very-high) and one sentence saying why"),
@@ -127,16 +109,6 @@ QUESTIONS: tuple[Question, ...] = (
     Question("destination", "Destination: plan-only, pr, merge, or nonprod-deploy"),
     Question(
         "staffing_overrides", "Any staffing override, per role, or 'none' to take the defaults"
-    ),
-    Question(
-        "lens_declaration",
-        "The lens declaration: the four always-on lenses plus the conditional ones that apply, "
-        "with a reason for each conditional lens left out",
-    ),
-    Question(
-        "repair_allowances",
-        "Repair allowances: 3 standard cycles and 2 escalated unless you lower them",
-        default={"standard": 3, "escalated": 2},
     ),
     Question(
         "unfinished_testing_response",
@@ -377,21 +349,6 @@ def fill_defaults(
         )
         if resolved is not None:
             _fill(configuration, "staffing_models_and_efforts", resolved, "staffing")
-            catalogue = _resolve_catalogue(staffing)
-            for parameter in CATALOGUE_PARAMETERS:
-                # The operator guard every other fill site applies, and that this
-                # function's own docstring promises. It was missing here and could
-                # not be observed: `_resolve_catalogue` returned an empty mapping for
-                # every checkout because of the shape defect above, so this loop never
-                # filled anything. Repairing the read made the clobber reachable — a
-                # re-run of admission replaced an operator's lens declaration with the
-                # catalogue's always-on proposal, discarding the conditional lenses and
-                # their recorded reasons.
-                if (
-                    catalogue.get(parameter) is not None
-                    and configuration[parameter]["source"] != "operator"
-                ):
-                    _fill(configuration, parameter, catalogue[parameter], "staffing")
 
     return run_record.RunRecord(
         **{**record.__dict__, "run_configuration": configuration, "admission": admission}
@@ -487,19 +444,10 @@ def _is_refusal(staffing: Any, exc: Exception) -> bool:
 def _resolve_one_role(
     staffing: Any, role: str, *, root: Path | None, jev_raise: Any
 ) -> tuple[Any, str | None]:
-    """Resolve one role, failing loud on every refusal except the known lens-reviewer skip.
+    """Resolve a role, preserving fail-open behavior for an unavailable component.
 
-    Returns ``(decision, refused)``. ``decision`` is None only for a role admission cannot staff
-    without a lens (the lens reviewer), or for a staffing component that is missing or too old to
-    take these arguments, which stays fail-open as before.
-
-    A recorded ``jev_raise`` the resolver refuses (a lowering, a two-step jump, a raise to the
-    strongest model or off the palette) does not drop the role: the role resolves without the
-    raise, and ``refused`` carries the resolver's message so the record shows the refusal beside
-    the raise it kept. Any other refusal, such as a Claude-only work shape on a role pinned to
-    another vendor, raises :class:`AdmissionError` naming the role; the raise is named there only
-    when the resolver refused it with a message of its own, so a refusal the raise did not cause
-    is never blamed on it.
+    A refused recorded raise retries the default and records the refusal. Other
+    staffing refusals stop admission; all active roles resolve without a lens.
     """
     try:
         return staffing.resolve_role(role, root=root, jev_raise=jev_raise), None
@@ -519,15 +467,8 @@ def _resolve_one_role(
             if str(exc) != str(first):
                 refused = str(first)
             first = exc
-    try:
-        staffing.resolve_role(role, root=root, require_lens=False)
-    except Exception as exc:
-        if not _is_refusal(staffing, exc):
-            return None, None
-        reason = f"; its recorded raise was also refused: {refused}" if refused else ""
-        raise AdmissionError(f"staffing refused role {role!r}: {first}{reason}") from first
-    # Only the lens requirement stood in the way: the lens reviewer is staffed per lens later.
-    return None, None
+    reason = f"; its recorded raise was also refused: {refused}" if refused else ""
+    raise AdmissionError(f"staffing refused role {role!r}: {first}{reason}") from first
 
 
 def _attach_tier_judgments(
@@ -625,70 +566,8 @@ def _attach_tier_judgments(
             row["jev_raise_refused"] = refused
 
 
-def _resolve_catalogue(staffing: Any) -> dict[str, Any]:
-    """Read the always-on lens names and the threshold ladder through the staffing component.
-
-    ``staffing.lens_catalogue()`` returns a **pair**: a mapping keyed by lens
-    identifier, and the catalogue's version string. It does not return the
-    catalogue document, so the mapping has no ``lenses`` key and no
-    ``strictness_ladder`` key — reading those off it yields ``None`` for every
-    checkout, which is how ``per_lens_score_threshold`` came to be unfillable by
-    any path. Issue 1023 owns ``lens_catalogue``; this is the consumer's half of
-    the repair, and ``tests/test_admission.py`` pins the real function's shape
-    rather than a fake's.
-
-    The ladder is not in that return value at all, so it is read from the same
-    checkout the staffing component resolves, through that component's own public
-    ``sdlc_root``. Resolving the path here independently would put a second copy
-    of the resolution order in the tree, which is the thing that made the two
-    environment-variable names diverge in the first place.
-    """
-    try:
-        catalogue, _version = staffing.lens_catalogue()
-    except Exception:
-        return {}
-    if not isinstance(catalogue, dict):
-        return {}
-
-    # The mapping is {lens identifier: catalogue entry}. A lens identifier is the
-    # key, never an entry's "name" field, which carries the human-readable title.
-    always_on = sorted(
-        str(lens_id)
-        for lens_id, row in catalogue.items()
-        if isinstance(row, dict) and row.get("always_on")
-    )
-
-    result: dict[str, Any] = {}
-    if always_on:
-        result["applicable_lenses"] = {"always_on": always_on, "conditional": "proposed at review"}
-
-    ladder = _resolve_strictness_ladder(staffing)
-    if ladder is not None:
-        result["per_lens_score_threshold"] = ladder
-    return result
 
 
-def _resolve_strictness_ladder(staffing: Any) -> Any | None:
-    """The catalogue's strictness ladder, or ``None`` when the checkout is unreadable.
-
-    Absent is a fact about the machine, not an error: an unfilled parameter leaves
-    a question to ask, and a missing sibling repository must not stop admission.
-    """
-    try:
-        checkout = staffing.sdlc_root()
-    except Exception:
-        return None
-    if checkout is None:
-        return None
-    path = Path(checkout) / "config" / "lens-catalogue.json"
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if not isinstance(document, dict):
-        return None
-    ladder = document.get("strictness_ladder")
-    return ladder if ladder is not None else None
 
 
 def _environment_answered(admission: dict[str, Any]) -> bool:
@@ -807,14 +686,6 @@ PALETTE_VENDOR = "claude"
 #: The keys one staffing-override row may carry.
 _OVERRIDE_KEYS: tuple[str, ...] = ("vendor", "model", "effort")
 
-#: The keys a lens declaration may carry: the shape ``review_roster._lens_entries`` reads.
-_DECLARATION_KEYS: tuple[str, ...] = (
-    "always_on",
-    "conditional_applies",
-    "conditional_does_not_apply",
-)
-
-
 def _no_override(value: Any) -> bool:
     """``none``, null and an empty mapping all mean "take the defaults"."""
     return value is None or value == "none" or value == {}
@@ -925,102 +796,8 @@ def validate_staffing_overrides(
             )
 
 
-def _catalogue_lenses(staffing: Any) -> tuple[set[str], set[str]] | None:
-    """The catalogue's ``(always-on, conditional)`` lenses, or ``None`` when it is unreadable."""
-    if staffing is None:
-        return None
-    try:
-        catalogue, _version = staffing.lens_catalogue()
-    except Exception:
-        return None
-    if not isinstance(catalogue, dict) or not catalogue:
-        return None
-    always_on = {
-        str(lens)
-        for lens, row in catalogue.items()
-        if isinstance(row, dict) and row.get("always_on")
-    }
-    return always_on, {str(lens) for lens in catalogue} - always_on
 
 
-def validate_lens_declaration(value: Any, staffing: Any = None) -> None:
-    """Refuse a lens declaration the review would misread (issue #103).
-
-    The shape is the one ``review_roster._lens_entries`` reads: ``always_on``, a list;
-    ``conditional_applies``, a mapping of lens to reason (or a plain list); and
-    ``conditional_does_not_apply``, a mapping of lens to a non-empty reason. No lens is in both
-    maps and no always-on lens is in either. When the lens catalogue is readable, ``always_on`` is
-    its always-on set and every conditional lens is declared exactly once; when it is not, only
-    the shape is checked.
-    """
-    if not isinstance(value, dict):
-        raise AdmissionError(
-            "lens_declaration must be an object of " + ", ".join(_DECLARATION_KEYS)
-        )
-    extra = sorted(set(value) - set(_DECLARATION_KEYS))
-    if extra:
-        raise AdmissionError(
-            f"lens_declaration has unexpected keys ({', '.join(extra)}); it carries "
-            + ", ".join(_DECLARATION_KEYS)
-        )
-    always_on = value.get("always_on")
-    if not isinstance(always_on, list) or not all(isinstance(lens, str) for lens in always_on):
-        raise AdmissionError("lens_declaration.always_on must be a list of lens identifiers")
-    applies = value.get("conditional_applies") or {}
-    if not isinstance(applies, (dict, list)):
-        raise AdmissionError(
-            "lens_declaration.conditional_applies must map each lens to the reason it applies"
-        )
-    excluded = value.get("conditional_does_not_apply") or {}
-    if not isinstance(excluded, dict):
-        raise AdmissionError(
-            "lens_declaration.conditional_does_not_apply must map each lens to the reason it "
-            "does not apply"
-        )
-    unexplained = sorted(
-        str(lens) for lens, reason in excluded.items() if not str(reason or "").strip()
-    )
-    if unexplained:
-        raise AdmissionError(
-            "lens_declaration: a lens left out needs a reason: " + ", ".join(unexplained)
-        )
-    applied = {str(lens) for lens in applies}
-    left_out = {str(lens) for lens in excluded}
-    both = sorted(applied & left_out)
-    if both:
-        raise AdmissionError(
-            "lens_declaration names a lens as both applying and not applying: " + ", ".join(both)
-        )
-
-    catalogue = _catalogue_lenses(staffing)
-    always = set(always_on) | (catalogue[0] if catalogue else set())
-    deselected = sorted((applied | left_out) & always)
-    if deselected:
-        raise AdmissionError(
-            "lens_declaration lists an always-on lens as conditional: "
-            + ", ".join(deselected)
-            + "; no declaration can deselect one"
-        )
-    if catalogue is None:
-        return
-    catalogue_always, catalogue_conditional = catalogue
-    if set(always_on) != catalogue_always:
-        raise AdmissionError(
-            "lens_declaration.always_on must be the catalogue's always-on lenses: "
-            + ", ".join(sorted(catalogue_always))
-        )
-    unknown = sorted((applied | left_out) - catalogue_conditional)
-    if unknown:
-        raise AdmissionError(
-            "lens_declaration names lenses the catalogue does not have: " + ", ".join(unknown)
-        )
-    undeclared = sorted(catalogue_conditional - applied - left_out)
-    if undeclared:
-        raise AdmissionError(
-            "lens_declaration leaves conditional lenses undeclared: "
-            + ", ".join(undeclared)
-            + "; each one applies or carries the reason it does not"
-        )
 
 
 def _merge_overrides(current: Any, overrides: dict[str, Any]) -> dict[str, Any]:
@@ -1049,8 +826,7 @@ def apply_answers(
 ) -> run_record.RunRecord:
     """Record *answers*, which outrank every default (plan R9).
 
-    The staffing override and the lens declaration are validated first (issue #103), against the
-    staffing component and its lens catalogue when *staffing* is given; a refusal records nothing.
+    Staffing overrides are validated before writing; a refusal records nothing.
     """
     admission = json.loads(json.dumps(record.admission))
     configuration = {name: dict(block) for name, block in record.run_configuration.items()}
@@ -1062,8 +838,6 @@ def apply_answers(
         raise AdmissionError(f"not admission questions: {', '.join(unknown)}")
     if "staffing_overrides" in answers:
         validate_staffing_overrides(answers["staffing_overrides"], record, staffing)
-    if "lens_declaration" in answers:
-        validate_lens_declaration(answers["lens_declaration"], staffing)
     environment = functional_environment_answer(answers)
 
     if environment is not None:
@@ -1083,13 +857,6 @@ def apply_answers(
                     approval_scope[category] = value[category]
         elif key == "unfinished_testing_response":
             _fill(configuration, key, value, "operator")
-        elif key == "repair_allowances" and isinstance(value, dict):
-            if "standard" in value:
-                _fill(configuration, "standard_cycle_allowance", value["standard"], "operator")
-            if "escalated" in value:
-                _fill(configuration, "escalated_cycle_allowance", value["escalated"], "operator")
-        elif key == "lens_declaration":
-            _fill(configuration, "applicable_lenses", value, "operator")
         elif key == "staffing_overrides":
             if not _no_override(value):
                 current = configuration["staffing_models_and_efforts"].get("value")
@@ -1454,10 +1221,10 @@ def _render_tier_judgment(record: run_record.RunRecord) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# The staffing and lens tables, in one fixed format (issue #102)
+# The staffing table, in one fixed format (issue #102)
 # ---------------------------------------------------------------------------
 #
-# The operator answers staffing_overrides and lens_declaration against a table. Left to the model,
+# The operator answers staffing_overrides against a table. Left to the model,
 # that table came out in a different shape every run, so admission renders it itself: one set of
 # rows (``review_data``) feeds both the fixed Markdown (``render_tables``) every harness prints
 # verbatim and the JSON a Claude Code pane reads. Nothing here changes the record.
@@ -1468,23 +1235,13 @@ RENDER_CHOICES: tuple[str, ...] = ("summary", "tables", "json")
 #: The schema of ``--render json``.
 REVIEW_SCHEMA = "admission_review.v1"
 
-#: The two tables' titles and column orders. Bold text, never a Markdown heading: the plan skill
+#: The staffing table's title and column order. Bold text, never a Markdown heading: the plan skill
 #: quotes the block, and a heading line inside a skill splits its gate-record sections.
 STAFFING_TITLE = "**Staffing (answer: staffing_overrides)**"
 STAFFING_COLUMNS: tuple[str, ...] = ("Role", "Default", "Jev suggestion", "Proposed", "Why")
-LENS_TITLE = "**Lenses (answer: lens_declaration)**"
-LENS_COLUMNS: tuple[str, ...] = ("Lens", "Include", "Reason", "Jev probability")
-
 #: The text of an empty Jev cell. A cell is never left blank.
 NOT_CONFIGURED = "not configured"
 NO_SUGGESTION = "no suggestion"
-
-#: The probability bands a lens proposal is read in: pre-checked at 0.8 and above, worth
-#: considering from 0.6 up to 0.8. Below 0.6 a probability is logged and not shown (issue #110,
-#: Intent item 2), so the cell reads "no suggestion" and only the JSON row keeps the value.
-#: Interim copies: import them from review_roster once issue #110 defines them there.
-LENS_PRE_CHECKED_AT = 0.8
-LENS_CONSIDER_AT = 0.6
 
 #: How each tier-judgment band (the per-role block issue #96 writes) reads in the Jev cell. The
 #: band names are fleet-core's ``staffing.BAND_*`` constants, copied because the table must still
@@ -1499,11 +1256,9 @@ _BAND_NOTES: dict[str, str] = {
 }
 _AT_CEILING = "raise-at-ceiling"
 
-#: The staffing-table and lens-table states a pane branches on instead of matching display text.
+#: The staffing-table states a pane branches on instead of matching display text.
 STAFFING_UNREACHABLE = "unreachable"
-LENS_CATALOGUE_UNREADABLE = "catalogue-unreadable"
 _STAFFING_PLACEHOLDER = "(staffing component unreachable)"
-_LENS_PLACEHOLDER = "(lens catalogue unreadable)"
 
 
 def _tier_text(tier: Any, *, with_vendor: bool = True) -> str | None:
@@ -1765,112 +1520,12 @@ def _staffing_rows(
     return {"source": source, "status": "ok", "rows": rows}
 
 
-def _lens_proposal(record: run_record.RunRecord) -> dict[str, Any] | None:
-    """The Jev lens proposal admission records (issue #110), or ``None`` when absent."""
-    proposal = record.admission.get("lens_proposal")
-    return proposal if isinstance(proposal, dict) else None
 
 
-def _jev_lens_cell(lens: str, always_on: bool, proposal: dict[str, Any] | None) -> dict[str, Any]:
-    """The Jev cell for one lens. ``band`` (``pre-checked``, ``consider`` or ``None``) is what a
-    pane branches on, so it never reads the cell's display text."""
-    if proposal is None:
-        return {
-            "cell": NOT_CONFIGURED,
-            "state": "not-configured",
-            "probability": None,
-            "band": None,
-        }
-    probabilities = proposal.get("probabilities")
-    probability = probabilities.get(lens) if isinstance(probabilities, dict) else None
-    if always_on or not isinstance(probability, (int, float)):
-        return {"cell": NO_SUGGESTION, "state": "no-suggestion", "probability": None, "band": None}
-    if probability < LENS_CONSIDER_AT:
-        # Logged, not shown (issue #110): the JSON row keeps the value for the record.
-        return {
-            "cell": NO_SUGGESTION,
-            "state": "below-threshold",
-            "probability": probability,
-            "band": None,
-        }
-    band = "pre-checked" if probability >= LENS_PRE_CHECKED_AT else "consider"
-    return {
-        "cell": f"{probability:.2f} ({band})",
-        "state": "suggested",
-        "probability": probability,
-        "band": band,
-    }
 
 
-def _declared(value: Any, key: str) -> dict[str, str]:
-    """A lens declaration's ``conditional_applies`` or ``conditional_does_not_apply``, as
-    ``{lens: reason}``. Matches ``review_roster._lens_entries``, the declaration's consumer: a
-    plain list is accepted for ``conditional_applies`` only, so the table never shows an
-    exclusion the review would not honour."""
-    entries = value.get(key) if isinstance(value, dict) else None
-    if isinstance(entries, dict):
-        return {str(lens): str(reason) for lens, reason in entries.items()}
-    if isinstance(entries, list) and key == "conditional_applies":
-        return {str(lens): "" for lens in entries}
-    return {}
 
 
-def _lens_rows(record: run_record.RunRecord, staffing: Any) -> dict[str, Any]:
-    """One row per catalogue lens, in catalogue order."""
-    block = record.run_configuration["applicable_lenses"]
-    declaration = block.get("value") if block.get("source") == "operator" else None
-    applies = _declared(declaration, "conditional_applies")
-    excluded = _declared(declaration, "conditional_does_not_apply")
-    proposal = _lens_proposal(record)
-
-    catalogue: Any = None
-    version: Any = None
-    if staffing is not None:
-        try:
-            catalogue, version = staffing.lens_catalogue()
-        except Exception:
-            catalogue = None
-    if isinstance(catalogue, dict) and catalogue:
-        lenses = [
-            (str(lens), isinstance(entry, dict) and bool(entry.get("always_on")))
-            for lens, entry in catalogue.items()
-        ]
-    elif isinstance(declaration, dict):
-        lenses = [(str(lens), True) for lens in declaration.get("always_on") or []]
-        # A lens in both maps is listed once (a malformed answer; the exclusion wins below).
-        lenses += [(lens, False) for lens in dict.fromkeys([*applies, *excluded])]
-    else:
-        lenses = []
-
-    rows: list[dict[str, Any]] = []
-    for lens, always_on in lenses:
-        if always_on:
-            include, reason = "always on", "always-on lens"
-        elif lens in excluded:
-            # Checked first: review_roster._lens_entries writes the excluded map last, so a lens
-            # in both maps is excluded from the review, and the table must say so.
-            include, reason = "no", excluded[lens] or "no reason recorded"
-        elif lens in applies:
-            include, reason = "yes", applies[lens] or "included"
-        else:
-            include, reason = "undeclared", "undeclared"
-        rows.append(
-            {
-                "lens": lens,
-                "always_on": always_on,
-                "include": include,
-                "reason": reason,
-                "jev": _jev_lens_cell(lens, always_on, proposal),
-            }
-        )
-    read = isinstance(catalogue, dict) and bool(catalogue)
-    return {
-        "catalogue_version": version if read else None,
-        "source": block.get("source", "unset"),
-        # Unreadable with an operator declaration: the rows are the declaration's lenses.
-        "status": "ok" if read else LENS_CATALOGUE_UNREADABLE,
-        "rows": rows,
-    }
 
 
 def _palette() -> dict[str, Any] | None:
@@ -1911,7 +1566,7 @@ def _table(columns: tuple[str, ...], rows: list[list[Any]]) -> list[str]:
 
 
 def render_tables(data: dict[str, Any]) -> str:
-    """The staffing and lens tables, in their fixed Markdown format, built from ``data`` alone."""
+    """The staffing table, in their fixed Markdown format, built from ``data`` alone."""
     staffing_rows = [
         [
             row["role"],
@@ -1922,12 +1577,7 @@ def render_tables(data: dict[str, Any]) -> str:
         ]
         for row in data["staffing"]["rows"]
     ] or [[_STAFFING_PLACEHOLDER, NOT_CONFIGURED, NOT_CONFIGURED, NOT_CONFIGURED, NOT_CONFIGURED]]
-    lens_rows = [
-        [row["lens"], row["include"], row["reason"], row["jev"]["cell"]]
-        for row in data["lenses"]["rows"]
-    ] or [[_LENS_PLACEHOLDER, "undeclared", "the lens catalogue could not be read", NOT_CONFIGURED]]
-    lines = [STAFFING_TITLE, "", *_table(STAFFING_COLUMNS, staffing_rows), ""]
-    lines += [LENS_TITLE, "", *_table(LENS_COLUMNS, lens_rows)]
+    lines = [STAFFING_TITLE, "", *_table(STAFFING_COLUMNS, staffing_rows)]
     return "\n".join(lines)
 
 
@@ -1938,7 +1588,7 @@ def review_data(
     path: Path | None,
     repo_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Everything the two tables show, machine-readable (schema ``admission_review.v1``).
+    """Everything the staffing table shows, machine-readable (schema ``admission_review.v1``).
 
     *repo_root* must be the root admission staffed with, so the staffing table resolves tiers
     against the same ``.saga/tier-defaults.json`` overlay as the recorded rows."""
@@ -1953,7 +1603,6 @@ def review_data(
             for question in outstanding
         ],
         "staffing": _staffing_rows(record, staffing, repo_root),
-        "lenses": _lens_rows(record, staffing),
         "palette": _palette(),
     }
     data["tables_markdown"] = render_tables(data)
@@ -2037,7 +1686,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="summary",
         help=(
             "What to print. summary (default): the filled defaults and the questions. tables: "
-            "the summary, then the staffing (staffing_overrides) and lens (lens_declaration) "
+            "the summary, then the staffing (staffing_overrides) "
             "tables in their fixed Markdown format, to show the operator exactly as printed. "
             f"json: the same data, machine-readable (schema {REVIEW_SCHEMA})."
         ),

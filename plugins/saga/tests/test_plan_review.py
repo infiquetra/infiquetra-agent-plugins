@@ -315,32 +315,32 @@ def test_a_usage_write_between_calls_survives(staged: dict[str, Path], tmp_path:
     assert entries[0]["answers"][first]["verdict"] == "fixed"
 
 
-def test_other_review_cycle_readers_ignore_the_entry(staged: dict[str, Path]) -> None:
-    release_step = _load("release_step")
-    cost_report = _load("cost_report")
-    run_status = _load("run_status")
-    review_result = _load("review_result")
+def test_a_plan_review_leaves_a_kept_legacy_entry_in_place_and_unread(
+    staged: dict[str, Path],
+) -> None:
+    """Issue #161: the old result shape is kept in the record, never read, never touched."""
+    review_state = _load("review_state")
 
+    legacy = {
+        "schema": "review_" + "result" + ".v2",
+        "loop": "code_review",
+        "unit": "U1",
+        "outcome": "accepted",
+    }
     raw = json.loads(staged["record.json"].read_text(encoding="utf-8"))
-    raw["review_cycles"] = [
-        {"schema": "review_result.v2", "loop": "code_review", "unit": "U1", "outcome": "accepted"}
-    ]
+    raw["review_cycles"] = [legacy]
     staged["record.json"].write_text(json.dumps(raw), encoding="utf-8")
 
     def readings() -> tuple:
         record = build_loop.load_record_file(staged["record.json"])
-        as_dict = run_record.to_dict(record)
         return (
-            release_step._code_review_cycles(as_dict),
-            cost_report._code_review_history(record, "U1"),
-            run_status.latest_review(record, loop="code_review", unit="U1"),
-            review_result.history_for(record, "U1", "code_review"),
+            [e for e in record.review_cycles if e.get("schema") == legacy["schema"]],
+            review_state.review_runs(record),
         )
 
-    before = readings()
-    assert before[0] and before[1] and before[2] and before[3]
+    assert readings() == ([legacy], [])
     assert plan_review.main(record_argv(staged)) == 0
-    assert readings() == before
+    assert readings() == ([legacy], [])
 
 
 def test_spore_freeze_leaves_plan_review_out_of_the_count(

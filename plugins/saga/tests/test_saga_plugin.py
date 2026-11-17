@@ -121,7 +121,7 @@ def test_infiquetra_lifecycle_metadata_and_marketplace_entry_match() -> None:
     # roster is deleted (issue #1001). Bumped from 0.164.0, the saga version on
     # origin/parent/1018 at 4e951f0e.
     # Predecessor 0.164.0: /work and /code-review stand role and
-    # lens-reviewer sessions up through agent-launcher's roster helper, which closes only the panes
+    # reviewer sessions up through agent-launcher's roster helper, which closes only the panes
     # the run record says it created (issue #1024).
     # Predecessor 0.163.0: one JSON run record per issue,
     # outside every worktree and addressed by an absolute path, plus the admission questionnaire

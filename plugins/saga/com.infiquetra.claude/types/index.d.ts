@@ -72,26 +72,16 @@ export type SagaRunBuildLoop = {
   units_green: number
 }
 
-/**
- * The latest code review cycle against its allowance, and how many lenses met
- * their bar by the verdict's own rule (issue #105). A record with C1 review
- * runs carries the round and grades instead (issue #165); the cycle keys stay
- * unset and `round` and `grades` carry the state branch.
- */
+/** The latest review run's round, grades and routing outcome. */
 export type SagaRunReviewProgress = {
   unit: string | null
-  cycle: number | null
-  standard_allowance: number
-  escalated_allowance: number
-  /** The cycle is past the standard allowance. */
-  is_escalated: boolean
   outcome: string | null
   lenses_met: number
   lenses_total: number
   lenses_not_run: number
-  /** The newest review round, or null for an old-shape record. */
+  /** The newest review round. */
   round: number | null
-  /** One `{lens, grade}` pair per lens in document order; empty for an old-shape record. */
+  /** One `{lens, grade}` pair per lens in document order. */
   grades: { lens: string; grade: string }[]
 }
 
@@ -188,16 +178,6 @@ export type SagaAdmissionStaffingRow = {
   why: string
 }
 
-/** One lens row. `include` is `always on`, `yes`, `no` or `undeclared`. */
-export type SagaAdmissionLensRow = {
-  lens: string
-  always_on: boolean
-  include: string
-  reason: string
-  /** `band` is `pre-checked`, `consider` or null (issue #110's lens proposal). */
-  jev: SagaAdmissionJevCell & { probability: number | null; band?: string | null }
-}
-
 /** The tiers an operator may pick: models, efforts, and the pairs the palette allows. */
 export type SagaAdmissionPalette = {
   vendor: string
@@ -214,16 +194,14 @@ export type SagaAdmissionReviewData = {
   repo: string
   pending_questions: string[]
   staffing: { source: string; status: string; rows: SagaAdmissionStaffingRow[] }
-  lenses: { source: string; status: string; catalogue_version: string | null; rows: SagaAdmissionLensRow[] }
   /** Null when the bundled tier palette could not be loaded. */
   palette: SagaAdmissionPalette | null
   [field: string]: unknown
 }
 
-/** The operator's picks while the pane is open: per role a tier, per conditional lens a decision. */
+/** The operator's staffing tiers while the pane is open. */
 export type SagaAdmissionSelections = {
   staffing: Record<string, { model: string; effort: string }>
-  lenses: Record<string, { include: 'yes' | 'no'; reason: string }>
 }
 
 /** The pane's session state: the document it draws, the picks, and the last refusal shown. */
@@ -238,11 +216,6 @@ export type SagaAdmissionReview = {
 /** The answers the pane hands to `admission.py --answers -`. */
 export type SagaAdmissionAnswers = {
   staffing_overrides: Record<string, { vendor: string; model: string; effort: string }>
-  lens_declaration: {
-    always_on: string[]
-    conditional_applies: Record<string, string>
-    conditional_does_not_apply: Record<string, string>
-  }
 }
 
 /** What `mcp__saga__review_admission` returns to the model. */

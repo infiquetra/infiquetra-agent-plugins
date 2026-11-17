@@ -11,6 +11,9 @@ The catalog requires `python>=3.12`.
 
 ## [Unreleased]
 
+- Retire the per-lens reviewer staffing role and allow `targeted-reviewer` to resolve
+  directly without a lens argument. The packet owns its lenses; staffing owns its tier.
+
 - Give `targeted-reviewer` a dedicated `targeted-review` work shape at Sonnet/high,
   with no unattended step-down, matching Saga's default launch tier. Other judgment
   roles retain their defaults; the work shape supports normal vendor translation.

@@ -110,7 +110,8 @@ export function effortName(effort: string | number | undefined): string {
 /** The role a subagent's requests record: its saga role, else the session's. */
 export function subagentRole(agentType: string | undefined, sessionRole: string): string {
   const saga = agentType === undefined ? null : SAGA_AGENT_TYPE.exec(agentType)
-  return saga === null ? sessionRole : saga[1]
+  const role = saga === null ? sessionRole : saga[1]
+  return role === 'review-controller' || role === 'external-reviewer' ? 'targeted-reviewer' : role
 }
 
 /** The session id an entry records: the session's own, or `<session>/<agent>` for a subagent's loop. */

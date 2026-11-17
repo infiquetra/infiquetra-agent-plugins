@@ -4,7 +4,7 @@
 //
 // Read-only. Every word comes from `scripts/run_status.py summary --all-active`,
 // whose `band_line` the script renders once for every harness: the build loop's
-// latest pass, the review cycle against its allowance, and how many lenses met
+// latest pass, the review round and grades, and how many lenses met
 // their bar by the verdict's own rule. The band never recomputes any of it and
 // no button here changes the run. The plain fallback on every other harness is
 // `run_status.py summary --band`.
@@ -36,7 +36,7 @@ export const BAND_REFRESH_MS = 60_000
 export const RECORD_PAGE_CHARS = 9_000
 
 /** A Bash command that ran a script which writes saga run state. */
-const WRITES_RUN_STATE = /\b(run_record|build_loop|review_result|admission|merge_turn|release_step|saga|orchestrate)\.py\b/
+const WRITES_RUN_STATE = /\b(run_record|build_loop|review_command|review_state|admission|merge_turn|release_step|saga|orchestrate)\.py\b/
 
 const runStatus = atom({ plugin: 'saga', key: 'runStatus' } as const, [])
 const bandHidden = atom({ plugin: 'saga', key: 'bandHidden' } as const, false)

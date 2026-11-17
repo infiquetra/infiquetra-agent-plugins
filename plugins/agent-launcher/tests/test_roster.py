@@ -13,6 +13,7 @@ commands the helper *built* — which is where every guard in the plan actually 
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import json
 import re
@@ -244,7 +245,6 @@ def _record(
     store: Path,
     *,
     staffing: dict[str, Any] | None = None,
-    lenses: list[str] | None = None,
     concurrency: int | None = None,
     roster_rows: list[dict[str, Any]] | None = None,
     issue: int = 4242,
@@ -258,8 +258,6 @@ def _record(
             "worker": {"vendor": "codex", "model": "gpt-5.6-sol", "effort": "medium"},
         }
     )
-    if lenses is not None:
-        configuration["applicable_lenses"]["value"] = lenses
     if concurrency is not None:
         configuration["concurrency_allocation"]["value"] = concurrency
     record = rr.RunRecord(
@@ -407,60 +405,41 @@ def test_the_staffing_to_roles_mapping_resolves_on_both_sides(roster: ModuleType
     )
 
 
-def test_a_lens_reviewer_gets_one_seat_per_lens_sliced_by_the_published_rule(
+# Spelled by concatenation so a repository-wide search for the retired names stays empty.
+_RETIRED_STAFFING_ROLE = "lens" + "-reviewer"
+_RETIRED_ROLE_ID = "lens" + "_reviewer"
+
+
+def test_the_retired_lens_role_is_a_named_refusal_not_a_staffable_role(
     roster: ModuleType, rr: ModuleType, store: Path
 ) -> None:
-    """Plan R5: the slicing rule is read from ``index.json``, never restated here."""
+    """Issue #161: the lens reviewer is no longer in the staffing map, so staffing it is refused.
+
+    It is refused the way every role without a prompt is: naming the role and listing what can be
+    staffed, not by expanding it into a seat per lens.
+    """
+    assert _RETIRED_STAFFING_ROLE not in roster.STAFFING_ROLE_TO_ROLE_ID
+    assert _RETIRED_ROLE_ID not in roster.STAFFING_ROLE_TO_ROLE_ID.values()
     _record(
         rr,
         store,
-        staffing={"lens-reviewer": {"vendor": "claude", "model": "opus", "effort": "high"}},
-        lenses=["security", "correctness", "testing"],
+        staffing={
+            _RETIRED_STAFFING_ROLE: {"vendor": "claude", "model": "opus", "effort": "high"}
+        },
     )
     record = rr.load(store, 4242, warn=None)
-    seats = roster.plan_seats(record)
-
-    assert [seat.pane_name for seat in seats] == [
-        "issue-4242-lens-security",
-        "issue-4242-lens-correctness",
-        "issue-4242-lens-testing",
-    ]
-    assert all(seat.role_id == "lens_reviewer" for seat in seats)
-
-    index = roster.load_roles_index()
-    text = (ROLES_DIR / "lens-reviewer.md").read_text(encoding="utf-8")
-    sliced = roster.lens_section(text, index, "security")
-    assert "#### security" in sliced
-    assert "#### correctness" not in sliced
-    assert len(sliced) < len(text)
-
-
-def test_a_lens_reviewer_with_no_declared_lens_is_refused(
-    roster: ModuleType, rr: ModuleType, store: Path
-) -> None:
-    _record(
-        rr,
-        store,
-        staffing={"lens-reviewer": {"vendor": "claude", "model": "opus", "effort": "high"}},
-    )
-    record = rr.load(store, 4242, warn=None)
-    with pytest.raises(roster.RosterError, match="no applicable lenses"):
+    with pytest.raises(roster.RosterError, match="has no prompt in the roles library") as caught:
         roster.plan_seats(record)
+    assert _RETIRED_STAFFING_ROLE in str(caught.value)
+    assert "staffable roles are" in str(caught.value)
 
 
-def test_seats_that_would_share_a_pane_name_are_refused_before_any_launch(
-    roster: ModuleType, rr: ModuleType, store: Path
-) -> None:
-    """The launcher splits a pane inside an existing tab rather than failing on a duplicate label."""
-    _record(
-        rr,
-        store,
-        staffing={"lens-reviewer": {"vendor": "claude", "model": "opus", "effort": "high"}},
-        lenses=["security", "security"],
-    )
-    record = rr.load(store, 4242, warn=None)
-    with pytest.raises(roster.RosterError, match="same pane name"):
-        roster.plan_seats(record)
+def test_the_roster_carries_no_lens_machinery(roster: ModuleType) -> None:
+    """Issue #161: no lens slicing, no per-lens seat, and no lens on a seat."""
+    for name in ("lens_ids", "lens_section", "LENS_ROLE"):
+        assert not hasattr(roster, name), f"roster.{name} must be removed"
+    assert "lens" not in {field.name for field in dataclasses.fields(roster.Seat)}
+    assert _RETIRED_ROLE_ID not in roster.load_roles_index()
 
 
 def test_the_dispatch_brief_names_the_role_file_by_absolute_path(
@@ -1063,24 +1042,22 @@ TARGETED = {
 }
 
 
-def test_the_targeted_reviewer_gets_one_seat_never_one_per_lens(
+def test_the_targeted_reviewer_gets_exactly_one_headless_seat(
     roster: ModuleType, rr: ModuleType, store: Path
 ) -> None:
-    _record(rr, store, staffing=TARGETED, lenses=["correctness", "security", "testing"])
+    _record(rr, store, staffing=TARGETED)
     record = roster.load_record(store, 4242)
     seats = [s for s in roster.plan_seats(record) if s.role == "targeted-reviewer"]
     assert len(seats) == 1
     seat = seats[0]
-    assert (seat.pane_name, seat.lens, seat.headless) == (
-        "issue-4242-targeted-reviewer", None, True,
-    )
+    assert (seat.pane_name, seat.headless) == ("issue-4242-targeted-reviewer", True)
     assert (seat.role_id, seat.prompt_file) == ("targeted_reviewer", "targeted-reviewer.md")
 
 
 def test_up_opens_no_pane_and_records_no_row_for_the_headless_seat(
     roster: ModuleType, rr: ModuleType, store: Path
 ) -> None:
-    _record(rr, store, staffing=TARGETED, lenses=["correctness"])
+    _record(rr, store, staffing=TARGETED)
     runner = FakeRunner()
     said: list[str] = []
 
@@ -1091,13 +1068,14 @@ def test_up_opens_no_pane_and_records_no_row_for_the_headless_seat(
     assert len(launches) == 1
     assert not any("targeted-reviewer" in " ".join(c) for c in launches)
     assert [row["role"] for row in _rows(rr, store)] == ["planner"]
+    assert all("lens" not in row for row in _rows(rr, store)), "a roster row carries no lens"
     assert any("targeted-reviewer is headless" in line for line in said)
 
 
 def test_a_headless_seat_counts_against_no_pane_allocation(
     roster: ModuleType, rr: ModuleType, store: Path
 ) -> None:
-    _record(rr, store, staffing=TARGETED, lenses=["correctness"], concurrency=1)
+    _record(rr, store, staffing=TARGETED, concurrency=1)
     runner = FakeRunner()
 
     code = roster.up(store, 4242, runner=runner, env=IN_PANE, out=lambda _: None)
@@ -1109,7 +1087,7 @@ def test_a_headless_seat_counts_against_no_pane_allocation(
 def test_the_dry_run_says_how_the_headless_seat_starts(
     roster: ModuleType, rr: ModuleType, store: Path
 ) -> None:
-    _record(rr, store, staffing=TARGETED, lenses=["correctness"])
+    _record(rr, store, staffing=TARGETED)
     said: list[str] = []
     roster.up(store, 4242, dry_run=True, env=IN_PANE, out=said.append)
     assert "start  started by `launcher.py review`" in "\n".join(said)

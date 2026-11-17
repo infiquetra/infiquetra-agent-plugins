@@ -36,16 +36,58 @@ RS = _load("release_step")
 
 
 class FakeGh:
-    """Answers `gh` by verb, and records every argv so a test can assert what was bound."""
+    """Answers `gh` by verb, and records every argv so a test can assert what was bound.
 
-    def __init__(self, *, view: dict[str, Any], merge_ok: bool = True, merged: dict | None = None):
+    ``threads`` is the pull request's review threads, as one page of ``isResolved`` flags;
+    ``thread_pages`` gives several pages instead, each flagged as having a next page until the
+    last. The default is a pull request with no review threads at all.
+    """
+
+    def __init__(
+        self,
+        *,
+        view: dict[str, Any],
+        merge_ok: bool = True,
+        merged: dict | None = None,
+        threads: list[bool] | None = None,
+        thread_pages: list[list[bool]] | None = None,
+        threads_ok: bool = True,
+    ):
         self.view = view
         self.merge_ok = merge_ok
         self.merged = merged or {}
+        self.pages = thread_pages if thread_pages is not None else [list(threads or [])]
+        self.threads_ok = threads_ok
         self.calls: list[list[str]] = []
+        self.thread_calls = 0
+
+    def _threads(self) -> Any:
+        if not self.threads_ok:
+            return SimpleNamespace(returncode=1, stdout="", stderr="HTTP 502")
+        index = min(self.thread_calls, len(self.pages) - 1)
+        self.thread_calls += 1
+        last = index == len(self.pages) - 1
+        payload = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "pageInfo": {
+                                "hasNextPage": not last,
+                                "endCursor": None if last else f"cursor-{index}",
+                            },
+                            "nodes": [{"isResolved": resolved} for resolved in self.pages[index]],
+                        }
+                    }
+                }
+            }
+        }
+        return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
 
     def __call__(self, argv: list[str], **_kw: Any) -> Any:
         self.calls.append(list(argv))
+        if "graphql" in argv:
+            return self._threads()
         if "merge" in argv:
             return SimpleNamespace(
                 returncode=0 if self.merge_ok else 1,
@@ -132,6 +174,83 @@ class TestRelease:
         assert "reports no head commit" in str(caught.value)
 
 
+class TestUnresolvedReviewThreads:
+    """Issue #161: an unresolved review thread, bot or human, holds the merge."""
+
+    def _release(self, runner: FakeGh, **kwargs: Any) -> dict[str, Any]:
+        return RS.release(repo="infiquetra/x", number=7, runner=runner, **kwargs)
+
+    def test_unresolved_threads_are_counted_through_the_graphql_api(self) -> None:
+        runner = FakeGh(view=_clean_view(), threads=[True, False, False, True, False])
+        assert RS.unresolved_review_threads("infiquetra/x", 7, runner=runner) == 3
+        [call] = [argv for argv in runner.calls if "graphql" in argv]
+        assert call[:2] == ["gh", "api"]
+        joined = " ".join(call)
+        assert "reviewThreads" in joined and "isResolved" in joined
+        assert "infiquetra" in joined and "7" in joined
+
+    def test_a_pull_request_with_every_thread_resolved_has_none(self) -> None:
+        runner = FakeGh(view=_clean_view(), threads=[True, True])
+        assert RS.unresolved_review_threads("infiquetra/x", 7, runner=runner) == 0
+        assert RS.unresolved_review_threads(
+            "infiquetra/x", 7, runner=FakeGh(view=_clean_view())
+        ) == 0
+
+    def test_every_page_of_threads_is_read(self) -> None:
+        runner = FakeGh(view=_clean_view(), thread_pages=[[True, False], [True], [False, False]])
+        assert RS.unresolved_review_threads("infiquetra/x", 7, runner=runner) == 3
+        assert runner.thread_calls == 3
+
+    def test_an_unresolved_thread_holds_the_release_before_any_merge_call(self) -> None:
+        runner = FakeGh(view=_clean_view(), threads=[True, False])
+        state = self._release(runner)
+        assert state["status"] == "waiting"
+        assert state["unresolved_threads"] == 1
+        assert "unresolved review thread" in state["reason"]
+        assert not any("merge" in argv for argv in runner.calls)
+
+    def test_unresolved_threads_on_a_later_page_still_hold_the_release(self) -> None:
+        runner = FakeGh(view=_clean_view(), thread_pages=[[True] * 3, [True], [False]])
+        state = self._release(runner)
+        assert state["status"] == "waiting" and state["unresolved_threads"] == 1
+        assert not any("merge" in argv for argv in runner.calls)
+
+    def test_a_pull_request_with_all_threads_resolved_still_merges_bound_to_its_head(self) -> None:
+        runner = FakeGh(
+            view=_clean_view(), threads=[True, True], merged={"mergeCommit": {"oid": "b" * 40}}
+        )
+        state = self._release(runner)
+        assert state["status"] == "merged"
+        merge_argv = next(argv for argv in runner.calls if "merge" in argv)
+        assert merge_argv[merge_argv.index("--match-head-commit") + 1] == "a" * 40
+        graphql_at = next((i for i, argv in enumerate(runner.calls) if "graphql" in argv), None)
+        merge_at = next(i for i, argv in enumerate(runner.calls) if "merge" in argv)
+        assert graphql_at is not None, "the review threads were never read"
+        assert graphql_at < merge_at
+
+    def test_threads_are_read_whatever_the_merge_method(self) -> None:
+        runner = FakeGh(view=_clean_view(), threads=[False])
+        state = self._release(runner, merge_method="squash")
+        assert state["status"] == "waiting" and state["unresolved_threads"] == 1
+
+    def test_a_thread_read_that_fails_never_leads_to_a_merge(self) -> None:
+        runner = FakeGh(view=_clean_view(), threads_ok=False)
+        try:
+            state = self._release(runner)
+        except RS.ReleaseStepError:
+            state = {"status": "refused-by-error"}
+        assert state["status"] != "merged"
+        assert not any("merge" in argv for argv in runner.calls)
+
+    def test_a_failing_check_still_waits_without_asking_about_threads_first(self) -> None:
+        view = _clean_view()
+        view["mergeStateStatus"] = "UNSTABLE"
+        runner = FakeGh(view=view, threads=[False])
+        state = self._release(runner)
+        assert state["status"] == "waiting"
+        assert not any("merge" in argv for argv in runner.calls)
+
+
 class TestDeploy:
     def test_this_repositorys_profile_records_no_destination_and_deploys_nothing(self) -> None:
         profile_path = REPO_ROOT / ".saga-profile.json"
@@ -192,13 +311,7 @@ class TestDeploy:
 
 class TestFunctionalTest:
     def _record(self, **extra: Any) -> dict[str, Any]:
-        return {
-            "run_configuration": {
-                "standard_cycle_allowance": {"value": 3},
-                "escalated_cycle_allowance": {"value": 2},
-            },
-            **extra,
-        }
+        return {**extra}
 
     def test_every_scenario_passing_is_a_pass(self) -> None:
         result = RS.record_functional_test(
@@ -207,24 +320,97 @@ class TestFunctionalTest:
         assert result["status"] == "passed"
         assert result["post_merge_cycles"] == 0
 
-    def test_a_failure_re_enters_the_loop_and_counts_against_the_post_merge_allowance(self) -> None:
-        result = RS.record_functional_test(self._record(), [{"name": "a", "state": "failed"}])
+    def _round(self, record: dict[str, Any], *names: str) -> dict[str, Any]:
+        """One failing functional pass, recorded the way the caller stores it."""
+        result = RS.record_functional_test(
+            record, [{"name": name, "state": "failed"} for name in names]
+        )
+        record["functional_test"] = result
+        return result
+
+    def test_a_first_failure_re_enters_the_loop(self) -> None:
+        result = self._round(self._record(), "a")
         assert result["status"] == "re-enters-the-build-loop"
         assert result["post_merge_cycles"] == 1
-        assert "cycle 1 of 5" in result["reason"]
+        assert result.get("early_stop") is False
 
-    def test_the_spent_allowance_takes_the_one_recorded_extension(self) -> None:
-        record = self._record(functional_test={"post_merge_cycles": 5, "extension_taken": False})
-        result = RS.record_functional_test(record, [{"name": "a", "state": "failed"}])
+    def test_a_second_failure_of_different_scenarios_re_enters_for_round_three(self) -> None:
+        record = self._record()
+        self._round(record, "a")
+        result = self._round(record, "b")
         assert result["status"] == "re-enters-the-build-loop"
-        assert result["extension_taken"] is True
-        assert "one recorded extension" in result["reason"]
+        assert result["post_merge_cycles"] == 2
+        assert result.get("early_stop") is False and result.get("at_limit") is not True
 
-    def test_a_second_extension_is_never_granted(self) -> None:
-        record = self._record(functional_test={"post_merge_cycles": 6, "extension_taken": True})
-        result = RS.record_functional_test(record, [{"name": "a", "state": "failed"}])
+    def test_the_same_failing_scenarios_in_round_two_stop_the_loop_early(self) -> None:
+        record = self._record()
+        self._round(record, "a", "b")
+        result = self._round(record, "b", "a")
         assert result["status"] == "exhausted"
-        assert "goes to the operator" in result["reason"]
+        assert result["early_stop"] is True
+        assert result["post_merge_cycles"] == 2
+        assert result.get("at_limit") is not True
+
+    def test_a_subset_or_superset_of_the_failures_is_not_the_same_set(self) -> None:
+        record = self._record()
+        self._round(record, "a", "b")
+        assert self._round(record, "a")["status"] == "re-enters-the-build-loop"
+        record = self._record()
+        self._round(record, "a")
+        assert self._round(record, "a", "b")["status"] == "re-enters-the-build-loop"
+
+    def test_round_three_stops_at_the_limit_with_no_fourth_round(self) -> None:
+        record = self._record()
+        self._round(record, "a")
+        self._round(record, "b")
+        result = self._round(record, "c")
+        assert result["status"] == "exhausted"
+        assert result["at_limit"] is True
+        assert result["post_merge_cycles"] == 3
+        assert "goes to the operator" in result["reason"] or "operator" in result["reason"]
+
+    def test_round_three_failing_the_same_way_is_both_early_and_at_the_limit(self) -> None:
+        record = self._record()
+        self._round(record, "a")
+        self._round(record, "b")
+        result = self._round(record, "b")
+        assert result["status"] == "exhausted"
+        assert result["at_limit"] is True and result["early_stop"] is True
+
+    def test_there_is_no_escalation_and_no_extension(self) -> None:
+        record = self._record()
+        for names in (("a",), ("b",), ("c",)):
+            result = self._round(record, *names)
+            assert result.get("extension_taken") is not True
+        assert result["status"] == "exhausted"
+        again = self._round(record, "d")
+        assert again["status"] == "exhausted"
+        assert again["post_merge_cycles"] <= RS.POST_MERGE_ROUND_LIMIT
+
+    def test_the_round_limit_is_three_and_no_allowance_model_remains(self) -> None:
+        assert RS.POST_MERGE_ROUND_LIMIT == 3
+        assert not hasattr(RS, "post_merge_allowance")
+
+    def test_a_generous_run_configuration_cannot_buy_more_post_merge_rounds(self) -> None:
+        record: dict[str, Any] = {
+            "run_configuration": {
+                "standard_cycle_allowance": {"value": 9},
+                "escalated_cycle_allowance": {"value": 9},
+            }
+        }
+        for names in (("a",), ("b",)):
+            self._round(record, *names)
+        assert self._round(record, "c")["status"] == "exhausted"
+
+    def test_a_pass_between_failures_is_a_pass_and_blocked_never_counts_a_round(self) -> None:
+        record = self._record()
+        self._round(record, "a")
+        blocked = RS.record_functional_test(
+            record,
+            [{"name": "x", "state": "blocked", "cause": "no credential", "required": True}],
+        )
+        assert blocked["status"] == "blocked"
+        assert blocked["post_merge_cycles"] == 1
 
     def test_an_unrun_scenario_is_never_folded_into_a_pass(self) -> None:
         with pytest.raises(RS.ReleaseStepError) as caught:
@@ -377,23 +563,56 @@ def _combined(revision: str = REVIEWED, *, green: bool = True, waiver: str = "")
     }
 
 
-def _review(outcome: str, *, residuals: list[int] | None = None, open_findings: int = 0) -> dict:
-    findings = [{"status": "open"} for _ in range(open_findings)]
-    findings.append({"status": "fixed-verified"})
+def _run(
+    *,
+    round_no: int = 3,
+    blocking: tuple[str, ...] = (),
+    filed: list[int] | None = None,
+    decision: str = "merge-with-reason",
+    revision: str = REVIEWED,
+) -> dict:
+    """A stored C1 review run, as ``review_run`` entries sit in ``review_cycles``.
+
+    The reviewed revision is stored under every name a reader may use for it.
+    """
+    entry: dict[str, Any] = {
+        "kind": "review_run",
+        "schema": "review_records.v1",
+        "card": 1028,
+        "round": round_no,
+        "head": revision,
+        "revision": revision,
+        "subject": {"head_sha": revision},
+        "merge": {"allowed": not blocking, "blocking": list(blocking), "report_only_blocks": []},
+    }
+    if filed is not None:
+        entry["merge_decision"] = {
+            "decision": decision,
+            "reason": "known and filed",
+            "filed_issues": list(filed),
+        }
+    return entry
+
+
+def _legacy_cap(*, residuals: list[int] | None = None, open_findings: int = 0) -> dict:
+    """An entry of the retired result shape, kept in the record and never read."""
     return {
-        "schema": "review_result.v2",
+        "schema": "review_" + "result" + ".v2",
         "loop": "code_review",
         "unit": "issue-1028",
         "cycle": 5,
         "revision": REVIEWED,
-        "outcome": outcome,
-        "findings": findings,
+        "outcome": "cycle_cap_best_available",
+        "findings": [{"status": "open"} for _ in range(open_findings)],
         "residual_issues": residuals or [],
     }
 
 
 class TestCloseCitesTheFunctionalEvidence:
-    """Issue #100: the closeout cites the pre-review functional run and the residual issues."""
+    """The closeout cites the pre-review functional run and the residual issues (#100, #161).
+
+    It reads C1 review runs and the operator's merge decision, never the retired result shape.
+    """
 
     def _close(self, tmp_path: Path, record: dict[str, Any], capsys: Any) -> tuple[int, Any, str]:
         path = tmp_path / "issue-1028.json"
@@ -405,7 +624,7 @@ class TestCloseCitesTheFunctionalEvidence:
     def test_the_delivered_closeout_cites_the_combined_pass(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        record = {"combined_branch": _combined(), "review_cycles": [_review("accepted")]}
+        record = {"combined_branch": _combined(), "review_cycles": [_run(round_no=1)]}
         code, comment, err = self._close(tmp_path, record, capsys)
         assert code == 0, err
         line = comment["parts"]["pre_review_functional_evidence"]
@@ -414,8 +633,7 @@ class TestCloseCitesTheFunctionalEvidence:
             "teardown pass"
         )
         assert line in comment["body"]
-        residual = comment["parts"]["residual_issues"]
-        assert residual.startswith("none: review did not end at the cycle cap")
+        assert comment["parts"]["residual_issues"].startswith("none")
 
     def test_a_waived_run_prints_the_waiver_and_its_reason(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -426,14 +644,12 @@ class TestCloseCitesTheFunctionalEvidence:
         assert comment["parts"]["pre_review_functional_evidence"].startswith("waived: docs only")
         assert "waived: docs only" in comment["body"]
 
-    def test_the_cap_cycles_residual_issues_are_listed(
+    def test_the_operators_merge_with_reason_lists_the_filed_residual_issues(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         record = {
             "combined_branch": _combined(),
-            "review_cycles": [
-                _review("cycle_cap_best_available", residuals=[301, 302], open_findings=2)
-            ],
+            "review_cycles": [_run(blocking=("rf:1", "rf:2"), filed=[301, 302])],
         }
         code, comment, err = self._close(tmp_path, record, capsys)
         assert code == 0, err
@@ -441,48 +657,80 @@ class TestCloseCitesTheFunctionalEvidence:
         assert "#301, #302" in comment["body"]
         assert REVIEWED in comment["parts"]["pre_review_functional_evidence"]
 
-    def test_delivered_is_refused_when_the_cap_revision_has_no_functional_run(
+    def test_the_closeout_reads_the_newest_review_runs_revision(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        older = _run(round_no=1, blocking=("rf:1",), revision="e" * 40)
+        record = {"combined_branch": _combined(), "review_cycles": [older, _run(round_no=2)]}
+        code, comment, err = self._close(tmp_path, record, capsys)
+        assert code == 0, err
+        assert REVIEWED in comment["parts"]["pre_review_functional_evidence"]
+
+    def test_delivered_is_refused_when_the_merged_over_revision_has_no_functional_run(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         for block in (None, _combined("d" * 40), _combined(green=False)):
             record: dict[str, Any] = {
-                "review_cycles": [
-                    _review("cycle_cap_best_available", residuals=[301], open_findings=1)
-                ]
+                "review_cycles": [_run(blocking=("rf:1",), filed=[301])]
             }
             if block is not None:
                 record["combined_branch"] = block
             code, _, err = self._close(tmp_path, record, capsys)
             assert code == 2
-            assert f"cycle_cap_best_available at {REVIEWED}" in err
+            assert REVIEWED in err
             assert "no passing combined-branch functional run and no waiver" in err
 
-    def test_delivered_is_refused_when_open_cap_findings_outnumber_the_filed_issues(
+    def test_delivered_is_refused_when_blocking_items_outnumber_the_filed_issues(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         record = {
             "combined_branch": _combined(),
-            "review_cycles": [
-                _review("cycle_cap_best_available", residuals=[301], open_findings=2)
-            ],
+            "review_cycles": [_run(blocking=("rf:1", "rf:2"), filed=[301])],
         }
         code, _, err = self._close(tmp_path, record, capsys)
         assert code == 2
-        assert "2 open finding(s) and 1 residual issue(s) filed" in err
+        assert REVIEWED in err
+
+    def test_a_review_run_that_stopped_the_card_is_not_a_merge_over_blocking_items(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        record = {
+            "combined_branch": _combined(),
+            "review_cycles": [_run(blocking=("rf:1",), filed=[], decision="stop-card")],
+        }
+        path = tmp_path / "issue-1028.json"
+        path.write_text(json.dumps({"schema": "run_record.v1", "issue": 1028, **record}))
+        code = RS.main(["--record", str(path), "close", "--disposition", "canceled"])
+        assert code == 0, capsys.readouterr().err
+
+    def test_legacy_entries_are_kept_in_the_record_and_never_read(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        record = {
+            "combined_branch": _combined(),
+            "review_cycles": [_legacy_cap(residuals=[301], open_findings=3)],
+        }
+        code, comment, err = self._close(tmp_path, record, capsys)
+        assert code == 0, err
+        assert comment["parts"]["residual_issues"].startswith("none")
+        assert comment["parts"]["pre_review_functional_evidence"].startswith("not recorded")
 
     def test_a_record_with_no_combined_run_records_the_absence_with_a_reason(self) -> None:
         comment = RS.closeout_comment({}, disposition="delivered")
         assert comment["parts"]["pre_review_functional_evidence"].startswith("not recorded: ")
-        reviewed_only = {"review_cycles": [_review("accepted")]}
+        reviewed_only = {"review_cycles": [_run(round_no=1)]}
         line = RS.closeout_comment(reviewed_only, disposition="delivered")["parts"][
             "pre_review_functional_evidence"
         ]
         assert line == f"not recorded: no combined-branch functional pass at {REVIEWED}"
 
-    def test_a_non_delivered_close_is_not_refused_over_the_cap(self) -> None:
-        record = {"review_cycles": [_review("cycle_cap_best_available", open_findings=3)]}
+    def test_a_non_delivered_close_is_not_refused_over_blocking_items(self) -> None:
+        record = {"review_cycles": [_run(blocking=("rf:1", "rf:2", "rf:3"), filed=[])]}
         comment = RS.closeout_comment(record, disposition="canceled")
         assert comment["closure_reason"] == "NOT_PLANNED"
+
+    def test_the_cycle_cap_outcome_of_the_retired_result_shape_is_gone(self) -> None:
+        assert not hasattr(RS, "CYCLE_CAP_OUTCOME")
 
     def test_the_evidence_parts_follow_the_required_ones_and_leave_them_unchanged(self) -> None:
         assert set(RS.EVIDENCE_PARTS).isdisjoint(RS.CLOSEOUT_PARTS)

@@ -16,9 +16,10 @@
       "merge_turn.py",
       "reconcile_controller.py",
       "release_step.py",
-      "review_result.py",
       "run_record.py",
-      "saga.py"
+      "saga.py",
+      "review_command.py",
+      "review_state.py"
     ],
     "mutating_operations": [
       "comment",
@@ -37,11 +38,12 @@
       "scripts/parse_issue.py",
       "scripts/qa_strategies.py",
       "scripts/release_step.py",
-      "scripts/review_roster.py",
       "scripts/run_record.py",
       "scripts/saga.py",
       "scripts/security_scan.py",
-      "scripts/shaping_judgments.py"
+      "scripts/shaping_judgments.py",
+      "scripts/review_command.py",
+      "scripts/review_state.py"
     ],
     "skill_units": [
       "skills/brainstorm",

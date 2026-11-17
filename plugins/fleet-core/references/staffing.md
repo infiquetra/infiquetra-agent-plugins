@@ -51,9 +51,9 @@ uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve --sha
 uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve --role functional-tester
 # by role and review lens
 uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve \
-  --role lens-reviewer --lens security
+  --role targeted-reviewer
 # the rated alternatives for a role
-uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py explain --role lens-reviewer
+uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py explain --role targeted-reviewer
 # ask the tier judgment about this unit and print the band it would take in a run
 # (the tier printed is the default; exit zero either way)
 uv run python plugins/fleet-core/scripts/fleet_commons/staffing.py resolve --shape judgment --suggest
@@ -66,7 +66,7 @@ The default output is short and human, and its shape depends on what you asked:
 | `resolve --shape judgment` | `opus/high` |
 | `resolve --role functional-tester` | `claude opus/high` |
 | `resolve --shape targeted-review` | `sonnet/high` |
-| `resolve --role lens-reviewer --lens security` | `claude opus/high documented-policy` |
+| `resolve --role targeted-reviewer` | `claude sonnet/high` |
 
 The third token is the qualification status, and it is one of three: `qualified`,
 `documented-policy` (the lens is real and establishes no threshold), or `lens-unverified` (the
@@ -95,7 +95,7 @@ today. A role pinned to another vendor through it fails loud, naming the vendor;
 shape without the flag, or unpin the vendor. The flag lives outside the portable subset shared with
 the Codex plugin repository, so it needs no schema version change.
 
-**Targeted review has its own work shape.** `targeted-reviewer` uses `targeted-review`,
+**Targeted review has its own work shape and needs no lens argument.** `targeted-reviewer` uses `targeted-review`,
 whose default is `sonnet/high` and whose `unattended_step_down` is false. Other judgment
 and review roles retain their defaults. The shape remains portable: a pinned non-Claude
 vendor follows the normal palette translation. Orchestrate's high-risk second reviewer
@@ -436,7 +436,7 @@ decision = staffing.resolve_shape("judgment")
 Consuming this module means depending on the fleet-core version that introduced it. Say so in your
 plugin's changelog and fail with a message naming both versions if the module is absent;
 `plugins/saga/scripts/bundled_fleet.py` and its callers (for example
-`plugins/saga/scripts/review_roster.py`, which treats an unreachable staffing module as "resolve it
+`plugins/saga/scripts/reviewer_answer.py`, which treats an unreachable staffing module as "resolve it
 here instead" rather than an error) are the worked examples. This machine carries two installed
 plugin roots and a release has updated one and not the other before, so a consumer that assumes
 the newer fleet-core is present will fail in one root and not the other.

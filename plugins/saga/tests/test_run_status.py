@@ -19,7 +19,6 @@ SAGA_SCRIPTS = ROOT / "plugins" / "saga" / "scripts"
 
 sys.path.insert(0, str(SAGA_SCRIPTS))
 
-import review_result  # noqa: E402
 import run_record  # noqa: E402
 import run_status  # noqa: E402
 import saga  # noqa: E402
@@ -235,82 +234,25 @@ def test_a_subdirectory_reads_the_checkout_envelopes(
 
 
 # --------------------------------------------------------------------------------------------
-# `review`: the latest code review result, lens by lens (issue #108)
+# `review`: the latest review run, from the review-state document (issues #108, #164, #161)
 # --------------------------------------------------------------------------------------------
 
 REVISION = "a" * 40
-SELECTED = {
-    "always_on": ["correctness", "security", "testing"],
-    "conditional_applies": {"performance": "hot path", "docs": "public API"},
+
+# The retired result shapes, as plain stored dicts. The module that wrote them is deleted, so a
+# reader that still understood them would have nothing left to import.
+_RETIRED = "review_" + "result"
+LEGACY_V2 = {
+    "schema": _RETIRED + ".v2",
+    "loop": "code_review",
+    "unit": "issue-108",
+    "cycle": 2,
+    "revision": REVISION,
+    "outcome": "repairs_requested",
+    "per_lens_results": [{"lens": "correctness", "derived_overall": 9}],
+    "findings": [],
 }
-
-
-def _lens(
-    name: str,
-    *,
-    scores: dict[str, int] | None = None,
-    scorable: bool = True,
-    executed: bool = True,
-) -> object:
-    return review_result.LensResult(
-        lens=name,
-        strictness="standard",
-        scorable=scorable,
-        executed=executed,
-        dimension_scores=scores or {},
-    )
-
-
-def _finding(lens: str, severity: str, path: str, line: int, category: str) -> object:
-    return review_result.Finding(
-        path=path,
-        line=line,
-        category=category,
-        lens=lens,
-        dimension="d",
-        severity=severity,
-        evidence=f"{path}:{line} shows {category}",
-        impact=f"{category} matters",
-    )
-
-
-def _result(*, cycle: int = 1, unit: str = "issue-108", loop: str = "code_review") -> object:
-    return review_result.ReviewResult(
-        revision=REVISION,
-        roster_hash="sha256:test",
-        outcome="review_incomplete",
-        cycle=cycle,
-        loop=loop,
-        unit=unit,
-        lens_results=[
-            _lens("correctness", scores={"a": 10, "b": 9}),
-            _lens("security", scores={"a": 5, "b": 4}),
-            _lens("testing", executed=False),
-            _lens("performance", scorable=False),
-        ],
-        findings=[
-            _finding("security", "P2", "src/b.py", 4, "weak-check"),
-            _finding("security", "P0", "src/a.py", 12, "injection"),
-            _finding("performance", "P3", "src/c.py", 1, "slow-loop"),
-            _finding("retired-lens", "P1", "src/d.py", 2, "orphan"),
-        ],
-    )
-
-
-def _record_with(store: Path, *results: object, legacy: int = 0) -> None:
-    run_record.set_next_step(store, 108, "review")
-    record = run_record.load(store, 108)
-    assert record is not None
-    configuration = dict(record.run_configuration)
-    configuration["applicable_lenses"] = {"value": SELECTED, "source": "operator"}
-    cycles = [{"schema": "review_result.v1", "cycle": n} for n in range(1, legacy + 1)]
-    cycles += [result.to_dict() for result in results]  # type: ignore[attr-defined]
-    run_record.save(
-        store,
-        run_record.RunRecord(
-            **{**record.__dict__, "run_configuration": configuration, "review_cycles": cycles}
-        ),
-    )
+LEGACY_V1 = {"schema": _RETIRED + ".v1", "cycle": 1}
 
 
 def _review(repo: Path, store: Path, *args: str, capsys: pytest.CaptureFixture[str]) -> dict:
@@ -319,116 +261,6 @@ def _review(repo: Path, store: Path, *args: str, capsys: pytest.CaptureFixture[s
     view = json.loads(out)
     assert view["schema"] == "review_view.v1"
     return view
-
-
-def test_review_reads_the_latest_code_review_entry_and_counts_legacy_ones(
-    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _record_with(
-        store,
-        _result(cycle=1),
-        _result(cycle=1, loop="post_merge"),
-        _result(cycle=2),
-        legacy=2,
-    )
-    view = _review(repo, store, capsys=capsys)
-    assert view["issue"] == 108
-    assert view["record_path"] == str(run_record.record_path(store, 108))
-    assert view["legacy_entries"] == 2
-    review = view["review"]
-    assert (review["cycle"], review["loop"], review["revision"]) == (2, "code_review", REVISION)
-    assert _review(repo, store, "--loop", "post_merge", capsys=capsys)["review"]["loop"] == (
-        "post_merge"
-    )
-
-
-def test_review_maps_each_selected_lens_to_its_state(
-    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _record_with(store, _result())
-    lenses = _review(repo, store, capsys=capsys)["review"]["lenses"]
-    states = {lens["lens"]: (lens["state"], lens["reason"]) for lens in lenses}
-    assert states == {
-        "correctness": ("met", None),
-        "security": ("not_met", None),
-        "testing": ("not_run", "could not execute"),
-        "performance": (
-            "unscored",
-            "establishes no threshold: no fixtures, or no qualified executor",
-        ),
-        "docs": ("not_run", "no result recorded"),
-    }
-    # A lens with no usable result never carries a score that could read as a low one.
-    overall = {lens["lens"]: lens["derived_overall"] for lens in lenses}
-    assert overall == {
-        "correctness": 9.5,
-        "security": 4.5,
-        "testing": None,
-        "performance": None,
-        "docs": None,
-    }
-
-
-def test_review_groups_findings_by_lens_most_severe_first(
-    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _record_with(store, _result())
-    review = _review(repo, store, capsys=capsys)["review"]
-    by_lens = {lens["lens"]: lens for lens in review["lenses"]}
-    security = by_lens["security"]
-    assert security["finding_count"] == 2
-    assert [(f["severity"], f["path"], f["line"]) for f in security["findings"]] == [
-        ("P0", "src/a.py", 12),
-        ("P2", "src/b.py", 4),
-    ]
-    assert security["top"] == security["findings"]
-    assert set(security["findings"][0]) == set(run_status.FINDING_FIELDS)
-    assert by_lens["performance"]["finding_count"] == 1
-    assert by_lens["correctness"]["finding_count"] == 0
-    assert [f["category"] for f in review["unattributed_findings"]] == ["orphan"]
-
-
-def test_review_unit_filters_to_that_units_history(
-    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _record_with(store, _result(cycle=1, unit="u1"), _result(cycle=3, unit="u2"))
-    assert _review(repo, store, "--unit", "u1", capsys=capsys)["review"]["unit"] == "u1"
-    assert _review(repo, store, capsys=capsys)["review"]["unit"] == "u2"
-    assert _review(repo, store, "--unit", "u9", capsys=capsys)["review"] is None
-
-
-def test_review_is_null_without_a_v2_entry_or_a_record(
-    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    view = _review(repo, store, capsys=capsys)
-    assert (view["record_path"], view["review"]) == (None, None)
-    _record_with(store, legacy=1)
-    view = _review(repo, store, capsys=capsys)
-    assert (view["legacy_entries"], view["review"]) == (1, None)
-    code, out, _ = _run(repo, store, "review", "--issue", "108", capsys=capsys)
-    assert code == 0
-    assert out.strip() == "run_status: no review result recorded for #108"
-
-
-def test_review_text_form_is_a_fixed_width_table(
-    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _record_with(store, _result())
-    code, out, _ = _run(repo, store, "review", "--issue", "108", capsys=capsys)
-    assert code == 0
-    assert out.splitlines() == [
-        f"#108 · issue-108 · cycle 1 · code_review · review_incomplete · {REVISION[:12]}",
-        "lens         state     findings",
-        "correctness  met       0",
-        "security     not met   2",
-        "  P0 src/a.py:12 injection",
-        "  P2 src/b.py:4 weak-check",
-        "testing      not run   0  (could not execute)",
-        "performance  unscored  1  (establishes no threshold: no fixtures, or no qualified executor)",
-        "  P3 src/c.py:1 slow-loop",
-        "docs         not run   0  (no result recorded)",
-        "other findings: 1",
-    ]
 
 
 STATE_FIXTURES = ROOT / "plugins" / "saga" / "tests" / "fixtures" / "review_state"
@@ -486,15 +318,6 @@ def test_review_embeds_the_whole_document_for_state_records(
     assert state["merge"] == review["merge"]
 
 
-def test_review_old_shape_carries_no_embedded_document(
-    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _record_with(store, _result(cycle=1))
-    review = _review(repo, store, capsys=capsys)["review"]
-    assert "state_schema" not in review
-    assert "state" not in review
-
-
 def test_review_state_text_prints_numbered_questions(
     repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -503,6 +326,56 @@ def test_review_state_text_prints_numbered_questions(
     assert code == 0
     assert "Q1. merge-blocking" in out.splitlines()
     assert any(line.startswith("correctness") and " D " in f" {line} " for line in out.splitlines())
+
+
+def test_review_is_null_without_a_review_run_or_a_record(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    view = _review(repo, store, capsys=capsys)
+    assert (view["record_path"], view["review"]) == (None, None)
+    code, out, _ = _run(repo, store, "review", "--issue", "108", capsys=capsys)
+    assert code == 0
+    assert out.strip() == "run_status: no review result recorded for #108"
+
+
+def _legacy_only_record(store: Path, issue: int) -> None:
+    run_record.set_next_step(store, issue, "review")
+    record = run_record.load(store, issue)
+    assert record is not None
+    run_record.save(
+        store,
+        run_record.RunRecord(
+            **{**record.__dict__, "review_cycles": [dict(LEGACY_V1), dict(LEGACY_V2)]}
+        ),
+    )
+
+
+def test_review_never_reads_the_retired_result_shapes(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #161: a stored v1 or v2 entry is kept in the record and shows nothing."""
+    _legacy_only_record(store, 108)
+    view = _review(repo, store, capsys=capsys)
+    assert view["review"] is None
+    code, out, _ = _run(repo, store, "review", "--issue", "108", capsys=capsys)
+    assert code == 0
+    assert out.strip() == "run_status: no review result recorded for #108"
+
+
+def test_the_band_never_reads_the_retired_result_shapes(
+    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _band_record(store, units=[], cycles=(dict(LEGACY_V1), dict(LEGACY_V2)))
+    _tick(repo, 412, lifecycle_phase="code-review")
+    row = _band(repo, store, capsys)
+    assert row["review"] is None
+    assert "cycle" not in row["band_line"]
+
+
+def test_the_status_reader_no_longer_imports_the_retired_modules() -> None:
+    text = (SAGA_SCRIPTS / "run_status.py").read_text(encoding="utf-8")
+    for name in ("review_" + "result", "review_" + "consensus", "review_" + "roster"):
+        assert name not in text, name
 
 
 def test_review_an_unknown_record_version_exits_3(
@@ -599,8 +472,8 @@ def test_unit_for_reads_unit_id_and_the_rows_own_staffing_role(
     [
         ("review-fixer", "worker"),
         ("downstream-resolver", "worker"),
-        ("review-controller", "lens-reviewer"),
-        ("external-reviewer", "lens-reviewer"),
+        ("review-controller", "targeted-reviewer"),
+        ("external-reviewer", "targeted-reviewer"),
     ],
 )
 def test_unit_for_maps_orchestrates_review_loop_role_to_a_staffing_role(
@@ -758,9 +631,6 @@ def test_the_contract_declares_exactly_the_fields_unit_for_matches(repo: Path, s
 # The run status band's line (issue #105)
 # --------------------------------------------------------------------------------------------
 
-BAND_LENSES = [f"lens-{n}" for n in range(1, 11)]
-
-
 def _check(name: str, status: str) -> dict[str, object]:
     return {"name": name, "command": name, "catalogue_check": None, "status": status}
 
@@ -781,45 +651,20 @@ def _unit(name: str, worktree: str, *iterations: dict[str, object]) -> dict[str,
     return {"id": name, "worktree": worktree, "build_loop": {"iterations": list(iterations)}}
 
 
-def _band_result(*, cycle: int, unit: str = "u1", met: int = 7) -> object:
-    return review_result.ReviewResult(
-        revision=REVISION,
-        roster_hash="sha256:test",
-        outcome="repairs_requested",
-        cycle=cycle,
-        loop="code_review",
-        unit=unit,
-        lens_results=[
-            _lens(lens, scores={"a": 10, "b": 9} if i < met else {"a": 5, "b": 4})
-            for i, lens in enumerate(BAND_LENSES)
-        ],
-        findings=[],
-    )
-
-
 def _band_record(
     store: Path,
     *,
     units: list[dict[str, object]],
-    results: tuple[object, ...] = (),
-    configuration: dict[str, object] | None = None,
+    cycles: tuple[dict[str, object], ...] = (),
     next_step: str = "run /work on the plan",
 ) -> None:
     run_record.set_next_step(store, 412, next_step)
     record = run_record.load(store, 412)
     assert record is not None
-    config = dict(record.run_configuration)
-    config["applicable_lenses"] = {"value": {"always_on": BAND_LENSES}, "source": "operator"}
-    config.update(configuration or {})
     run_record.save(
         store,
         run_record.RunRecord(
-            **{
-                **record.__dict__,
-                "run_configuration": config,
-                "units": units,
-                "review_cycles": [result.to_dict() for result in results],  # type: ignore[attr-defined]
-            }
+            **{**record.__dict__, "units": units, "review_cycles": list(cycles)}
         ),
     )
 
@@ -829,52 +674,6 @@ def _band(repo: Path, store: Path, capsys: pytest.CaptureFixture[str]) -> dict[s
     assert (code, err) == (0, "")
     [row] = json.loads(out)["runs"]
     return row
-
-
-def test_band_line_reads_build_loop_review_cycle_and_lenses_met(
-    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _band_record(
-        store,
-        units=[
-            _unit(
-                "u1",
-                str(repo),
-                _iteration(1, "fail", "fail", "fail"),
-                _iteration(2, "fail", "fail", "pass"),
-                _iteration(3, "fail", "pass", "fail"),
-            )
-        ],
-        results=(_band_result(cycle=1),),
-    )
-    _tick(repo, 412, lifecycle_phase="work")
-    row = _band(repo, store, capsys)
-    assert (
-        row["band_line"]
-        == "#412 · work · build loop pass 3, 2 failing · review cycle 1/3 · 7/10 lenses met"
-    )
-    assert row["build_loop"] == {
-        "unit": "u1",
-        "pass": 3,
-        "failing": 2,
-        "could_not_execute": 0,
-        "green": False,
-        "units_total": 1,
-        "units_green": 0,
-    }
-    assert row["review"] == {
-        "unit": "u1",
-        "cycle": 1,
-        "standard_allowance": 3,
-        "escalated_allowance": 2,
-        "is_escalated": False,
-        "outcome": "repairs_requested",
-        "lenses_met": 7,
-        "lenses_total": 10,
-        "lenses_not_run": 0,
-        "round": None,
-        "grades": [],
-    }
 
 
 def test_band_line_shows_the_round_and_grades_for_state_records(
@@ -900,7 +699,8 @@ def test_band_line_shows_the_round_and_grades_for_state_records(
         {"lens": "testing", "grade": "A"},
         {"lens": "architecture-maintainability", "grade": "A"},
     ]
-    assert row["review"]["cycle"] is None
+    for retired in ("cycle", "standard_allowance", "escalated_allowance", "is_escalated"):
+        assert retired not in row["review"], retired
 
 
 def test_band_text_form_prints_the_band_line(
@@ -921,26 +721,6 @@ def test_band_line_leaves_out_the_review_when_none_is_recorded(
     row = _band(repo, store, capsys)
     assert row["review"] is None
     assert row["band_line"] == "#412 · work · build loop pass 1, 1 failing"
-
-
-def test_band_line_marks_a_cycle_past_the_standard_allowance_as_escalated(
-    repo: Path, store: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _band_record(
-        store,
-        units=[],
-        results=(_band_result(cycle=3), _band_result(cycle=4, met=10)),
-        configuration={
-            "standard_cycle_allowance": {"value": 3},
-            "escalated_cycle_allowance": 2,
-        },
-    )
-    _tick(repo, 412, lifecycle_phase="code-review")
-    row = _band(repo, store, capsys)
-    assert row["build_loop"] is None
-    assert (
-        row["band_line"] == "#412 · code-review · review cycle 4/5 (escalated) · 10/10 lenses met"
-    )
 
 
 def test_band_line_counts_green_units_when_the_checkout_is_none_of_them(
@@ -970,13 +750,10 @@ def test_band_line_picks_the_unit_whose_worktree_is_this_checkout(
             _unit("u1", "/elsewhere/u1", _iteration(5, "pass", green=True)),
             _unit("u2", str(repo), _iteration(2, "fail", "pass")),
         ],
-        results=(_band_result(cycle=2, unit="u2", met=4), _band_result(cycle=1, unit="u1")),
     )
     _tick(repo, 412, lifecycle_phase="work")
     row = _band(repo, store, capsys)
-    assert row["band_line"] == (
-        "#412 · work · build loop pass 2, 1 failing · review cycle 2/3 · 4/10 lenses met"
-    )
+    assert row["band_line"] == "#412 · work · build loop pass 2, 1 failing"
 
 
 def test_band_line_counts_could_not_execute_apart_from_fail(
@@ -1007,7 +784,11 @@ def test_the_contract_declares_the_band_blocks_the_script_prints(
     _band_record(
         store,
         units=[_unit("u1", str(repo), _iteration(1, "fail"))],
-        results=(_band_result(cycle=1),),
+        cycles=tuple(
+            json.loads((STATE_FIXTURES / "record.json").read_text(encoding="utf-8"))[
+                "review_cycles"
+            ]
+        ),
     )
     row = _band(repo, store, capsys)
     contract = (ADAPTER / "types" / "index.d.ts").read_text(encoding="utf-8")

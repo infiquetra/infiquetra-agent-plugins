@@ -9,7 +9,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { buildAnswers, clampTier, initialSelections, parseReview, PANE, WAIT_CAP_SECONDS } from './admission-review.tsx'
-import { GOLDEN_ANSWERS, PALETTE, PRIVACY_REASON, REVIEW_JSON } from './fixtures/admission-review.fixture.ts'
+import { GOLDEN_ANSWERS, PALETTE, REVIEW_JSON } from './fixtures/admission-review.fixture.ts'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const TOOL = 'mcp__saga__review_admission'
@@ -110,7 +110,7 @@ const optionValues = (found: { props: Record<string, unknown> } | undefined) =>
   ((found?.props.options as { value: string }[] | undefined) ?? []).map((option) => option.value)
 
 describe('the review pane', () => {
-  test('draws the staffing and lens tables, with controls only where a row takes one', async ($, on) => {
+  test('draws the staffing table alone, with a model and effort control on every row', async ($, on) => {
     const w = world(on)
     for (const surface of SURFACES) {
       w.runs.length = 0
@@ -123,20 +123,13 @@ describe('the review pane', () => {
       expect((await ui.find({ key: 'staff:planner:jev' }))?.text).toContain('not configured')
       expect((await ui.find({ key: 'staff:worker:jev' }))?.text).toContain('opus/medium (0.72, raise to confirm)')
       expect(await ui.find({ type: 'Text', text: 'staffing default (work shape implementation)' })).toBeDefined()
-      for (const lens of ['correctness', 'security']) {
-        expect((await ui.find({ key: `lens:${lens}:always-on` }))?.text).toBe('always on')
-        expect(await ui.find({ key: `lens:${lens}:include` })).toBeUndefined()
-        expect(await ui.find({ key: `lens:${lens}:reason` })).toBeUndefined()
+      // Issue #161: no lens table, and so no lens control of any kind.
+      expect(await ui.find({ type: 'Text', text: /lens/i }), `${surface} lens text`).toBeUndefined()
+      for (const lens of ['correctness', 'security', 'performance', 'privacy']) {
+        for (const part of ['always-on', 'include', 'reason', 'jev']) {
+          expect(await ui.find({ key: `lens:${lens}:${part}` }), `${surface} lens:${lens}:${part}`).toBeUndefined()
+        }
       }
-      for (const lens of ['performance', 'privacy']) {
-        expect(optionValues(await ui.find({ key: `lens:${lens}:include` }))).toEqual(['yes', 'no'])
-        expect(await ui.find({ key: `lens:${lens}:reason` })).toBeDefined()
-      }
-      expect((await ui.find({ key: 'lens:performance:jev' }))?.text).toContain('0.86 (pre-checked)')
-      expect((await ui.find({ key: 'lens:privacy:jev' }))?.text).toContain('not configured')
-      // Jev's pre-checked lens opens included; an undeclared one opens left out.
-      expect((await ui.find({ key: 'lens:performance:include' }))?.props.value).toBe('yes')
-      expect((await ui.find({ key: 'lens:privacy:include' }))?.props.value).toBe('no')
       await ui.press({ key: 'dismiss' })
       await pending
     }
@@ -150,7 +143,6 @@ describe('the review pane', () => {
       const ui = await mountPane($, surface)
       await ui.select({ key: 'staff:worker:model', value: 'opus' })
       await ui.select({ key: 'staff:worker:effort', value: 'medium' })
-      await ui.input({ key: 'lens:privacy:reason', text: PRIVACY_REASON })
       await ui.press({ key: 'submit' })
       const result = await pending
 
@@ -170,12 +162,8 @@ describe('the review pane', () => {
     }
   })
 
-  test('Accept all sends the proposed tiers as the complete role map with the declared lenses', async ($, on) => {
-    const declared = clone(REVIEW_JSON)
-    const [, , performance, privacy] = declared.lenses.rows
-    Object.assign(performance!, { include: 'yes', reason: 'a hot loop' })
-    Object.assign(privacy!, { include: 'no', reason: 'no personal data' })
-    const w = world(on, { review: declared })
+  test('Accept all sends the proposed tiers as the complete role map and nothing else', async ($, on) => {
+    const w = world(on)
     for (const surface of SURFACES) {
       w.runs.length = 0
       const { pending } = await startReview($, w)
@@ -190,73 +178,25 @@ describe('the review pane', () => {
           planner: { vendor: 'claude', model: 'opus', effort: 'high' },
           worker: { vendor: 'claude', model: 'sonnet', effort: 'xhigh' },
         },
-        lens_declaration: {
-          always_on: ['correctness', 'security'],
-          conditional_applies: { performance: 'a hot loop' },
-          conditional_does_not_apply: { privacy: 'no personal data' },
-        },
       })
       expect(parseResult(result.result).status).toBe('submitted')
     }
   })
 
-  test('a lens left out with no reason keeps the pane open with a hint and runs nothing', async ($, on) => {
+  test('Accept all restores every proposal, and no answer carries a lens or an allowance', async ($, on) => {
     const w = world(on)
     for (const surface of SURFACES) {
       w.runs.length = 0
       const { pending } = await startReview($, w)
       const ui = await mountPane($, surface)
-      await ui.press({ key: 'accept-all' })
-      expect((await ui.find({ key: 'error' }))?.text).toContain('privacy')
-      expect(w.answerRuns()).toHaveLength(0)
-      await ui.press({ key: 'dismiss' })
-      expect(parseResult((await pending).result)).toEqual({ status: 'dismissed' })
-    }
-  })
-
-  test('Accept all restores every proposal and keeps the operator\'s answer for a lens with none', async ($, on) => {
-    const w = world(on)
-    for (const surface of SURFACES) {
-      w.runs.length = 0
-      const { pending } = await startReview($, w)
-      const ui = await mountPane($, surface)
-      // performance is pre-checked, so leaving it out with no reason is the operator's
-      // own unexplained exclusion; the privacy reason and the worker pick are theirs too.
-      await ui.select({ key: 'lens:performance:include', value: 'no' })
-      await ui.select({ key: 'lens:privacy:include', value: 'yes' })
-      await ui.input({ key: 'lens:privacy:reason', text: PRIVACY_REASON })
       await ui.select({ key: 'staff:worker:model', value: 'opus' })
       await ui.press({ key: 'accept-all' })
-      // Accept all restores performance to Jev's pre-check, so it submits; privacy has
-      // no proposal and keeps the operator's yes and reason.
       await pending
-      const answers = JSON.parse(w.answerRuns()[0]?.stdin ?? 'null')
-      expect(answers.lens_declaration.conditional_applies).toEqual({ performance: '', privacy: PRIVACY_REASON })
-      expect(answers.lens_declaration.conditional_does_not_apply).toEqual({})
+      const sent = w.answerRuns()[0]?.stdin ?? 'null'
+      const answers = JSON.parse(sent)
+      expect(Object.keys(answers)).toEqual(['staffing_overrides'])
       expect(answers.staffing_overrides.worker).toEqual({ vendor: 'claude', model: 'sonnet', effort: 'xhigh' })
-    }
-  })
-
-  test('Accept all with a lens left out and no reason changes nothing in the pane', async ($, on) => {
-    const w = world(on)
-    for (const surface of SURFACES) {
-      w.runs.length = 0
-      const { pending } = await startReview($, w)
-      const ui = await mountPane($, surface)
-      await ui.input({ key: 'lens:performance:reason', text: 'a hot loop' })
-      await ui.select({ key: 'staff:worker:model', value: 'opus' })
-      await ui.press({ key: 'accept-all' })
-      expect((await ui.find({ key: 'error' }))?.text).toContain('privacy')
-      expect(w.answerRuns()).toHaveLength(0)
-      expect((await ui.find({ key: 'lens:performance:reason' }))?.props.value).toBe('a hot loop')
-      expect((await ui.find({ key: 'staff:worker:model' }))?.props.value).toBe('opus')
-
-      // A typed privacy reason survives a second Accept all, which now submits.
-      await ui.input({ key: 'lens:privacy:reason', text: PRIVACY_REASON })
-      await ui.press({ key: 'accept-all' })
-      await pending
-      const answers = JSON.parse(w.answerRuns()[0]?.stdin ?? 'null')
-      expect(answers.lens_declaration.conditional_does_not_apply).toEqual({ privacy: PRIVACY_REASON })
+      expect(sent).not.toMatch(/lens|allowance/i)
     }
   })
 
@@ -309,7 +249,6 @@ describe('the review pane', () => {
       expect(await ui.select({ key: 'staff:worker:effort', value: 'xhigh' })).toBeUndefined()
       expect((await ui.find({ key: 'staff:worker:effort' }))?.props.value).toBe('high')
 
-      await ui.input({ key: 'lens:privacy:reason', text: PRIVACY_REASON })
       await ui.press({ key: 'submit' })
       await pending
       const answers = JSON.parse(w.answerRuns()[0]?.stdin ?? 'null')
@@ -337,7 +276,6 @@ describe('the review pane', () => {
         settled = true
       })
       const ui = await mountPane($, surface)
-      await ui.input({ key: 'lens:privacy:reason', text: PRIVACY_REASON })
       await ui.press({ key: 'submit' })
       await delay(30)
       expect((await ui.find({ key: 'error' }))?.text).toBe(refusal)
@@ -372,7 +310,7 @@ describe('the tool without a pane', () => {
     expect(w.opens).toBe(0)
   })
 
-  test('with neither question outstanding there is nothing to review', async ($, on) => {
+  test('with staffing_overrides not outstanding there is nothing to review', async ($, on) => {
     const w = world(on, { review: { ...REVIEW_JSON, pending_questions: ['risk_tier'] } })
     expect(parseResult((await ($ as any).tool.call({ tool: TOOL, issue: 103 })).result)).toEqual({ status: 'nothing-to-review' })
     expect(w.opens).toBe(0)
@@ -402,7 +340,6 @@ test('the tool outlasts the ten-second hook budget while the operator decides', 
   const { pending } = await startReview($, w)
   await delay(12_000)
   const ui = await mountPane($, 'terminal')
-  await ui.input({ key: 'lens:privacy:reason', text: PRIVACY_REASON })
   await ui.press({ key: 'submit' })
   expect(parseResult((await pending).result).status).toBe('submitted')
   expect(w.sleeps()).toBeLessThan(WAIT_CAP_SECONDS)
@@ -415,16 +352,12 @@ describe('the pure helpers', () => {
     expect(clampTier(PALETTE, 'haiku', null)).toEqual({ model: 'haiku', effort: 'high' })
   })
 
-  test('buildAnswers sends every role and every conditional lens, never an always-on one', async () => {
+  test('buildAnswers sends every role and no lens declaration', async () => {
     const selections = initialSelections(REVIEW_JSON)
-    selections.lenses.privacy = { include: 'no', reason: ` ${PRIVACY_REASON} ` }
+    expect(Object.keys(selections)).toEqual(['staffing'])
     const answers = buildAnswers(REVIEW_JSON, selections)
+    expect(Object.keys(answers)).toEqual(['staffing_overrides'])
     expect(Object.keys(answers.staffing_overrides)).toEqual(['planner', 'worker'])
-    expect(answers.lens_declaration).toEqual({
-      always_on: ['correctness', 'security'],
-      conditional_applies: { performance: '' },
-      conditional_does_not_apply: { privacy: PRIVACY_REASON },
-    })
   })
 
   test('parseReview refuses output the engine cut off', async () => {

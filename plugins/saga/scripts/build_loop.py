@@ -1181,7 +1181,7 @@ def run_iteration(
         for entry in criterion.functional_checks
         if runs_in_unit(entry)
     ]
-    preview_result = run_preview(
+    preview_status = run_preview(
         criterion.preview, runner=runner, timeout=timeout, cwd=cwd, clock=clock
     )
     smoke_results = [
@@ -1195,7 +1195,7 @@ def run_iteration(
     checks_green = all(
         result["status"] == STATUS_PASS
         for result in (*baseline_results, *functional_results, *smoke_results)
-    ) and preview_result["status"] in (STATUS_PASS, STATUS_NO_PREVIEW)
+    ) and preview_status["status"] in (STATUS_PASS, STATUS_NO_PREVIEW)
     repo_path = repo if repo is not None else (cwd or Path("."))
     scanned = _perform_scan(
         repo_path, revision, runner=runner, scan=scan, ask=ask, sweep_home=sweep_home
@@ -1217,7 +1217,7 @@ def run_iteration(
         "green": green,
         "baseline": baseline_results,
         "functional_checks": functional_results,
-        "preview": preview_result,
+        "preview": preview_status,
         "scenario_smoke": smoke_results,
         "review": review,
     }

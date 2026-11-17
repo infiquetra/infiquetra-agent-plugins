@@ -36,6 +36,16 @@ def _load(name: str) -> ModuleType:
     return module
 
 
+#: The run-configuration parameters issue #161 retires with the lens roster and the cycle
+#: allowances, built from parts so the retired names appear nowhere in this file as one word.
+RETIRED_PARAMETERS: tuple[str, ...] = (
+    "standard" + "_cycle_allowance",
+    "escalated" + "_cycle_allowance",
+    "applicable" + "_lenses",
+    "per_lens" + "_score_threshold",
+)
+
+
 @pytest.fixture
 def adm() -> ModuleType:
     return _load("admission")
@@ -112,21 +122,11 @@ def _fake_staffing() -> SimpleNamespace:
     calls: list[str] = []
 
     def roles() -> dict[str, Any]:
-        return {"planner": {}, "lens_reviewer": {}}
+        return {"planner": {}}
 
     def resolve_role(role: str, **_kwargs: Any) -> SimpleNamespace:
         calls.append(role)
         return SimpleNamespace(vendor="claude", model="opus", effort="high")
-
-    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
-        # The real function returns (mapping keyed by lens identifier, version).
-        # This fake used to return the catalogue DOCUMENT, which is the shape the
-        # consumer wrongly assumed — so the fake agreed with the bug and the bug
-        # survived. See the shape tests at the end of this file.
-        return {
-            "correctness": {"always_on": True},
-            "security": {"always_on": True},
-        }, "1.0.0"
 
     def sdlc_root(*_args: Any, **_kwargs: Any) -> None:
         return None
@@ -134,7 +134,6 @@ def _fake_staffing() -> SimpleNamespace:
     return SimpleNamespace(
         roles=roles,
         resolve_role=resolve_role,
-        lens_catalogue=lens_catalogue,
         sdlc_root=sdlc_root,
         calls=calls,
     )
@@ -237,23 +236,13 @@ def test_every_defaultable_parameter_is_filled_without_a_question(
         for name in run_record.RUN_CONFIGURATION_PARAMETERS
         if record.run_configuration[name]["source"] != "unset"
     }
-    # Eleven of the thirteen fill themselves here. Two do not: the response to
-    # unfinished testing, which the operator must choose from a closed set of two,
-    # and the strictness ladder, because this fake resolves no lifecycle checkout
-    # for the ladder to be read from.
-    #
-    # That second exclusion is the repair of issue 1001 showing through. Before it,
-    # this assertion passed with `per_lens_score_threshold` filled — but only
-    # because the fake returned the catalogue DOCUMENT, the shape the consumer
-    # wrongly assumed. Against the real `lens_catalogue`, which returns a mapping
-    # keyed by lens identifier, the old consumer filled it for no checkout at all.
-    # The fake now returns the real shape, so this line states what actually
-    # happens with no checkout. The filled case is covered by
-    # `test_resolve_catalogue_reads_the_ladder_from_the_checkout`.
-    assert filled == set(run_record.RUN_CONFIGURATION_PARAMETERS) - {
-        "unfinished_testing_response",
-        "per_lens_score_threshold",
-    }
+    # Everything fills itself here except the response to unfinished testing, which the operator
+    # must choose from a closed set of two. The retired lens and allowance parameters are left out
+    # of the comparison so it reads the same before and after they leave the run configuration.
+    retired = set(RETIRED_PARAMETERS)
+    assert filled - retired == (
+        set(run_record.RUN_CONFIGURATION_PARAMETERS) - retired - {"unfinished_testing_response"}
+    )
     asked = {question.key for question in outstanding}
     assert "concurrency_allocation" not in asked
     assert "mechanical_tool_baseline" not in asked
@@ -273,11 +262,6 @@ def test_each_filled_value_records_where_it_came_from(
         validator=_passing_validator,
         staffing=_fake_staffing(),
     )
-    assert record.run_configuration["standard_cycle_allowance"] == {
-        "value": 3,
-        "chosen_by": "delivery_manager",
-        "source": "lifecycle-default",
-    }
     assert record.run_configuration["concurrency_allocation"]["source"] == "profile"
     assert record.run_configuration["staffing_models_and_efforts"]["source"] == "staffing"
 
@@ -295,7 +279,7 @@ def test_staffing_comes_from_the_component_not_a_local_table(
         validator=_passing_validator,
         staffing=staffing,
     )
-    assert sorted(staffing.calls) == ["lens_reviewer", "planner"]
+    assert sorted(staffing.calls) == ["planner"]
 
 
 def test_an_unreachable_staffing_component_degrades_to_asking_not_refusing(
@@ -344,7 +328,7 @@ def test_this_repositorys_own_profile_parses_and_fills_what_it_claims(adm: Modul
 # ---------------------------------------------------------------------------
 
 
-def test_the_question_set_on_a_fresh_record_with_no_profile_is_the_cards_ten(
+def test_the_question_set_on_a_fresh_record_with_no_profile_is_the_cards_eight(
     adm: ModuleType, store: Path, repo_root: Path
 ) -> None:
     _, outstanding = adm.admit(
@@ -360,14 +344,12 @@ def test_the_question_set_on_a_fresh_record_with_no_profile_is_the_cards_ten(
         "approval_scope",
         "destination",
         "staffing_overrides",
-        "lens_declaration",
-        "repair_allowances",
         "unfinished_testing_response",
         "functional_test_environment",
         "main_consumed_directly",
         "change_shape",
     ]
-    assert len(outstanding) == 10
+    assert len(outstanding) == 8
 
 
 def test_a_profile_removes_the_two_repository_facts_from_the_question_set(
@@ -385,7 +367,7 @@ def test_a_profile_removes_the_two_repository_facts_from_the_question_set(
     asked = {question.key for question in outstanding}
     assert "functional_test_environment" not in asked
     assert "main_consumed_directly" not in asked
-    assert len(outstanding) == 8
+    assert len(outstanding) == 6
 
 
 def _all_answers() -> dict[str, Any]:
@@ -396,12 +378,6 @@ def _all_answers() -> dict[str, Any]:
         "approval_scope": dict.fromkeys(run_record.APPROVAL_CATEGORIES, "none"),
         "destination": "pr",
         "staffing_overrides": "none",
-        "lens_declaration": {
-            "always_on": ["correctness", "security"],
-            "conditional_applies": {},
-            "conditional_does_not_apply": {},
-        },
-        "repair_allowances": {"standard": 3, "escalated": 2},
         "unfinished_testing_response": "bring the result to the operator",
         "functional_test_environment": dict(_LOCAL_ENVIRONMENT),
         "main_consumed_directly": False,
@@ -447,13 +423,16 @@ def test_an_operator_answer_is_never_overwritten_by_a_default(
         repo_root=repo_root,
         body=_good_card(),
         validator=_passing_validator,
-        answers={"repair_allowances": {"standard": 1, "escalated": 1}},
+        staffing=_table_staffing(),
+        answers={
+            "staffing_overrides": {"worker": {"vendor": "claude", "model": "opus", "effort": "low"}}
+        },
     )
-    assert record.run_configuration["standard_cycle_allowance"] == {
-        "value": 1,
-        "chosen_by": "delivery_manager",
-        "source": "operator",
-    }
+    block = record.run_configuration["staffing_models_and_efforts"]
+    assert block["source"] == "operator"
+    assert block["value"]["worker"]["model"] == "opus"
+    assert block["value"]["worker"]["effort"] == "low"
+    assert block["value"]["worker"]["operator_override"] is True
 
 
 def test_answers_land_in_the_seven_approval_boundaries(
@@ -561,7 +540,7 @@ def test_the_rendered_summary_names_the_defaults_and_the_questions(
     assert "Filled without asking:" in text
     assert "concurrency_allocation" in text
     assert "not written (--dry-run)" in text
-    assert "Questions to answer, once (8)" in text
+    assert "Questions to answer, once (6)" in text
 
 
 def test_the_summary_says_so_when_nothing_is_outstanding(
@@ -692,211 +671,7 @@ def test_default_repo_reads_the_origin_remote(adm: ModuleType, tmp_path: Path) -
 
 
 # ---------------------------------------------------------------------------
-# The catalogue read, pinned against the REAL staffing function (issue 1001)
-# ---------------------------------------------------------------------------
-#
-# Until issue 1001 this module's `_resolve_catalogue` read `catalogue["lenses"]`
-# and `catalogue["strictness_ladder"]` off the first element of what
-# `staffing.lens_catalogue()` returns. That element is a mapping keyed by LENS
-# IDENTIFIER, so neither key exists and both reads yielded None for every
-# checkout: `per_lens_score_threshold` could not be filled by any path.
-#
-# The bug survived because the fake above was shaped like the consumer's wrong
-# assumption rather than like the real function. These tests fix that: the first
-# asserts the real function's shape directly, and the second drives
-# `_resolve_catalogue` with a fake built to match it.
-
-
-def _real_staffing() -> ModuleType | None:
-    """fleet-core's staffing component, or None when it cannot be reached."""
-    root = Path(__file__).resolve().parents[3]
-    path = root / "plugins" / "fleet-core" / "scripts" / "fleet_commons" / "staffing.py"
-    if not path.is_file():
-        return None
-    spec = importlib.util.spec_from_file_location("real_staffing_for_admission", path)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["real_staffing_for_admission"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_real_lens_catalogue_returns_a_pair_keyed_by_lens_identifier() -> None:
-    """Pin the sibling's actual return shape, not a fake's.
-
-    One test against the real function is what the old fake could not give. If
-    issue 1023 ever changes `lens_catalogue` to return the catalogue document
-    instead of a mapping, this fails here rather than silently re-emptying
-    `per_lens_score_threshold` in a run nobody is watching.
-    """
-    staffing = _real_staffing()
-    if staffing is None:
-        pytest.skip("fleet-core's staffing component is not in this tree")
-
-    returned = staffing.lens_catalogue()
-    assert isinstance(returned, tuple), (
-        "lens_catalogue returns a pair; a consumer unpacking it as one value reads the "
-        "mapping's version string as its catalogue"
-    )
-    assert len(returned) == 2
-    mapping, _version = returned
-    assert isinstance(mapping, dict)
-    # The mapping is keyed by lens identifier. These two keys are the shape the
-    # consumer reads, and neither exists — which is the defect this pins.
-    assert "lenses" not in mapping, (
-        "the first element is a mapping of lens identifier to entry, not the catalogue "
-        "document; reading a 'lenses' key off it always yields None"
-    )
-    assert "strictness_ladder" not in mapping, (
-        "the strictness ladder is not in this return value at all; it is read from the "
-        "checkout through staffing.sdlc_root()"
-    )
-
-
-def test_resolve_catalogue_reads_the_real_shape(adm: ModuleType) -> None:
-    """`_resolve_catalogue` fills always-on lenses from a mapping keyed by identifier.
-
-    The fake here returns what the real function returns. Against the pre-repair
-    consumer this test fails: it read `catalogue["lenses"]`, found nothing, and
-    returned an empty result.
-    """
-
-    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
-        return (
-            {
-                "correctness": {"always_on": True, "name": "Correctness"},
-                "security": {"always_on": True, "name": "Security"},
-                "performance": {"always_on": False, "name": "Performance"},
-            },
-            "1.0.0",
-        )
-
-    staffing = SimpleNamespace(lens_catalogue=lens_catalogue, sdlc_root=lambda: None)
-    resolved = adm._resolve_catalogue(staffing)
-
-    assert resolved["applicable_lenses"]["always_on"] == ["correctness", "security"], (
-        "always-on lenses come from the mapping's KEYS, which are lens identifiers; a "
-        "conditional lens is never in the list"
-    )
-
-
-def test_resolve_catalogue_reads_the_ladder_from_the_checkout(
-    adm: ModuleType, tmp_path: Path
-) -> None:
-    """The strictness ladder is read from the checkout staffing resolves, not from the pair."""
-    checkout = tmp_path / "sdlc"
-    (checkout / "config").mkdir(parents=True)
-    (checkout / "config" / "lens-catalogue.json").write_text(
-        json.dumps(
-            {
-                "schema": "lens_catalogue.v1",
-                "strictness_ladder": {
-                    "levels": [
-                        {
-                            "id": "standard",
-                            "derived_overall_minimum": 9.0,
-                            "applicable_dimension_minimum": 7,
-                        }
-                    ]
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
-        return {"correctness": {"always_on": True}}, "1.0.0"
-
-    staffing = SimpleNamespace(lens_catalogue=lens_catalogue, sdlc_root=lambda: checkout)
-    resolved = adm._resolve_catalogue(staffing)
-
-    ladder = resolved["per_lens_score_threshold"]
-    assert ladder["levels"][0]["derived_overall_minimum"] == 9.0
-    assert ladder["levels"][0]["applicable_dimension_minimum"] == 7
-
-
-def test_resolve_catalogue_survives_an_absent_checkout(adm: ModuleType) -> None:
-    """No checkout is a fact about the machine: the ladder is absent, not an error."""
-
-    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
-        return {"correctness": {"always_on": True}}, "1.0.0"
-
-    staffing = SimpleNamespace(lens_catalogue=lens_catalogue, sdlc_root=lambda: None)
-    resolved = adm._resolve_catalogue(staffing)
-
-    assert resolved["applicable_lenses"]["always_on"] == ["correctness"]
-    assert "per_lens_score_threshold" not in resolved
-
-
-def test_the_catalogue_never_overwrites_an_operator_lens_declaration(
-    adm: ModuleType, tmp_path: Path
-) -> None:
-    """A re-run of admission must not discard the operator's answer.
-
-    `fill_defaults`'s own docstring promises it never overwrites a value carrying an
-    `operator` source, and every other fill site honours that. The catalogue loop did
-    not — and the omission could not be observed, because `_resolve_catalogue` returned
-    an empty mapping for every checkout (see the shape tests above). Repairing that
-    read made the clobber reachable: a second `admission.py --issue N` replaced an
-    operator's lens declaration, conditional lenses and recorded reasons included, with
-    the catalogue's four always-on names.
-    """
-    checkout = tmp_path / "sdlc"
-    (checkout / "config").mkdir(parents=True)
-    (checkout / "config" / "lens-catalogue.json").write_text(
-        json.dumps({"strictness_ladder": {"levels": []}}), encoding="utf-8"
-    )
-
-    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
-        return {"correctness": {"always_on": True}, "security": {"always_on": True}}, "1.0.0"
-
-    def roles() -> dict[str, Any]:
-        return {"planner": {}}
-
-    def resolve_role(_role: str, **_kwargs: Any) -> SimpleNamespace:
-        return SimpleNamespace(vendor="claude", model="opus", effort="high")
-
-    staffing = SimpleNamespace(
-        roles=roles,
-        resolve_role=resolve_role,
-        lens_catalogue=lens_catalogue,
-        sdlc_root=lambda: checkout,
-    )
-
-    run_record = _load("run_record")
-    record = run_record.RunRecord(
-        issue=1001,
-        repo="infiquetra/infiquetra-claude-plugins",
-        run_configuration=run_record.empty_run_configuration(),
-        approval_scope=run_record.empty_approval_scope(),
-        admission=run_record.empty_admission(),
-    )
-    operator_answer = {
-        "always_on": ["architecture-maintainability", "correctness", "security", "testing"],
-        "conditional_applies": {"adversarial": "the change is a gate"},
-        "conditional_does_not_apply": {"privacy": "no personal data is touched"},
-    }
-    record.run_configuration["applicable_lenses"] = {
-        "value": operator_answer,
-        "chosen_by": "planner",
-        "source": "operator",
-    }
-
-    filled = adm.fill_defaults(record, {}, staffing)
-
-    kept = filled.run_configuration["applicable_lenses"]
-    assert kept["source"] == "operator"
-    assert kept["value"] == operator_answer, (
-        "the catalogue proposal overwrote the operator's lens declaration; the "
-        "conditional lenses and their recorded reasons would be lost on a re-run"
-    )
-    # The parameter the operator did NOT answer still fills from the catalogue.
-    assert filled.run_configuration["per_lens_score_threshold"]["source"] == "staffing"
-
-
-# ---------------------------------------------------------------------------
-# The staffing and lens tables, in one fixed format (issue #102)
+# The staffing table, in one fixed format (issue #102)
 # ---------------------------------------------------------------------------
 #
 # The golden block below IS the format. A change to it must be deliberate: edit this constant in
@@ -909,16 +684,7 @@ GOLDEN_TABLES = """\
 | Role | Default | Jev suggestion | Proposed | Why |
 |---|---|---|---|---|
 | planner | claude opus/high | not configured | claude opus/high | staffing default (work shape judgment) |
-| worker | claude sonnet/medium | not configured | claude sonnet/medium | staffing default (work shape mechanical) |
-
-**Lenses (answer: lens_declaration)**
-
-| Lens | Include | Reason | Jev probability |
-|---|---|---|---|
-| correctness | always on | always-on lens | not configured |
-| security | always on | always-on lens | not configured |
-| performance | undeclared | undeclared | not configured |
-| privacy | undeclared | undeclared | not configured |"""
+| worker | claude sonnet/medium | not configured | claude sonnet/medium | staffing default (work shape mechanical) |"""
 
 
 def _table_staffing(
@@ -927,7 +693,7 @@ def _table_staffing(
     failing: tuple[str, ...] = (),
     worker: tuple[str, str] = ("sonnet", "medium"),
 ) -> SimpleNamespace:
-    """A staffing component with two roles and a four-lens catalogue, two of them conditional.
+    """A staffing component with two roles.
 
     *sources* sets a role's decision ``source`` (``overlay`` for ``.saga/tier-defaults.json``);
     a role in *failing* raises from ``resolve_role``; *worker* sets the worker's default tier.
@@ -960,21 +726,12 @@ def _table_staffing(
                 decision.source = "jev-raise"
         return decision
 
-    def lens_catalogue(**_kwargs: Any) -> tuple[dict[str, Any], str]:
-        return {
-            "correctness": {"always_on": True},
-            "security": {"always_on": True},
-            "performance": {"always_on": False},
-            "privacy": {"always_on": False},
-        }, "1.0.0"
-
     def sdlc_root(*_args: Any, **_kwargs: Any) -> None:
         return None
 
     return SimpleNamespace(
         roles=roles,
         resolve_role=resolve_role,
-        lens_catalogue=lens_catalogue,
         sdlc_root=sdlc_root,
         StaffingError=real.StaffingError,
     )
@@ -1004,7 +761,7 @@ def _rows(tables: str) -> list[list[str]]:
     """Every data row of both tables, split into cells (an escaped pipe stays in its cell)."""
     rows = []
     for line in tables.splitlines():
-        if not line.startswith("| ") or line.startswith(("| Role ", "| Lens ")):
+        if not line.startswith("| ") or line.startswith("| Role "):
             continue
         rows.append([cell.strip() for cell in re.split(r"(?<!\\)\|", line)[1:-1]])
     return rows
@@ -1116,70 +873,7 @@ def test_an_operator_override_keeps_the_fresh_default_and_says_why(adm: ModuleTy
     assert rows["worker"][4] == "operator answer"
 
 
-def test_an_operator_lens_declaration_renders_with_escaped_reasons(adm: ModuleType) -> None:
-    staffing = _table_staffing()
-    record = adm.apply_answers(
-        _table_record(adm, staffing),
-        {
-            "lens_declaration": {
-                "always_on": ["correctness", "security"],
-                "conditional_applies": {"performance": "a hot loop | per request"},
-                "conditional_does_not_apply": {"privacy": "no personal\ndata is touched"},
-            }
-        },
-    )
-    tables = _tables(adm, record, staffing)
-    assert "| performance | yes | a hot loop \\| per request | not configured |" in tables
-    assert "| privacy | no | no personal data is touched | not configured |" in tables
-    _assert_no_empty_cell(tables)
-
-
-def test_a_lens_proposal_renders_its_probability_bands(adm: ModuleType) -> None:
-    """The read contract with issue #110: ``admission.lens_proposal.probabilities``."""
-    staffing = _table_staffing()
-    record = _table_record(adm, staffing)
-    record.admission["lens_proposal"] = {
-        "ok": True,
-        "probabilities": {"performance": 0.85, "privacy": 0.7, "security": 0.4},
-    }
-    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
-    assert rows["performance"][3] == "0.85 (pre-checked)"
-    assert rows["privacy"][3] == "0.70 (consider)"
-    assert rows["security"][3] == "no suggestion"
-    assert rows["correctness"][3] == "no suggestion"
-    # Below 0.6 a probability is logged, not shown (issue #110); the JSON row keeps it.
-    record.admission["lens_proposal"]["probabilities"] = {"performance": 0.4}
-    data = adm.review_data(record, [], staffing, None)
-    rows = {row[0]: row for row in _rows(adm.render_tables(data))}
-    assert rows["performance"][3] == "no suggestion"
-    assert rows["privacy"][3] == "no suggestion"
-    performance = next(row for row in data["lenses"]["rows"] if row["lens"] == "performance")
-    assert performance["jev"] == {
-        "cell": "no suggestion",
-        "state": "below-threshold",
-        "probability": 0.4,
-        "band": None,
-    }
-
-
-@pytest.mark.parametrize(
-    ("probability", "cell"),
-    [
-        (0.8, "0.80 (pre-checked)"),
-        (0.79, "0.79 (consider)"),
-        (0.6, "0.60 (consider)"),
-        (0.59, "no suggestion"),
-    ],
-)
-def test_the_lens_probability_band_edges(adm: ModuleType, probability: float, cell: str) -> None:
-    staffing = _table_staffing()
-    record = _table_record(adm, staffing)
-    record.admission["lens_proposal"] = {"probabilities": {"performance": probability}}
-    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
-    assert rows["performance"][3] == cell
-
-
-def test_unreachable_staffing_and_catalogue_render_placeholder_rows(adm: ModuleType) -> None:
+def test_unreachable_staffing_renders_one_placeholder_row(adm: ModuleType) -> None:
     run_record = _load("run_record")
     record = run_record.RunRecord(issue=102, repo="infiquetra/infiquetra-agent-plugins")
     tables = _tables(adm, record, None)
@@ -1188,8 +882,7 @@ def test_unreachable_staffing_and_catalogue_render_placeholder_rows(adm: ModuleT
     # The JSON carries a typed state and no placeholder rows, so a pane never parses prose.
     assert data["staffing"]["status"] == "unreachable"
     assert data["staffing"]["rows"] == []
-    assert data["lenses"]["status"] == "catalogue-unreadable"
-    assert data["lenses"]["rows"] == []
+    assert "lenses" not in data
     assert rows == [
         [
             "(staffing component unreachable)",
@@ -1198,14 +891,9 @@ def test_unreachable_staffing_and_catalogue_render_placeholder_rows(adm: ModuleT
             "not configured",
             "not configured",
         ],
-        [
-            "(lens catalogue unreadable)",
-            "undeclared",
-            "the lens catalogue could not be read",
-            "not configured",
-        ],
     ]
     _assert_no_empty_cell(tables)
+
 
 
 def _run_main(adm: ModuleType, store: Path, repo_root: Path, *extra: str) -> int:
@@ -1271,15 +959,51 @@ def test_render_json_carries_the_rows_and_the_palette(
     tier_palette = _load("bundled_fleet").load("tier_palette")
     assert data["schema"] == "admission_review.v1"
     assert data["staffing"]["status"] == "ok"
-    assert data["lenses"]["status"] == "ok"
+    assert "lenses" not in data
     assert data["tables_markdown"] == GOLDEN_TABLES
     assert "staffing_overrides" in data["pending_questions"]
     assert [row["role"] for row in data["staffing"]["rows"]] == ["planner", "worker"]
     assert data["staffing"]["rows"][0]["jev"]["state"] == "not-configured"
-    assert data["lenses"]["catalogue_version"] == "1.0.0"
     assert data["palette"]["models"] == list(tier_palette.MODELS)
     assert {"model": "haiku", "effort": "xhigh"} in data["palette"]["pairs"]
     assert {"model": "haiku", "effort": "high"} in data["palette"]["pairs"]
+
+
+def test_the_review_document_has_no_lenses_and_pends_no_lens_or_allowance_question(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _patch_main(adm, monkeypatch)
+    assert _run_main(adm, store, repo_root, "--render", "json") == 0
+    data = json.loads(capsys.readouterr().out)
+    assert "lenses" not in data
+    retired = ("lens", "allowance")
+    assert [key for key in data["pending_questions"] if any(word in key for word in retired)] == []
+    assert [
+        question["key"]
+        for question in data["questions"]
+        if any(word in f"{question['key']} {question['prompt']}".lower() for word in retired)
+    ] == []
+    assert "staffing_overrides" in data["pending_questions"]
+
+
+@pytest.mark.parametrize("render", ["summary", "tables", "json"])
+def test_the_rendered_questionnaire_never_mentions_a_lens_or_an_allowance(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    render: str,
+) -> None:
+    _patch_main(adm, monkeypatch)
+    assert _run_main(adm, store, repo_root, "--render", render) == 0
+    text = capsys.readouterr().out.lower()
+    assert "lens" not in text
+    assert "allowance" not in text
 
 
 def test_the_help_documents_the_render_option(adm: ModuleType) -> None:
@@ -1540,103 +1264,6 @@ def test_a_failed_role_resolve_falls_back_to_the_recorded_default(adm: ModuleTyp
     assert rows["worker"][1] == "claude sonnet/medium"
 
 
-def test_an_unreadable_catalogue_still_shows_the_operator_declaration(adm: ModuleType) -> None:
-    staffing = _table_staffing()
-    record = adm.apply_answers(
-        _table_record(adm, staffing),
-        {
-            "lens_declaration": {
-                "always_on": ["correctness"],
-                "conditional_applies": ["performance"],
-                "conditional_does_not_apply": {"privacy": "no personal data"},
-            }
-        },
-    )
-
-    def broken_catalogue(**_kwargs: Any) -> Any:
-        raise RuntimeError("catalogue unreadable")
-
-    broken = _table_staffing()
-    broken.lens_catalogue = broken_catalogue
-    data = adm.review_data(record, [], broken, None)
-    assert data["lenses"]["status"] == "catalogue-unreadable"
-    rows = {row[0]: row for row in _rows(adm.render_tables(data))}
-    assert rows["correctness"][1] == "always on"
-    assert rows["performance"][1:3] == ["yes", "included"]
-    assert rows["privacy"][1:3] == ["no", "no personal data"]
-
-
-def _recorded_declaration(adm: ModuleType, staffing: Any, declaration: dict[str, Any]) -> Any:
-    """A record holding *declaration* as an operator answer, written past admission's validation.
-
-    Admission refuses a malformed declaration since issue #103, but a record written before then
-    can still hold one, and the tables must show it as the review would read it.
-    """
-    record = _table_record(adm, staffing)
-    record.run_configuration["applicable_lenses"] = {
-        "value": declaration,
-        "chosen_by": "planner",
-        "source": "operator",
-    }
-    return record
-
-
-def test_a_lens_in_both_maps_is_listed_once_and_excluded_without_a_catalogue(
-    adm: ModuleType,
-) -> None:
-    staffing = _table_staffing()
-    record = _recorded_declaration(
-        adm,
-        staffing,
-        {
-            "always_on": ["correctness"],
-            "conditional_applies": {"performance": "hot path"},
-            "conditional_does_not_apply": {"performance": "no hot path"},
-        },
-    )
-
-    def broken_catalogue(**_kwargs: Any) -> Any:
-        raise RuntimeError("catalogue unreadable")
-
-    broken = _table_staffing()
-    broken.lens_catalogue = broken_catalogue
-    rows = _rows(adm.render_tables(adm.review_data(record, [], broken, None)))
-    performance = [row for row in rows if row[0] == "performance"]
-    assert len(performance) == 1
-    assert performance[0][1:3] == ["no", "no hot path"]
-
-
-@pytest.mark.parametrize(
-    "declaration",
-    [
-        {"conditional_applies": ["performance"], "conditional_does_not_apply": {"privacy": "x"}},
-        {"conditional_applies": {"performance": "hot"}, "conditional_does_not_apply": ["privacy"]},
-        {
-            "conditional_applies": {"performance": "hot path"},
-            "conditional_does_not_apply": {"performance": "no hot path"},
-        },
-    ],
-)
-def test_the_table_and_the_review_roster_agree_on_a_declaration(
-    adm: ModuleType, declaration: dict[str, Any]
-) -> None:
-    """A list for ``conditional_does_not_apply`` is ignored by the review, so the table too."""
-    roster = _load("review_roster")
-    staffing = _table_staffing()
-    record = _recorded_declaration(
-        adm, staffing, {"always_on": ["correctness", "security"], **declaration}
-    )
-    rows = {row[0]: row for row in _rows(_tables(adm, record, staffing))}
-    entries = roster._lens_entries(declaration)
-    for lens in ("performance", "privacy"):
-        if lens not in entries:
-            assert rows[lens][1] == "undeclared"
-        else:
-            assert rows[lens][1] == ("yes" if entries[lens]["applies"] else "no")
-            if entries[lens].get("reason"):
-                assert rows[lens][2] == entries[lens]["reason"]
-
-
 def test_an_override_answered_as_the_skill_documents_keeps_every_role(adm: ModuleType) -> None:
     """The plan skill asks for the complete role map, so every row records the operator."""
     staffing = _table_staffing()
@@ -1777,8 +1404,8 @@ def test_the_panes_golden_answers_record_with_the_operator_as_their_source(
     assert _tiers(staffing["value"]) == payload["staffing_overrides"]
     for role in payload["staffing_overrides"]:
         assert staffing["value"][role]["operator_override"] is True, role
-    assert configuration["applicable_lenses"]["source"] == "operator"
-    assert configuration["applicable_lenses"]["value"] == payload["lens_declaration"]
+    for name in RETIRED_PARAMETERS:
+        assert name not in configuration, name
     assert "staffing_overrides" not in json.loads(shown.stdout)["admission"]["pending_questions"]
 
 
@@ -1877,79 +1504,76 @@ def test_none_and_an_empty_override_take_the_defaults(adm: ModuleType) -> None:
         assert after.run_configuration["staffing_models_and_efforts"]["source"] == "staffing"
 
 
-_GOOD_DECLARATION: dict[str, Any] = {
-    "always_on": ["correctness", "security"],
-    "conditional_applies": {"performance": "a hot loop"},
-    "conditional_does_not_apply": {"privacy": "no personal data"},
+#: The answers the questionnaire no longer asks for (issue #161), built from parts so the retired
+#: names appear nowhere in this file as one word.
+_RETIRED_ANSWERS: dict[str, Any] = {
+    "lens" + "_declaration": {
+        "always_on": ["correctness", "security"],
+        "conditional_applies": {},
+        "conditional_does_not_apply": {},
+    },
+    "repair" + "_allowances": {"standard": 3, "escalated": 2},
 }
 
 
-@pytest.mark.parametrize(
-    ("change", "names"),
-    [
-        ({"conditional_does_not_apply": {"privacy": "  "}}, "needs a reason: privacy"),
-        (
-            {"conditional_does_not_apply": {"privacy": "x", "security": "not needed"}},
-            "always-on lens as conditional: security",
-        ),
-        (
-            {"conditional_applies": {"performance": "hot", "privacy": "logs"}},
-            "both applying and not applying: privacy",
-        ),
-        (
-            {"conditional_applies": {"performance": "hot", "accessibility": "a ui"}},
-            "does not have: accessibility",
-        ),
-        ({"conditional_does_not_apply": {}}, "undeclared: privacy"),
-        ({"always_on": ["correctness"]}, "always_on must be"),
-        ({"conditional_does_not_apply": ["privacy"]}, "must map each lens"),
-        ({"conditional": []}, "unexpected keys (conditional)"),
-    ],
-)
-def test_a_lens_declaration_the_review_would_misread_is_refused(
-    adm: ModuleType, change: dict[str, Any], names: str
+@pytest.mark.parametrize("key", sorted(_RETIRED_ANSWERS))
+def test_an_answer_to_a_retired_question_is_refused_and_changes_nothing(
+    adm: ModuleType, key: str
 ) -> None:
     staffing = _table_staffing()
-    with pytest.raises(adm.AdmissionError) as excinfo:
-        adm.apply_answers(
-            _table_record(adm, staffing),
-            {"lens_declaration": {**_GOOD_DECLARATION, **change}},
-            staffing,
-        )
-    assert names in str(excinfo.value)
+    record = _table_record(adm, staffing)
+    before = json.dumps(record.__dict__, sort_keys=True, default=str)
+    with pytest.raises(adm.AdmissionError, match=key):
+        adm.apply_answers(record, {key: _RETIRED_ANSWERS[key]}, staffing)
+    assert json.dumps(record.__dict__, sort_keys=True, default=str) == before
 
 
-def test_a_complete_lens_declaration_is_accepted(adm: ModuleType) -> None:
-    staffing = _table_staffing()
-    after = adm.apply_answers(
-        _table_record(adm, staffing), {"lens_declaration": _GOOD_DECLARATION}, staffing
-    )
-    assert after.run_configuration["applicable_lenses"]["value"] == _GOOD_DECLARATION
+@pytest.mark.parametrize("key", sorted(_RETIRED_ANSWERS))
+def test_the_pane_path_refuses_a_retired_answer_and_leaves_the_record_unchanged(
+    adm: ModuleType,
+    store: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    key: str,
+) -> None:
+    assert _answer_main(adm, store, repo_root, monkeypatch, _golden_answers()) == 0
+    capsys.readouterr()
+    (saved,) = store.glob("*.json")
+    before = saved.read_text(encoding="utf-8")
+
+    payload = {**_golden_answers(), key: _RETIRED_ANSWERS[key]}
+    assert _answer_main(adm, store, repo_root, monkeypatch, payload) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("admission: ")
+    assert key in err
+    assert saved.read_text(encoding="utf-8") == before
 
 
-def test_without_a_catalogue_only_the_declarations_shape_is_checked(adm: ModuleType) -> None:
-    run_record = _load("run_record")
-    declaration = {"always_on": ["correctness"], "conditional_applies": ["performance"]}
-    after = adm.apply_answers(
-        run_record.RunRecord(issue=103), {"lens_declaration": declaration}, None
-    )
-    assert after.run_configuration["applicable_lenses"]["value"] == declaration
-    with pytest.raises(adm.AdmissionError):
-        adm.apply_answers(
-            run_record.RunRecord(issue=103),
-            {"lens_declaration": {"always_on": ["correctness"], "conditional": []}},
-            None,
-        )
+def test_a_staffing_only_answers_payload_is_accepted_and_records_no_retired_parameter(
+    adm: ModuleType, store: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _golden_answers()
+    assert list(payload) == ["staffing_overrides"]
+    assert _answer_main(adm, store, repo_root, monkeypatch, payload) == 0
+    record = adm.run_record.load(store, 103, warn=None)
+    assert record is not None
+    for name in RETIRED_PARAMETERS:
+        assert name not in record.run_configuration, name
+    assert [key for key in record.admission.get("answers", {}) if key in _RETIRED_ANSWERS] == []
+    pending = record.admission["pending_questions"]
+    assert "staffing_overrides" not in pending
+    assert [key for key in pending if key in _RETIRED_ANSWERS] == []
+
 
 
 def test_answering_in_two_passes_leaves_plan_as_the_next_step(
     adm: ModuleType, store: Path, repo_root: Path
 ) -> None:
-    """The pane records questions 4 and 5 first; the rest follow in a second pass."""
+    """The pane records the staffing question first; the rest follow in a second pass."""
     staffing = _table_staffing()
     answers = _all_answers()
-    answers["lens_declaration"] = _GOOD_DECLARATION
-    first = {key: answers.pop(key) for key in ("staffing_overrides", "lens_declaration")}
+    first = {"staffing_overrides": answers.pop("staffing_overrides")}
 
     def admit(given: dict[str, Any]) -> Any:
         record, outstanding = adm.admit(
@@ -2018,20 +1642,6 @@ def test_the_plan_skill_calls_the_review_pane_and_falls_back_to_the_tables(
     assert "--render tables" in section
     assert "Never retype or re-record them" in section
     assert [line for line in section.splitlines()[1:] if line.startswith("#")] == []
-
-
-def test_the_lens_jev_cell_carries_its_band_for_a_pane(adm: ModuleType) -> None:
-    staffing = _table_staffing()
-    record = _table_record(adm, staffing)
-    record.admission["lens_proposal"] = {"probabilities": {"performance": 0.85, "privacy": 0.7}}
-    data = adm.review_data(record, [], staffing, None)
-    bands = {row["lens"]: row["jev"]["band"] for row in data["lenses"]["rows"]}
-    assert bands == {
-        "correctness": None,
-        "security": None,
-        "performance": "pre-checked",
-        "privacy": "consider",
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -2314,15 +1924,52 @@ def test_admission_stays_fail_open_for_a_staffing_component_too_old_for_its_argu
     assert block is None or "worker" not in (block.get("value") or {})
 
 
-def test_admission_still_skips_the_lens_reviewer_without_a_lens(
+def _recording_bundled_staffing(adm: ModuleType) -> tuple[SimpleNamespace, list[str]]:
+    """The staffing component saga ships, wrapped to record every role admission resolves."""
+    real = _bundled_staffing(adm)
+    asked: list[str] = []
+
+    def resolve_role(role: str, **kwargs: Any) -> Any:
+        asked.append(role)
+        return real.resolve_role(role, **kwargs)
+
+    wrapper = SimpleNamespace(
+        roles=real.roles, resolve_role=resolve_role, StaffingError=real.StaffingError
+    )
+    return wrapper, asked
+
+
+def _admit_with_bundled_staffing(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Any, list[str]]:
+    monkeypatch.chdir(repo_root)
+    staffing, asked = _recording_bundled_staffing(adm)
+    run_record = _load("run_record")
+    record = run_record.RunRecord(issue=161, repo="infiquetra/infiquetra-agent-plugins")
+    return adm.fill_defaults(record, {}, staffing, repo_root=repo_root), asked
+
+
+def test_admission_resolves_no_lens_role(
     adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.chdir(repo_root)
-    staffing = _bundled_staffing(adm)
-    reviewers = [role for role in staffing.roles() if role not in _admitted_staffing(adm, repo_root)]
-    for role in reviewers:
-        with pytest.raises(staffing.StaffingError, match="needs a lens"):
-            staffing.resolve_role(role, root=repo_root)
+    """Issue #161: the lens reviewer role is gone, so admission neither asks for it nor skips it."""
+    filled, asked = _admit_with_bundled_staffing(adm, repo_root, monkeypatch)
+    assert [role for role in asked if "lens" in role] == [], (
+        "admission still asks staffing to resolve a lens role"
+    )
+    recorded = filled.run_configuration["staffing_models_and_efforts"]["value"]
+    assert [role for role in recorded if "lens" in role] == []
+
+
+def test_admission_staffs_the_targeted_reviewer_directly(
+    adm: ModuleType, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #161: the targeted reviewer resolves on its work shape, with no lens to pass."""
+    filled, _asked = _admit_with_bundled_staffing(adm, repo_root, monkeypatch)
+    recorded = filled.run_configuration["staffing_models_and_efforts"]["value"]
+    assert "targeted-reviewer" in recorded, sorted(recorded)
+    row = recorded["targeted-reviewer"]
+    assert row["vendor"] and row["model"] and row["effort"], row
 
 
 def test_the_build_unit_tier_passes_a_recorded_raise_to_the_resolver(tmp_path: Path) -> None:

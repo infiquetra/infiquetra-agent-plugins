@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Re-pin the roles library to SDLC `1d2e33e`: thirteen staffable prompts, updated handoff fields and fixed review rounds; retire lens slicing and the two superseded prompts.
+
 Breaking: the release that ships this is a major version. Herdr is now herdr core (`hc`, the terminals on each machine) plus the Herdr app (the window), and
 old Herdr (`herdr agent|tab|pane|workspace`) is being removed; a session it starts does not appear
 in the window. `launcher.py` and `roster.py` now start sessions through the `agents` launcher's

@@ -161,7 +161,7 @@ second controller. Halt rather than falling back to the retired saga runner.
 
 The controller owns acceptance. Its lenses, cycle state, and typed outcome stay with Code Review.
 Orchestrate does not score lenses and does not decide review policy. A review run routes through
-the same outcome words as `review_result.v2`.
+the routing outcome words derived from its merge decision.
 
 **A unit is also told, whatever its capability, never to stop on a question.** Saga still asks about
 destination, scope class, resume-versus-mint — and every one of those in a background tab is a unit

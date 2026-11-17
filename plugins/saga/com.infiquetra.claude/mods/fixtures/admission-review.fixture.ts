@@ -2,8 +2,9 @@
 // `admission_review.v1`) for the review pane's tests, and the answers the pane
 // must hand to `admission.py --answers -` for the golden Submit.
 //
-// Two roles; two always-on lenses and two conditional ones, `performance`
-// pre-checked by Jev at 0.86 (issue #110) and `privacy` undeclared. The palette
+// Two roles and nothing else to decide: admission no longer asks for a lens
+// declaration or for repair allowances (issue #161), so the document carries no
+// `lenses` table and the answers carry no `lens_declaration`. The palette
 // leaves fable out on purpose: a Select listing exactly these models shows the
 // choices come from the document, not from a list written in the mod.
 //
@@ -38,7 +39,7 @@ export const REVIEW_JSON: SagaAdmissionReviewData = {
   issue: 103,
   repo: 'infiquetra/infiquetra-agent-plugins',
   record_path: null,
-  pending_questions: ['risk_tier', 'staffing_overrides', 'lens_declaration', 'change_shape'],
+  pending_questions: ['risk_tier', 'staffing_overrides', 'change_shape'],
   questions: [],
   staffing: {
     source: 'staffing',
@@ -69,60 +70,17 @@ export const REVIEW_JSON: SagaAdmissionReviewData = {
       },
     ],
   },
-  lenses: {
-    catalogue_version: '1.0.0',
-    source: 'staffing',
-    status: 'ok',
-    rows: [
-      {
-        lens: 'correctness',
-        always_on: true,
-        include: 'always on',
-        reason: 'always-on lens',
-        jev: { cell: 'no suggestion', state: 'no-suggestion', probability: null, band: null },
-      },
-      {
-        lens: 'security',
-        always_on: true,
-        include: 'always on',
-        reason: 'always-on lens',
-        jev: { cell: 'no suggestion', state: 'no-suggestion', probability: null, band: null },
-      },
-      {
-        lens: 'performance',
-        always_on: false,
-        include: 'undeclared',
-        reason: 'undeclared',
-        jev: { cell: '0.86 (pre-checked)', state: 'suggested', probability: 0.86, band: 'pre-checked' },
-      },
-      {
-        lens: 'privacy',
-        always_on: false,
-        include: 'undeclared',
-        reason: 'undeclared',
-        jev: { cell: 'not configured', state: 'not-configured', probability: null, band: null },
-      },
-    ],
-  },
   palette: PALETTE,
   tables_markdown: '',
 }
 
-/** What Submit sends after worker is set to opus/medium and privacy is left out with a reason. */
+/** What Submit sends after worker is set to opus/medium: the role map, and nothing else. */
 export const GOLDEN_ANSWERS: SagaAdmissionAnswers =
 /* BEGIN GOLDEN ANSWERS */
 {
   "staffing_overrides": {
     "planner": {"vendor": "claude", "model": "opus", "effort": "high"},
     "worker": {"vendor": "claude", "model": "opus", "effort": "medium"}
-  },
-  "lens_declaration": {
-    "always_on": ["correctness", "security"],
-    "conditional_applies": {"performance": ""},
-    "conditional_does_not_apply": {"privacy": "no personal data is touched"}
   }
 }
 /* END GOLDEN ANSWERS */
-
-/** The reason the golden Submit types for the privacy lens. */
-export const PRIVACY_REASON = 'no personal data is touched'

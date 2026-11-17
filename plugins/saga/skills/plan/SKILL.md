@@ -88,7 +88,7 @@ python3 plugins/saga/scripts/admission.py --issue <N> --dry-run --render tables
 ```
 
 Read what it prints. It names the defaults it filled with the source of each, and the questions that
-remain, then prints the staffing and lens tables in one fixed format. Then:
+remain, then prints the staffing table in one fixed format. Then:
 
 **The tier judgment runs here by default** (issue #96) whenever `TYPESAFE_API_KEY` is configured
 and `INFIQUETRA_TYPESAFE_TIERING=off` is not set. Admission asks TypeSafe Jev once, for every
@@ -115,7 +115,7 @@ admission logs it as the judgment's label when the answers are recorded.
    is why the absence behaviour here is a halt rather than a safe default.
 
    **In Claude Code, when the tool `mcp__saga__review_admission` is listed and
-   `staffing_overrides` or `lens_declaration` is outstanding, call it with `{"issue": <N>}`
+   `staffing_overrides` is outstanding, call it with `{"issue": <N>}`
    before the message** instead of printing the two tables. It opens a review pane with both
    tables and a control per row, and the operator's answers are recorded through admission itself,
    which validates them. Parse the JSON string it returns to read its `status`:
@@ -128,10 +128,10 @@ admission logs it as the judgment's label when the answers are recorded.
    Every other harness (Codex, Grok, Agy, a Claude Code without the tool) has no such tool and
    always takes the tables path below.
 
-   **When `staffing_overrides` or `lens_declaration` is outstanding and the review pane did not
+   **When `staffing_overrides` is outstanding and the review pane did not
    record it, print the tables block exactly as rendered** (the `--render tables` output above),
    in that same message: from the line
-   `**Staffing (answer: staffing_overrides)**` to the last row of the lens table. Do not
+   `**Staffing (answer: staffing_overrides)**` to the last row of the staffing table. Do not
    reformat, reorder, merge, abbreviate, or summarise it — admission owns that format so every
    harness shows the same table. Collect the two answers against its rows:
 
@@ -140,9 +140,7 @@ admission logs it as the judgment's label when the answers are recorded.
      the operator's changes applied. Admission merges an override role by role and refuses a
      tier the palette does not list, but send every role: the complete role map records that the
      operator reviewed each row.
-   - `lens_declaration`: `{"always_on": [...], "conditional_applies": {"<lens>": "<reason>"},
-     "conditional_does_not_apply": {"<lens>": "<reason>"}}`, with every conditional lens in the
-     table in exactly one of the two maps and a reason for each one left out.
+
 
    **When `functional_test_environment` is outstanding**, the operator declares how this
    repository's changes are functionally tested before review. Collect it in the same message,
@@ -179,8 +177,7 @@ an empty question set and costs nothing. The schema is
 `plugins/saga/references/repository-profile.md`.
 
 The questions admission asks are the run's shape, not the plan's content: Risk tier and its
-justification, the seven approval-boundary scopes, the destination, staffing overrides, the lens
-declaration, the repair allowances, the response to unfinished functional testing, the repository's
+justification, the seven approval-boundary scopes, the destination, staffing overrides, the response to unfinished functional testing, the repository's
 functional-test environment (kind, commands, private or shared) or a waiver reason, whether `main`
 is consumed directly, and whether the change is code, docs, or mixed. Phase 5's own questions (destination, backend) are separate and stay where
 they are; where admission has already recorded the destination, do not ask it again.

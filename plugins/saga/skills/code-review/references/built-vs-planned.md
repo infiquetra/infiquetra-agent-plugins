@@ -3,8 +3,8 @@
 The audit that answers: **did this change build what was requested — nothing more, nothing less?** It has
 two halves, both grounded in the active plan artifact (`docs/plans/`) and the engineering journal
 (`docs/engineering-journal/`): **scope-drift detection** (informational) and the **plan-completion audit**
-(5-state). Both always run on every review and emit findings. The typed `outcome`, derived from the
-overall-score and applicable-dimension thresholds, is the sole acceptance decision; neither half blocks.
+(5-state). Both always run on every review and emit findings. C1 grades and the stored merge answer determine whether review proceeds. Both audits provide
+evidence to the prepared-packet review; neither invents a separate acceptance score.
 
 ## Inputs
 
@@ -36,7 +36,7 @@ Delivered: <one-line summary of what the diff actually does>
 ```
 
 This is **informational** — it produces findings, it does not block. Drift items surface as findings the
-operator triages; the typed `outcome`, not the scope check itself, determines whether the PR can proceed.
+operator triages; the review command computes the C1 findings, grades and merge answer that determine whether the PR can proceed.
 
 ## Part 2 — Plan-completion audit (5-state)
 

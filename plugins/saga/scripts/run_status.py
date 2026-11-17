@@ -23,7 +23,7 @@ harness shows. ``summary --band`` prints that line per run.
 
 ``review`` prints the latest code review result in the run record, lens by lens (issue #108): for
 each selected lens whether it met its bar, did not, did not run, or ran without a bar to meet, and
-its findings. Whether a lens met its bar comes from ``review_consensus.lens_outcomes_for_result``,
+its findings. Grades and merge state come from the current review-state document,
 the rule the verdict itself applies, so a display never re-derives it. A lens that did not run is
 never shown with a score.
 
@@ -53,8 +53,6 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import next_step_context  # noqa: E402  (after the sys.path shim, by design)
-import review_consensus  # noqa: E402
-import review_result  # noqa: E402
 import review_state  # noqa: E402
 import run_record  # noqa: E402
 
@@ -235,8 +233,8 @@ DEFAULT_ROLE = "worker"
 REVIEW_LOOP_ROLES: dict[str, str] = {
     "review-fixer": "worker",
     "downstream-resolver": "worker",
-    "review-controller": "lens-reviewer",
-    "external-reviewer": "lens-reviewer",
+    "review-controller": "targeted-reviewer",
+    "external-reviewer": "targeted-reviewer",
 }
 
 
@@ -367,112 +365,16 @@ def render_line(run: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def selected_lenses(record: run_record.RunRecord) -> list[str]:
-    """The lenses admission selected for the run: always-on first, then the conditional ones.
-
-    Read from ``run_configuration.applicable_lenses.value`` in the shape ``admission.py`` records
-    (an ``always_on`` list and a ``conditional_applies`` mapping or list). Anything else selects
-    nothing here; the review's own rows still show.
-    """
-    block = record.run_configuration.get("applicable_lenses")
-    value = block.get("value") if isinstance(block, dict) else None
-    if not isinstance(value, dict):
-        return []
-    lenses: list[str] = []
-    always_on = value.get("always_on")
-    if isinstance(always_on, list):
-        lenses += [str(lens) for lens in always_on]
-    applies = value.get("conditional_applies")
-    if isinstance(applies, (dict, list)):
-        lenses += sorted(str(lens) for lens in applies)
-    return list(dict.fromkeys(lenses))
 
 
-def latest_review(
-    record: run_record.RunRecord, *, loop: str, unit: str | None = None
-) -> dict[str, Any] | None:
-    """The newest ``review_result.v2`` entry in *loop* (and for *unit*, when given), or ``None``.
-
-    Entries are appended in the order the review wrote them, so the newest is the last match.
-    Legacy ``review_result.v1`` entries are never chosen.
-    """
-    for entry in reversed(record.review_cycles):
-        if not isinstance(entry, dict) or entry.get("schema") != review_result.RESULT_SCHEMA:
-            continue
-        if entry.get("loop") != loop:
-            continue
-        if unit is not None and entry.get("unit") != unit:
-            continue
-        return entry
-    return None
 
 
-def _finding_order(finding: dict[str, Any]) -> tuple[int, str, int, str]:
-    """Most severe first, then by path and line."""
-    severity = str(finding.get("severity", ""))
-    rank = (
-        review_result.SEVERITY_VOCABULARY.index(severity)
-        if severity in review_result.SEVERITY_VOCABULARY
-        else len(review_result.SEVERITY_VOCABULARY)
-    )
-    line = str(finding.get("line", ""))
-    number = int(line) if line.isdigit() else sys.maxsize
-    return (rank, str(finding.get("path", "")), number, line)
 
 
-def _finding_view(finding: dict[str, Any]) -> dict[str, Any]:
-    return {name: finding.get(name) for name in FINDING_FIELDS}
 
 
-def _lens_state(outcome: review_consensus.LensOutcome) -> str:
-    if outcome.usable:
-        return "met" if outcome.met else "not_met"
-    if outcome.reason == review_consensus.REASON_NOT_EXECUTED:
-        return "not_run"
-    return "unscored"
 
 
-def lens_views(
-    entry: dict[str, Any], selected: list[str]
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """One view per lens, and the findings no listed lens owns.
-
-    The lenses are the result's rows in its order, then every selected lens the result has no row
-    for, shown as ``not_run``. Only a ``met`` or ``not_met`` lens carries ``derived_overall``.
-    """
-    rows = {
-        str(row.get("lens", "")): row
-        for row in entry.get("per_lens_results") or []
-        if isinstance(row, dict)
-    }
-    findings = sorted(
-        (f for f in entry.get("findings") or [] if isinstance(f, dict)), key=_finding_order
-    )
-    states: list[tuple[str, str, str | None]] = [
-        (outcome.lens_id, _lens_state(outcome), outcome.reason or None)
-        for outcome in review_consensus.lens_outcomes_for_result(entry)
-    ]
-    shown = {lens for lens, _, _ in states}
-    states += [(lens, "not_run", REASON_NO_RESULT) for lens in selected if lens not in shown]
-
-    views: list[dict[str, Any]] = []
-    for lens, state, reason in states:
-        owned = [_finding_view(f) for f in findings if str(f.get("lens", "")) == lens]
-        overall = rows.get(lens, {}).get("derived_overall") if state in ("met", "not_met") else None
-        views.append(
-            {
-                "lens": lens,
-                "state": state,
-                "reason": reason,
-                "derived_overall": overall,
-                "finding_count": len(owned),
-                "top": owned[:TOP_FINDINGS],
-                "findings": owned,
-            }
-        )
-    listed = {view["lens"] for view in views}
-    unattributed = [_finding_view(f) for f in findings if str(f.get("lens", "")) not in listed]
-    return views, unattributed
 
 
 def review_view(
@@ -481,7 +383,7 @@ def review_view(
     *,
     issue: int | None = None,
     unit: str | None = None,
-    loop: str = review_result.LOOP_CODE_REVIEW,
+    loop: str = "code_review",
     resolve: Callable[[Path], int | None] = next_step_context.resolve_issue,
 ) -> dict[str, Any]:
     """The ``review_view.v1`` document ``review`` prints. ``review`` is null without a result.
@@ -503,32 +405,8 @@ def review_view(
     if record is None:
         return view
     view["record_path"] = str(run_record.record_path(store_root, resolved))
-    view["legacy_entries"] = len(review_result.legacy_entries(record))
-    # The review-state document wins when the redesign's runs exist; the
-    # ``review_result.v2`` reader below stays for older records until C10b
-    # deletes it. The document is card-level, so --unit/--loop do not filter it.
-    if any(
-        isinstance(entry, dict) and entry.get("kind") == review_state.KIND_REVIEW_RUN
-        for entry in record.review_cycles
-    ):
+    if review_state.review_runs(record):
         view["review"] = state_review_view(record)
-        return view
-    entry = latest_review(record, loop=loop, unit=unit)
-    if entry is None:
-        return view
-    lenses, unattributed = lens_views(entry, selected_lenses(record))
-    view["review"] = {
-        "unit": entry.get("unit"),
-        "cycle": entry.get("cycle"),
-        "loop": entry.get("loop"),
-        "revision": entry.get("revision"),
-        "outcome": entry.get("outcome"),
-        "reason": entry.get("reason") or None,
-        "lenses": lenses,
-        "unattributed_findings": unattributed,
-        "advisory_count": len(entry.get("advisory_findings") or []),
-        "duplicate_count": len(entry.get("duplicate_findings") or []),
-    }
     return view
 
 
@@ -536,8 +414,6 @@ def review_view(
 STATE_WORDS = {"met": "met", "not_met": "not met", "not_run": "not run", "unscored": "unscored"}
 
 
-def _finding_line(finding: dict[str, Any]) -> str:
-    return f"{finding['severity']} {finding['path']}:{finding['line']} {finding['category']}"
 
 
 def state_review_view(record: run_record.RunRecord) -> dict[str, Any]:
@@ -571,25 +447,7 @@ def render_review(view: dict[str, Any]) -> list[str]:
     if review is None:
         which = f"#{view['issue']}" if view["issue"] is not None else "this checkout"
         return [f"run_status: no review result recorded for {which}"]
-    if isinstance(review, dict) and "state_schema" in review:
-        return render_state_review(view)
-    header = (
-        f"#{view['issue']} · {review['unit']} · cycle {review['cycle']} · {review['loop']} · "
-        f"{review['outcome']} · {str(review['revision'])[:12]}"
-    )
-    lines = [header]
-    width = max([len("lens"), *(len(lens["lens"]) for lens in review["lenses"])])
-    lines.append(f"{'lens':<{width}}  {'state':<8}  findings")
-    for lens in review["lenses"]:
-        reason = f"  ({lens['reason']})" if lens["state"] in ("not_run", "unscored") else ""
-        lines.append(
-            f"{lens['lens']:<{width}}  {STATE_WORDS[lens['state']]:<8}  "
-            f"{lens['finding_count']}{reason}"
-        )
-        lines += [f"  {_finding_line(finding)}" for finding in lens["top"]]
-    if review["unattributed_findings"]:
-        lines.append(f"other findings: {len(review['unattributed_findings'])}")
-    return lines
+    return render_state_review(view)
 
 
 def render_state_review(view: dict[str, Any]) -> list[str]:
@@ -616,10 +474,6 @@ def render_state_review(view: dict[str, Any]) -> list[str]:
 # ---------------------------------------------------------------------------
 # Where a run stands, for the run status band (issue #105)
 # ---------------------------------------------------------------------------
-
-#: The repair allowances the lifecycle defaults to when the run configuration names none.
-DEFAULT_STANDARD_ALLOWANCE = 3
-DEFAULT_ESCALATED_ALLOWANCE = 2
 
 #: How much of ``next_step`` stands in for the phase when no saga envelope names one.
 PHASE_FALLBACK_CHARS = 40
@@ -705,37 +559,19 @@ def build_loop_view(record: run_record.RunRecord, checkout: Path) -> dict[str, A
     return view
 
 
-def _allowance(record: run_record.RunRecord, key: str, fallback: int) -> int:
-    """A cycle allowance from the run configuration (``{"value": n}`` or a bare number)."""
-    entry = record.run_configuration.get(key)
-    raw = entry.get("value") if isinstance(entry, dict) else entry
-    if isinstance(raw, bool):
-        return fallback
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return fallback
-    return value if value >= 0 else fallback
 
 
 def state_review_progress(record: run_record.RunRecord) -> dict[str, Any] | None:
     """The code-review round and per-lens grades from the review-state document.
 
     Built offline with no envelope, like the review view: only the round and
-    the stored grades are read, so the merge setting is never needed. The
-    old-shape keys stay, unset, so every reader of this view keeps its shape.
+    the stored grades are read, so the merge setting is never needed. Retired cycle and allowance fields are absent.
     """
     document = review_state.build_document(record, None)
     if document["round"] is None:
         return None
-    standard = _allowance(record, "standard_cycle_allowance", DEFAULT_STANDARD_ALLOWANCE)
-    escalated = _allowance(record, "escalated_cycle_allowance", DEFAULT_ESCALATED_ALLOWANCE)
     return {
         "unit": None,
-        "cycle": None,
-        "standard_allowance": standard,
-        "escalated_allowance": escalated,
-        "is_escalated": False,
         "outcome": None,
         "lenses_met": 0,
         "lenses_total": 0,
@@ -748,42 +584,8 @@ def state_review_progress(record: run_record.RunRecord) -> dict[str, Any] | None
 
 
 def review_progress(record: run_record.RunRecord, unit: str | None) -> dict[str, Any] | None:
-    """The latest code review cycle against its allowance, and how many lenses met their bar.
-
-    The entry is *unit*'s latest ``review_result.v2`` code review when it has one, else the run's
-    latest. Whether a lens met its bar is the verdict's own rule, through :func:`lens_views`; a
-    selected lens with no row counts in the total as not run. A record with C1 review runs takes
-    the state branch instead: the round and grades from the review-state document.
-    """
-    if any(
-        isinstance(entry, dict) and entry.get("kind") == review_state.KIND_REVIEW_RUN
-        for entry in record.review_cycles
-    ):
-        return state_review_progress(record)
-    loop = review_result.LOOP_CODE_REVIEW
-    entry = latest_review(record, loop=loop, unit=unit) if unit else None
-    if entry is None:
-        entry = latest_review(record, loop=loop)
-    if entry is None:
-        return None
-    lenses, _ = lens_views(entry, selected_lenses(record))
-    standard = _allowance(record, "standard_cycle_allowance", DEFAULT_STANDARD_ALLOWANCE)
-    escalated = _allowance(record, "escalated_cycle_allowance", DEFAULT_ESCALATED_ALLOWANCE)
-    cycle = entry.get("cycle")
-    cycle = cycle if isinstance(cycle, int) and not isinstance(cycle, bool) else None
-    return {
-        "unit": entry.get("unit"),
-        "cycle": cycle,
-        "standard_allowance": standard,
-        "escalated_allowance": escalated,
-        "is_escalated": cycle is not None and cycle > standard,
-        "outcome": entry.get("outcome"),
-        "lenses_met": sum(1 for lens in lenses if lens["state"] == "met"),
-        "lenses_total": len(lenses),
-        "lenses_not_run": sum(1 for lens in lenses if lens["state"] == "not_run"),
-        "round": None,
-        "grades": [],
-    }
+    """The current card-level review round and C1 grades; historical shapes stay unread."""
+    return state_review_progress(record)
 
 
 def _plural(count: int, word: str) -> str:
@@ -812,14 +614,6 @@ def _review_part(view: dict[str, Any]) -> list[str]:
         if pairs:
             parts.append(pairs)
         return parts
-    if view["cycle"] is not None:
-        if view["is_escalated"]:
-            budget = view["standard_allowance"] + view["escalated_allowance"]
-            parts.append(f"review cycle {view['cycle']}/{budget} (escalated)")
-        else:
-            parts.append(f"review cycle {view['cycle']}/{view['standard_allowance']}")
-    if view["lenses_total"]:
-        parts.append(f"{view['lenses_met']}/{view['lenses_total']} lenses met")
     return parts
 
 
@@ -880,8 +674,8 @@ def build_parser() -> argparse.ArgumentParser:
     rev.add_argument("--unit", default=None, help="This unit's history only.")
     rev.add_argument(
         "--loop",
-        choices=review_result.LOOPS,
-        default=review_result.LOOP_CODE_REVIEW,
+        choices=("code_review",),
+        default="code_review",
         help="Which repair loop's history to read (default: code_review).",
     )
     rev.add_argument("--json", action="store_true", help=f"Print the {REVIEW_SCHEMA} document.")

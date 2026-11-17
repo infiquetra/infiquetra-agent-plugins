@@ -3,8 +3,8 @@
 # source-version: 0.33.2
 # source-commit: authored
 # source-path: scripts/fleet_commons/staffing.py
-# source-sha256: bac21fb4edd74024e0c54cf55d1df06469229d32f99fde58dad819b1e13b44a7
-# output-sha256: bac21fb4edd74024e0c54cf55d1df06469229d32f99fde58dad819b1e13b44a7
+# source-sha256: 1f9c2a4859cd3fa630144434f1a6419961ed8ed8cfb189f8a9d33dbddbce34d9
+# output-sha256: 1f9c2a4859cd3fa630144434f1a6419961ed8ed8cfb189f8a9d33dbddbce34d9
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """The one staffing resolver — "role or work shape, and for review the lens, to a tier" (#1021).
@@ -731,7 +731,7 @@ def resolve_role(
 
     qualification: Qualification | None = None
     if lens is None:
-        if require_lens and _is_reviewing_role(role):
+        if require_lens and _is_reviewing_role(role) and role != "targeted-reviewer":
             raise StaffingError(
                 f"role {role!r} reviews, so it needs a lens: pass one to learn whether this "
                 "executor may establish a threshold for it"

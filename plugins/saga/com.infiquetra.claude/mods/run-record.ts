@@ -244,9 +244,8 @@ export async function readRunStatusWith(
 // ---------------------------------------------------------------------------
 // `run_status.py review`: the latest code review, lens by lens (issue #108)
 //
-// Whether a lens met its bar is the verdict's own rule
-// (`review_consensus.lens_outcomes_for_result`); the script applies it and a
-// mod shows the answer, never recomputing it.
+// Saga supplies each lens's grade and merge effect; the mod displays that
+// answer without recomputing the review policy.
 // ---------------------------------------------------------------------------
 
 /** The view version this module reads; `REVIEW_SCHEMA` in `scripts/run_status.py`. */

@@ -376,16 +376,47 @@ def test_merge_confirmation_still_present() -> None:
     assert "silently mutate" in boundary_collapsed
 
 
-def test_four_typed_review_outcomes_still_pinned() -> None:
+def test_unattended_auto_merge_is_the_operators_run_start_confirmation() -> None:
+    """Issue #161: §5.5 keeps its pinned sentence and says what an unattended ``auto`` merge is.
+
+    The intent envelope's ``auto`` merge setting is the operator's confirmation, given once when
+    the run started. At ``gate`` the merge still waits for the operator.
+    """
+    text = _read_skill()
+    boundary = " ".join(_section(text, "### 5.5 ", "\n---").split())
+    lowered = boundary.lower()
+    assert re.search(r"run[- ]start confirmation", lowered)
+    assert "unattended" in lowered
+    assert "`auto`" in boundary
+    assert "envelope" in lowered
+    assert "`gate`" in boundary
+
+
+def test_the_review_gate_reads_grades_and_names_no_retired_outcome() -> None:
+    """Issue #161: §5.3 routes on C1 grades from the review command, not on four typed outcomes."""
     text = _read_skill()
     gate = _section(text, "### 5.3 ", "### 5.4 ")
-    outcomes = tuple(re.findall(r"^- \*\*`([^`]+)`\*\* —", gate, flags=re.MULTILINE))
-    assert outcomes == (
+    for retired in (
         "accepted",
         "repairs_requested",
         "cycle_cap_best_available",
         "review_incomplete",
-    )
+    ):
+        assert retired not in gate, retired
+    collapsed = " ".join(gate.split())
+    assert "review_state.py" in collapsed
+    assert "review_command.py" in collapsed
+    assert "grade" in collapsed.lower()
+
+
+def test_a_stale_review_goes_back_through_phase_three_three() -> None:
+    """Issue #144 stays true after the switch: the combined-branch loop reruns before any re-review."""
+    text = _read_skill()
+    gate = " ".join(_section(text, "### 5.3 ", "### 5.4 ").split())
+    assert "stale" in gate.lower()
+    assert "git rev-list <REVIEWED_SHA>..HEAD --count" in gate
+    assert "Phase 3.3" in gate
+    assert "build_loop.py --handoff" in gate
 
 
 def test_skill_names_gate_verdict_validation_at_save() -> None:

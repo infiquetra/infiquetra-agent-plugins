@@ -203,7 +203,6 @@ RUN_SLOT = "__run__"
 """Key under which an unscoped run's single-controller review state lives in ``review_states``."""
 REVIEWER_SEAT_ROLE = "external-reviewer"
 TARGETED_REVIEWER_ROLE = "targeted-reviewer"
-LENS_REVIEWER_ROLE = "lens-reviewer"
 REVIEWER_LAUNCH_ROLES = frozenset({TARGETED_REVIEWER_ROLE, REVIEWER_SEAT_ROLE})
 #: Issue #223: ``launcher.py review`` refuses a Claude reviewer launch without a dollar ceiling,
 #: and this is the one place ``review-launch`` takes it from. It bounds a runaway session; it is
@@ -217,13 +216,6 @@ WORK_FIX_ROLES = frozenset({"review-fixer", "downstream-resolver"})
 _REVIEW_SHAPED = re.compile(r"(?i)\breview\b")
 _RETIRED_TRANSPORT = re.compile(r"engine_session_runner|engine_offer|external_only")
 OPERATOR_FIX_ROLES = frozenset({"human", "release"})
-#: The code-review result Orchestrate consumes. Moved to v2 by issue 1001, when the
-#: review began taking its lenses and thresholds from the lifecycle repository's
-#: catalogue instead of a policy file inside the Saga plugin. The pair of schema
-#: identifiers is the only persistent compatibility contract between the two
-#: repositories, so a consumer that does not recognise one must refuse rather than
-#: guess — which is why this is a named constant and not an inline string.
-REVIEW_RESULT_SCHEMA = "review_result.v2"
 REVIEW_OUTCOMES = frozenset(
     {"accepted", "repairs_requested", "cycle_cap_best_available", "review_incomplete"}
 )
@@ -1427,12 +1419,6 @@ def _refuse_duplicate_review_role(units: Sequence[Unit], role: str) -> None:
 
 def _refuse_lens_roster_and_duplicate_seats(units: Sequence[Unit]) -> None:
     """A review is one controller plus at most one of each reviewer seat, never a lens roster."""
-    for unit in units:
-        if unit.role == LENS_REVIEWER_ROLE:
-            raise SystemExit(
-                f"unit {unit.name!r} is a lens roster; a review is one controller plus "
-                "one targeted reviewer, not one unit per lens"
-            )
     _refuse_duplicate_review_role(units, TARGETED_REVIEWER_ROLE)
     _refuse_duplicate_review_role(units, REVIEWER_SEAT_ROLE)
 
@@ -1517,43 +1503,6 @@ def _is_review_run(payload: Mapping[str, Any]) -> bool:
     return payload.get("schema") == REVIEW_RUN_SCHEMA and payload.get("kind") == REVIEW_RUN_KIND
 
 
-def _route_review_result_v2(payload: Mapping[str, Any]) -> tuple[str, list[dict[str, Any]]]:
-    """The ``review_result.v2`` envelope, unchanged, including operator owners."""
-    outcome = payload.get("outcome")
-    if not isinstance(outcome, str) or outcome not in REVIEW_OUTCOMES:
-        raise SystemExit(f"review result has unsupported routing outcome {outcome!r}")
-    if outcome != "repairs_requested":
-        return str(outcome), []
-
-    raw_requests = payload.get("fix_requests")
-    if not isinstance(raw_requests, list):
-        raise SystemExit("repairs_requested result requires a fix_requests list")
-    requests: list[dict[str, Any]] = []
-    for index, item in enumerate(raw_requests):
-        if not isinstance(item, dict):
-            raise SystemExit(f"fix request {index} must be an object")
-        owner = item.get("owner")
-        if not isinstance(owner, str) or owner not in WORK_FIX_ROLES | OPERATOR_FIX_ROLES:
-            raise SystemExit(f"fix request {index} has unsupported owner role {owner!r}")
-        fix_id = item.get("fix_id")
-        if not isinstance(fix_id, str) or not fix_id.strip():
-            raise SystemExit(f"fix request {index} requires a non-empty fix_id")
-        if "\n" in fix_id or "\r" in fix_id:
-            raise SystemExit(f"fix request {index} fix_id must not contain a newline")
-        touched = item.get("touched_paths")
-        if not isinstance(touched, list) or not touched:
-            raise SystemExit(f"fix request {fix_id!r} requires touched_paths")
-        normalized = [
-            _route_path(path, label=f"fix request {fix_id!r} touched path") for path in touched
-        ]
-        request = json.loads(json.dumps(item, ensure_ascii=False))
-        request["owner"] = owner
-        request["fix_id"] = fix_id.strip()
-        request["touched_paths"] = normalized
-        requests.append(request)
-    return str(outcome), requests
-
-
 def _review_run_location_path(finding_id: str, finding: Mapping[str, Any]) -> str:
     """The one path a blocking finding contributes, normalized, or a refusal naming the id."""
     location = finding.get("location")
@@ -1632,13 +1581,11 @@ def _review_routing_fields(raw_result: str) -> tuple[str, list[dict[str, Any]]]:
         raise SystemExit(f"review result is not JSON: {exc}") from None
     if not isinstance(payload, dict):
         raise SystemExit("review result must be a JSON object")
-    if payload.get("schema") == REVIEW_RESULT_SCHEMA:
-        return _route_review_result_v2(payload)
     if _is_review_run(payload):
         return _route_review_run(payload)
     schema = payload.get("schema")
     raise SystemExit(
-        f"review result has unsupported schema {schema!r}; expected {REVIEW_RESULT_SCHEMA!r}"
+        f"review result has unsupported schema {schema!r}; expected {REVIEW_RUN_SCHEMA!r}"
     )
 
 

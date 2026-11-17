@@ -301,17 +301,6 @@ def test_a_second_targeted_reviewer_in_one_lifecycle_is_refused(
     assert "create exactly one" in plan_message
 
 
-def test_a_lens_roster_is_refused_before_anything_exists(
-    orch, bed, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    lenses = [_seat(f"lens-{index}", "lens-reviewer") for index in range(4)]
-    plan = write_plan(tmp_path, units=[_controller_unit(), *lenses])
-    plan_message = _refusal(orch, plan)
-    start_message = _start_refusal(orch, bed, plan, monkeypatch)
-    assert plan_message == start_message
-    assert "lens roster" in plan_message
-
-
 def test_a_second_controller_is_refused_with_starts_message(
     orch, bed, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

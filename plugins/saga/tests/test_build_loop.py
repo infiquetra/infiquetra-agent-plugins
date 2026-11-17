@@ -1045,7 +1045,7 @@ def test_a_usage_entry_added_while_the_checks_run_survives_the_iteration_write(
                 record,
                 "U1",
                 session_id="reviewer-1",
-                role="lens-reviewer",
+                role="targeted-reviewer",
                 vendor="claude",
                 model="claude-opus-5-5",
                 effort="high",

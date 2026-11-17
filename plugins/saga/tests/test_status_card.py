@@ -653,21 +653,22 @@ def test_project_work_r12_ci_merge_carry_external_ref() -> None:
 # ── project_code_review tests ─────────────────────────────────────────────────────────────────────
 
 
-def test_project_code_review_rows_complete() -> None:
-    """project_code_review produces exactly 7 rows."""
+def test_project_code_review_rows_name_no_retired_lens_machinery() -> None:
+    """Issue #161: the lens roster, the reviewer fan-out and the validators are deleted.
+
+    The card keeps the gates a review still passes: scope, intent, the merge answer and the verdict.
+    """
     spec = SC.project_code_review(_CODE_REVIEW_CLEAN, ref="docs/reviews/clean.md")
     assert spec.archetype == "gate-sequence"
-    assert len(spec.rows) == 7
     labels = [r.label for r in spec.rows]
-    assert labels == [
-        "Scope",
-        "Intent",
-        "Lenses",
-        "Review fan-out",
-        "Merge",
-        "Validators",
-        "Verdict",
-    ]
+    for kept in ("Scope", "Intent", "Merge", "Verdict"):
+        assert kept in labels, kept
+    for retired in ("Lenses", "Review fan-out", "Validators"):
+        assert retired not in labels, retired
+    keys = [r.key for r in spec.rows]
+    for retired_key in ("lenses", "fanout", "validators"):
+        assert retired_key not in keys, retired_key
+    assert labels.index("Merge") < labels.index("Verdict")
 
 
 def test_project_code_review_scope_clean() -> None:

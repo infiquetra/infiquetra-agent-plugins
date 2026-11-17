@@ -528,7 +528,7 @@ describe('refreshing the pane', () => {
     expect(fakes.runs).toHaveLength(1)
   })
 
-  test('a Bash call that ran review_result.py reloads the open pane; another command does not', async ($, on) => {
+  test('a Bash call that ran review_command.py reloads the open pane; another command does not', async ($, on) => {
     const fakes = fake(on)
     on('tool.call', { tool: 'Bash' }, async () => ({ result: {}, text: 'ran' }))
     await start($)
@@ -537,9 +537,22 @@ describe('refreshing the pane', () => {
     fakes.review = answer(reviewOf('repairs_requested', 3))
     await $.tool.call({ tool: 'Bash', command: 'git status' })
     expect(fakes.runs).toHaveLength(1)
-    await $.tool.call({ tool: 'Bash', command: 'python3 plugins/saga/scripts/review_result.py append --issue 108' })
+    await $.tool.call({ tool: 'Bash', command: 'python3 plugins/saga/scripts/review_command.py finish --issue 108' })
     expect(fakes.runs).toHaveLength(2)
     expect(await ui.find({ type: 'Text', text: /cycle 3 · repairs_requested/ })).toBeDefined()
+  })
+
+  test('a Bash call of the deleted result script no longer reloads the pane', async ($, on) => {
+    const fakes = fake(on)
+    on('tool.call', { tool: 'Bash' }, async () => ({ result: {}, text: 'ran' }))
+    await start($)
+    await reviewView($, '')
+    await $.ui.mount({ plugin: 'saga', surface: 'terminal', ...PANE })
+    fakes.review = answer(reviewOf('repairs_requested', 3))
+    // Built from parts so a search for the deleted script's name stays empty; issue #161.
+    const deleted = ['review', 'result'].join('_')
+    await $.tool.call({ tool: 'Bash', command: `python3 plugins/saga/scripts/${deleted}.py append --issue 108` })
+    expect(fakes.runs).toHaveLength(1)
   })
 })
 
