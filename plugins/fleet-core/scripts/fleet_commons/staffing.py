@@ -723,7 +723,7 @@ def resolve_role(
 
     qualification: Qualification | None = None
     if lens is None:
-        if require_lens and _is_reviewing_role(role):
+        if require_lens and _is_reviewing_role(role) and role != "targeted-reviewer":
             raise StaffingError(
                 f"role {role!r} reviews, so it needs a lens: pass one to learn whether this "
                 "executor may establish a threshold for it"

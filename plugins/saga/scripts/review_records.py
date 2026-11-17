@@ -19,7 +19,7 @@ Six kinds, each carrying ``kind`` and ``schema: "review_records.v1"``:
 * ``builder_record``: one unit's acceptance criteria, policy declarations and reasons.
 
 Storage (``references/run-record.md``): a review run is appended to ``review_cycles`` with
-``loop: "review_run"``, which the readers of today's ``review_result`` entries skip; a builder
+``loop: "review_run"``, which the readers of today's retired entries skip; a builder
 record is the unit row's ``builder_record`` key. Both go through ``run_record.update``.
 """
 

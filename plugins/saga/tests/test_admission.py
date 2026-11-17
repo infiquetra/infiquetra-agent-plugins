@@ -540,7 +540,7 @@ def test_the_rendered_summary_names_the_defaults_and_the_questions(
     assert "Filled without asking:" in text
     assert "concurrency_allocation" in text
     assert "not written (--dry-run)" in text
-    assert "Questions to answer, once (8)" in text
+    assert "Questions to answer, once (6)" in text
 
 
 def test_the_summary_says_so_when_nothing_is_outstanding(

@@ -56,13 +56,8 @@ DEFAULT_PRICES = Path(__file__).resolve().parents[1] / "references" / "model-pri
 #: How old the price table may be before the report warns.
 DEFAULT_MAX_AGE_DAYS = 30
 
-#: The review-result schema whose entries count. ``review_result.RESULT_SCHEMA``; a test keeps the
-#: two equal. Older ``review_result.v1`` entries carry no unit and are ignored.
-REVIEW_SCHEMA = "review_result.v2"
-
-#: The code-review outcomes that make a green unit completed. A subset of
-#: ``review_consensus.ReviewOutcome``; a test keeps it one.
-TERMINAL_REVIEW_OUTCOMES: tuple[str, ...] = ("accepted", "cycle_cap_best_available")
+#: The current review-record schema.
+REVIEW_SCHEMA = "review_records.v1"
 
 MILLION = Decimal(1_000_000)
 MICRO = Decimal("0.000001")
@@ -240,28 +235,26 @@ def entry_cost(entry: Mapping[str, Any], price: ModelPrice) -> Decimal | None:
 
 
 def _code_review_history(record: run_record.RunRecord, unit: str) -> list[dict[str, Any]]:
-    return [
-        entry
-        for entry in record.review_cycles
-        if isinstance(entry, dict)
-        and entry.get("schema") == REVIEW_SCHEMA
-        and entry.get("unit") == unit
-        and entry.get("loop") == "code_review"
-    ]
+    """The card-level review rounds shared by every unit on the combined branch."""
+    return [entry for entry in record.review_cycles
+            if isinstance(entry, dict) and entry.get("kind") == "review_run"
+            and entry.get("schema") == REVIEW_SCHEMA]
 
 
 def unit_completed(record: run_record.RunRecord, row: Mapping[str, Any]) -> tuple[bool, str]:
-    """Whether *row* is a completed unit, and the reason when it is not."""
+    """A completed unit has a green build loop and a current review merge decision."""
     block = row.get("build_loop")
     if not (isinstance(block, dict) and isinstance(block.get("handed_to_code_review"), dict)):
         return False, "build loop not green"
     history = _code_review_history(record, run_record.unit_key(row))
     if not history:
-        return False, "no code-review result"
-    outcome = history[-1].get("outcome")
-    if outcome not in TERMINAL_REVIEW_OUTCOMES:
-        return False, f"latest code review is {outcome}"
-    return True, ""
+        return False, "no code-review run"
+    newest = history[-1]
+    if (newest.get("merge") or {}).get("allowed") is True:
+        return True, ""
+    if (newest.get("merge_decision") or {}).get("decision") == "merge-with-reason":
+        return True, ""
+    return False, "latest code review does not allow merge"
 
 
 def _usage_entries(row: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -382,7 +375,7 @@ def build_report(
                     )
                 continue
             iterations = row.get("build_loop", {}).get("iterations") or []
-            cycles = len(_code_review_history(record, unit))
+            cycles = max(int(entry.get("round") or 0) for entry in _code_review_history(record, unit))
             completed_units.append(
                 {
                     "issue": record.issue,
@@ -496,9 +489,9 @@ def render(report: Mapping[str, Any]) -> str:
         f"({prices['age_days']} days old)"
     )
     lines.append(
-        "Completed unit: build loop green and latest code review "
-        + " or ".join(TERMINAL_REVIEW_OUTCOMES)
-        + ". Per completed unit = a group's spend on the completed units it fully priced / those"
+        "Completed unit: build loop green and the latest review run allows merge or carries "
+        "the operator's merge-with-reason decision. Per completed unit = a group's spend on "
+        "the completed units it fully priced / those"
         + " units."
     )
     lines.append("")

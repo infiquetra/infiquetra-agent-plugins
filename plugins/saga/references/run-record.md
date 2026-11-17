@@ -9,8 +9,8 @@ This document is the contract. `tests/test_run_record.py` fails if the document 
 disagree about the key set, the thirteen parameters, the version token or the refusal line, so the
 two cannot drift apart silently.
 
-**Source of the lifecycle vocabulary:** `infiquetra/infiquetra-sdlc` at revision `5efc869f` —
-`docs/lifecycle/run-model.md` for the thirteen run-configuration parameters and
+**Source of the lifecycle vocabulary:** `infiquetra/infiquetra-sdlc` at revision `1d2e33e` —
+`docs/lifecycle/run-model.md` for the current run-configuration parameters and
 `docs/process/operator-escalations.md` for the seven approval boundaries.
 
 ## Where the file lives
@@ -117,12 +117,11 @@ Twelve, in this write order. Anything else is an unknown field, handled as above
 | `branch_preview` | legacy: whether the repository had a branch preview deployment. Read only for records admitted before issue #97; admission no longer asks it |
 | `main_consumed_directly` | whether this repository's `main` branch is consumed directly |
 | `change_shape` | `code`, `docs` or `mixed` |
-| `lens_proposal` | the Jev lens proposal issue #110 writes: `{probabilities: {<lens>: 0.0–1.0}, ...}`. `admission.py --render` reads `probabilities` for the lens table's Jev probability column: 0.8 and above reads pre-checked, 0.6 up to 0.8 reads consider, and lower is kept in the JSON only. Absent until #110 lands, and the column reads `not configured` |
 | `setup_notice` | one object `{text, missing_tools, sandbox_unavailable}` naming every tool that is not installed and the reproduction sandbox when it is unavailable, plus `/saga:setup`. The text is empty when nothing is missing, and the object is still stored. Absent on a record admitted before issue #150. Not a top-level key, and not a question |
 
-### The two answers admission validates
+### The answers admission validates
 
-Admission checks two answers before it records anything, and a refusal exits 2 with one line
+Admission validates answers before it records anything, and a refusal exits 2 with one line
 naming the problem (issue #103). Whoever supplies them — the plan skill from the conversation, or
 the Claude Code review pane through `admission.py --answers -` on standard input — goes through the
 same check.
@@ -134,12 +133,8 @@ same check.
   `run_configuration.staffing_models_and_efforts`: a named role takes the answer and is marked
   `operator_override: true`, every other role keeps its recorded row, and the parameter's source
   becomes `operator`. The plan skill and the pane both send the complete role map.
-- **`lens_declaration`** is `{always_on, conditional_applies, conditional_does_not_apply}` and lands
-  as `run_configuration.applicable_lenses`: `always_on` a list, `conditional_applies` a map of lens
-  to the reason it applies (a plain list is accepted), and `conditional_does_not_apply` a map of
-  lens to a non-empty reason. No lens is in both maps and no always-on lens is in either. When the
-  lens catalogue is readable, `always_on` is its always-on set and every conditional lens is in
-  exactly one map; when it is not, only the shape is checked.
+Historical configuration values and answers are preserved on load and round-trip, but retired
+questions are refused as unknown input and are never rendered or filled for new runs.
 
 ### Two things called "destination"
 
@@ -149,18 +144,12 @@ repository's parameter for *which lower environment* a run deploys to. They are 
 that share an English word, and conflating them is the easiest mistake in this schema, so they are
 separate fields in separate blocks and a test asserts that neither appears in the other's block.
 
-## `run_configuration` — the thirteen parameters
+## `run_configuration` — current parameters
 
-These are the thirteen of the run model's "Run configuration — what is chosen before the work
-starts": nine chosen by the Delivery Manager at orchestration setup, four by the Planner during
-planning.
-
-**They are not the thirteen `required_fields` of the `orchestrator-to-controller` contract.** That
-is a handoff *message* shape, carrying `roster_hash`, `executors_and_topology`,
-`session_reset_authority` and others that appear nowhere in the run model's table. Both sets number
-thirteen, both live in the same repository at the same revision, and both look right — which is why
-the test guards the distinction by **name** and not by count. The contract's shape is what the
-roster helper and the close step *emit* from this block; it is not this block's key set.
+Seven current run-model parameters are chosen before work starts: five by the Delivery Manager
+and two by the Planner. These are configuration values, not the required fields of the
+`orchestrator-to-controller` handoff message. The contract's field names and count are owned by
+the lifecycle snapshot; they are not this block's keys.
 
 <!-- BEGIN PARAMETERS -->
 
@@ -168,17 +157,11 @@ roster helper and the close step *emit* from this block; it is not this block's 
 |---|---|---|---|
 | 1 | `staffing_models_and_efforts` | Delivery Manager | the staffing component in fleet-core |
 | 2 | `concurrency_allocation` | Delivery Manager | the repository profile |
-| 3 | `standard_cycle_allowance` | Delivery Manager | lifecycle default, 3 |
-| 4 | `escalated_cycle_allowance` | Delivery Manager | lifecycle default, 2 |
-| 5 | `escalation_trigger` | Delivery Manager | lifecycle default |
-| 6 | `nonproduction_destination` | Delivery Manager | the repository profile |
-| 7 | `unfinished_testing_response` | Delivery Manager | asked; a closed set of two |
-| 8 | `applicable_lenses` | Planner | asked, with a proposal from the lens catalogue |
-| 9 | `per_lens_score_threshold` | Planner | the lens catalogue's strictness ladder |
-| 10 | `mechanical_tool_baseline` | Planner | the repository profile |
-| 11 | `lens_execution_recovery` | Delivery Manager | lifecycle default |
-| 12 | `repair_custody` | Delivery Manager | lifecycle default |
-| 13 | `preflight_checks` | Planner | the repository profile |
+| 3 | `nonproduction_destination` | Delivery Manager | the repository profile |
+| 4 | `unfinished_testing_response` | Delivery Manager | asked; a closed set of two |
+| 5 | `mechanical_tool_baseline` | Planner | the repository profile |
+| 6 | `repair_custody` | Delivery Manager | lifecycle default |
+| 7 | `preflight_checks` | Planner | the repository profile |
 
 <!-- END PARAMETERS -->
 
@@ -297,7 +280,7 @@ role; any other subagent records as the session's role. A request with no effort
 A row's `role` is recorded only as a staffing role from `staffing.json`, the vocabulary the cost
 report groups spend by: orchestrate's review-loop roles map to the staffing role whose work they
 do (`review-fixer` and `downstream-resolver` to `worker`, `review-controller` and
-`external-reviewer` to `lens-reviewer`), and any other name `staffing.json` does not list records
+`external-reviewer` to `targeted-reviewer`), and any other name `staffing.json` does not list records
 as `worker`.
 
 An entry is identified by its session id, role, vendor, model and effort. The first `usage add`
@@ -311,7 +294,7 @@ model and effort because nothing else in the record says which role and tier wor
 | Key | Holds |
 |---|---|
 | `session_id` | the model session's identifier, as the harness names it |
-| `role` | the staffing role that ran the session: `worker`, `lens-reviewer`, `functional-tester`, and so on |
+| `role` | the staffing role that ran the session: `worker`, `targeted-reviewer`, `functional-tester`, and so on |
 | `vendor` | the vendor, e.g. `claude` |
 | `model` | the model id, e.g. `claude-opus-5-5`, or a staffing alias such as `opus` |
 | `effort` | the effort level the session ran at, e.g. `medium` |
@@ -352,10 +335,10 @@ keys, unknown keys inside the usage block, and every other row.
 
 **What a completed unit is.** `scripts/cost_report.py` prices usage from the dated table in
 `references/model-prices.yaml` and divides by completed units. A unit is completed when its build
-loop went green (`build_loop.handed_to_code_review` is present) and its latest `review_result.v2`
-code-review entry has the outcome `accepted` or `cycle_cap_best_available`. A review that ended
-`review_incomplete` is terminal for the review controller but did not finish, so that unit is not
-completed; the report shows its spend apart, with the reason.
+loop went green (`build_loop.handed_to_code_review` is present) and the newest card-level
+C1 review run permits merge, or carries the operator's recorded `merge-with-reason` decision.
+Historical result entries never complete a unit. The report keeps `mean_code_review_cycles`
+as the public metric key; its value is the counted review rounds.
 
 The **all roles** line divides only over completed units whose usage is recorded and fully priced,
 and names how many completed units it left out (no usage recorded, or some usage unpriced). Each
@@ -414,11 +397,10 @@ carries the `orchestrate` key, where it refuses with exit 5 for the reason `func
 write` gives above: orchestrate owns which rows exist there.
 
 A computed review run is appended to `review_cycles` with `kind: "review_run"` and
-`loop: "review_run"`. Today's readers of that array skip it: `review_result.py`, `run_status.py`
-and `cost_report.py` read only `review_result.v2` entries, `release_step.py` only entries whose
-`loop` is `code_review`, and `saga_spore.py` leaves it out of its cycle count. The run carries its
-own builder-record snapshots and per-lens "may block" answers, so it can be validated, its
-severities recomputed, without the rest of the record.
+`loop: "review_run"`. Status, cost reporting and release read these C1 entries; historical result
+shapes remain opaque and unread. `saga_spore.py` leaves review runs out of its legacy cycle count.
+The run includes builder snapshots and per-lens blocking authority, so its computed grades and
+severities can be validated without the rest of the run record.
 
 `review_command.py finish` appends that review run and writes usage in the same locked update.
 It calls `add_usage` only after it has checked the session id. A session the usage-capture mod
@@ -436,19 +418,24 @@ A plan review is appended to `review_cycles` with `loop: "plan_review"` by
 `answers` keyed by finding identity — each `fixed` with the plan section
 changed, or `rejected` with a reason. A fixed answer is accepted only when the
 plan's current fingerprint differs from the stored one. The readers above skip
-these entries the same way: the four typed readers filter on `code_review`
-loops and schemas, and `saga_spore.py` leaves `plan_review` entries out of its
+these entries: current review readers select only `kind: "review_run"`, and
+`saga_spore.py` leaves `plan_review` entries out of its
 cycle count.
 
 ### Merge confirmation entries (issue 164)
 
-A merge confirmation is appended to `review_cycles` with
-`loop: "merge_confirmation"` by `review_state.py answers`, never by hand. The
-entry carries `decision` (`merge-with-reason` with a `reason`, or
-`stop-card`), the `blocking` finding identities it covers, and `answered_at`.
-C10b reads the newest entry to carry out or hold the merge. The readers above
-skip these entries the same way, and `saga_spore.py` leaves them out of its
-cycle count.
+`review_state.py answers` records `merge_decision` on the current review run. It carries
+`decision` (`merge-with-reason` or `stop-card`), the reason when required, blocking identities,
+`filed_findings` (finding identity to issue number), `filed_issues`, and `complete`.
+Each successful blocking-item filing is saved under the record lock before the next filing,
+so retries skip already filed identities. A completed answer also appends the C13 confirmation
+entry with `loop: "merge_confirmation"`; `saga_spore.py` excludes it from its cycle count.
+A choice before a later review run cannot approve that later run.
+
+The operator can merge over ordinary blocking items only after all are filed and a reason is
+recorded. Reproduced data loss or security exposure refuses that answer in any lens, including
+report-only lenses. The review-state action waits at an early stop or round three even when
+an unattended envelope says `auto`. A clear unattended review follows `auto`; `gate` waits.
 
 ### `tier_judgments` — `/plan`'s per-unit tier judgments
 
@@ -483,11 +470,12 @@ its own, `combined_branch`, with the declared environment, one entry per pass an
 under the record lock on a fresh read. Its full contract, the pass keys and the exit codes are in
 `plugins/saga/references/mechanical-baseline.md`, documented there so the two do not drift.
 
-Three readers depend on it (issue #100). The review gate, `build_loop.py --handoff`, admits a
-revision to code review only when the latest combined pass at it is green or waived. The cycle-cap
-invariant, `review_result.cap_refusal`, refuses to write a `code_review` entry with the outcome
-`cycle_cap_best_available` at a revision without that evidence. And `release_step.py close` cites
-the evidence, or the waiver and its reason, in the closeout.
+The review gate, `build_loop.py --handoff`, admits a revision only when its latest combined
+pass is green or waived. Every repaired branch passes that gate again. At closeout,
+`release_step.py` reads the newest review run's head, cites the functional evidence or waiver,
+and lists the issues on its merge decision. A delivered close over blocking items requires
+passing functional evidence and one linked issue per remaining blocking item. Release also
+checks every page of pull-request review threads before merging the checked head.
 
 ## `approval_scope`
 
@@ -559,7 +547,7 @@ or git merges would stall every unit session's `usage add`.
 | `run_record.set_next_step`, `usage add` | `next_step`; one unit row's `usage` | `update` |
 | `build_loop.py` | one unit row's `build_loop` | checks run unlocked; the iteration lands on a row re-read under `file_lock` |
 | `build_loop.py --combined` | the top-level `combined_branch` block | the pass runs unlocked; it lands on a record re-read under `file_lock` |
-| `review_result.py --issue` | `review_cycles` | `update` |
+| `review_command.py finish --issue` | one current review run and usage | `update` |
 | `review_records.py record-run` | one `review_run` entry in `review_cycles` | the formula runs inside the change, on the fresh read, through `update` |
 | `review_records.py record-builder` | one unit row's `builder_record` | `update` |
 | `admission.py` | `repo`, `admission`, `run_configuration`, `approval_scope` | admission runs unlocked; those fields land on a fresh read through `update` |
@@ -654,11 +642,11 @@ envelope knows (no record yet) stays. Named with `--issue` alone, a closed run s
 Each row also carries where the run stands, for the run status band (issue #105): `build_loop`
 (from the unit rows' `build_loop.iterations`: the unit whose `worktree` is this checkout, or the
 only unit that ran the loop, with its latest iteration's number, failing and could-not-execute
-counts; otherwise how many units are green), `review` (the latest `review_result.v2` code review
-cycle against `standard_cycle_allowance` and `escalated_cycle_allowance`, and how many lenses met
-their bar by `review_consensus.lens_outcomes_for_result`) and `band_line`, the one line every
-harness shows, such as `#412 · work · build loop pass 3, 2 failing · review cycle 1/3 · 7/10
-lenses met`. `--band` prints that line per run; it is the plain fallback for the Claude Code band.
+counts; otherwise how many units are green), `review` (the newest C1 review round and grades)
+and `band_line`, for example `#412 · work · build loop pass 3, 2 failing · review round 2 ·
+correctness C, security A`. The progress contract has `unit`, `outcome`, `lenses_met`,
+`lenses_total`, `lenses_not_run`, `round` and `grades`; retired cycle and allowance fields are absent.
+`--band` prints that line per run as the portable fallback for the Claude Code band.
 
 `--store-root <dir>` overrides the resolution above. It exists for the tests and for reading a
 record that belongs to another checkout; every test that touches a store passes it, because nothing

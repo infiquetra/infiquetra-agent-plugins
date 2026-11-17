@@ -457,7 +457,7 @@ def project_code_review(artifact_text: str, *, ref: str) -> CardSpec:
     - Plan-completion audit tokens ``DONE|PARTIAL|NOT-DONE|CHANGED|UNVERIFIABLE`` → Intent row.
     - ``**Verdict:** ...`` line → Verdict row (and Merge row by implication).
 
-    Rows: Scope · Intent · Lenses · Review fan-out · Merge · Validators · Verdict.
+    Rows: Scope · Intent · Merge · Verdict.
     """
     # ── Scope ────────────────────────────────────────────────────────────────────────────────────
     scope_m = re.search(
@@ -486,18 +486,6 @@ def project_code_review(artifact_text: str, *, ref: str) -> CardSpec:
         intent_state = CardState.NOT_REACHED
         intent_ref = None
 
-    # ── Lenses ───────────────────────────────────────────────────────────────────────────────────
-    has_lenses = bool(re.search(r"\blenses?\b", artifact_text, re.IGNORECASE))
-    lenses_state = CardState.DONE if has_lenses else CardState.NOT_REACHED
-    lenses_ref: str | None = ref if has_lenses else None
-
-    # ── Review fan-out ───────────────────────────────────────────────────────────────────────────
-    has_fanout = bool(
-        re.search(r"\bfan-out\b|\breview fan-out\b|\breviewers?\b", artifact_text, re.IGNORECASE)
-    )
-    fanout_state = CardState.DONE if has_fanout else CardState.NOT_REACHED
-    fanout_ref: str | None = ref if has_fanout else None
-
     # ── Verdict (parsed first; Merge row derives from the same signal) ───────────────────────────
     verdict_state = _parse_verdict_state(artifact_text) or CardState.NOT_REACHED
     verdict_ref: str | None = ref if verdict_state != CardState.NOT_REACHED else None
@@ -513,21 +501,13 @@ def project_code_review(artifact_text: str, *, ref: str) -> CardSpec:
         merge_state = CardState.NOT_REACHED
         merge_ref = None
 
-    # ── Validators ───────────────────────────────────────────────────────────────────────────────
-    has_validators = bool(re.search(r"\bvalidators?\b", artifact_text, re.IGNORECASE))
-    validators_state = CardState.DONE if has_validators else CardState.NOT_REACHED
-    validators_ref: str | None = ref if has_validators else None
-
     return CardSpec(
         archetype="gate-sequence",
         header=CardHeader(surface="/code-review", id=ref),
         rows=(
             CardRow("scope", "Scope", scope_state, ref=scope_ref),
             CardRow("intent", "Intent", intent_state, ref=intent_ref),
-            CardRow("lenses", "Lenses", lenses_state, ref=lenses_ref),
-            CardRow("fanout", "Review fan-out", fanout_state, ref=fanout_ref),
             CardRow("merge", "Merge", merge_state, ref=merge_ref),
-            CardRow("validators", "Validators", validators_state, ref=validators_ref),
             CardRow("verdict", "Verdict", verdict_state, ref=verdict_ref),
         ),
     )

@@ -90,27 +90,14 @@ TOP_LEVEL_KEYS: tuple[str, ...] = (
     "next_step",
 )
 
-#: The thirteen run-configuration parameters of the software-development-lifecycle repository's
-#: run model (``docs/lifecycle/run-model.md``, "Run configuration — what is chosen before the work
-#: starts"), at the revision this parent is pinned to.
-#:
-#: These are NOT the thirteen ``required_fields`` of the ``orchestrator-to-controller`` contract,
-#: which is a handoff MESSAGE shape carrying ``roster_hash``, ``executors_and_topology`` and
-#: ``session_reset_authority``. Both sets number thirteen, both live in the same repository at the
-#: same revision, and both look right — which is why
-#: ``tests/test_run_record.py`` guards the distinction by name rather than by count.
+#: The current run-model configuration parameters. Stored historical keys are preserved
+#: unchanged when reading and writing an older record; defaults contain only the current keys.
 RUN_CONFIGURATION_PARAMETERS: tuple[str, ...] = (
     "staffing_models_and_efforts",
     "concurrency_allocation",
-    "standard_cycle_allowance",
-    "escalated_cycle_allowance",
-    "escalation_trigger",
     "nonproduction_destination",
     "unfinished_testing_response",
-    "applicable_lenses",
-    "per_lens_score_threshold",
     "mechanical_tool_baseline",
-    "lens_execution_recovery",
     "repair_custody",
     "preflight_checks",
 )
@@ -119,14 +106,11 @@ RUN_CONFIGURATION_PARAMETERS: tuple[str, ...] = (
 #: for the other is the most likely silent error in this schema, so the names are written down.
 RUN_SETUP_CONTRACT_ONLY_FIELDS: tuple[str, ...] = (
     "approval_scope",
-    "cycle_allowances",
     "destination",
     "exception_decisions",
-    "executors_and_topology",
     "investigator_triggers",
     "models_and_efforts",
     "recovery_rules",
-    "roster_hash",
     "session_reset_authority",
     "staffing_per_role",
 )
@@ -146,20 +130,14 @@ APPROVAL_CATEGORIES: tuple[str, ...] = (
     "major team or process authority changes",
 )
 
-#: Which actor chooses each parameter, per the run model's "Chosen by" column. Nine are the
-#: Delivery Manager's at orchestration setup; four are the Planner's during planning.
+#: Which actor chooses each parameter, per the run model's "Chosen by" column. Five are the
+#: Delivery Manager's at orchestration setup; two are the Planner's during planning.
 PARAMETER_CHOSEN_BY: dict[str, str] = {
     "staffing_models_and_efforts": "delivery_manager",
     "concurrency_allocation": "delivery_manager",
-    "standard_cycle_allowance": "delivery_manager",
-    "escalated_cycle_allowance": "delivery_manager",
-    "escalation_trigger": "delivery_manager",
     "nonproduction_destination": "delivery_manager",
     "unfinished_testing_response": "delivery_manager",
-    "applicable_lenses": "planner",
-    "per_lens_score_threshold": "planner",
     "mechanical_tool_baseline": "planner",
-    "lens_execution_recovery": "delivery_manager",
     "repair_custody": "delivery_manager",
     "preflight_checks": "planner",
 }
@@ -197,7 +175,7 @@ USAGE_ENTRY_KEYS: tuple[str, ...] = (
     "additions",
 )
 
-#: A staffing role name: ``worker``, ``lens-reviewer``, ``merging-worker``. Checked by shape, not
+#: A staffing role name: ``worker``, ``targeted-reviewer``, ``merging-worker``. Checked by shape, not
 #: against ``staffing.json``, so a staffing change can never break the writer.
 ROLE_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
 
@@ -837,7 +815,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add.add_argument("--session-id", required=True, help="The model session's identifier.")
     add.add_argument(
-        "--role", required=True, help="The staffing role, e.g. worker or lens-reviewer."
+        "--role", required=True, help="The staffing role, e.g. worker or targeted-reviewer."
     )
     add.add_argument("--vendor", required=True, help="The vendor, e.g. claude.")
     add.add_argument("--model", required=True, help="The model id, e.g. claude-opus-5-5.")

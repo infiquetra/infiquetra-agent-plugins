@@ -462,7 +462,7 @@ def test_answers_reader_isolation_and_spore_count(
     mc = FakeMissionControl()
     _answers(staged["record"], {"merge-blocking": {"decision": "stop-card"}}, mc)
     record = run_record.from_dict(_record(staged["record"]), path="t", warn=None)
-    assert run_status.latest_review(record, loop="code_review") is None
+    assert run_status.state_review_view(record)["round"] == 3
     assert review_state.review_runs(record) != []
     store = tmp_path / "store"
     store.mkdir()

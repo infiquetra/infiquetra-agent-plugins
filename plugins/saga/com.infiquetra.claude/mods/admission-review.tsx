@@ -1,6 +1,5 @@
-// The admission review pane (issue #103): admission's staffing answer
-// (question 4, `staffing_overrides`) and lens answer (question 5,
-// `lens_declaration`) as two tables with a control per row.
+// The admission review pane: staffing tiers, one control per role.
+// Admission owns validation and records only the staffing answer.
 //
 // The model calls the tool `mcp__saga__review_admission` with an issue number.
 // The tool runs `scripts/admission.py --dry-run --render json`, draws the pane
@@ -42,17 +41,14 @@ export const TOOL = 'review_admission'
 /** The review document version this module reads; `REVIEW_SCHEMA` in `scripts/admission.py`. */
 export const REVIEW_SCHEMA = 'admission_review.v1'
 
-/** The two questions the pane answers. With neither outstanding there is nothing to review. */
-export const REVIEWED_QUESTIONS = ['staffing_overrides', 'lens_declaration'] as const
+/** The staffing question the pane answers; otherwise there is nothing to review. */
+export const REVIEWED_QUESTIONS = ['staffing_overrides'] as const
 
 /** How long the tool waits for the operator before it returns `timed-out`: thirty minutes. */
 export const WAIT_CAP_SECONDS = 1800
 
 /** How long one admission run may take; it reads the issue with `gh`. */
 const ADMISSION_TIMEOUT_MS = 120_000
-
-/** The two decisions a conditional lens takes. */
-const INCLUDE_CHOICES = ['yes', 'no'] as const
 
 const review = atom({ plugin: 'saga', key: 'admissionReview' } as const, null)
 
@@ -142,62 +138,25 @@ function pickFrom(palette: SagaAdmissionPalette, tier: SagaAdmissionTier | null)
   return first ? { model: first.model, effort: first.effort } : { model: '', effort: '' }
 }
 
-/**
- * The picks the pane opens with: each role's
- * proposed tier, and each conditional lens as declared; an undeclared lens is
- * included when Jev pre-checked it (issue #110) and left out, with no reason
- * yet, otherwise.
- */
+/** The proposed tier for each role when the pane opens. */
 export function initialSelections(data: SagaAdmissionReviewData): SagaAdmissionSelections {
   const palette = data.palette
   const staffing: SagaAdmissionSelections['staffing'] = {}
   if (palette) {
     for (const row of data.staffing.rows) staffing[row.role] = pickFrom(palette, row.proposed ?? row.default)
   }
-  const lenses: SagaAdmissionSelections['lenses'] = {}
-  for (const row of data.lenses.rows) {
-    if (row.always_on) continue
-    if (row.include === 'yes' || row.include === 'no') {
-      lenses[row.lens] = { include: row.include, reason: row.reason }
-    } else {
-      lenses[row.lens] = { include: row.jev.band === 'pre-checked' ? 'yes' : 'no', reason: '' }
-    }
-  }
-  return { staffing, lenses }
+  return { staffing }
 }
 
-/**
- * The picks "Accept all" submits: every proposal that exists, applied over the
- * operator's current picks. Each role takes its proposed tier, and each lens
- * that is declared or that Jev pre-checked takes that answer; a lens with no
- * proposal keeps the operator's own include choice and reason.
- */
+/** Accept every role's proposed tier. */
 export function acceptAllSelections(
   data: SagaAdmissionReviewData,
-  current: SagaAdmissionSelections,
+  _current: SagaAdmissionSelections,
 ): SagaAdmissionSelections {
-  const proposed = initialSelections(data)
-  const lenses: SagaAdmissionSelections['lenses'] = { ...proposed.lenses }
-  for (const row of data.lenses.rows) {
-    if (row.always_on) continue
-    const hasProposal = row.include === 'yes' || row.include === 'no' || row.jev.band === 'pre-checked'
-    const own = current.lenses[row.lens]
-    if (!hasProposal && own) lenses[row.lens] = own
-  }
-  return { staffing: proposed.staffing, lenses }
+  return initialSelections(data)
 }
 
-/** The conditional lenses left out with no reason yet, in table order. */
-export function unexplainedExclusions(selections: SagaAdmissionSelections): string[] {
-  return Object.entries(selections.lenses)
-    .filter(([, pick]) => pick.include === 'no' && pick.reason.trim() === '')
-    .map(([lens]) => lens)
-}
-
-/**
- * The answers to record: the complete role map, so every role's source becomes
- * the operator, and the lens declaration in the shape the review reads.
- */
+/** Record the complete staffing map, with no other admission decisions. */
 export function buildAnswers(data: SagaAdmissionReviewData, selections: SagaAdmissionSelections): SagaAdmissionAnswers {
   const vendor = data.palette?.vendor ?? ''
   const staffing_overrides: SagaAdmissionAnswers['staffing_overrides'] = {}
@@ -210,22 +169,7 @@ export function buildAnswers(data: SagaAdmissionReviewData, selections: SagaAdmi
       effort: pick.effort,
     }
   }
-  const conditional_applies: Record<string, string> = {}
-  const conditional_does_not_apply: Record<string, string> = {}
-  for (const row of data.lenses.rows) {
-    const pick = selections.lenses[row.lens]
-    if (row.always_on || !pick) continue
-    if (pick.include === 'yes') conditional_applies[row.lens] = pick.reason.trim()
-    else conditional_does_not_apply[row.lens] = pick.reason.trim()
-  }
-  return {
-    staffing_overrides,
-    lens_declaration: {
-      always_on: data.lenses.rows.filter((row) => row.always_on).map((row) => row.lens),
-      conditional_applies,
-      conditional_does_not_apply,
-    },
-  }
+  return { staffing_overrides }
 }
 
 function tierText(tier: SagaAdmissionTier | null): string {
@@ -252,9 +196,8 @@ export function registerAdmissionReview(on: On): void {
     await $.tool.register({
       name: TOOL,
       description:
-        "Opens saga's admission review pane for an issue: the staffing table (admission question 4, " +
-        'staffing_overrides) and the lens table (question 5, lens_declaration), each row with its ' +
-        "own control. The operator's answers are recorded through scripts/admission.py, which " +
+        "Opens saga's admission review pane for an issue: the staffing table, with a model and " +
+        "effort control per role. Answers are recorded through scripts/admission.py, which " +
         'validates them. Returns status submitted (with the answers recorded), dismissed, ' +
         'not-placed, unavailable, nothing-to-review, timed-out or error; on anything but ' +
         'submitted, print admission.py --render tables and collect the answers in the conversation.',
@@ -313,7 +256,7 @@ export function registerAdmissionReview(on: On): void {
     await update($, review, () => ({ issue, repo, data, selections: initialSelections(data), error: null }))
     let outcome: SagaAdmissionReviewOutcome | undefined
     try {
-      const opened = await $.ui.open({ id: PANE, title: `Admission #${issue}: staffing and lenses`, focus: true })
+      const opened = await $.ui.open({ id: PANE, title: `Admission #${issue}: staffing`, focus: true })
       if (!opened.isPlaced) {
         return { result: paneResult({ status: 'not-placed', reason: opened.reason }) }
       }
@@ -346,7 +289,7 @@ export function registerAdmissionReview(on: On): void {
       const { Text } = $.ui.resolve(e)
       return <Text>Answer the admission review in the terminal or the desktop app.</Text>
     }
-    const { Box, Button, Input, Select, Text } = $.ui.resolve(e)
+    const { Box, Button, Select, Text } = $.ui.resolve(e)
     if (state === null || state.data.palette === null) {
       return <Text dimColor>No admission review is open.</Text>
     }
@@ -368,26 +311,12 @@ export function registerAdmissionReview(on: On): void {
         const staffing = { ...current.selections.staffing, [role]: { model: pick.model, effort } }
         return { ...current, selections: { ...current.selections, staffing }, error: null }
       })
-    const setLens = (lens: string, change: { include?: string; reason?: string }) =>
-      update($, review, (current) => {
-        const pick = current?.selections.lenses[lens]
-        if (!current || !pick) return current
-        const include = change.include ?? pick.include
-        if (include !== 'yes' && include !== 'no') return current
-        const lenses = { ...current.selections.lenses, [lens]: { include, reason: change.reason ?? pick.reason } }
-        return { ...current, selections: { ...current.selections, lenses }, error: null }
-      })
     const setError = (error: string) => update($, review, (current) => current && { ...current, error })
 
     const submit = async (acceptAll: boolean) => {
       const current = await read($, review)
       if (!current || current.issue !== issue) return
       const picks = acceptAll ? acceptAllSelections(current.data, current.selections) : current.selections
-      const missing = unexplainedExclusions(picks)
-      if (missing.length > 0) {
-        await setError(`Give a reason for each lens left out: ${missing.join(', ')}`)
-        return
-      }
       if (acceptAll) await update($, review, (now) => now && { ...now, selections: picks })
       const answers = buildAnswers(current.data, picks)
       let ran: ProcessRunResult
@@ -413,7 +342,6 @@ export function registerAdmissionReview(on: On): void {
     }
 
     const modelOptions = palette.models.map((value) => ({ value }))
-    const includeOptions = INCLUDE_CHOICES.map((value) => ({ value }))
 
     return (
       <Box flexDirection="column" width={e.props.bodyColumns}>
@@ -447,47 +375,6 @@ export function registerAdmissionReview(on: On): void {
               <Text dimColor wrap="wrap">
                 {row.why}
               </Text>
-            </Box>
-          )
-        })}
-        <Box marginTop={1}>
-          <Text bold>Lenses (answer: lens_declaration)</Text>
-        </Box>
-        {data.lenses.rows.map((row) => {
-          if (row.always_on) {
-            return (
-              <Box flexDirection="row" columnGap={2}>
-                <Text bold>{row.lens}</Text>
-                <Box key={`lens:${row.lens}:always-on`}>
-                  <Text>always on</Text>
-                </Box>
-              </Box>
-            )
-          }
-          const pick = selections.lenses[row.lens] ?? { include: 'no', reason: '' }
-          return (
-            <Box flexDirection="column" marginTop={1}>
-              <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-                <Text bold>{row.lens}</Text>
-                <Box key={`lens:${row.lens}:jev`}>
-                  <Text>Jev: {row.jev.cell}</Text>
-                </Box>
-                <Select
-                  key={`lens:${row.lens}:include`}
-                  label="include "
-                  options={includeOptions}
-                  value={pick.include}
-                  onSelect={(value) => setLens(row.lens, { include: value })}
-                />
-              </Box>
-              <Input
-                key={`lens:${row.lens}:reason`}
-                label="reason "
-                placeholder={pick.include === 'no' ? 'why it does not apply (required)' : 'why it applies'}
-                value={pick.reason}
-                onInput={(value) => setLens(row.lens, { reason: value })}
-                onSubmit={(value) => setLens(row.lens, { reason: value })}
-              />
             </Box>
           )
         })}

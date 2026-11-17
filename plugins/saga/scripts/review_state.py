@@ -275,10 +275,86 @@ def consequence_group(finding: Mapping[str, Any]) -> str:
     return "upkeep"
 
 
+def _reproduced_critical(run: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Reproduced data loss and security exposure hold in every lens."""
+    return [finding for finding in run.get("findings", [])
+            if isinstance(finding, Mapping) and finding.get("evidence") == "reproduced"
+            and finding.get("consequence") in ("data-lost-or-corrupted", "security-boundary-crossed")
+            and finding.get("status") not in ("withdrawn", "duplicate-of", "fixed-verified")]
+
+
 def _blocking_of(run: Mapping[str, Any]) -> list[str]:
     merge = run.get("merge")
     blocking = merge.get("blocking") if isinstance(merge, Mapping) else []
-    return [str(item) for item in blocking or []]
+    critical = [finding["id"] for finding in _reproduced_critical(run) if finding.get("id")]
+    return list(dict.fromkeys([*(str(item) for item in blocking or []), *critical]))
+
+
+def _filed_merge(run: Mapping[str, Any]) -> bool:
+    decision = run.get("merge_decision") or {}
+    if not isinstance(decision, Mapping) or decision.get("decision") != "merge-with-reason":
+        return False
+    if not str(decision.get("reason") or "").strip() or _reproduced_critical(run):
+        return False
+    blocking = _blocking_of(run)
+    filed = decision.get("filed_findings") or {}
+    issues = decision.get("filed_issues") or []
+    return bool(blocking) and (
+        all(isinstance(filed.get(item), int) for item in blocking)
+        or len([number for number in issues if isinstance(number, int)]) >= len(blocking)
+    )
+
+
+def next_review_action(
+    record: run_record.RunRecord | Mapping[str, Any], *,
+    envelope: Mapping[str, Any] | None = None, current_revision: str | None = None,
+) -> dict[str, Any]:
+    """Choose the next review action without changing the record or reading old results."""
+    raw = as_dict(record)
+    runs = review_runs(raw)
+    if not runs:
+        cycles = raw.get("review_cycles") or []
+        restarting = any(isinstance(entry, Mapping)
+                         and entry.get("kind") != KIND_REVIEW_RUN
+                         and entry.get("loop", "code_review") == "code_review"
+                         for entry in cycles)
+        restarting = restarting or bool(raw.get("legacy_review_in_progress"))
+        return {"action": "restart-review" if restarting else "run-review",
+                "round": 1, "scope": "full-branch",
+                "reason": "start the review command at round one; historical entries stay unread"}
+    newest = runs[-1]
+    number = min(ROUND_LIMIT, int(newest.get("round") or 1))
+    blocking = _blocking_of(newest)
+    state = round_state(runs)
+    decision = newest.get("merge_decision") or _recorded_merge(raw) or {}
+    if decision.get("decision") == "stop-card":
+        return {"action": "stopped", "round": number, "reason": "the operator stopped the card"}
+    reviewed = newest.get("head") or (newest.get("subject") or {}).get("head_sha") or newest.get("revision")
+    stale = current_revision is not None and current_revision != reviewed
+    if blocking and (state["early_stop"] or state["at_limit"]):
+        if not stale and _filed_merge(newest):
+            return {"action": "ready-to-merge", "round": number,
+                    "via": "operator-merge-with-reason", "waiting": False,
+                    "reason": "the operator recorded a reason and filed every blocking item"}
+        return {"action": "await-operator", "round": number, "blocking": blocking,
+                "early_stop": state["early_stop"], "at_limit": state["at_limit"],
+                "reproduced_critical": bool(_reproduced_critical(newest)),
+                "reason": "blocking items remain at " + ("the round limit" if state["at_limit"] else "an early stop")}
+    if stale:
+        counts = bool(blocking)
+        return {"action": "run-review", "round": number + int(counts),
+                "scope": "repaired-only", "counts_against_limit": counts,
+                "reason": "review the repaired code at the new revision"}
+    if blocking:
+        return {"action": "repair", "round": number + 1, "scope": "repaired-only",
+                "blocking": blocking, "reason": "repair the blocking findings before reviewing again"}
+    merge = newest.get("merge") or {}
+    if merge.get("allowed") is not True:
+        return {"action": "await-operator", "round": number, "waiting": True,
+                "reason": "the stored review does not allow merge"}
+    auto = envelope is not None and envelope.get("run_mode") == "unattended" and envelope.get("merge") == "auto"
+    return {"action": "auto-merge" if auto else "confirm-merge", "round": number,
+            "waiting": not auto, "reason": "every lens is at C or better" if auto else "the operator confirms the merge"}
 
 
 def round_state(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -318,6 +394,8 @@ def merge_display(
     """
     state = round_state(runs)
     blocking = _blocking_of(runs[-1]) if runs else []
+    if runs and _filed_merge(runs[-1]):
+        return {"waiting": False, "reason": "the operator recorded a reason and filed every blocking item"}
     pending = bool(blocking) and (state["at_limit"] or state["early_stop"])
     if pending:
         where = "the round limit" if state["at_limit"] else "an early stop"
@@ -333,7 +411,7 @@ def merge_display(
             "waiting": True,
             "reason": "the envelope's merge setting is unknown here, so this view cannot say the merge is free to proceed",
         }
-    if envelope.get("merge") == "gate":
+    if envelope.get("run_mode") != "unattended" or envelope.get("merge") == "gate":
         return {"waiting": True, "reason": "the envelope holds the merge for the operator"}
     newest = runs[-1] if runs else {}
     merge = newest.get("merge") if isinstance(newest.get("merge"), Mapping) else {}
@@ -693,12 +771,22 @@ def _finding_by_id(newest: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _recorded_merge(record: Mapping[str, Any]) -> dict[str, Any] | None:
-    entries = [
-        e
-        for e in (record.get("review_cycles") or [])
-        if isinstance(e, dict) and e.get("loop") == MERGE_ENTRY_LOOP
-    ]
-    return entries[-1] if entries else None
+    runs = review_runs(record)
+    if not runs:
+        return None
+    direct = runs[-1].get("merge_decision")
+    if isinstance(direct, dict):
+        return direct
+    # C13 confirmations already stored beside the current run remain readable;
+    # a decision preceding a later run never applies to that later run.
+    for entry in reversed(record.get("review_cycles") or []):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("kind") == KIND_REVIEW_RUN:
+            break
+        if entry.get("loop") == MERGE_ENTRY_LOOP:
+            return entry
+    return None
 
 
 def check_answers(
@@ -733,6 +821,8 @@ def check_answers(
     for key, choice in answers.items():
         if key == MERGE_CHOICE:
             _check_merge_answer(choice, _recorded_merge(record))
+            if choice.get("decision") == "merge-with-reason" and _reproduced_critical(newest):
+                raise ReviewStateError("merge-with-reason cannot override reproduced data loss or security exposure")
         else:
             finding = by_id.get(key[len(FIX_LATER_PREFIX):])
             _check_fix_later_answer(key, choice, finding)
@@ -1271,18 +1361,23 @@ def do_answers(
                     ),
                 )
             )
-        if MERGE_CHOICE in answers:
-            recorded.append(
-                mutate_record(
-                    record_file,
-                    store_root,
-                    issue,
-                    lambda rec: _apply_merge(rec, answers[MERGE_CHOICE]),
-                )
-            )
         recorded.extend(
             _apply_guard(record_file, store_root, issue, envelope, mc, runner, unattended)
         )
+        if MERGE_CHOICE in answers:
+            choice = answers[MERGE_CHOICE]
+            if choice.get("decision") == "merge-with-reason":
+                newest = review_runs(record0)[-1]
+                for finding_id in _blocking_of(newest):
+                    recorded.append(mutate_record(
+                        record_file, store_root, issue,
+                        lambda rec, fid=finding_id: _file_merge_item(
+                            rec, choice, fid, str(newest.get("head") or ""), mc, runner,
+                        ),
+                    ))
+            recorded.append(mutate_record(
+                record_file, store_root, issue, lambda rec: _apply_merge(rec, choice),
+            ))
         bundle: str | None = _maybe_bundle(
             record_file, store_root, issue, answers, envelope, profile_default,
             unattended, mc, runner,
@@ -1350,29 +1445,58 @@ def _apply_fix_later(
     return _describe_outcome(finding_id, outcome)
 
 
+def _file_merge_item(
+    record: run_record.RunRecord, choice: Mapping[str, Any], finding_id: str,
+    expected_head: str, mc: Path | None, runner: Runner,
+) -> str:
+    """File one blocking item and save its progress before attempting the next."""
+    newest = _newest_run_entry(record)
+    if str(newest.get("head") or "") != expected_head:
+        raise ReviewStateError("the reviewed revision changed while filing blocking items")
+    _check_merge_answer(choice, _recorded_merge(as_dict(record)))
+    if _reproduced_critical(newest):
+        raise ReviewStateError("merge-with-reason cannot override reproduced data loss or security exposure")
+    if finding_id not in _blocking_of(newest):
+        raise ReviewStateError(f"{finding_id} is no longer a blocking item")
+    finding = _finding_by_id(newest).get(finding_id)
+    if finding is None:
+        raise ReviewStateError(f"blocking item {finding_id} has no stored finding")
+    decision = newest.setdefault("merge_decision", {
+        "decision": "merge-with-reason", "reason": str(choice.get("reason") or ""),
+        "filed_findings": {}, "filed_issues": [], "complete": False,
+    })
+    filed = decision.setdefault("filed_findings", {})
+    if finding_id in filed:
+        return f"{finding_id} already filed #{filed[finding_id]}"
+    title, body = defect_body([finding], repo=str(record.repo), card=record.issue,
+                              revision=_revision_of(record))
+    number = file_issue(mc, runner, repo=str(record.repo), card=record.issue,
+                        revision=_revision_of(record), title=title, body=body,
+                        risk=RISK_BY_GROUP[consequence_group(finding)])
+    filed[finding_id] = number
+    issues = decision.setdefault("filed_issues", [])
+    if number not in issues:
+        issues.append(number)
+    return f"{finding_id} filed #{number}"
+
+
 def _apply_merge(record: run_record.RunRecord, choice: Mapping[str, Any]) -> str:
-    """The blocking-merge decision, appended beside the review runs."""
-    runs = review_runs(as_dict(record))
-    blocking = _blocking_of(runs[-1]) if runs else []
+    """Record the completed choice on its review run and in C13's confirmation history."""
+    newest = _newest_run_entry(record)
     recorded = _recorded_merge(as_dict(record))
+    _check_merge_answer(choice, recorded)
     decision = choice.get("decision")
-    reason = str(choice.get("reason") or "")
-    if recorded is not None:
-        if recorded.get("decision") == decision and (recorded.get("reason") or "") == reason:
-            return f"merge decision already recorded: {decision}"
-        raise ReviewStateError(
-            f"choice key {MERGE_CHOICE!r} is already recorded "
-            f"{recorded.get('decision')}, not {decision}"
-        )
-    entry: dict[str, Any] = {
-        "loop": MERGE_ENTRY_LOOP,
-        "decision": decision,
-        "blocking": blocking,
-        "answered_at": _utc_now(),
-    }
+    if decision == "merge-with-reason" and not _filed_merge(newest):
+        raise ReviewStateError("every blocking item must be filed before merging with a reason")
+    if recorded is not None and (recorded.get("complete") is True or decision == "stop-card"):
+        return f"merge decision already recorded: {decision}"
+    entry = dict(recorded or {})
+    entry.update({"decision": decision, "blocking": _blocking_of(newest),
+                  "answered_at": _utc_now(), "complete": True})
     if decision == "merge-with-reason":
-        entry["reason"] = reason
-    record.review_cycles.append(entry)
+        entry["reason"] = str(choice.get("reason") or "")
+    newest["merge_decision"] = entry
+    record.review_cycles.append({**entry, "loop": MERGE_ENTRY_LOOP})
     return f"merge decision recorded: {decision}"
 
 

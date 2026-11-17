@@ -201,7 +201,7 @@ def test_run_configuration_holds_the_run_model_parameters_not_the_run_setup_cont
     snapshot = json.loads(LIFECYCLE_SNAPSHOT.read_text(encoding="utf-8"))
     contract_fields = set(snapshot["contracts"]["orchestrator-to-controller"]["required_fields"])
 
-    assert len(contract_fields) == 13
+    assert len(contract_fields) == 10
     assert set(rr.RUN_CONFIGURATION_PARAMETERS) != contract_fields
 
     contract_only = contract_fields - set(rr.RUN_CONFIGURATION_PARAMETERS)

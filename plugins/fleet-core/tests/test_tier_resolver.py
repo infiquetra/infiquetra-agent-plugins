@@ -512,9 +512,8 @@ def test_the_targeted_reviewer_resolves_at_its_own_sonnet_tier(no_overlay: pathl
     assert decision.work_shape == "targeted-review"
     assert staffing.unattended_step_down("targeted-review") is False
     assert staffing.resolve_shape("judgment").tier == "opus/high"
-    # It reviews, so asking without saying it needs no lens fails loud rather than guessing.
-    with pytest.raises(staffing.StaffingError, match="needs a lens"):
-        staffing.resolve_role("targeted-reviewer")
+    # Targeted review consumes the packet's lenses; admission staffs it directly.
+    assert staffing.resolve_role("targeted-reviewer").tier == "sonnet/high"
 
 
 def test_targeted_review_still_translates_for_a_pinned_vendor(

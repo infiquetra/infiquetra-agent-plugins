@@ -80,34 +80,26 @@ The keys and their meaning are identical either way.
 
 ## Review-readiness gate (the hard PR gate)
 
-Before PR-ready, run `/code-review` programmatically (SKILL Phase 5.1), deserialize its
-`review_result.v1` envelope, and use `outcome` as the sole acceptance decision:
+Before PR-ready, run `review_command.py prepare`, launch the targeted reviewer through
+Orchestrate, then run `review_command.py finish`. Read C1 grades, findings and the merge answer
+through `review_state.py`. No blocking finding means every lens is at C or better; fix-later
+choices do not hold the merge. Blocking findings route to Work, then the combined-branch loop.
+A repeating blocking set stops early; round three stops. Both require the operator's decision.
+Reproduced data loss or security exposure cannot be merged with a reason, even in report-only lenses.
 
-- **`accepted`** — the review acceptance gate passes.
-- **`repairs_requested`** — block PR-ready and route the typed fix requests through Work.
-- **`cycle_cap_best_available`** — proceed with the cycle-three revision and surface every residual.
-- **`review_incomplete`** — block PR-ready because delivery did not establish a review.
+### Stale review
 
-Do not derive another acceptance decision from finding Priority, confidence, or fix-request counts.
-Those values remain reporting and routing metadata.
+Capture `REVIEWED_SHA` from `build_loop.py --handoff` after Phase 3.3 succeeds. After a repair,
+check freshness with:
 
-### Stale review (computed from `/work`'s own captured SHA)
+```bash
+git rev-list <REVIEWED_SHA>..HEAD --count
+```
 
-`/code-review` in programmatic mode writes no durable artifact (the caller owns persistence) and the saga
-has no `reviewed_sha` field — so `/work` captures the reviewed commit **itself** at review time and
-computes staleness directly, with no dependency on `/code-review`'s output format:
-
-1. At the moment `/work` runs `/code-review` (SKILL Phase 5.1), capture
-   `REVIEWED_SHA=$(git rev-parse HEAD)` and record it in the work-session.
-2. Compute commits since the review:
-   ```bash
-   git rev-list <REVIEWED_SHA>..HEAD --count
-   ```
-   A count `> 0` means commits landed since the review → **stale**. Re-run `/code-review` (capturing a
-   fresh `REVIEWED_SHA`) before any PR-open or merge offer.
-
-This is the same commits-since-review staleness gstack's review dashboard uses, computed against `/work`'s
-own captured reviewed SHA rather than a stored field or a parse of `/code-review`'s artifact.
+A count `> 0` is stale: keep PR-ready blocked, rerun **Phase 3.3**, obtain a new
+`build_loop.py --handoff` revision, and prepare another review. An unattended `auto` merge is the
+operator's run-start confirmation for a clear current review; `gate` waits for the operator.
+Unresolved review threads hold release regardless of that setting.
 
 ### Override (recorded, never silent)
 

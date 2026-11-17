@@ -10,7 +10,7 @@ its own: no role that repository does not name, no contract it does not define, 
 threshold. When this directory and that repository disagree, that repository is right and this
 directory is stale.
 
-Read from `infiquetra-sdlc` revision `f8d0994`.
+Read from `infiquetra-sdlc` revision `1d2e33e`.
 
 **One thing here is copied rather than referenced, and it is worth naming.** Each prompt lists the
 required field names of the contract it posts. Those names are the lifecycle's, transcribed — a
@@ -18,7 +18,7 @@ second copy that can drift. It is deliberate: a prompt is the whole briefing a f
 and a session that has to file a handoff cannot go and read a schema. The copy is made safe by a
 test rather than by discipline: `tests/test_roles_library.py` reads each contract's fields from the
 lifecycle's run model and fails when a prompt omits a required one. Everything else the lifecycle
-owns — the lens dimensions, the anchors, the strictness ladder, the staffing tiers — is referenced,
+owns — the review rules and staffing tiers — is referenced,
 never copied, because nothing consuming those is mid-task with no way to look them up.
 
 ## What is here, and what is not
@@ -40,9 +40,9 @@ Frontmatter keys, all four required:
 
 | Key | Meaning |
 |---|---|
-| `role` | The readable role name, spelled as the role catalogue at `infiquetra-sdlc` `docs/roles/run-roles.md` spells it — Title Case. The lifecycle disagrees with itself here: its run model spells eight of the fifteen in sentence case (`Initial implementation worker`), its role catalogue in Title Case (`Initial Implementation Worker`). The catalogue is the page a person reads, so these files follow it, and the test compares the two without regard to case |
+| `role` | The readable role name, spelled as the role catalogue at `infiquetra-sdlc` `docs/roles/run-roles.md` spells it — Title Case. The lifecycle disagrees with itself here: its run model spells some role names in sentence case (`Initial implementation worker`), its role catalogue in Title Case (`Initial Implementation Worker`). The catalogue is the page a person reads, so these files follow it, and the test compares the two without regard to case |
 | `role_id` | The lifecycle's stable identifier for the role |
-| `emits` | A YAML **list** of the handoff contract identifiers this role produces. Always a list, never a bare string — the Planner produces two and the Delivery Manager five. The list is empty for a role whose result is aggregated into another role's contract rather than posted as its own; the Lens Reviewer and the Targeted Reviewer are the only such roles, and each prompt says where its result goes |
+| `emits` | A YAML **list** of the handoff contract identifiers this role produces. Always a list, never a bare string — the Planner produces two and the Delivery Manager five. The list is empty for a role whose result is aggregated into another role's contract rather than posted as its own; the Targeted Reviewer is the only such role, and each prompt says where its result goes |
 | `source` | Where the content came from, so a reader can check it |
 
 Required sections, in this order and with these exact headings:
@@ -51,7 +51,7 @@ Required sections, in this order and with these exact headings:
 |---|---|
 | `## Role` | What the role is, what it may decide, and what it must never do |
 | `## Inputs from the run record` | The named inputs the session is given, and where each comes from |
-| `## Output contract` | The handoff comment the role posts, in the lifecycle's shape, naming each contract in `emits` by the name the lifecycle gives it and listing its required fields. Two roles post nothing of their own — the Lens Reviewer and the Targeted Reviewer, the only files with an empty `emits` — and each section says where its result goes instead |
+| `## Output contract` | The handoff comment the role posts, in the lifecycle's shape, naming each contract in `emits` by the name the lifecycle gives it and listing its required fields. The Targeted Reviewer posts no handoff of its own; its empty `emits` and output section say where its answer goes instead |
 | `### Stop rule` | The condition on which this role stops working and hands off |
 
 `### Stop rule` is a level-three heading inside the output-contract section on purpose: the card that
@@ -65,7 +65,7 @@ heading here and the field there are the same idea under two names.
 ## The output contract, once
 
 Every role posts its result as a handoff comment on the issue record, in the shape
-`infiquetra-sdlc` `docs/process/run-contracts.md` fixes, at revision `f8d0994`. The comment opens with a heading naming the contract:
+`infiquetra-sdlc` `docs/process/run-contracts.md` fixes, at revision `1d2e33e`. The comment opens with a heading naming the contract:
 
 ```markdown
 ### Handoff: <contract name> (<contract-id>)
@@ -103,7 +103,7 @@ handoffs.
 
 ## Role to file map
 
-Fifteen roles, one file each. The lifecycle names sixteen; the Human Operator is a person, not a
+Thirteen roles, one file each. The lifecycle names fourteen; the Human Operator is a person, not a
 session, and gets no prompt.
 
 Two identifiers are historical and deliberately do not match their readable name — the Architect's
@@ -121,16 +121,11 @@ orchestrator.
 | Initial Implementation Worker | `implementer` | `implementer.md` |
 | Plan Reviewer | `plan_reviewer` | `plan-reviewer.md` |
 | Review Controller | `review_controller` | `review-controller.md` |
-| Lens Reviewer | `lens_reviewer` | `lens-reviewer.md` |
 | Targeted Reviewer | `targeted_reviewer` | `targeted-reviewer.md` |
 | Standard Repair Implementer | `standard_repair_implementer` | `standard-repair-implementer.md` |
-| Expert Repair Implementer | `expert_repair_implementer` | `expert-repair-implementer.md` |
 | Release Worker | `release_worker` | `release-worker.md` |
 | Functional Tester | `functional_tester` | `functional-tester.md` |
 | Investigator | `investigator` | `investigator.md` |
-
-The Lens Reviewer is one file carrying a shared reviewer half and one section per lens, keyed
-`#### <lens-id>` to the lifecycle's lens catalogue.
 
 The Targeted Reviewer is a thin wrapper. Its instructions are saga's
 `plugins/saga/references/targeted-reviewer-prompt.md`, which `launcher.py review` sends after the
@@ -139,24 +134,7 @@ to saga's review command, so it sends no lifecycle contract of its own. And like
 it varies the shared `**Where these come from.**` paragraph, because it has no dispatch and must not
 read the issue, where another reviewer's findings may be.
 
-### Slicing the Lens Reviewer
-
-A consumer sends two pieces, joined by a blank line:
-
-1. **The shared half** — everything from the start of the file up to, but not including, the line
-   `# The lenses`.
-2. **One lens section** — from the line `#### <lens-id>` up to, but not including, the next line
-   matching `^#{1,4} `. That terminator matters: the next line after a section is sometimes another
-   `####`, sometimes a `##` grouping heading, and for the last section it is the end of the file.
-   Slicing "to the next `####`" pulls in a grouping heading that means nothing to the session.
-
-Everything a session needs is in those two pieces. The `## Always on` and `## Conditional` headings
-organise the file for a person and are deliberately not sent; nothing load-bearing lives under them
-rather than inside a lens section, which is why the always-on-versus-conditional rule and the
-permission to report without scoring sit in the shared half instead.
-
-`index.json` carries the machine-readable form of all of this, so a helper does not have to parse
-this table or find these headings by hand.
+Each role is one whole prompt; `index.json` publishes its identifier and output contracts.
 
 ## How a prompt reports
 
@@ -174,15 +152,14 @@ live somewhere; the role prompts themselves never mention that plugin.
 
 | Group | Count | Destination |
 |---|---|---|
-| Reviewers — security, architecture, devil's advocate, code quality, testing, API, infrastructure, privacy, clarity, AI usefulness | 10 | Lens sections of `lens-reviewer.md` |
+| Reviewers — security, architecture, devil's advocate, code quality, testing, API, infrastructure, privacy, clarity, AI usefulness | 10 | Saga's targeted-reviewer prompt and four review lenses |
 | Testers — scenario, smoke, API contract, UI regression, performance, concurrency, event flow, SDK regression | 8 | Named strategies in `functional-tester.md` |
 | Scanners — security, dependency, API compatibility, infrastructure cost | 4 | Not roles. They become mechanical baseline checks in the build loop, tracked separately |
 | Monitors — GitHub Actions, runtime — and the deploy watcher | 3 | Wait steps in `release-worker.md` |
 
 The two criteria documents follow the same rule. The review criteria already delegated every
 dimension, anchor and acceptance rule to a roster file and asserted no policy of its own, so its
-substance is now the Lens Reviewer's instruction to read dimensions and anchors from the lifecycle's
-catalogue. The validator criteria's gate-status vocabulary was that plugin's own invention and is
+substance is now the Targeted Reviewer's instruction to follow saga's prompt, schema and checks. The validator criteria's gate-status vocabulary was that plugin's own invention and is
 deliberately not carried; roles record pass-or-fail evidence in their handoff comment instead.
 
 The `team-execution` plugin was archived by issue #1030; its final changelog entry points here.
@@ -192,10 +169,10 @@ The `team-execution` plugin was archived by issue #1030; its final changelog ent
 Two data files sit beside the prompts, and both are generated rather than hand-written.
 
 `index.json` is what a consumer reads instead of parsing this README: the role-to-file map, each
-role's `emits`, the lens identifiers, and the rule for slicing the Lens Reviewer.
+role's `emits`. Every prompt is sent whole.
 
 `lifecycle-snapshot.json` is the lifecycle's roles, contracts — each required field with the
-lifecycle's one-line definition of it — and lenses at the pinned revision, vendored here. It states
+lifecycle's one-line definition of it — at the pinned revision, vendored here. It states
 which roles and contracts exist, so it is the library's own declaration of what it is built against
 — which is why it lives here rather than under `tests/`. The suite checks the prompts against it
 everywhere, including where no lifecycle checkout is reachable, and a separate parity check
@@ -219,9 +196,8 @@ inside the test. A row without a file fails, a file without a row fails, and a p
 `role_id` the lifecycle does not name fails — so no half can drift alone, and a role the lifecycle
 has not declared cannot be introduced by adding a file.
 
-The Targeted Reviewer is the worked case. The lifecycle named `targeted_reviewer` at `f8d0994` (its
-X1a change). Issue #163 moved the pin there, regenerated the snapshot and landed a minimal prompt
-with its map row and index entry; issue #158 replaced the prompt with the full wrapper.
+The Targeted Reviewer is a worked case: its role, map row and index entry move together.
+The current pin includes the review redesign; issue #158 supplies the reviewer wrapper.
 
 ## Exemptions this file claims
 

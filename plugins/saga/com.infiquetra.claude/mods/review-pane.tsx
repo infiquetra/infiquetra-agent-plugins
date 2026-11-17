@@ -4,8 +4,7 @@
 // Read-only. It reads the review through `scripts/run_status.py review`. For a
 // record with C1 review runs the view embeds the whole `review_state.v1`
 // document, and the pane draws that alone: grades, where-to-look states,
-// tools, round and cost, and per-round deltas. For an older record it draws
-// today's lens list from the latest `review_result.v2` entry. The pane shows
+// tools, round and cost, and per-round deltas. The pane shows
 // those answers and never recomputes them. The only thing it writes is the
 // operator's own prompt, when they press a finding's Quote. No acceptance
 // decision and no finding edits happen here. The plain fallback on every other
@@ -62,7 +61,7 @@ export const BAND_REVIEW_ELEMENT = /^band-review-\d+$/
 export const REVIEW_POLL_MS = 5_000
 
 /** A Bash command that ran a script which writes review runs or answers. */
-const WRITES_REVIEW = /\b(review_result|review_command|review_state)\.py\b/
+const WRITES_REVIEW = /\b(review_command|review_state)\.py\b/
 
 const reviewView = atom({ plugin: 'saga', key: 'reviewView' } as const, null)
 const reviewLens = atom({ plugin: 'saga', key: 'reviewLens' } as const, null)
@@ -185,7 +184,7 @@ export function registerReviewPane(on: On): void {
     return { element: e.element }
   })
 
-  // `review_result.py` writing a result reloads the open pane at once.
+  // A review command or state update reloads the open pane at once.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
     if (ran.deny !== undefined || ran.isError === true) return ran

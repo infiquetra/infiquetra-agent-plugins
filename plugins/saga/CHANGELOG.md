@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Switch `/code-review` to the prepared-packet review command and C1 review records.
+  Retire the lens roster and scoring flow, remove admission lens and allowance questions,
+  cap counted repair rounds at three with early stopping, and persist blocking-item filings
+  between attempts. Reproduced data loss or security exposure cannot be overridden;
+  unresolved review threads hold release. Unattended merges follow the intent envelope.
+
 - Default targeted reviews to Claude Sonnet at high effort. Refuse relative or computed
   JS/TS config imports, preserve package tsconfig file extensions, pin Jest defaults,
   and isolate Rust mutation settings to the base commit. Dependency checks now notice

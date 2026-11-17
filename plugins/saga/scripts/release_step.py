@@ -82,8 +82,8 @@ CLOSEOUT_PARTS = (
     "disposition",
 )
 
-#: The review outcome that proceeds without acceptance, from ``review_result.py``.
-CYCLE_CAP_OUTCOME = "cycle_cap_best_available"
+#: Post-merge repair rounds share the review loop's fixed limit.
+POST_MERGE_ROUND_LIMIT = 3
 
 #: Parts that follow the required ones (issue #100). They are not in ``CLOSEOUT_PARTS`` because that
 #: tuple mirrors ``terminal-outcomes.md``, which does not name them yet.
@@ -153,6 +153,57 @@ def pull_request_state(repo: str, number: int, *, runner: Runner | None = None) 
         ) from exc
 
 
+def unresolved_review_threads(repo: str, number: int, *, runner: Runner | None = None) -> int:
+    """Count unresolved human and bot threads across every page; unreadable input refuses merge."""
+    parts = repo.split("/") if repo else ["{owner}", "{repo}"]
+    if len(parts) != 2 or not all(parts):
+        raise ReleaseStepError(f"repository {repo!r} must be owner/name")
+    owner, name = parts
+    query = """query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $cursor) {
+            nodes { isResolved }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }"""
+    count = 0
+    cursor: str | None = None
+    seen: set[str] = set()
+    while True:
+        argv = ["gh", "api", "graphql", "-f", f"query={query}",
+                "-f" if repo else "-F", f"owner={owner}",
+                "-f" if repo else "-F", f"name={name}", "-F", f"number={number}"]
+        if cursor is not None:
+            argv.extend(["-f", f"cursor={cursor}"])
+        result = _run(runner, argv)
+        if not _ok(result):
+            raise ReleaseStepError(f"cannot read review threads for {repo}#{number}")
+        try:
+            payload = json.loads(_out(result))
+            if payload.get("errors"):
+                raise ValueError("GraphQL errors")
+            connection = payload["data"]["repository"]["pullRequest"]["reviewThreads"]
+            nodes = connection["nodes"]
+            page = connection["pageInfo"]
+            if not isinstance(nodes, list) or not isinstance(page.get("hasNextPage"), bool):
+                raise ValueError("invalid review thread page")
+            if any(not isinstance(node, dict) or not isinstance(node.get("isResolved"), bool)
+                   for node in nodes):
+                raise ValueError("invalid review thread")
+            count += sum(node["isResolved"] is False for node in nodes)
+            if not page["hasNextPage"]:
+                return count
+            cursor = page.get("endCursor")
+            if not isinstance(cursor, str) or not cursor or cursor in seen:
+                raise ValueError("review thread pagination did not advance")
+            seen.add(cursor)
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise ReleaseStepError(f"cannot read review threads for {repo}#{number}: {exc}") from exc
+
+
 def failing_checks(state: dict[str, Any]) -> list[str]:
     """Required checks on this head that did not conclude successfully, by name."""
     failing: list[str] = []
@@ -199,6 +250,13 @@ def release(
             "merge_state": merge_state,
             "reason": route + detail,
         }
+
+    unresolved = unresolved_review_threads(repo, number, runner=runner)
+    if unresolved:
+        return {"status": "waiting", "repo": repo, "pull_request": number,
+                "url": state.get("url", ""), "reviewed_head": head,
+                "merge_state": merge_state, "unresolved_threads": unresolved,
+                "reason": f"{unresolved} unresolved review thread(s) hold the merge"}
 
     merged = _run(
         runner,
@@ -384,28 +442,6 @@ def deploy(
 # ---------------------------------------------------------------------------
 
 
-def post_merge_allowance(record: dict[str, Any]) -> dict[str, int]:
-    """The post-merge repair loop's own budget, read from the run configuration.
-
-    Its own counter, not the code review's: the lifecycle repository gives the post-merge loop a
-    separate one under the same rules, plus exactly one recorded extension.
-    """
-    parameters = record.get("run_configuration") or {}
-
-    def _value(key: str, fallback: int) -> int:
-        entry = parameters.get(key)
-        raw = entry.get("value") if isinstance(entry, dict) else entry
-        try:
-            return int(raw)
-        except (TypeError, ValueError):
-            return fallback
-
-    return {
-        "standard": _value("standard_cycle_allowance", 3),
-        "escalated": _value("escalated_cycle_allowance", 2),
-    }
-
-
 def record_functional_test(
     record: dict[str, Any], scenarios: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -440,13 +476,10 @@ def record_functional_test(
             )
     existing = record.get("functional_test") or {}
     cycles = int(existing.get("post_merge_cycles") or 0)
-    extension_taken = bool(existing.get("extension_taken"))
     failed = [s for s in scenarios if s.get("state") == "failed"]
     blocked = [s for s in scenarios if s.get("state") == "blocked"]
     required_blocked = [s for s in blocked if s.get("required", True)]
     optional_blocked = [s for s in blocked if not s.get("required", True)]
-    allowance = post_merge_allowance(record)
-    budget = allowance["standard"] + allowance["escalated"]
 
     # A required block outranks a failure: the loop can repair the failure and cannot repair the
     # block, so sending this to the loop would spend a cycle on work that cannot clear the stop.
@@ -458,7 +491,10 @@ def record_functional_test(
             "status": "blocked",
             "scenarios": scenarios,
             "post_merge_cycles": cycles,
-            "extension_taken": extension_taken,
+            "failed_scenarios": list(existing.get("failed_scenarios") or [
+                str(item.get("name") or "") for item in existing.get("scenarios", [])
+                if item.get("state") == "failed"
+            ]),
             "reason": (
                 f"{len(required_blocked)} required scenario(s) could not run, so nothing was "
                 f"proved about them: {named}. The causes of a block are environment, credential "
@@ -473,8 +509,7 @@ def record_functional_test(
                 "status": "passed-with-proof-debt",
                 "scenarios": scenarios,
                 "post_merge_cycles": cycles,
-                "extension_taken": extension_taken,
-                "proof_debt": [
+                    "proof_debt": [
                     {"name": str(s.get("name", "?")), "cause": str(s.get("cause", ""))}
                     for s in optional_blocked
                 ],
@@ -487,39 +522,24 @@ def record_functional_test(
             "status": "passed",
             "scenarios": scenarios,
             "post_merge_cycles": cycles,
-            "extension_taken": extension_taken,
         }
-    cycles += 1
-    if cycles <= budget:
-        return {
-            "status": "re-enters-the-build-loop",
-            "scenarios": scenarios,
-            "post_merge_cycles": cycles,
-            "extension_taken": extension_taken,
-            "reason": (
-                f"{len(failed)} scenario(s) failed; cycle {cycles} of {budget} in the post-merge "
-                "allowance"
-            ),
-        }
-    if not extension_taken:
-        return {
-            "status": "re-enters-the-build-loop",
-            "scenarios": scenarios,
-            "post_merge_cycles": cycles,
-            "extension_taken": True,
-            "reason": (
-                f"the post-merge allowance of {budget} cycles is spent; taking the one recorded "
-                "extension, which no role may grant twice"
-            ),
-        }
+    previous = set(existing.get("failed_scenarios") or [
+        str(scenario.get("name") or "") for scenario in existing.get("scenarios", [])
+        if scenario.get("state") == "failed"
+    ])
+    failed_names = {str(scenario.get("name") or "") for scenario in failed}
+    if existing.get("status") != "exhausted":
+        cycles = min(cycles + 1, POST_MERGE_ROUND_LIMIT)
+    at_limit = cycles >= POST_MERGE_ROUND_LIMIT
+    early_stop = cycles >= 2 and bool(previous) and failed_names == previous
+    exhausted = at_limit or early_stop or existing.get("status") == "exhausted"
     return {
-        "status": "exhausted",
-        "scenarios": scenarios,
-        "post_merge_cycles": cycles,
-        "extension_taken": True,
+        "status": "exhausted" if exhausted else "re-enters-the-build-loop",
+        "scenarios": scenarios, "post_merge_cycles": cycles,
+        "failed_scenarios": sorted(failed_names), "early_stop": early_stop, "at_limit": at_limit,
         "reason": (
-            "the post-merge allowance and its one extension are both spent; the result goes to the "
-            "operator and prescribed testing is never weakened to fit inside it"
+            "the post-merge repair loop stopped; the result goes to the operator"
+            if exhausted else f"{len(failed)} scenario(s) failed in round {cycles}; repair for the next round"
         ),
     }
 
@@ -593,21 +613,18 @@ def closeout_comment(
 
 
 def _code_review_cycles(record: dict[str, Any]) -> list[dict[str, Any]]:
-    cycles = record.get("review_cycles")
-    return [
-        entry
-        for entry in (cycles if isinstance(cycles, list) else [])
-        if isinstance(entry, dict) and entry.get("loop", "code_review") == "code_review"
-        and entry.get("schema") != "review_result.v1"
-    ]
+    return [entry for entry in record.get("review_cycles", [])
+            if isinstance(entry, dict) and entry.get("kind") == "review_run"]
 
 
 def _capped_cycles(record: dict[str, Any]) -> list[dict[str, Any]]:
-    """Each unit's latest code-review entry, where it ended at the cycle cap."""
-    latest: dict[str, dict[str, Any]] = {}
-    for entry in _code_review_cycles(record):
-        latest[str(entry.get("unit") or "")] = entry
-    return [entry for entry in latest.values() if entry.get("outcome") == CYCLE_CAP_OUTCOME]
+    """The current review run when the operator merged over filed blocking items."""
+    runs = _code_review_cycles(record)
+    if not runs:
+        return []
+    newest = runs[-1]
+    decision = newest.get("merge_decision") or {}
+    return [newest] if decision.get("decision") == "merge-with-reason" else []
 
 
 def _functional_evidence(record: dict[str, Any], revision: str) -> dict[str, Any]:
@@ -621,8 +638,13 @@ def _evidence_revision(record: dict[str, Any]) -> str:
     """The revision whose functional evidence the closeout cites: the last one reviewed, else the
     last one the combined-branch loop handed to review."""
     cycles = _code_review_cycles(record)
-    if cycles and cycles[-1].get("revision"):
-        return str(cycles[-1]["revision"])
+    if cycles:
+        newest = cycles[-1]
+        revision = newest.get("head") or (newest.get("subject") or {}).get("head_sha") or newest.get("revision")
+        if revision:
+            return str(revision)
+    if record.get("review_cycles") and not cycles:
+        return ""
     block = record.get("combined_branch")
     handed = block.get("handed_to_code_review") if isinstance(block, dict) else None
     return str(handed.get("revision") or "") if isinstance(handed, dict) else ""
@@ -653,45 +675,34 @@ def _evidence_line(record: dict[str, Any]) -> str:
 
 
 def _unresolved(entry: dict[str, Any]) -> int:
-    findings = entry.get("findings")
-    return sum(
-        1
-        for finding in (findings if isinstance(findings, list) else [])
-        if isinstance(finding, dict) and finding.get("status") not in RESOLVED_FINDING_STATES
-    )
+    return len(set((entry.get("merge") or {}).get("blocking") or []))
 
 
 def _refuse_unproven_cap(record: dict[str, Any], capped: list[dict[str, Any]]) -> None:
     for entry in capped:
-        revision = str(entry.get("revision") or "")
+        revision = str(entry.get("head") or (entry.get("subject") or {}).get("head_sha") or entry.get("revision") or "")
         if not _functional_evidence(record, revision)["admits"]:
             raise ReleaseStepError(
-                f"review ended {CYCLE_CAP_OUTCOME} at {revision}, which has no passing "
+                f"review merged with blocking items at {revision}, which has no passing "
                 "combined-branch functional run and no waiver; a delivered close needs one"
             )
-        filed = entry.get("residual_issues")
-        count = len(filed) if isinstance(filed, list) else 0
+        filed = (entry.get("merge_decision") or {}).get("filed_issues") or []
+        count = len({number for number in filed if isinstance(number, int)})
         open_findings = _unresolved(entry)
         if open_findings > count:
             raise ReleaseStepError(
-                f"review ended {CYCLE_CAP_OUTCOME} at {revision} with {open_findings} open "
-                f"finding(s) and {count} residual issue(s) filed; every leftover finding is "
-                "filed as a linked issue before a delivered close"
+                f"review at {revision} left {open_findings} blocking item(s) and {count} residual "
+                "issue(s) filed; every leftover finding is filed before a delivered close"
             )
 
 
 def _residual_line(capped: list[dict[str, Any]]) -> str:
-    if not capped:
-        return f"none: review did not end at the cycle cap ({CYCLE_CAP_OUTCOME})"
-    numbers = [
-        number
-        for entry in capped
-        for number in (entry.get("residual_issues") or [])
+    numbers = list(dict.fromkeys(
+        number for entry in capped
+        for number in (entry.get("merge_decision") or {}).get("filed_issues", [])
         if isinstance(number, int)
-    ]
-    if not numbers:
-        return "none: review ended at the cycle cap with no open finding left to file"
-    return ", ".join(f"#{number}" for number in numbers)
+    ))
+    return ", ".join(f"#{number}" for number in numbers) if numbers else "none: no residual issues were recorded"
 
 
 def _acceptance_line(test_state: dict[str, Any]) -> str:

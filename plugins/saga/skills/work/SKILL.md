@@ -34,8 +34,8 @@ which now runs before code review (Phase 3.2).
 `/work` is the saga's **primary writer**: it `restore`s on resume, mints/advances the work-thread saga
 to `lifecycle_phase=work`, writes a tick per phase, and — crucially — **mints the *findable* work-thread
 saga** (with `issue_ref` / `plan_path` / branch set) that a standalone `/code-review` appends `review_paths`
-to (saga-spec §11). For its own pre-PR gate, `/work` calls `/code-review` programmatically and reads the
-returned envelope **directly** — programmatic mode hands persistence to the caller, so `/work` owns the
+to (saga-spec §11). For its pre-PR gate, `/work` runs the review command and reads the stored C1
+review run through `review_state.py`; `/work` owns the
 gate, not a saga round-trip.
 
 ## Position in the lifecycle
@@ -877,17 +877,17 @@ means the board write **did** commit and only the replay key is missing. `detect
 observation. An unknown subcommand exits **2**. A caller that branches on the exit code alone will
 treat a committed write as a failure and retry a move that already landed.
 
-`/work` still does **not** merge or deploy autonomously (permanently gated), and the controller
-never widens the autonomously-writable set beyond what `board_progression`/`reversibility_certificate`
-already establish (#450 non-goal).
+The controller never widens the writable set beyond what `board_progression` and the intent
+envelope establish. Merge follows the explicit confirmation contract, including the operator's
+run-start unattended `auto` setting for a clear review; production deployment stays gated.
 
 ## Phase 5 — Code-review gate, PR-ready, continuation routing
 
 ### 5.1 Run /code-review programmatically and capture the reviewed SHA
 
-Call `/code-review` in `programmatic` / `report-only` mode. In that mode `/code-review` returns its
-structured findings envelope to the caller and writes nothing durable — **the caller owns persistence**
-(its own contract).
+Run `/code-review` through `review_command.py prepare`, the Orchestrate-owned targeted reviewer,
+and `review_command.py finish`. Finish stores the C1 review run; `review_state.py` renders its
+grades, merge state, operator choices and next action.
 
 **Review does not start without a passing combined-branch functional run** on the revision under
 review, or the repository's recorded waiver, whose reason the closeout prints (issue #100). The
@@ -913,60 +913,42 @@ from the post-merge `/qa` repair loop, passes 3.3 and `--handoff` again first.
 The review-gate override (`--review-gate-override`, 5.3) is an acceptance override and does not
 apply to this gate. No role may skip it; the recorded waiver is the only exception.
 
-The findable saga `/work` minted in Phase 1.4 (`issue_ref` / `plan_path` / branch) is what a *standalone*
-`/code-review` would later append `review_paths` to. For this in-loop gate, `/work` reads the envelope
-**directly** — no saga round-trip, no dependency on `/code-review` writing an artifact (it doesn't, in
-programmatic mode).
+Immediately before preparing the packet, run `git rev-parse HEAD` in the combined checkout and
+require its full SHA to equal `REVIEWED_SHA` from the handoff. A mismatch returns to Phase 3.3.
+This freshness check cannot replace the handoff's functional evidence.
 
-### 5.2 Read the gate input (the envelope)
+The issue's run record holds the durable review run. Read that record through `review_state.py`;
+review transport remains owned by Orchestrate.
 
-Read `/code-review`'s serialized `review_result.v1`; any accompanying human rendering may group
-findings by `autofix_class`, but it adds no decision field. The result's `outcome` is the sole decision
-field and is the gate input. Record that outcome, the finding inventory as metadata, and `REVIEWED_SHA`
-in the Phase-4 work-session writeup. **Retired in the portable package:** the evidence-ledger
-persistence step this paragraph used to describe (`evidence_ledger.py write --check-id code-review
-...`, giving this programmatic-mode write the same no-clobber/custody guarantee as `/code-review`'s
-own interactive-mode write, SKILL.md §5.3) named a script that plugins/saga/CHANGELOG.md records as
-gone from the imported source; until a replacement lands, persist the result as a bare file write
-instead.
+### 5.2 Read the gate input
 
-### 5.3 Outcome-driven review gate (typed outcome or stale)
+Read the latest C1 `review_run` stored by `review_command.py finish`. Use `review_state.py render`
+for grades, blocking finding identities, degraded inputs and recorded operator choices. Keep the
+reviewed head and evidence links in the work-session. Historical entries stay preserved and unread.
 
-Route the complete typed outcome set as follows:
+### 5.3 Grade-driven review gate and stale revisions
 
-- **`accepted`** — proceed to PR-ready even when the result still carries findings, including Priority 2
-  findings.
-- **`repairs_requested`** — block PR-ready and route the consolidated fix requests through Work; the
-  repaired branch passes Phase 3.3 and the 5.1 gate before the next review.
-- **`cycle_cap_best_available`** — proceed with the best-available revision only when it passed the
-  combined-branch functional run, and hand every residual to mission-control so the closeout lists
-  them. The record refuses a cap result at an unproven revision: run Phase 3.3 on it, then record
-  the result again.
-- **`review_incomplete`** — block PR-ready and say that the review did not run: delivery did not
-  establish a review, so do not invent acceptance.
+`review_command.py` computes the C1 grades and merge answer; `review_state.py` selects the next
+action. Every lens at C or better with no blocking finding proceeds to merge. Fix-later choices
+never hold it. Work repairs blocking findings and re-enters the combined-branch loop before review.
+Later rounds re-check repaired code; fix-now rounds on a clear review do not count against the
+three-round blocking repair limit. A repeating set of stable C1 blocking identities stops early,
+even when lines moved. Round three stops with no escalation or extension.
 
-These four values are the complete outcome set. Work does not recompute scores, inspect thresholds, or
-derive acceptance from findings. Finding Priority and confidence are reporting and routing metadata;
-neither can change the typed outcome. `/code-review` never changes reviewed code. Work is the only
-mutator and applies any authorized repairs before resubmitting.
+At an early stop or the limit, wait for the operator to stop the card or record a merge reason
+and file every ordinary blocking item through mission-control. Reproduced data loss or security
+exposure in any lens, including report-only lenses, cannot be overridden with a merge reason.
+Independently, a **stale** review always blocks PR-ready. Compute commits since the reviewed handoff:
 
-Independently, a **stale** review blocks PR-ready because the code moved since `REVIEWED_SHA`. This is a
-freshness decision, not an acceptance decision. Compute it directly against the SHA `/work` captured at
-review time (see `references/test-and-gates.md` for the staleness mechanism only; do not read an
-acceptance rule from that reference):
+```bash
+git rev-list <REVIEWED_SHA>..HEAD --count
+```
 
-  ```bash
-  git rev-list <REVIEWED_SHA>..HEAD --count
-  ```
-
-A count `> 0` means commits landed since the review: keep PR-ready blocked and route the branch back
-through Phase 3.3 — run the combined-branch loop on the new head until it is green, take the new
-`REVIEWED_SHA` from `build_loop.py --handoff` exactly as §5.1 does, and then re-run `/code-review`,
-before any PR/merge offer.
-
-Allow an explicit operator override only with a **recorded** rationale (it flows into the issue comment
-via `--review-gate-override`, rendered through `issue_progress.py:_override_line` under the review
-gate's label, plus the work-session). Never a silent skip.
+A count `> 0` sends the branch through **Phase 3.3** again. Run the combined-branch loop until green,
+take the new `REVIEWED_SHA` from `build_loop.py --handoff`, then re-run `/code-review` through
+packet preparation and finish.
+Never route a stale branch straight to another review. Recorded operator exceptions cannot waive
+this functional-evidence gate or the reproduced-harm block.
 
 ### 5.4 The release, the functional test, and the close
 
@@ -1032,8 +1014,8 @@ That prints the honest absence rather than a move. What follows it are four step
    one line that you are running it. `/qa` still owns the advance of `lifecycle_phase` and still
    makes it only on a PASS: starting a step and deciding its verdict are different authorities, and
    only the first moved. A failure re-enters the build loop and counts against the post-merge
-   allowance, which keeps its own counter of three standard and two escalated cycles plus exactly
-   one recorded extension that no role may grant twice. A repair batch from that loop that goes
+   loop, which stops at round three or earlier on the same failing scenario set, with no
+   escalation or extension. A repair batch from that loop that goes
    back to code review passes Phase 3.3 and the 5.1 `--handoff` gate first, like any other entry
    into review; this `/qa` run itself is unchanged. An unrun scenario is never folded into a
    pass.
@@ -1066,7 +1048,8 @@ ordinary `gh` operations.** The ship ceremony that used to carry them was remove
 there is no ceremony, no transition table, no reversibility tier and no receipt. **Each of them, and
 the merge, stays explicitly confirmed** — that is the preservation contract issue #1029 declared, and
 removing the ceremony removed the mechanism, never the confirmation. They are
-**offered and confirmed, never auto-fired**. At merge confirmation each fix-later item is answered
+**offered and confirmed**. For an unattended clear review, the envelope's `auto` setting is the
+operator's run-start confirmation; `gate` still waits. At merge confirmation each fix-later item is answered
 fix-now, file-as-issue or leave through `review_state.py answers`, which records the choice on the
 finding; a traced security harm the security lens could not reproduce is filed unless fixed now, and
 an unattended run files nothing else. If the operator declines, hand them the prepared
@@ -1105,7 +1088,11 @@ combined-branch loop until it is green, records, releases, runs the functional t
 It does **NOT** silently mutate GitHub:
 PR-open, review-request, and merge are each explicitly confirmed, and merge is a git op `/work`
 owns only under confirmation — issue #1029's preservation contract, which outlived the ceremony
-that used to carry it. It does **NOT** refuse: the build loop's only non-green outcome is another
+that used to carry it. In an unattended run, `auto` is the operator's **run-start confirmation**
+as the intent envelope defines it, and applies only after the review allows merge. At `gate` the
+merge still waits for confirmation; early stops and blocking items at the limit always wait.
+Without the recorded confirmation, these actions are never auto-fired.
+It does **NOT** refuse: the build loop's only non-green outcome is another
 iteration, and the only stops in it are an unreadable record or an unnamed unit. It does **NOT**
 judge whether the tests are adequate — the criterion was written at admission, and re-deciding it
 here would be the judgment the criterion replaced.

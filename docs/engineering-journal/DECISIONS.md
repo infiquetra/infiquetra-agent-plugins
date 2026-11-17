@@ -1,5 +1,32 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-16
+
+### Switch code review to prepared packets and current review records
+
+**Decision.** [Issue #161](https://github.com/infiquetra/infiquetra-agent-plugins/issues/161)
+replaces the retired review execution flow with `prepare`, Orchestrate-owned targeted-reviewer
+transport, `finish`, and the portable review-state document. Historical review entries stay stored
+and unread; an in-progress historical review restarts at round one. Admission no longer chooses
+lenses or review allowances. The targeted reviewer resolves without a lens argument.
+
+**Rationale.** One computed review record supplies grades, finding identities and the merge answer
+to status, cost reporting, release and every harness. Three counted repair rounds and early stopping
+bound both review repairs and post-merge functional repairs. Clear fix-now rounds do not spend that
+counter. The operator's recorded merge reason files ordinary blocking items one at a time with
+saved progress; reproduced data loss or security exposure remains a hard block in every lens.
+Unresolved pull-request threads also hold release. An unattended clear review merges only when the
+intent envelope records `auto`; `gate`, early stops and the round limit still wait for the operator.
+
+**Validation boundary.** Regression tests cover the round, filing, historical-record and merge
+rules with injected transports. The calibration record and its component files remain unchanged;
+this cutover establishes no new calibrated blocking authority or live client certification.
+
+**Revisit when.** A lifecycle contract changes, a current record cannot express a required merge
+choice, or a new transport needs a separately verified adapter. Do not restore the retired flow.
+
+---
+
 ## 2026-11-15
 
 ### Plan a selected-tree security scan without changing review behavior
