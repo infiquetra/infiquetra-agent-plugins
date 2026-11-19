@@ -1,0 +1,10 @@
+{
+  "name": "brainstorm",
+  "version": "0.1.0",
+  "description": "Socratic requirements shaping with fail-open typed judgments.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "skills": "./skills/"
+}

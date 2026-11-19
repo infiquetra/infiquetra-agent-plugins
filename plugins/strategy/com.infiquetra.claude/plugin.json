@@ -1,0 +1,9 @@
+{
+  "name": "strategy",
+  "version": "0.1.0",
+  "description": "Claude adapter for the strategy skill. Behavior lives in the portable skill.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  }
+}

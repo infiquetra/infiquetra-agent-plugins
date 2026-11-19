@@ -419,20 +419,24 @@ class MuseApplicablePackageTests(MuseStagingCase):
             [package.name for package in sm.muse_applicable_packages(self.root)], ["alpha"]
         )
 
-    def test_the_committed_tree_has_exactly_the_twelve_installable_packages(self) -> None:
+    def test_the_committed_tree_has_exactly_the_sixteen_installable_packages(self) -> None:
         self.assertEqual(
             [package.name for package in sm.muse_applicable_packages(ROOT)],
             [
                 "agent-launcher",
                 "agy",
+                "brainstorm",
                 "codex",
                 "deploy",
                 "hermes-profile-evolution",
                 "home-lab-ops",
+                "ideate",
+                "investigate",
                 "mission-control",
                 "orchestrate",
                 "redis-channel",
                 "saga",
+                "strategy",
                 "unifi",
                 "voice",
             ],

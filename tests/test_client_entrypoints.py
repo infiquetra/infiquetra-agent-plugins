@@ -347,5 +347,36 @@ class BundleResolutionTests(unittest.TestCase):
                     )
 
 
+class StandaloneShapingJudgmentEntrypointTests(unittest.TestCase):
+    """ideate and brainstorm ship shaping_judgments.py inside the skill directory.
+
+    Authored packages have no provenance manifest, so the provenance-gated
+    entrypoint loop above does not reach them. These two scripts are the
+    command surface a skill-scoped install runs.
+    """
+
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.stubs = write_transport_stubs(Path(self._temporary.name) / "stubs")
+
+    def test_each_skill_local_judgment_script_answers_help(self) -> None:
+        for relative in (
+            "plugins/ideate/skills/ideate/scripts/shaping_judgments.py",
+            "plugins/brainstorm/skills/brainstorm/scripts/shaping_judgments.py",
+        ):
+            with self.subTest(entrypoint=relative):
+                completed = run_entrypoint(
+                    ROOT / relative,
+                    "--help",
+                    stubs=self.stubs,
+                    credential_prefixes=("TYPESAFE_",),
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn("usage:", completed.stdout.lower())
+                self.assertNotIn("ModuleNotFoundError", completed.stderr)
+                self.assertNotIn("Traceback", completed.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

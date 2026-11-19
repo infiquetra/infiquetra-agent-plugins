@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "ideate",
+  "version": "0.1.0",
+  "description": "Generates and critically evaluates grounded product, architecture, and workflow ideas, then writes a ranked ideation artifact under docs/ideation/.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "license": "MIT",
+  "keywords": [
+    "ideate",
+    "ideas",
+    "divergence"
+  ]
+}

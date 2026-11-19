@@ -28,6 +28,17 @@
       }
     },
     {
+      "name": "brainstorm",
+      "source": {
+        "source": "local",
+        "path": "./plugins/brainstorm"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
       "name": "codex",
       "source": {
         "source": "local",
@@ -94,6 +105,28 @@
       }
     },
     {
+      "name": "ideate",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ideate"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "investigate",
+      "source": {
+        "source": "local",
+        "path": "./plugins/investigate"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
       "name": "mission-control",
       "source": {
         "source": "local",
@@ -131,6 +164,17 @@
       "source": {
         "source": "local",
         "path": "./plugins/saga"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
+      "name": "strategy",
+      "source": {
+        "source": "local",
+        "path": "./plugins/strategy"
       },
       "policy": {
         "installation": "AVAILABLE",
