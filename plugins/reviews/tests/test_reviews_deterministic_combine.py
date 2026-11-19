@@ -20,6 +20,7 @@ import socket
 import subprocess
 import sys
 import urllib.request
+import zipfile
 from contextlib import redirect_stderr
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -114,9 +115,22 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+def _schema_document() -> dict[str, Any]:
+    return json.loads((REFERENCES / "review-records.schema.json").read_text(encoding="utf-8"))
+
+
+def _jsonschema():
+    """The installed validator. A missing package is a failed check, not a skip."""
+    try:
+        import jsonschema
+    except ImportError as exc:
+        pytest.fail(f"jsonschema is required to validate review records: {exc}")
+    return jsonschema
+
+
 def _assert_against_schema(record: dict[str, Any]) -> None:
     """Check *record* against the schema file and the review_records validator."""
-    schema = json.loads((REFERENCES / "review-records.schema.json").read_text(encoding="utf-8"))
+    schema = _schema_document()
     kind = record.get("kind")
     spec = schema["$defs"].get(kind)
     assert isinstance(spec, dict), f"schema has no definition for {kind!r}"
@@ -126,11 +140,37 @@ def _assert_against_schema(record: dict[str, Any]) -> None:
         if isinstance(prop, dict) and "const" in prop and key in record:
             assert record[key] == prop["const"], key
     assert REC.validate(record) == [], record
-    try:
-        import jsonschema
-    except ImportError:
-        return
-    jsonschema.validate(record, schema)
+    _jsonschema().validate(record, schema)
+
+
+def _answer_required(error: Any) -> bool:
+    message = getattr(error, "message", "")
+    if getattr(error, "validator", None) == "required" and "answer" in str(message):
+        return True
+    return any(_answer_required(child) for child in getattr(error, "context", ()))
+
+
+def _assert_unanswered_where_to_look(items: list[dict[str, Any]]) -> None:
+    """Prepare prompts are not answered ``where_to_look`` records.
+
+    The schema requires ``answer`` once a reviewer has answered. Prepare emits
+    the question, the classifier, and ``degraded`` without that field.
+    """
+    schema = _schema_document()
+    where = schema["$defs"]["where_to_look"]
+    assert "answer" in where["required"]
+    validator = _jsonschema().Draft202012Validator(schema)
+    assert items, "prepare emitted no where-to-look prompts"
+    for item in items:
+        assert item.get("kind") == "where_to_look"
+        assert item.get("schema") == REC.SCHEMA
+        assert "answer" not in item
+        for key in ("lens", "location", "language", "questions", "classifier", "degraded"):
+            assert key in item, key
+        assert item["questions"]
+        assert all("id" in question and "probability" in question for question in item["questions"])
+        errors = list(validator.iter_errors(item))
+        assert any(_answer_required(error) for error in errors), errors
 
 
 def _invocations(bindir: Path) -> list[dict[str, Any]]:
@@ -138,6 +178,61 @@ def _invocations(bindir: Path) -> list[dict[str, Any]]:
     if not log.is_file():
         return []
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _semgrep_configs(invocations: list[dict[str, Any]]) -> list[str]:
+    configs: list[str] = []
+    for item in invocations:
+        if item.get("name") != "semgrep":
+            continue
+        argv = item.get("argv") or []
+        if "--config" not in argv:
+            continue
+        configs.append(str(argv[argv.index("--config") + 1]))
+    return configs
+
+
+def _prove_osv_cache_zip(bindir: Path, cache: Path, tmp_path: Path) -> None:
+    """The shim's advisories come from the zip, and a bad zip is a failure."""
+    work = tmp_path / "osv-parse-proof"
+    (work / "deps").mkdir(parents=True)
+    (work / "deps" / "requirements.txt").write_text("requests==2.31.0\n", encoding="utf-8")
+    argv = [
+        str(bindir / "osv-scanner"), "scan", "source",
+        "--offline", "--offline-vulnerabilities",
+        "--format", "json", "--data-source", "native",
+        "--lockfile", "requirements.txt:deps/requirements.txt",
+    ]
+
+    def _run(directory: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            argv,
+            cwd=work,
+            env={
+                "PATH": str(bindir),
+                "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY": str(directory),
+                "LANG": "C",
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    parsed = _run(cache)
+    assert parsed.returncode == 0, parsed.stderr
+    body = json.loads(parsed.stdout)
+    vulns = body["results"][0]["packages"][0]["vulnerabilities"]
+    assert [item["id"] for item in vulns] == ["GHSA-2099-0002"]
+    assert vulns[0]["aliases"] == ["CVE-2099-0002"]
+
+    bad = tmp_path / "osv-bad-cache"
+    (bad / "osv-scalibr" / "PyPI").mkdir(parents=True)
+    (bad / "osv-scalibr" / "PyPI" / "all.zip").write_bytes(b"PK\x03\x04")
+    assert _run(bad).returncode != 0
+
+    missing = tmp_path / "osv-missing-cache"
+    (missing / "osv-scalibr" / "PyPI").mkdir(parents=True)
+    assert _run(missing).returncode != 0
 
 
 def _find_adapter(adapters: tuple[Any, ...], tool_id: str) -> Any:
@@ -165,9 +260,77 @@ def pytest_configure(config):
         return
     def blocked(*_args, **_kwargs):
         raise SocketBlockedError("socket blocked by hermetic pytest_socket")
-    socket.socket.connect = blocked
+    socket.socket = blocked
     socket.create_connection = blocked
+    socket.create_server = blocked
+    socket.getaddrinfo = blocked
 """
+
+_PYTHON_SHIM = """\
+#!__PYTHON__
+import json
+import os
+import runpy
+import socket
+import sys
+from pathlib import Path
+
+def _refuse(*_args, **_kwargs):
+    raise OSError("network socket refused by R7 python3 shim")
+
+socket.socket = _refuse
+socket.create_connection = _refuse
+socket.create_server = _refuse
+socket.socketpair = _refuse
+socket.getaddrinfo = _refuse
+
+log = Path(__file__).resolve().parent / "invocations.jsonl"
+with log.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps({"name": "python3", "argv": sys.argv[1:]}) + "\\n")
+
+argv = sys.argv[1:]
+real = "__PYTHON__"
+if argv[:1] in (["--version"], ["-V"]):
+    os.execv(real, [real, *argv])
+if argv[:1] == ["-c"] and len(argv) >= 2:
+    sys.argv = ["-c", *argv[2:]]
+    exec(compile(argv[1], "<string>", "exec"), {"__name__": "__main__"})
+elif argv[:1] == ["-m"] and len(argv) >= 2:
+    sys.argv = [argv[1], *argv[2:]]
+    runpy.run_module(argv[1], run_name="__main__", alter_sys=True)
+elif argv and not argv[0].startswith("-"):
+    sys.argv = list(argv)
+    runpy.run_path(argv[0], run_name="__main__")
+else:
+    os.execv(real, [real, *argv])
+"""
+
+
+def _assert_python3_shim_refuses_sockets(bindir: Path, tmp_path: Path) -> None:
+    """The shim blocks AF_INET construction after production envs drop PYTHONPATH."""
+    code = "import socket; socket.socket(socket.AF_INET, socket.SOCK_STREAM)"
+    scanner_home = tmp_path / "scanner-home"
+    scanner_home.mkdir(parents=True, exist_ok=True)
+    scanner_env = {
+        "PATH": str(bindir),
+        "LANG": "C.UTF-8",
+        "HOME": str(scanner_home),
+        "TMPDIR": str(scanner_home),
+        "SEMGREP_ENABLE_VERSION_CHECK": "0",
+    }
+    installer_env = dict(PY._plugin_install_env())
+    assert "PYTHONPATH" not in scanner_env
+    assert "PYTHONPATH" not in installer_env
+    for label, env in (("scanner", scanner_env), ("plugin-installer", installer_env)):
+        proc = subprocess.run(
+            [str(bindir / "python3"), "-c", code],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode != 0, (label, proc.returncode, proc.stderr)
+        assert "network socket refused" in f"{proc.stdout}{proc.stderr}", (label, proc.stderr)
 
 
 def _install_hermetic_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -192,13 +355,7 @@ def _install_hermetic_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     env_wrapper.chmod(0o755)
     python_wrapper = bindir / "python3"
     python_wrapper.write_text(
-        f"#!{sys.executable}\n"
-        "import json, os, sys\n"
-        "from pathlib import Path\n"
-        "log = Path(__file__).resolve().parent / 'invocations.jsonl'\n"
-        "with log.open('a', encoding='utf-8') as handle:\n"
-        "    handle.write(json.dumps({'name': 'python3', 'argv': sys.argv[1:]}) + '\\n')\n"
-        f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n",
+        _PYTHON_SHIM.replace("__PYTHON__", sys.executable),
         encoding="utf-8",
     )
     python_wrapper.chmod(0o755)
@@ -288,7 +445,7 @@ def _install_hermetic_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     scanner_script = bindir / "scanner-shim.py"
     scanner_script.write_text(
         f"#!{sys.executable}\n"
-        "import json, os, socket, sys, urllib.request\n"
+        "import json, os, socket, sys, urllib.request, zipfile\n"
         "def _refuse_socket(*_a, **_k):\n"
         "    raise RuntimeError('network socket refused by R7 scanner shim')\n"
         "socket.socket = _refuse_socket\n"
@@ -391,19 +548,56 @@ def _install_hermetic_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
         "if name == 'osv-scanner':\n"
         "    assert '--offline' in args and '--offline-vulnerabilities' in args\n"
         "    assert args[args.index('--data-source') + 1] == 'native'\n"
-        "    assert os.environ.get('OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY')\n"
-        "    req = Path('deps/requirements.txt')\n"
+        "    cache = os.environ.get('OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY')\n"
+        "    if not cache:\n"
+        "        sys.stderr.write('OSV cache directory was not supplied\\n')\n"
+        "        raise SystemExit(2)\n"
+        "    zips = sorted(Path(cache).glob('osv-scalibr/*/all.zip'))\n"
+        "    if len(zips) != 1 or not zips[0].is_file():\n"
+        "        sys.stderr.write('OSV cache zip is missing\\n')\n"
+        "        raise SystemExit(2)\n"
+        "    try:\n"
+        "        archive = zipfile.ZipFile(zips[0])\n"
+        "        docs = []\n"
+        "        for member in archive.namelist():\n"
+        "            if member.endswith('.json'):\n"
+        "                docs.append(json.loads(archive.read(member)))\n"
+        "        archive.close()\n"
+        "    except (zipfile.BadZipFile, OSError, ValueError) as exc:\n"
+        "        sys.stderr.write(f'OSV cache zip is unreadable: {exc}\\n')\n"
+        "        raise SystemExit(2)\n"
+        "    lock_text = ''\n"
+        "    lock_path = 'deps/requirements.txt'\n"
+        "    if '--lockfile' in args:\n"
+        "        token = args[args.index('--lockfile') + 1]\n"
+        "        lock_path = token.split(':', 1)[-1]\n"
+        "        candidate = Path(lock_path)\n"
+        "        if candidate.is_file():\n"
+        "            lock_text = candidate.read_text(encoding='utf-8')\n"
+        "    vulns = []\n"
+        "    for doc in docs:\n"
+        "        if not isinstance(doc, dict) or not doc.get('id'):\n"
+        "            continue\n"
+        "        matched = False\n"
+        "        for affected in doc.get('affected') or []:\n"
+        "            if not isinstance(affected, dict):\n"
+        "                continue\n"
+        "            package = (affected.get('package') or {}).get('name')\n"
+        "            versions = affected.get('versions') or []\n"
+        "            if package and any(f'{package}=={version}' in lock_text for version in versions):\n"
+        "                matched = True\n"
+        "        if not matched:\n"
+        "            continue\n"
+        "        vulns.append({\n"
+        "            'id': doc['id'],\n"
+        "            'aliases': list(doc.get('aliases') or []),\n"
+        "            'severity': list(doc.get('severity') or []),\n"
+        "        })\n"
         "    results = []\n"
-        "    if req.is_file() and 'requests==2.31.0' in req.read_text(encoding='utf-8'):\n"
+        "    if vulns:\n"
         "        results.append({\n"
-        "            'source': {'path': 'deps/requirements.txt'},\n"
-        "            'packages': [{\n"
-        "                'vulnerabilities': [{\n"
-        "                    'id': 'GHSA-2099-0002',\n"
-        "                    'aliases': ['CVE-2099-0002'],\n"
-        "                    'severity': [{'score': '7.5'}],\n"
-        "                }]\n"
-        "            }],\n"
+        "            'source': {'path': lock_path},\n"
+        "            'packages': [{'vulnerabilities': vulns}],\n"
         "        })\n"
         "    print(json.dumps({'results': results}))\n"
         "    raise SystemExit(0)\n"
@@ -436,6 +630,7 @@ def _install_hermetic_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     monkeypatch.setenv("PATH", str(bindir))
     for absent in ("cargo", "cargo-deny", "npm", "pytest"):
         assert shutil.which(absent) is None
+    _assert_python3_shim_refuses_sockets(bindir, tmp_path)
     return bindir
 
 
@@ -461,9 +656,17 @@ def _build_combined_fixture(tmp_path: Path) -> tuple[Path, str, str]:
         encoding="utf-8",
     )
     (repo / "tests" / "test_app.py").write_text(
+        "import socket\n"
         "from src.app import compute\n\n"
         "def test_compute() -> None:\n"
-        "    assert compute(2) == 4\n",
+        "    assert compute(2) == 4\n\n"
+        "def test_socket_construction_is_refused() -> None:\n"
+        "    try:\n"
+        "        socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "    except Exception as exc:\n"
+        "        assert 'blocked' in str(exc).lower() or 'refused' in str(exc).lower()\n"
+        "        return\n"
+        "    raise AssertionError('socket.socket(AF_INET, SOCK_STREAM) opened')\n",
         encoding="utf-8",
     )
     (repo / "deps" / "requirements.txt").write_text("requests==2.30.0\n", encoding="utf-8")
@@ -568,7 +771,19 @@ def _seed_home_for_combined_fixture(repo: Path, home: Path) -> str:
     osv_adv = adv_base / "osv-scanner"
     osv_zip = osv_adv / "osv-scalibr" / "PyPI"
     osv_zip.mkdir(parents=True, exist_ok=True)
-    (osv_zip / "all.zip").write_bytes(b"PK\x03\x04")
+    advisory = {
+        "id": "GHSA-2099-0002",
+        "aliases": ["CVE-2099-0002"],
+        "affected": [
+            {
+                "package": {"ecosystem": "PyPI", "name": "requests"},
+                "versions": ["2.31.0"],
+            }
+        ],
+        "severity": [{"score": "7.5"}],
+    }
+    with zipfile.ZipFile(osv_zip / "all.zip", "w") as archive:
+        archive.writestr("GHSA-2099-0002.json", json.dumps(advisory))
     (osv_adv / "metadata.json").write_text(json.dumps(snapshot_meta) + "\n", encoding="utf-8")
 
     record = SETUP.survey(repo, home)
@@ -595,6 +810,11 @@ def test_two_offline_prepare_runs_produce_byte_identical_packets_across_python_c
     home = tmp_path / "home"
     home.mkdir()
     pack_digest = _seed_home_for_combined_fixture(repo, home)
+    _prove_osv_cache_zip(
+        bindir,
+        home / ".config" / "infiquetra" / "reviews" / "advisories" / "osv-scanner",
+        tmp_path,
+    )
 
     profile = tmp_path / "outside" / "profile.json"
     profile.parent.mkdir(parents=True, exist_ok=True)
@@ -604,6 +824,9 @@ def test_two_offline_prepare_runs_produce_byte_identical_packets_across_python_c
                 "schema": "repository_profile.v1",
                 "review": {"shared_update_paths": {"python": ["save_record"]}},
                 "review_tools": {
+                    "languages": {
+                        "python": {"test_command": "PYTHONPATH=. python3 -m pytest -q"}
+                    },
                     "pins": {
                         "gitleaks": {"version": "1.0.0"},
                         "osv-scanner": {"version": "1.0.0"},
@@ -675,6 +898,7 @@ def test_two_offline_prepare_runs_produce_byte_identical_packets_across_python_c
         _find_adapter(PY.ADAPTERS, "bandit"),
         _find_adapter(PY.ADAPTERS, "pip-audit"),
         _find_adapter(PY.ADAPTERS, "ruff-lint"),
+        _find_adapter(PY.ADAPTERS, "pytest-socket"),
         _find_adapter(INFRA.ADAPTERS, "checkov-cfn"),
         _find_adapter(INFRA.ADAPTERS, "cfn-lint"),
         _find_adapter(CHECKS.ADAPTERS, "changed-names"),
@@ -744,6 +968,14 @@ def test_two_offline_prepare_runs_produce_byte_identical_packets_across_python_c
     assert len(security_orders) >= 2, security_orders
     assert security_orders[0] != security_orders[1]
     assert security_orders[0] == tuple(reversed(security_orders[1]))
+    prepare_configs = _semgrep_configs(_invocations(bindir))
+    assert any("p--security-audit" in cfg for cfg in prepare_configs), prepare_configs
+    assert any("p--security-audit" not in cfg for cfg in prepare_configs), prepare_configs
+    pytest_calls = [item["argv"] for item in _invocations(bindir) if item.get("name") == "env"]
+    assert any(
+        "--disable-socket" in argv and "pytest_socket" in argv and "pytest" in argv
+        for argv in pytest_calls
+    ), pytest_calls
 
     # 2. Schema validation against review-records.schema.json.
     findings = json.loads((packet_1 / "findings.json").read_text(encoding="utf-8"))
@@ -753,6 +985,17 @@ def test_two_offline_prepare_runs_produce_byte_identical_packets_across_python_c
     _assert_against_schema(builder_rec)
     for record in (*findings, *measurements):
         _assert_against_schema(record)
+    outcomes = json.loads((packet_1 / "outcomes.json").read_text(encoding="utf-8"))
+    for grade in outcomes["lens_grades"]:
+        _assert_against_schema(grade)
+    prompts = json.loads((packet_1 / "where-to-look.json").read_text(encoding="utf-8"))
+    _assert_unanswered_where_to_look(prompts)
+    assert "socket.socket(socket.AF_INET, socket.SOCK_STREAM)" in (
+        repo / "tests" / "test_app.py"
+    ).read_text(encoding="utf-8")
+    assert not any(
+        "test_socket_construction_is_refused" in item["rule"]["ref"] for item in findings
+    ), findings
     assert degraded == [], f"expected zero degraded inputs in combined run, got: {degraded}"
 
     # 3. Verify additive Semgrep execution (both custom saga rule and security pack findings).
@@ -807,18 +1050,29 @@ def test_two_offline_prepare_runs_produce_byte_identical_packets_across_python_c
     assert snapshots["pip-audit"]["version"] == SNAPSHOT_VERSION
     assert snapshots["osv-scanner"]["version"] == SNAPSHOT_VERSION
 
-    # 7. Also run security_scan.py against the same combined fixture with sockets disabled.
+    # 7. security_scan.py on its own call log, with the same profile wired in.
     monkeypatch.setattr(SCAN.Path, "home", lambda: home)
+    (bindir / "invocations.jsonl").write_text("", encoding="utf-8")
     scan_out = tmp_path / "security-scan-out"
     scan_err = io.StringIO()
     with redirect_stderr(scan_err):
-        scan_code = SCAN.main(["--repo", str(repo), "--commit", head, "--output", str(scan_out)])
+        scan_code = SCAN.main(
+            [
+                "--repo", str(repo),
+                "--commit", head,
+                "--output", str(scan_out),
+                "--profile", str(profile),
+            ]
+        )
     assert scan_code == 1, scan_err.getvalue()
     summary = json.loads((scan_out / "summary.json").read_text(encoding="utf-8"))
     assert summary["commit"] == head
     assert summary["exit_code"] == 1
     rows_by_id = {row["id"]: row for row in summary["rows"]}
-    for expected_ran in ("semgrep-security", "pip-audit", "osv-scanner", "checkov-cfn", "bandit", "gitleaks"):
+    for expected_ran in (
+        "semgrep-security", "semgrep-saga", "pip-audit", "osv-scanner",
+        "checkov-cfn", "bandit", "gitleaks",
+    ):
         assert rows_by_id[expected_ran]["status"] == "ran", rows_by_id[expected_ran]
     scan_findings = json.loads((scan_out / "findings.json").read_text(encoding="utf-8"))
     for record in scan_findings:
@@ -827,22 +1081,12 @@ def test_two_offline_prepare_runs_produce_byte_identical_packets_across_python_c
     assert "python.security.audit.exec-used" in scan_refs, scan_refs
     assert "python.security.audit. weak-hash" in scan_refs, scan_refs
     assert "CKV_AWS_20" in scan_refs and "CVE-2099-0002" in scan_refs
-    scan_orders = [
-        tuple(item["order"])
-        for item in _invocations(bindir)
-        if item.get("name") == "semgrep" and "p--security-audit" in str(item.get("cfg") or "")
-    ]
-    assert len(scan_orders) >= 3, scan_orders
-    configs: list[str] = []
-    for item in _invocations(bindir):
-        if item.get("name") != "semgrep":
-            continue
-        argv = item.get("argv") or []
-        if "--config" not in argv:
-            continue
-        configs.append(str(argv[argv.index("--config") + 1]))
-    assert any("p--security-audit" in cfg for cfg in configs), configs
-    assert any("p--security-audit" not in cfg for cfg in configs), configs
+    assert "saga.swallowed-error" in scan_refs, scan_refs
+    scan_log = _invocations(bindir)
+    assert scan_log, "security_scan.py recorded no invocations of its own"
+    scan_configs = _semgrep_configs(scan_log)
+    assert any("p--security-audit" in cfg for cfg in scan_configs), scan_configs
+    assert any("p--security-audit" not in cfg for cfg in scan_configs), scan_configs
 
 
 def test_review_tools_direct_script_known_gap_and_cloudformation_setup_detection(
@@ -992,6 +1236,9 @@ def test_review_tools_direct_script_known_gap_and_cloudformation_setup_detection
     assert socket_code == 0
     assert json.loads((socket_out / "degraded.json").read_text(encoding="utf-8")) == []
     assert json.loads((socket_out / "findings.json").read_text(encoding="utf-8")) == []
+    assert "socket.socket(socket.AF_INET, socket.SOCK_STREAM)" in (
+        repo / "tests" / "test_app.py"
+    ).read_text(encoding="utf-8")
     assert shutil.which("uv") == str(bindir / "uv")
     uv_calls = [item["argv"] for item in _invocations(bindir) if item.get("name") == "uv"]
     assert any(

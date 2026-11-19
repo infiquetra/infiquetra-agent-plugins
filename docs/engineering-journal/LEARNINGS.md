@@ -5,17 +5,34 @@
 ### A combined scanner closeout has to be offline and order-independent
 
 **Evidence.** Issue #335 runs one git fixture through two offline `prepare`s and
-`security_scan.py`: Python pytest, a real CloudFormation template beside YAML,
-JSON, and comment decoys, Markdown prose removal plus a backticked symbol, a
-custom Semgrep pin, a cached `p/security-audit` pack that returns findings in
-opposite orders, and a local advisory snapshot. Sockets are refused in the test
-process and in child interpreters. The packets match byte for byte and validate
-against `review-records.schema.json`.
+a separate `security_scan.py` invocation: Python pytest with pytest-socket on
+the composed adapter roster, a real CloudFormation template beside YAML, JSON,
+and comment decoys, Markdown prose removal plus a backticked symbol, a custom
+Semgrep pin, a cached `p/security-audit` pack that returns findings in opposite
+orders, and a local advisory snapshot. The generated `python3` shim refuses
+`socket.socket(AF_INET)` when `PYTHONPATH` is absent, under both the scanner
+environment and the plugin-installer environment. The composed prepare runs
+pytest-socket, and the fixture test calls `socket.socket(AF_INET, SOCK_STREAM)`
+and passes only because that call is refused. The two prepare packets match
+byte for byte. `jsonschema` validates every finding, measurement, lens grade,
+and builder record in the packet. `where-to-look.json` holds unanswered
+prepare prompts: each item has questions and no `answer`, and the
+`where_to_look` definition in `review-records.schema.json` rejects them
+because `answer` is required. The security scan's own invocation log, cleared
+before that run, records both the custom Semgrep config and the
+`p/security-audit` pack, and the summary rows for `semgrep-saga` and
+`semgrep-security` both ran. The OSV shim reads `all.zip` from the cache
+directory the adapter passes and emits only advisories parsed from that zip;
+a missing or corrupt zip exits non-zero.
 
 **Mechanism.** The pack pin and the custom rule directory stay on separate
-catalogue rows, so neither scan replaces the other. Advisory and rule bytes come
-from the machine record. Packet findings and stored Semgrep JSON are written in
-canonical order, so a reversed tool result does not change the packet.
+catalogue rows. The security scan selects the security-lens rows and the
+custom Semgrep row as well. Advisory and rule bytes come from the machine
+record, and the OSV advisory bytes come from the native cache zip. Packet
+findings and stored Semgrep JSON are written in canonical order, so a reversed
+tool result does not change the packet. The schema governs answered
+`where_to_look` records; prepare's prompts are checked against the unanswered
+shape.
 
 **Generalizable rule.** Close a multi-fix scanner capability with one offline
 fixture that composes every fix, compare two packets as bytes, and treat tool
