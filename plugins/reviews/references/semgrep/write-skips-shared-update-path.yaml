@@ -1,0 +1,25 @@
+rules:
+  - id: saga.write-skips-shared-update-path
+    languages:
+      - python
+      - typescript
+    severity: ERROR
+    message: A write bypasses the repository's shared update path.
+    metadata:
+      lens: correctness
+      defect: A write that skips the shared update path
+      harm: data-lost-or-corrupted
+      outcome: blocks unless the builder records a reason
+      row: correctness.pattern.write-skips-shared-update
+    patterns:
+      - pattern-either:
+          - pattern-regex: (update|clear)ProjectV2ItemFieldValue
+          - pattern-regex: gh["',\s]+project["',\s]+item-edit
+          - pattern-regex: 'singleSelectOptionId|(?:[{,]\s*)["'']?optionId["'']?\s*:'
+          - pattern-regex: (?s)gh["',\s]+api["',\s]+graphql.{0,600}?projectV2[A-Za-z]*Field
+      - pattern-not:
+          patterns:
+            - pattern-inside: $SHARED(...)
+            - metavariable-regex:
+                metavariable: $SHARED
+                regex: example_shared_write|illustrative_update_path

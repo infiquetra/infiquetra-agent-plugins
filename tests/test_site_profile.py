@@ -1101,7 +1101,13 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 29. Cycle 28 remains the proof of the bytes
+        The document is cycle 30. Cycle 29 remains the proof of the bytes
+        before issue #329 widened the Semgrep rule-test directory exemption
+        in ``scripts/check_repo.py`` so ``plugins/reviews`` is accepted beside
+        ``plugins/saga``. Cycle 30 re-grades that exemption (three mutations,
+        three killed) and carries the other four digests.
+
+        Cycle 29's account follows. Cycle 28 remains the proof of the bytes
         before issue #237 made Muse a plugin-marketplace assessment client
         and added the current client-inventory guard. Cycle 29 re-grades those
         guards in ``scripts/assess_clients.py`` and
@@ -1176,7 +1182,7 @@ class MutationProofBindingTest(unittest.TestCase):
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-10-13-cycle29-mutation-proof-muse-client-roster.txt"
+            "2026-11-19-cycle30-mutation-proof-reviews-semgrep-directory.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:

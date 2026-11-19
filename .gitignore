@@ -12,6 +12,7 @@ vault_pass.txt
 
 # Local agent runtime state
 .claude/
+.reviews/
 .saga/
 # Session scratch written into a target repository by the standalone skills.
 # .ideate/runs/ and .brainstorm/scratch/ must not be staged.

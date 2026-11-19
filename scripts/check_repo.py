@@ -313,7 +313,10 @@ CLAUDE_ADAPTER_DIRECTORY_NAME = "com.infiquetra.claude"
 # each target with the rule file beside it, so they cannot live anywhere else.
 # A TypeScript or JavaScript file here is accepted only when its stem names a
 # rule file in the same directory; anything unpaired is still refused.
-SEMGREP_RULE_TEST_DIRECTORY = ("plugins", "saga", "references", "semgrep")
+SEMGREP_RULE_TEST_DIRECTORY = (
+    ("plugins", "saga", "references", "semgrep"),
+    ("plugins", "reviews", "references", "semgrep"),
+)
 
 # When the repository is a git work tree, the module-source check takes its
 # candidates from git (tracked files plus untracked files ``.gitignore`` does not
@@ -1251,7 +1254,7 @@ def check_claude_module_sources(root: Path) -> list[str]:
             for index in range(len(parts) - 2)
         ):
             continue
-        if tuple(parts[:4]) == SEMGREP_RULE_TEST_DIRECTORY and (
+        if tuple(parts[:4]) in SEMGREP_RULE_TEST_DIRECTORY and (
             root / Path(*parts[:-1]) / (Path(parts[-1]).stem + ".yaml")
         ).is_file():
             continue

@@ -1,0 +1,1288 @@
+#!/usr/bin/env python3
+"""Python review adapters, built from review-tools.yaml (issue 152).
+
+Importing this module reads the yaml and builds adapter objects. It does not run a tool.
+Settings come from the base commit or from a file this module writes under the runner home.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import json
+import re
+import shlex
+import subprocess
+import sys
+import time
+from collections.abc import Callable, Mapping
+from pathlib import Path
+
+import yaml
+
+import review_dependencies
+import review_tools
+from review_tools import Adapter, Hit, ParseResult, ScanContext, ToolGap
+
+_OWNED = (
+    "bandit",
+    "pip-audit",
+    "mypy",
+    "ruff-lint",
+    "ruff-format",
+    "vulture",
+    "import-linter",
+    "cosmic-ray",
+    "pytest-randomly",
+    "pytest-socket",
+)
+_ROWS: dict[str, tuple[str, ...]] = {
+    "bandit": ("security.scanner-high", "security.scanner-medium-low"),
+    "pip-audit": ("security.dependency-high",),
+    "mypy": ("correctness.type-error", "correctness.tool-style"),
+    "ruff-lint": (
+        "correctness.tool-error", "correctness.tool-warning", "correctness.tool-style",
+        "security.scanner-medium-low",
+    ),
+    "ruff-format": ("correctness.tool-style",),
+    "vulture": ("architecture-maintainability.complexity-dead-code-naming",),
+    "import-linter": ("architecture-maintainability.structural-check-fails",),
+    "cosmic-ray": ("testing.surviving-mutant",),
+    "pytest-randomly": ("testing.flaky-order-or-network",),
+    "pytest-socket": ("testing.flaky-order-or-network",),
+}
+_VERSION_ARGV = {
+    "pytest-randomly": (
+        "python3", "-c",
+        "import importlib.metadata as m; print(m.version('pytest-randomly'))",
+    ),
+    "pytest-socket": (
+        "python3", "-c",
+        "import importlib.metadata as m; print(m.version('pytest-socket'))",
+    ),
+}
+_MYPY_LINE = re.compile(
+    r"^(?P<path>.+?):(?P<line>\d+):(?:(?P<col>\d+):)? "
+    r"(?P<level>error|note|warning): (?P<message>.*)$"
+)
+_VULTURE_LINE = re.compile(r"^(?P<path>.+?):(?P<line>\d+): (?P<message>unused .+)$")
+_CONTRACT_LINE = re.compile(r"^(.+?) (KEPT|BROKEN)$")
+_CODE_SUFFIX = re.compile(r"\[([A-Za-z0-9_-]+)\]\s*$")
+
+# Rewrites ruff's absolute filenames to paths relative to the scanned root.
+_RUFF_WRAPPER = r"""
+import json, subprocess, sys
+argv = sys.argv[sys.argv.index("--") + 1:]
+root = argv[-1].replace("\\", "/").rstrip("/")
+proc = subprocess.run(argv, capture_output=True, text=True)
+try:
+    data = json.loads(proc.stdout or "[]")
+except json.JSONDecodeError:
+    sys.stdout.write(proc.stdout or "")
+    raise SystemExit(proc.returncode)
+prefix = root + "/"
+if isinstance(data, list):
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("filename") or "").replace("\\", "/")
+        if name.startswith(prefix):
+            item["filename"] = name[len(prefix):]
+        elif name.startswith("./"):
+            item["filename"] = name[2:]
+sys.stdout.write(json.dumps(data))
+raise SystemExit(proc.returncode)
+"""
+
+# Copies Python files without a project config, then runs vulture from that copy.
+_VULTURE_WRAPPER = r"""
+import subprocess, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+dest = Path(sys.argv[2])
+rels = sys.argv[3:]
+for rel in rels:
+    source = root / rel
+    target = dest / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+if not rels:
+    raise SystemExit(0)
+proc = subprocess.run(["vulture", *rels], cwd=dest, capture_output=True, text=True)
+sys.stdout.write(proc.stdout or "")
+raise SystemExit(proc.returncode)
+"""
+
+# Shared per-run budget in seconds: the config's per-mutant timeout and the
+# wrapper's baseline bound are the same value (issue 227). A suite slower than
+# this fails the baseline instead of timing out per mutant into all-killed.
+_COSMIC_TIMEOUT_SECONDS = 300
+#: The wrapper's reasons for a session that ran no mutant: the row is a gap with that reason.
+_COSMIC_NO_RUN = frozenset({"baseline-failed", "baseline-timeout", "init-failed", "cap"})
+#: Every reason the wrapper writes. ``cap`` is not one: only the runner's shared cap is ``cap``.
+_COSMIC_REASONS = _COSMIC_NO_RUN | {"mutant-abnormal"}
+#: The most changed-line mutants one review runs, in a stable order (see the DECISIONS entry of
+#: 2026-11-11 for how it was sized). The rest are recorded as reason ``mutant-budget``.
+COSMIC_MUTANT_BUDGET = 10
+#: Seconds the session keeps in hand under the shared cap, to interrupt cosmic-ray, dump what
+#: finished and return before the runner's own deadline.
+_COSMIC_STOP_MARGIN = 60
+#: The safety stop's distance when the runner gives no mutation deadline (a direct call).
+_COSMIC_STOP_NONE = 900
+
+# Runs one cosmic-ray session: baseline first, then init, exec, dump. Reads the
+# 8.7.0 dump as [work_item, result] arrays. Anything it cannot prove clean is
+# unfinished, with the reason it stopped: baseline-failed, baseline-timeout,
+# init-failed or mutant-abnormal. Only the runner's shared cap is ever ``cap``.
+# argv[2] overrides the baseline budget; tests use that, production passes
+# _COSMIC_TIMEOUT_SECONDS.
+_COSMIC_WRAPPER = r"""
+import atexit, json, os, shlex, signal, subprocess, sys, tempfile, tomllib
+import xml.etree.ElementTree as ET
+config = sys.argv[1]
+try:
+    budget = float(sys.argv[2])
+except (IndexError, ValueError):
+    budget = 300.0
+if not budget > 0:
+    budget = 300.0
+# argv[3], when given, is the wall-clock time (seconds since the epoch) by which the session must
+# have stopped and dumped what it finished: safely inside the runner's shared mutation cap.
+try:
+    stop_by = float(sys.argv[3])
+except (IndexError, ValueError):
+    stop_by = None
+# argv[4] and argv[5], when given, are the mutant budget and the program that applies it.
+try:
+    mutant_budget = int(sys.argv[4])
+    BUDGET = sys.argv[5]
+except (IndexError, ValueError):
+    mutant_budget = None
+counts = {}
+import time
+def _left():
+    return None if stop_by is None else stop_by - time.time()
+def _tail(*outputs):
+    # The end of a failed step's output, for the operator's private prepare diagnostics: the
+    # runner keeps this script's stderr there, never in the packet.
+    for text in outputs:
+        lines = (text or "").splitlines()[-40:]
+        if lines:
+            sys.stderr.write("\n".join(lines) + "\n")
+def _done(unfinished, survivors, reason=None):
+    payload = {"unfinished": unfinished, "survivors": survivors}
+    if counts:
+        payload["mutants"] = counts
+    if unfinished:
+        payload["reason"] = reason or "mutant-abnormal"
+    print(json.dumps(payload))
+    raise SystemExit(0)
+try:
+    with open(config, "rb") as handle:
+        test_command = tomllib.load(handle)["cosmic-ray"]["test-command"]
+except (OSError, ValueError, KeyError):
+    _done(True, [], "init-failed")
+if not isinstance(test_command, str):
+    _done(True, [], "init-failed")
+# JUnit attributes carry identities separately from failure messages. The report is private
+# scratch, never part of the packet or the mutation command saved in the configuration.
+report_directory = tempfile.TemporaryDirectory(prefix="saga-baseline-")
+atexit.register(report_directory.cleanup)
+report_path = os.path.join(report_directory.name, "baseline.xml")
+def _baseline(command):
+    left = _left()
+    if left is not None and left <= 0:
+        return "cap", "", ""
+    argv = shlex.split(command)
+    if is_pytest:
+        argv.extend(["--junitxml=" + report_path, "-o", "junit_family=xunit1", "--junit-prefix="])
+    try:
+        os.unlink(report_path)
+    except FileNotFoundError:
+        pass
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
+        )
+    except (OSError, ValueError):
+        return "failed", "", ""
+    left = _left()
+    try:
+        out, err = proc.communicate(timeout=budget if left is None else max(0.0, min(budget, left)))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (AttributeError, OSError):
+            proc.kill()
+        out, err = proc.communicate()
+        reason = "cap" if left is not None and left <= budget else "timeout"
+        return reason, out, err
+    return ("passed" if proc.returncode == 0 else "failed"), out, err
+def _without_failures(command):
+    # Never parse the console summary: both parameter ids and messages may contain " - ".
+    if not is_pytest:
+        return None
+    try:
+        cases = ET.parse(report_path).getroot().iter("testcase")
+    except (OSError, ET.ParseError):
+        return None
+    flags = []
+    for case in cases:
+        if case.find("failure") is None and case.find("error") is None:
+            continue
+        path = case.get("file")
+        name = case.get("name")
+        classname = case.get("classname", "")
+        if not path or not name:
+            return None
+        module = path.replace("/", ".").removesuffix(".py")
+        if not classname:  # A collection error names the file, not a runnable test.
+            flags.append("--ignore=" + path)
+        elif classname == module or classname.startswith(module + "."):
+            classes = classname[len(module):].lstrip(".")
+            node = "::".join([path, *(classes.split(".") if classes else []), name])
+            flags.append("--deselect=" + node)
+        else:
+            # An imported or custom test whose XML identity cannot be reconstructed safely.
+            return None
+    if not flags or len(flags) > 200:
+        return None
+    return shlex.join([*shlex.split(command), *sorted(set(flags))])
+def _rewrite(command):
+    with open(config, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+    lines = [("test-command = " + json.dumps(command)) if line.startswith("test-command = ")
+             else line for line in lines]
+    with open(config, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+# A profile may request fail-fast, but the baseline must name every pre-existing failure.
+words = shlex.split(test_command)
+is_pytest = any(os.path.basename(word) in {"pytest", "py.test"} for word in words)
+if is_pytest:
+    test_command = shlex.join([word for word in words if word not in {"-x", "--exitfirst"}])
+started = time.time()
+state, out, err = _baseline(test_command)
+sys.stderr.write(f"baseline: {state} after {time.time() - started:.0f} seconds\n")
+if state in {"timeout", "cap"}:
+    _tail(out, err)
+    _done(True, [], "cap" if state == "cap" else "baseline-timeout")
+if state == "failed":
+    narrowed = _without_failures(test_command)
+    if narrowed is None:
+        _tail(out, err)
+        _done(True, [], "baseline-failed")
+    started = time.time()
+    state, again_out, again_err = _baseline(narrowed)
+    sys.stderr.write(f"narrowed baseline: {state} after {time.time() - started:.0f} seconds\n")
+    if state != "passed":
+        _tail(out, err, again_out, again_err)
+        reason = {"cap": "cap", "timeout": "baseline-timeout"}.get(state, "baseline-failed")
+        _done(True, [], reason)
+    sys.stderr.write("baseline: left out the tests that failed before any mutation\n")
+    _tail(out)
+    test_command = narrowed
+# A mutant is killed by its first failing test: pytest stops there (-x), so a killed mutant costs
+# a fraction of a full run. The baseline ran without it, so every failing test was named.
+words = shlex.split(test_command)
+if (any(os.path.basename(word) in {"pytest", "py.test"} for word in words)
+        and not {"-x", "--exitfirst"} & set(words)):
+    test_command = shlex.join([*words, "-x"])
+_rewrite(test_command)
+session = config + ".sqlite"
+init = subprocess.run(["cosmic-ray", "init", config, session], capture_output=True, text=True)
+if init.returncode != 0:
+    _tail(init.stdout, init.stderr)
+    _done(True, [], "init-failed")
+# Skip every mutant off the change's lines; init alone queues whole files.
+scoped = subprocess.run(
+    ["cr-filter-git", session, "--config", config], capture_output=True, text=True
+)
+if scoped.returncode != 0:
+    _tail(scoped.stdout, scoped.stderr)
+    _done(True, [], "init-failed")
+# A fixed number of the changed-line mutants, in a stable order, so a repeat prepare runs the same
+# set: the rest are marked skipped. Run by the interpreter cosmic-ray's own script names, the one
+# that can import it.
+def _cosmic_python():
+    import shutil
+    found = shutil.which("cosmic-ray")
+    try:
+        with open(found or "", "rb") as handle:
+            first = handle.readline().decode("utf-8", "replace")
+    except OSError:
+        return sys.executable
+    words = first[2:].split() if first.startswith("#!") else []
+    return words[0] if words and os.path.isabs(words[0]) else sys.executable
+if mutant_budget is not None:
+    try:
+        budgeted = subprocess.run(
+            [_cosmic_python(), "-c", BUDGET, session, str(mutant_budget)],
+            capture_output=True, text=True,
+        )
+        counts = json.loads(budgeted.stdout)
+    except (OSError, json.JSONDecodeError):
+        budgeted, counts = None, {}
+    if (budgeted is None or budgeted.returncode != 0 or not isinstance(counts, dict)
+            or "changed" not in counts):
+        counts = {}
+        if budgeted is not None:
+            _tail(budgeted.stdout, budgeted.stderr)
+        _done(True, [], "init-failed")
+left = _left()
+if left is not None and left <= 0:
+    _done(True, [], "cap")
+runner = subprocess.Popen(
+    ["cosmic-ray", "exec", config, session],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+)
+stopped = False
+started = time.time()
+try:
+    ran_out, ran_err = runner.communicate(timeout=left)
+except subprocess.TimeoutExpired:
+    # Out of time, a safety stop only: interrupt the session (cosmic-ray restores the module it
+    # is mutating on an interrupt). What finished depends on the clock, so none of it is reported.
+    stopped = True
+    for sig, wait in ((signal.SIGINT, 10), (signal.SIGKILL, 10)):
+        try:
+            os.killpg(os.getpgid(runner.pid), sig)
+        except (AttributeError, OSError):
+            runner.kill()
+        try:
+            ran_out, ran_err = runner.communicate(timeout=wait)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    else:
+        ran_out, ran_err = "", ""
+    _tail(ran_out, ran_err)
+    _done(True, [], "cap")
+sys.stderr.write(f"mutants: {counts.get('run', 'all')} run in {time.time() - started:.0f} "
+                 "seconds\n")
+dump = subprocess.run(
+    ["cosmic-ray", "dump", session], capture_output=True, text=True
+)
+unfinished = stopped or runner.returncode != 0 or dump.returncode != 0
+if unfinished:
+    _tail(ran_out, ran_err, dump.stderr)
+survivors = []
+for line in (dump.stdout or "").splitlines():
+    text = line.strip()
+    if not text:
+        continue
+    try:
+        row = json.loads(text)
+    except json.JSONDecodeError:
+        unfinished = True
+        continue
+    if not isinstance(row, list) or len(row) != 2:
+        unfinished = True
+        continue
+    work, result = row
+    if not isinstance(work, dict) or (result is not None and not isinstance(result, dict)):
+        unfinished = True
+        continue
+    if result is None:
+        # Not run: the session stopped before this mutant, or it never started.
+        unfinished = True
+        continue
+    if result.get("worker_outcome") == "skipped":
+        # cr-filter-git skipped a mutant off the changed lines.
+        continue
+    if result.get("worker_outcome") != "normal":
+        unfinished = True
+    outcome = result.get("test_outcome")
+    if outcome is None:
+        unfinished = True
+        continue
+    lowered = str(outcome).lower()
+    if lowered == "survived":
+        mutations = work.get("mutations") or []
+        first = mutations[0] if mutations else {}
+        path = first.get("module_path") if isinstance(first, dict) else None
+        start = first.get("start_pos") if isinstance(first, dict) else None
+        number = start[0] if isinstance(start, (list, tuple)) and start else None
+        if not path or not isinstance(number, int) or isinstance(number, bool):
+            unfinished = True
+            continue
+        survivor = {"path": str(path), "line": number}
+        if isinstance(first.get("operator_name"), str):
+            survivor["operator"] = first["operator_name"]
+        survivors.append(survivor)
+    elif lowered != "killed":
+        unfinished = True
+_done(unfinished, survivors, "mutant-abnormal")
+"""
+
+# Chooses which changed-line mutants a budget runs, spread over the change: one mutant per line,
+# lines inside control flow first (an if, elif, else, except or return line, or the body of one),
+# then lines in an order fixed by a hash of (file, line), taken round-robin across the files.
+# Plain Python, so the tests run it as is; _COSMIC_BUDGET runs it inside the cosmic-ray
+# environment against the session.
+_COSMIC_SELECT = r"""
+import hashlib
+_FLOW = ("if ", "if(", "elif ", "else:", "else ", "except", "return", "raise")
+def _flow_line(lines, number):
+    if not 1 <= number <= len(lines):
+        return False
+    text = lines[number - 1]
+    if text.strip().startswith(_FLOW):
+        return True
+    indent = len(text) - len(text.lstrip())
+    for earlier in range(number - 2, -1, -1):
+        above = lines[earlier]
+        if not above.strip():
+            continue
+        if len(above) - len(above.lstrip()) < indent:
+            return above.strip().startswith(_FLOW)
+    return False
+def select(candidates, budget, read):
+    # candidates: (file, line, column, operator, occurrence, job_id); read(file) -> list of lines.
+    # One mutant per line per round; a second round only when every line already has one.
+    per_line = {}
+    for item in sorted(candidates):
+        per_line.setdefault((item[0], item[1]), []).append(item)
+    files = {}
+    for (name, number) in per_line:
+        files.setdefault(name, []).append(number)
+    ordered = []
+    for name in sorted(files):
+        lines = read(name)
+        def order(number, name=name, lines=lines):
+            digest = hashlib.sha256(f"{name}:{number}".encode()).hexdigest()
+            return (not _flow_line(lines, number), digest)
+        ordered.append([(name, number) for number in sorted(files[name], key=order)])
+    chosen = []
+    depth = 0
+    while len(chosen) < budget and depth < max((len(v) for v in per_line.values()), default=0):
+        queues = [list(lines) for lines in ordered]
+        while len(chosen) < budget and any(queues):
+            for queue in queues:
+                while queue and len(chosen) < budget:
+                    key = queue.pop(0)
+                    if depth < len(per_line[key]):
+                        chosen.append(per_line[key][depth])
+                        break
+        depth += 1
+    return chosen, len(per_line), len(files)
+"""
+
+# Marks every changed-line mutant the budget does not choose skipped, and prints the counts.
+# Runs inside the cosmic-ray environment, from the scan's root.
+_COSMIC_BUDGET = _COSMIC_SELECT + r"""
+import json, sys
+from cosmic_ray.work_db import WorkDB, use_db
+from cosmic_ray.work_item import WorkerOutcome, WorkResult
+session, budget = sys.argv[1], int(sys.argv[2])
+def read(name):
+    try:
+        with open(name, encoding="utf-8", errors="replace") as handle:
+            return handle.read().splitlines()
+    except OSError:
+        return []
+with use_db(session, WorkDB.Mode.open) as db:
+    pending = list(db.pending_work_items)
+    candidates = []
+    for item in pending:
+        first = item.mutations[0]
+        candidates.append((str(first.module_path), int(first.start_pos[0]),
+                           int(first.start_pos[1]), first.operator_name, int(first.occurrence),
+                           item.job_id))
+    chosen, lines, files = select(candidates, budget, read)
+    keep = {item[5] for item in chosen}
+    over = [item.job_id for item in pending if item.job_id not in keep]
+    if over:
+        db.set_multiple_results(over, WorkResult(output="mutant budget",
+                                                 worker_outcome=WorkerOutcome.SKIPPED))
+print(json.dumps({
+    "changed": len(pending), "run": len(chosen),
+    "lines": lines, "files": files,
+    "covered_lines": len({(item[0], item[1]) for item in chosen}),
+    "covered_files": len({item[0] for item in chosen}),
+}))
+"""
+
+
+def _document() -> dict[str, object]:
+    loaded = yaml.safe_load(review_tools.TOOL_LIST.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise review_tools.RunnerFailure(2, "review-tools.yaml must be an object")
+    return loaded
+
+
+def _show(repo: Path, revision: str, path: str) -> str | None:
+    if not revision:
+        return None
+    result = subprocess.run(
+        ["git", "show", f"{revision}:{path}"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _rel(path: str) -> str:
+    text = path.replace("\\", "/")
+    return text[2:] if text.startswith("./") else text
+
+
+def _py_rels(root: Path) -> list[str]:
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in review_tools.scan_files(root)
+        if path.suffix == ".py" and path.is_file()
+    )
+
+
+def _changed_python(context: ScanContext) -> list[str]:
+    """Python files this review changed. cosmic-ray 8.7 reads one module-path string as one file."""
+    if not context.base:
+        return _py_rels(context.root)
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=ACMR", context.base, "HEAD"],
+        cwd=context.root, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return _py_rels(context.root)
+    found = []
+    for line in result.stdout.splitlines():
+        rel = line.strip().replace("\\", "/")
+        if rel.endswith(".py") and (context.root / rel).is_file():
+            found.append(rel)
+    return sorted(set(found))
+
+
+def _toml(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _toml_list(values: list[str]) -> str:
+    return "[" + ", ".join(_toml(item) for item in values) + "]"
+
+
+def _strip_randomly(argv: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    index = 0
+    while index < len(argv):
+        part = argv[index]
+        nxt = argv[index + 1] if index + 1 < len(argv) else ""
+        if part == "-p" and nxt in {"randomly", "no:randomly"}:
+            index += 2
+            continue
+        if part in {"-prandomly", "-pno:randomly"}:
+            index += 1
+            continue
+        cleaned.append(part)
+        index += 1
+    return cleaned
+
+
+def _resolve_python_head(parts: list[str]) -> list[str]:
+    """Rewrite a bare python head to this interpreter (issue 227).
+
+    A bare ``python`` resolves through PATH, which the temporary uv
+    environment shadows with an interpreter that has no pytest. Every other
+    head passes through: this adapter cannot know what ``make`` needs.
+    """
+
+    if parts and parts[0] in {"python", "python3"}:
+        return [sys.executable, *parts[1:]]
+    return parts
+
+
+def _family_level(code: str, mapping: Mapping[str, str]) -> str:
+    if code in mapping:
+        return mapping[code]
+    best = ""
+    level = "warning"
+    for prefix, mapped in mapping.items():
+        if not code.startswith(prefix) or len(prefix) <= len(best):
+            continue
+        rest = code[len(prefix):]
+        if rest and rest[0].isdigit():
+            best = prefix
+            level = mapped
+    return level
+
+
+def _invoke_bandit(context: ScanContext) -> list[str]:
+    context.home.mkdir(parents=True, exist_ok=True)
+    config = context.home / "bandit.toml"
+    config.write_text("[tool.bandit]\nskips = []\n", encoding="utf-8")
+    return [
+        "bandit", "-f", "json", "-q", "--ignore-nosec",
+        "-c", str(config), "-r", ".",
+    ]
+
+
+def _stable_bandit(text: str) -> str:
+    """bandit's report without ``generated_at``, which differs on every run (issue 244)."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if isinstance(data, dict):
+        data.pop("generated_at", None)
+    return json.dumps(data, indent=2, sort_keys=True) + "\n"
+
+
+def _parse_bandit(text: str) -> ParseResult:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError("bandit output is not json") from exc
+    if not isinstance(data, dict):
+        raise ValueError("bandit output must be an object")
+    hits: list[Hit] = []
+    for item in data.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        severity = str(item.get("issue_severity") or "").upper()
+        row = (
+            "security.scanner-high" if severity == "HIGH" else "security.scanner-medium-low"
+        )
+        test_id = str(item.get("test_id") or "bandit")
+        path = _rel(str(item.get("filename") or "."))
+        summary = " ".join(str(item.get("issue_text") or "").split())
+        start = item.get("line_number")
+        line = int(start) if isinstance(start, int) else None
+        hits.append(Hit(
+            rule_id=test_id,
+            path=path,
+            statement=f"{test_id} {summary}".strip(),
+            anchor=f"{test_id} {path}",
+            start=line,
+            end=line,
+            row=row,
+        ))
+    return ParseResult(tuple(hits))
+
+
+def _invoke_pip_audit(context: ScanContext) -> list[str]:
+    if context.repository_scan:
+        files, _unsupported = pip_audit_scan_inputs(context.root)
+        if not files:
+            return []
+        argv = [
+            "pip-audit", "--format", "json", "--progress-spinner", "off",
+            "--disable-pip", "--no-deps",
+        ]
+        for name in files:
+            argv.extend(["--requirement", name])
+        return argv
+    files = [
+        path.relative_to(context.root).as_posix()
+        for path in review_tools.scan_files(context.root)
+        if fnmatch.fnmatchcase(path.name, "requirements*.txt") and path.is_file()
+    ]
+    if not files:
+        return []
+    argv = ["pip-audit", "--format", "json", "--progress-spinner", "off"]
+    for name in sorted(files):
+        argv.extend(["--requirement", name])
+    return argv
+
+
+def pip_audit_scan_inputs(root: Path) -> tuple[list[str], list[str]]:
+    """Only literal exact pins may reach the scan's resolver-free audit invocation.
+
+    Includes, local paths, URLs, wildcards and installer options are unsupported input,
+    not an invitation to invoke pip. Keep this policy beside the invocation it governs.
+    """
+    exact = re.compile(
+        r"^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\[[A-Za-z0-9_,. -]+\])?"
+        r"\s*==\s*[A-Za-z0-9][A-Za-z0-9_.+!-]*(?:\s*;[^\r\n]+)?$"
+    )
+    accepted: list[str] = []
+    unsupported: list[str] = []
+    for path in review_tools.scan_files(root):
+        if not fnmatch.fnmatchcase(path.name, "requirements*.txt"):
+            continue
+        name = path.relative_to(root).as_posix()
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("not a regular file")
+            lines = [line.split(" #", 1)[0].strip() for line in path.read_text().splitlines()]
+            entries = [line for line in lines if line and not line.startswith("#")]
+            valid = bool(entries) and all(exact.fullmatch(line) for line in entries)
+        except (OSError, UnicodeError, ValueError):
+            valid = False
+        (accepted if valid else unsupported).append(name)
+    return sorted(accepted), sorted(unsupported)
+
+
+def _parse_pip_audit(text: str) -> ParseResult:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError("pip-audit output is not json") from exc
+    if not isinstance(data, dict):
+        raise ValueError("pip-audit output must be an object")
+    hits: list[Hit] = []
+    for dependency in data.get("dependencies") or []:
+        if not isinstance(dependency, dict):
+            continue
+        for vuln in dependency.get("vulns") or []:
+            if not isinstance(vuln, dict) or not vuln.get("id"):
+                continue
+            identifiers = [str(vuln["id"])]
+            for alias in vuln.get("aliases") or []:
+                if alias and str(alias) not in identifiers:
+                    identifiers.append(str(alias))
+            canonical = identifiers[0]
+            hits.append(Hit(
+                rule_id=canonical,
+                path="requirements.txt",
+                statement=f"Dependency advisory {canonical}.",
+                anchor=canonical,
+                advisory_ids=tuple(identifiers),
+                score=None,
+                whole_project=True,
+                row="security.dependency-high",
+            ))
+    return ParseResult(tuple(hits))
+
+
+def _mypy_config(context: ScanContext) -> Path:
+    pyproject = _show(context.repo, context.base, "pyproject.toml")
+    if pyproject and "[tool.mypy]" in pyproject:
+        dest = context.home / "mypy-review.toml"
+        dest.write_text(pyproject, encoding="utf-8")
+        return dest
+    for name in ("mypy.ini", ".mypy.ini"):
+        text = _show(context.repo, context.base, name)
+        if text:
+            dest = context.home / "mypy-review.ini"
+            dest.write_text(text, encoding="utf-8")
+            return dest
+    setup = _show(context.repo, context.base, "setup.cfg")
+    if setup and "[mypy]" in setup:
+        dest = context.home / "mypy-review.cfg"
+        dest.write_text(setup, encoding="utf-8")
+        return dest
+    dest = context.home / "mypy-review.ini"
+    dest.write_text("[mypy]\n", encoding="utf-8")
+    return dest
+
+
+def _invoke_mypy(context: ScanContext) -> list[str]:
+    if not _py_rels(context.root):
+        return []
+    return [
+        "mypy",
+        "--config-file", str(_mypy_config(context)),
+        "--show-column-numbers",
+        "--hide-error-context",
+        "--no-color-output",
+        "--no-error-summary",
+        "--no-pretty",
+        "--follow-imports=silent",
+        ".",
+    ]
+
+
+def _parse_mypy(text: str) -> ParseResult:
+    hits: list[Hit] = []
+    for raw in text.splitlines():
+        match = _MYPY_LINE.match(raw.strip())
+        if match is None:
+            continue
+        message = match.group("message").strip()
+        code_match = _CODE_SUFFIX.search(message)
+        code = code_match.group(1) if code_match else ""
+        if code_match is not None:
+            message = message[:code_match.start()].strip()
+        word = match.group("level")
+        row = (
+            "correctness.tool-style" if code in {"import-not-found", "import-untyped"}
+            else "correctness.type-error" if word == "error" else None
+        )
+        level = None if row else ("style" if word == "note" else word)
+        line = int(match.group("line"))
+        hits.append(Hit(
+            rule_id=code or "mypy",
+            path=_rel(match.group("path")),
+            statement=message or "mypy reported a finding.",
+            anchor=f"{code} {message}".strip(),
+            level=level,
+            start=line,
+            end=line,
+            row=row,
+        ))
+    return ParseResult(tuple(hits))
+
+
+#: Test files, where ``assert`` is how a test checks a result. ``S101`` ("use of assert") is
+#: ruff's flake8-bandit rule for production code, which is stripped under ``python -O``; in a
+#: test file it is never a defect. The standard convention is a per-file ignore for these paths.
+_RUFF_TEST_FILES = ("test_*.py", "*_test.py", "tests.py", "conftest.py")
+_RUFF_TEST_FOLDERS = ("tests", "test")
+#: Rules ruff reports for tests that are not findings.
+_RUFF_TEST_IGNORED = ("S101",)
+#: Where the flake8-bandit rules (the ``S`` family, level ``security`` in the family map) go.
+_RUFF_SECURITY_ROW = "security.scanner-medium-low"
+
+
+def _glob_escape(text: str) -> str:
+    """*text* with ruff's glob metacharacters escaped, so a scan root is matched literally."""
+    return re.sub(r"([\\*?\[\]{}])", r"\\\1", text)
+
+
+def _ruff_per_file_ignores(root: Path) -> str:
+    """Inline TOML for ``--config``: the test-path ignores, anchored at the scan root.
+
+    ``--isolated`` drops every config file, so the reviewed repository's own per-file ignores
+    never apply and a convention has to be passed on the command line. Each pattern starts with
+    the scan root, so a root that happens to sit under a folder named ``tests`` does not make
+    every file in it a test file.
+    """
+    base = _glob_escape(root.as_posix().rstrip("/"))
+    patterns = [f"{base}/**/{name}" for name in _RUFF_TEST_FILES]
+    patterns += [f"{base}/**/{folder}/**" for folder in _RUFF_TEST_FOLDERS]
+    rules = json.dumps(list(_RUFF_TEST_IGNORED))
+    # ``ensure_ascii=False``: ``json.dumps`` writes a character outside the Basic Multilingual
+    # Plane as a surrogate pair, which is not valid in a TOML string; TOML takes the character.
+    table = ", ".join(
+        f"{json.dumps(pattern, ensure_ascii=False)} = {rules}" for pattern in patterns
+    )
+    return f"lint.per-file-ignores = {{{table}}}"
+
+
+def _invoke_ruff(pin: str) -> Callable[[ScanContext], list[str]]:
+    """Ruff at the row pin through uv, whatever PATH holds (issue 226)."""
+
+    def invoke(context: ScanContext) -> list[str]:
+        return [
+            "python3", "-c", _RUFF_WRAPPER, "--",
+            "uv", "run", "--with", f"ruff=={pin}",
+            "ruff", "check", "--isolated", "--ignore-noqa", "--select", "ALL",
+            "--config", _ruff_per_file_ignores(context.root),
+            "--output-format", "json", str(context.root),
+        ]
+
+    return invoke
+
+
+def _parse_ruff(mapping: Mapping[str, str]) -> Callable[[str], ParseResult]:
+    def parse(text: str) -> ParseResult:
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("ruff output is not json") from exc
+        if isinstance(data, dict):
+            data = data.get("diagnostics") or data.get("results") or []
+        if not isinstance(data, list):
+            raise ValueError("ruff output must be a list")
+        hits: list[Hit] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("code") or "ruff")
+            location = item.get("location") if isinstance(item.get("location"), dict) else {}
+            end = item.get("end_location") if isinstance(item.get("end_location"), dict) else {}
+            start = location.get("row")
+            stop = end.get("row") if isinstance(end.get("row"), int) else start
+            message = " ".join(str(item.get("message") or code).split())
+            level = _family_level(code, mapping)
+            # A flake8-bandit rule is a lead for a security look, never a proven correctness
+            # error: it goes to the row bandit's own MEDIUM and LOW findings use, which fixes
+            # later and never blocks. Ruff reports no severity, so none is claimed as HIGH.
+            row = _RUFF_SECURITY_ROW if level == "security" else None
+            hits.append(Hit(
+                rule_id=code,
+                path=_rel(str(item.get("filename") or ".")),
+                statement=f"{code} {message}",
+                anchor=code,
+                level=None if row else level,
+                row=row,
+                start=int(start) if isinstance(start, int) else None,
+                end=int(stop) if isinstance(stop, int) else None,
+            ))
+        return ParseResult(tuple(hits))
+
+    return parse
+
+
+def _invoke_vulture(context: ScanContext) -> list[str]:
+    files = _py_rels(context.root)
+    if not files:
+        return []
+    dest = review_tools.scan_folder(context, "vulture-src")
+    return ["python3", "-c", _VULTURE_WRAPPER, str(context.root), str(dest), *files]
+
+
+def _parse_vulture(text: str) -> ParseResult:
+    hits: list[Hit] = []
+    for raw in text.splitlines():
+        match = _VULTURE_LINE.match(raw.strip())
+        if match is None:
+            continue
+        line = int(match.group("line"))
+        message = " ".join(match.group("message").split())
+        hits.append(Hit(
+            rule_id="vulture",
+            path=_rel(match.group("path")),
+            statement=message,
+            anchor=message,
+            start=line,
+            end=line,
+            row="architecture-maintainability.complexity-dead-code-naming",
+        ))
+    return ParseResult(tuple(hits))
+
+
+def _invoke_import_linter(context: ScanContext) -> list[str]:
+    text = _show(context.repo, context.base, ".importlinter")
+    if text is None:
+        pyproject = _show(context.repo, context.base, "pyproject.toml") or ""
+        if "[tool.importlinter]" not in pyproject:
+            return []
+        text = pyproject
+    dest = context.home / "import-linter.cfg"
+    dest.write_text(text, encoding="utf-8")
+    return ["lint-imports", "--config", str(dest)]
+
+
+def _parse_import_linter(text: str) -> ParseResult:
+    hits: list[Hit] = []
+    for raw in text.splitlines():
+        match = _CONTRACT_LINE.match(raw.strip())
+        if match is None or match.group(2) != "BROKEN":
+            continue
+        name = " ".join(match.group(1).split())
+        hits.append(Hit(
+            rule_id=name,
+            path=".",
+            statement=f"Import contract {name} is broken.",
+            anchor=name,
+            whole_project=True,
+            row="architecture-maintainability.structural-check-fails",
+        ))
+    return ParseResult(tuple(hits))
+
+
+#: The most test files a mutation run names. The baseline and every mutant run them all, so the
+#: bound keeps one mutant's run short; when it cuts the list, the cut is logged.
+_COSMIC_MAX_TEST_FILES = 10
+
+
+def _mentions(path: Path, names: frozenset[str]) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(re.search(rf"\b{re.escape(name)}\b", text) for name in names)
+
+
+def _cosmic_tests(context: ScanContext, modules: list[str]) -> list[str]:
+    """The test files the baseline and every mutant run, named explicitly.
+
+    Every test file that mentions a mutated module, the change's own first and then the tree's,
+    smallest first, up to ``_COSMIC_MAX_TEST_FILES``: a mutant an existing test elsewhere kills
+    must not be reported as surviving. With none, the change's own test files. Naming them keeps a
+    project's default collection (a glob a shell never expanded, a ``testpaths`` setting) from
+    failing the baseline.
+    """
+    names = frozenset(Path(module).stem for module in modules)
+    changed = review_tools.changed_test_files(context.change, context.root)
+    own = [rel for rel in changed if _mentions(context.root / rel, names)]
+    others: list[tuple[int, str]] = []
+    for path in review_tools.scan_files(context.root):
+        rel = path.relative_to(context.root).as_posix()
+        if rel in own or not review_tools.is_python_test_file(rel) or not path.is_file():
+            continue
+        if _mentions(path, names):
+            others.append((path.stat().st_size, rel))
+    chosen = own + [rel for _size, rel in sorted(others)]
+    if not chosen:
+        return changed[:_COSMIC_MAX_TEST_FILES]
+    if len(chosen) > _COSMIC_MAX_TEST_FILES:
+        print(
+            f"cosmic-ray: {len(chosen)} test files mention the mutated modules; "
+            f"running the first {_COSMIC_MAX_TEST_FILES} (the change's own, then the smallest)",
+            file=sys.stderr,
+        )
+    return sorted(chosen[:_COSMIC_MAX_TEST_FILES])
+
+
+def _cosmic_test_argv(context: ScanContext, command: str, modules: list[str]) -> list[str]:
+    """The baseline's and every mutant's test command.
+
+    A command that runs pytest runs the tests :func:`_cosmic_tests` names, with the command's
+    own options. With the packet's Python environment it runs them with that environment's
+    interpreter, by path, so the tests import the change's installed dependencies and not
+    ``uv run``'s temporary environment (the one that holds cosmic-ray). No test file to name is
+    the gap ``no-tests-for-change``. Any other command runs as before.
+    """
+    read = review_tools.read_pytest_command(command)
+    if read is None:
+        argv = _resolve_python_head([*_strip_randomly(shlex.split(command)), "-p", "no:randomly"])
+        environment = (review_dependencies.python_shim_env(context.python_env)
+                       if context.python_env is not None else {"PYTHONDONTWRITEBYTECODE": "1"})
+        return ["env", *[f"{name}={value}" for name, value in environment.items()], *argv]
+    tests = _cosmic_tests(context, modules)
+    if not tests:
+        raise ToolGap("no-tests-for-change", "testing.surviving-mutant")
+    options = [*_strip_randomly(review_tools.pytest_options(read.arguments)), "-p", "no:randomly"]
+    if context.python_env is not None:
+        argv = review_tools.python_env_argv(context.python_env, [*options, *tests])
+    else:
+        argv = [*_resolve_python_head(list(read.launcher)), *options, *tests]
+    # The command's own ``NAME=value`` assignments (``PYTHONPATH=tests``) stay with it. Over the
+    # packet's packages no run writes bytecode: set in the command, so the baseline, every mutant
+    # and whatever they start inherit it, and the packet stays as the fetch wrote it.
+    assigned = [f"{name}={value}" for name, value in read.env]
+    if context.python_env is not None:
+        assigned.extend(f"{name}={value}" for name, value in
+                        review_dependencies.python_shim_env(context.python_env).items())
+    return ["env", *assigned, *argv] if assigned else argv
+
+
+def _invoke_cosmic(context: ScanContext) -> list[str]:
+    command = context.test_command.strip()
+    if not command:
+        raise ToolGap("known-gap", "testing.surviving-mutant")
+    # Test files are what the mutants are checked against, never mutated themselves.
+    modules = [rel for rel in _changed_python(context)
+               if not review_tools.is_python_test_file(rel)]
+    if not modules:
+        return []
+    parts = _cosmic_test_argv(context, command, modules)
+    # The config, and the session database the wrapper writes beside it, live in the scan's own
+    # folder. In the runner home the session database survived into the next prepare (issue 147).
+    toml = review_tools.scan_folder(context, "cosmic-ray") / "cosmic-ray.toml"
+    toml.write_text(
+        "\n".join([
+            "[cosmic-ray]",
+            f"module-path = {_toml_list(modules)}",
+            f"timeout = {float(_COSMIC_TIMEOUT_SECONDS)}",
+            "excluded-modules = []",
+            f"test-command = {_toml(shlex.join(parts))}",
+            "",
+            "[cosmic-ray.distributor]",
+            'name = "local"',
+            "",
+            "[cosmic-ray.filters.git-filter]",
+            f"branch = {_toml(context.base)}",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    argv = [
+        "uv", "run", "--with", "cosmic-ray==8.7.0",
+        sys.executable, "-c", _COSMIC_WRAPPER, str(toml), str(_COSMIC_TIMEOUT_SECONDS),
+    ]
+    # A wall-clock time, since the wrapper is another process: a safety stop inside the cap.
+    left = (context.mutation_deadline - time.monotonic() - _COSMIC_STOP_MARGIN
+            if context.mutation_deadline is not None else float(_COSMIC_STOP_NONE))
+    argv += [f"{time.time() + max(0.0, left):.0f}", str(COSMIC_MUTANT_BUDGET), _COSMIC_BUDGET]
+    return argv
+
+
+def _parse_cosmic(text: str) -> ParseResult:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError("cosmic-ray output is not json") from exc
+    if not isinstance(data, dict):
+        raise ValueError("cosmic-ray output must be an object")
+    hits: list[Hit] = []
+    for item in data.get("survivors") or []:
+        if not isinstance(item, dict):
+            continue
+        line = item.get("line")
+        start = int(line) if isinstance(line, int) else None
+        path = _rel(str(item.get("path") or "."))
+        operator = item.get("operator")
+        named = f" ({operator})" if isinstance(operator, str) and operator else ""
+        hits.append(Hit(
+            rule_id="surviving-mutant",
+            path=path,
+            statement=f"A mutant survived{named}.",
+            anchor=f"{path}:{start or 0}",
+            start=start,
+            end=start,
+            row="testing.surviving-mutant",
+        ))
+    unfinished = bool(data.get("unfinished"))
+    reason = data.get("reason")
+    if unfinished and reason in _COSMIC_NO_RUN:
+        # Nothing was mutated, or what ran depends on the clock: no answer, for this reason.
+        return ParseResult(gap=(str(reason), "testing.surviving-mutant"))
+    gaps: tuple[tuple[str, str], ...] = ()
+    details: tuple[tuple[str, str], ...] = ()
+    counts = data.get("mutants")
+    if isinstance(counts, dict):
+        changed, ran = counts.get("changed"), counts.get("run")
+        if isinstance(changed, int) and isinstance(ran, int) and changed > ran:
+            # Coverage was partial: the reviewer sees how much.
+            gaps = (("mutant-budget", "testing.surviving-mutant"),)
+            detail = f"ran {ran} of {changed} mutants on changed lines"
+            spread = [counts.get(key) for key in ("covered_lines", "lines", "covered_files",
+                                                   "files")]
+            if all(isinstance(value, int) for value in spread):
+                detail += (f", covering {spread[0]} of {spread[1]} changed lines in "
+                           f"{spread[2]} of {spread[3]} files")
+            details = (("mutant-budget", detail),)
+    if unfinished:
+        known = reason if reason in _COSMIC_REASONS else "mutant-abnormal"
+        return ParseResult(tuple(hits), unfinished=True, unfinished_reason=known, gaps=gaps,
+                           gap_details=details)
+    return ParseResult(tuple(hits), gaps=gaps, gap_details=details)
+
+
+def _pytest_argv(context: ScanContext, package: str, extra: list[str]) -> list[str]:
+    command = context.test_command.strip()
+    if not command:
+        raise ToolGap("known-gap", "testing.flaky-order-or-network")
+    parts = _resolve_python_head(_strip_randomly(shlex.split(command)))
+    return ["uv", "run", "--with", package, *parts, *extra]
+
+
+def _invoke_randomly(context: ScanContext) -> list[str]:
+    # The seed is fixed by the change, so two runs of one change test one order.
+    return _pytest_argv(
+        context, "pytest-randomly==5.0.0",
+        ["-p", "randomly", f"--randomly-seed={review_tools.change_seed(context)}"],
+    )
+
+
+def _invoke_socket(context: ScanContext) -> list[str]:
+    return _pytest_argv(
+        context, "pytest-socket==0.8.1", ["-p", "no:randomly", "--disable-socket"]
+    )
+
+
+def _parse_pytest(text: str) -> ParseResult:
+    hits: list[Hit] = []
+    for raw in text.splitlines():
+        if not raw.startswith("FAILED "):
+            continue
+        node = raw[len("FAILED "):].split(" - ", 1)[0].strip()
+        path = node.split("::", 1)[0] or "."
+        hits.append(Hit(
+            rule_id=node,
+            path=path,
+            statement=f"Test failed: {node}",
+            anchor=node,
+            whole_project=True,
+            row="testing.flaky-order-or-network",
+        ))
+    return ParseResult(tuple(hits))
+
+
+def _invoke_nothing(_context: ScanContext) -> list[str]:
+    return []
+
+
+def _parse_nothing(_text: str) -> ParseResult:
+    return ParseResult()
+
+
+def _level_map(row: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
+    mapping = row.get("level_map") or {}
+    if not isinstance(mapping, dict):
+        return ()
+    return tuple((str(key), str(value)) for key, value in mapping.items())
+
+
+def _from_row(
+    row: Mapping[str, object],
+    invoke: Callable[[ScanContext], list[str]],
+    parse: Callable[[str], ParseResult],
+    *,
+    version_argv: tuple[str, ...] = (),
+    stable_raw: Callable[[str], str] | None = None,
+) -> Adapter:
+    tool_id = str(row.get("id") or "")
+    return Adapter(
+        id=tool_id,
+        tool=str(row.get("tool") or ""),
+        invoke=invoke,
+        parse=parse,
+        languages=tuple(str(item) for item in (row.get("languages") or ["*"])),
+        rows=_ROWS[tool_id],
+        comparison=str(row.get("comparison") or "lines"),
+        lens=str(row.get("lens") or "correctness"),
+        type_checker=bool(row.get("type_checker")),
+        mutation=bool(row.get("mutation")),
+        mode=str(row.get("mode") or "report"),
+        timeout_seconds=int(row.get("timeout_seconds") or 120),
+        version_args=tuple(str(item) for item in (row.get("version_args") or ("--version",))),
+        default_version=str(row.get("default_version") or "not-recorded"),
+        curated_rules=tuple(str(item) for item in (row.get("curated_block_rules") or ())),
+        level_map=_level_map(row),
+        version_argv=version_argv,
+        narrow_env=bool(row.get("narrow_env")),
+        stable_raw=stable_raw,
+    )
+
+
+# A pytest transcript ends "1 failed in 0.01s", which differs between runs.
+_STABLE_RAW: dict[str, Callable[[str], str]] = {
+    "bandit": _stable_bandit,
+    "pytest-randomly": review_tools.stable_transcript,
+    "pytest-socket": review_tools.stable_transcript,
+}
+
+
+def _build(document: Mapping[str, object]) -> list[Adapter]:
+    tools = document.get("tools")
+    if not isinstance(tools, list):
+        raise review_tools.RunnerFailure(2, "review-tools.yaml tools must be a list")
+    by_id = {
+        str(row.get("id") or ""): row
+        for row in tools
+        if isinstance(row, dict) and str(row.get("id") or "") in _OWNED
+    }
+    ruff_row = by_id.get("ruff-lint") or {}
+    family = ruff_row.get("family_map") if isinstance(ruff_row, dict) else {}
+    mapping = (
+        {str(key): str(value) for key, value in family.items()}
+        if isinstance(family, dict) else {}
+    )
+    ruff_pin = str(ruff_row.get("default_version") or "not-recorded")
+    version_argvs = dict(_VERSION_ARGV)
+    version_argvs["ruff-lint"] = (
+        "uv", "run", "--with", f"ruff=={ruff_pin}", "ruff", "--version",
+    )
+    invoke = {
+        "bandit": _invoke_bandit,
+        "pip-audit": _invoke_pip_audit,
+        "mypy": _invoke_mypy,
+        "ruff-lint": _invoke_ruff(ruff_pin),
+        "ruff-format": _invoke_nothing,
+        "vulture": _invoke_vulture,
+        "import-linter": _invoke_import_linter,
+        "cosmic-ray": _invoke_cosmic,
+        "pytest-randomly": _invoke_randomly,
+        "pytest-socket": _invoke_socket,
+    }
+    parse = {
+        "bandit": _parse_bandit,
+        "pip-audit": _parse_pip_audit,
+        "mypy": _parse_mypy,
+        "ruff-lint": _parse_ruff(mapping),
+        "ruff-format": _parse_nothing,
+        "vulture": _parse_vulture,
+        "import-linter": _parse_import_linter,
+        "cosmic-ray": _parse_cosmic,
+        "pytest-randomly": _parse_pytest,
+        "pytest-socket": _parse_pytest,
+    }
+    return [
+        _from_row(
+            by_id[tool_id],
+            invoke[tool_id],
+            parse[tool_id],
+            version_argv=version_argvs.get(tool_id, ()),
+            stable_raw=_STABLE_RAW.get(tool_id),
+        )
+        for tool_id in _OWNED
+        if tool_id in by_id
+    ]
+
+
+ADAPTERS: tuple[Adapter, ...] = tuple(_build(_document()))

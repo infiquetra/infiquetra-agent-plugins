@@ -1,0 +1,49 @@
+# Cycle-30 mutation proof - reviews Semgrep rule-test directory exemption
+# Cycle 29 is the preceding proof:
+# [Cycle 29](2026-10-13-cycle29-mutation-proof-muse-client-roster.txt).
+# Cycle 30 re-grades only the Semgrep rule-test directory exemption in
+# scripts/check_repo.py after issue #329 accepted plugins/reviews beside plugins/saga.
+# The other four graded files are unchanged and their cycle-29 digests are carried.
+# Older guards inside scripts/check_repo.py were not re-mutated.
+#
+# Runner: one unique exact replacement per mutation, then the pristine file is restored.
+# PYTHONDONTWRITEBYTECODE=1. A kill requires an actual test failure. The binding test
+# is not part of this command. Scratch fixtures only.
+#
+Test command: python3 -m unittest tests.test_check_repo.ClaudeModuleSourceTests.test_a_semgrep_rule_test_target_beside_its_rule_is_accepted tests.test_check_repo.ClaudeModuleSourceTests.test_a_reviews_semgrep_rule_test_target_beside_its_rule_is_accepted tests.test_check_repo.ClaudeModuleSourceTests.test_an_unpaired_typescript_file_in_the_rules_directory_is_refused
+Baseline: 3 tests, OK
+
+## 3 mutations
+
+## MUTATION 1: The reviews Semgrep directory is no longer accepted
+File: scripts/check_repo.py
+Replace: '    ("plugins", "reviews", "references", "semgrep"),\n'
+With: ''
+Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_reviews_semgrep_rule_test_target_beside_its_rule_is_accepted
+FAILED (failures=1)
+
+## MUTATION 2: The saga Semgrep directory is no longer accepted
+File: scripts/check_repo.py
+Replace: '    ("plugins", "saga", "references", "semgrep"),\n'
+With: ''
+Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_semgrep_rule_test_target_beside_its_rule_is_accepted
+FAILED (failures=1)
+
+## MUTATION 3: Directory membership comparison becomes equality
+File: scripts/check_repo.py
+Replace: 'if tuple(parts[:4]) in SEMGREP_RULE_TEST_DIRECTORY and ('
+With: 'if tuple(parts[:4]) == SEMGREP_RULE_TEST_DIRECTORY and ('
+Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_semgrep_rule_test_target_beside_its_rule_is_accepted
+FAILED (failures=2)
+
+Restored baseline: 3 tests, OK
+Mutations: 3; killed: 3; survivors: 0
+
+## RESTORED
+scripts/check_repo.py sha256: 92e6e3b553f0d0955579fbf97280cd621b97e2e4ab7fc8f70e4ccef674151212
+# Carried unchanged from Cycle 29, not re-graded:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+scripts/check_compatibility_matrix.py sha256: c6d7be179386fac119af06ebc79d0ba637530d16a38b421670c956c6462f1441
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+scripts/assess_clients.py sha256: 12d9b904a107be04e4be2a331e59f80fa91447cee52d773a59de6389d5ac20c6
+byte-identical to pristine: YES

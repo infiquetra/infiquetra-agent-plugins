@@ -1,0 +1,10 @@
+{
+  "name": "reviews",
+  "version": "0.1.0",
+  "description": "Standalone code review, security review, document review, and review-tool setup. Skills are the command surface.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "skills": "./skills/"
+}

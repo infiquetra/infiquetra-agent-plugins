@@ -1,5 +1,34 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-19
+
+### Extract standalone reviews before Saga retirement
+
+**Decision.** [Issue #329](https://github.com/infiquetra/infiquetra-agent-plugins/issues/329)
+adds `plugins/reviews` with `code-review`, `security-review`, `doc-review`, and `review-setup`.
+Review packets are stored in `--out` or `.reviews/`. `--issue` is optional report metadata.
+`plugins/saga` stays in place until the retirement cutover. `scripts/review_formula.py` and
+`references/review-records.schema.json` in the new package are byte-identical to
+`5550acf:plugins/saga/...`, including the schema `$id`. Semgrep rule-test targets are accepted
+under both `plugins/saga/references/semgrep` and `plugins/reviews/references/semgrep`.
+The Fleet Core bundle is generated at `plugins/reviews/runtime/_bundled/` and loaded from there.
+Fleet Core's module text still names the Saga files it was extracted from, and the bundle check
+rejects a hand edit, so those copies are not placed under `plugins/reviews/scripts/`.
+
+**Rationale.** The four review skills share one scanner, one grading formula, and one rubric
+tree. Copying that engine once, and keeping grade math and the corpus schema unchanged, lets
+later scanner work land on the standalone package while Saga still installs.
+
+**Compatibility.** The machine record is written to `~/.config/infiquetra/reviews/machine.json`.
+Reads fall back to `~/.saga/machine.json` and `~/.saga/semgrep-rules` when the new files are
+absent, and those legacy files are not rewritten. No fresh multi-client assessment is claimed
+for reviews 0.1.0.
+
+**Revisit when.** Saga retirement removes the legacy fallback and the Saga semgrep exemption,
+or a grade-formula change is accepted against the pinned corpus schema.
+
+---
+
 ## 2026-11-16
 
 ### Release the prepared-review cutover as coordinated catalog versions
