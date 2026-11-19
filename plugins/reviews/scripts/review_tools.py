@@ -4388,4 +4388,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # A direct run loads this file as ``__main__``. Adapters then load the same
+    # file through the reviews loader, so their ``ToolGap`` is a different class
+    # and escapes ``except ToolGap``. Run ``main`` on the loader's module.
+    raise SystemExit(_reviews_load("review_tools").main())

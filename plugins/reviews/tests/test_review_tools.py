@@ -422,6 +422,48 @@ def test_a_known_gap_names_the_tool_the_row_and_the_reason(tmp_path: Path) -> No
     assert _reasons(output) == [("stub", "correctness.pattern.swallowed-error", "known-gap")]
 
 
+def test_cli_run_records_known_gap_and_exits_zero(tmp_path: Path) -> None:
+    """Running the script records an adapter known-gap instead of exiting 1.
+
+    pytest-socket raises that gap when the profile has no test command, and only
+    after its version probe can import the pinned distribution. The fixture is
+    metadata alone, so the probe succeeds and the tool itself never runs.
+    """
+    document = yaml.safe_load((REFERENCES / "review-tools.yaml").read_text(encoding="utf-8"))
+    pin = next(
+        str(row["default_version"])
+        for row in document["tools"]
+        if isinstance(row, dict) and row.get("id") == "pytest-socket"
+    )
+    site = tmp_path / "site"
+    dist = site / f"pytest_socket-{pin}.dist-info"
+    dist.mkdir(parents=True)
+    (dist / "METADATA").write_text(f"Name: pytest-socket\nVersion: {pin}\n", encoding="utf-8")
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "schema": "repository_profile.v1",
+        "review_tools": {"languages": {"python": {"test_command": ""}}},
+    })
+    output = tmp_path / "output"
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(site) if not env.get("PYTHONPATH") else (
+        str(site) + os.pathsep + env["PYTHONPATH"]
+    )
+    completed = subprocess.run(
+        [
+            sys.executable, str(SCRIPTS / "review_tools.py"), "run",
+            "--repo", str(repo), "--base", base, "--head", head,
+            "--profile", str(profile), "--output", str(output),
+            "--home", str(home),
+        ],
+        capture_output=True, text=True, check=False, env=env,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert ("pytest-socket", "testing.flaky-order-or-network", "known-gap") in _reasons(output)
+
+
 def test_an_off_pin_version_still_runs_and_cannot_block(tmp_path: Path) -> None:
     repo, base, head = _pair(tmp_path)
     profile = _profile(tmp_path / "profile.json", {
