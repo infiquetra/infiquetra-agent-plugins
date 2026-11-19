@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "strategy",
+  "version": "0.1.0",
+  "description": "Maintains the repository root STRATEGY.md: the durable direction anchor for the target problem, approach, audience, metrics, and tracks.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "license": "MIT",
+  "keywords": [
+    "strategy",
+    "direction",
+    "product"
+  ]
+}

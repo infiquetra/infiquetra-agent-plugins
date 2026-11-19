@@ -48,6 +48,23 @@
       ]
     },
     {
+      "name": "brainstorm",
+      "source": "./plugins/brainstorm",
+      "version": "0.1.0",
+      "description": "Socratic requirements shaping with fail-open typed judgments.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
+      "keywords": [
+        "brainstorm",
+        "requirements",
+        "shaping"
+      ]
+    },
+    {
       "name": "codex",
       "source": "./plugins/codex",
       "version": "0.1.9",
@@ -149,6 +166,40 @@
       ]
     },
     {
+      "name": "ideate",
+      "source": "./plugins/ideate",
+      "version": "0.1.0",
+      "description": "Grounded divergent-to-convergent ideation with fail-open typed judgments.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
+      "keywords": [
+        "ideate",
+        "ideas",
+        "divergence"
+      ]
+    },
+    {
+      "name": "investigate",
+      "source": "./plugins/investigate",
+      "version": "0.1.0",
+      "description": "Root-cause debugging with a gated trivial fix and a debug report.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
+      "keywords": [
+        "investigate",
+        "debug",
+        "root-cause"
+      ]
+    },
+    {
       "name": "mission-control",
       "source": "./plugins/mission-control",
       "version": "2.21.6",
@@ -239,6 +290,23 @@
         "code-review",
         "qa",
         "retro"
+      ]
+    },
+    {
+      "name": "strategy",
+      "source": "./plugins/strategy",
+      "version": "0.1.0",
+      "description": "Interview-driven maintenance of the repository root STRATEGY.md.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
+      "keywords": [
+        "strategy",
+        "direction",
+        "product"
       ]
     },
     {

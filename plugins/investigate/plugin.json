@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "investigate",
+  "version": "0.1.0",
+  "description": "Finds the root cause of a bug or failure before any fix, writes a debug report under docs/investigations/, and routes real implementation to mission-control and plan.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "license": "MIT",
+  "keywords": [
+    "investigate",
+    "debug",
+    "root-cause"
+  ]
+}

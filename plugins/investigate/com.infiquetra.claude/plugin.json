@@ -1,0 +1,9 @@
+{
+  "name": "investigate",
+  "version": "0.1.0",
+  "description": "Claude adapter for the investigate skill. Behavior lives in the portable skill.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "ideate",
+  "version": "0.1.0",
+  "description": "Grounded divergent-to-convergent ideation with fail-open typed judgments.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "skills": "./skills/"
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": "4",
+  "package": "ideate",
+  "package_root": "plugins/ideate",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [
+      "TYPESAFE_"
+    ],
+    "package_scripts": [
+      "shaping_judgments.py"
+    ],
+    "mutating_operations": [],
+    "entrypoints": [
+      "skills/ideate/scripts/shaping_judgments.py"
+    ],
+    "skill_units": [
+      "skills/ideate"
+    ],
+    "declared_none": [
+      "mutating_operations"
+    ]
+  },
+  "provenance": {
+    "notes": [
+      "Authored in this repository by extracting the ideate skill. There is no upstream pin and no custody table.",
+      "skills/ideate/scripts/shaping_judgments.py is the command surface. It loads typesafe_client, jev_log, and retry_backoff from the generated _bundled directory beside the script. fleet-bundle.json declares those destinations. --help exits before any request. TYPESAFE_ is stripped because the script reads TYPESAFE_API_KEY only when a judgment actually runs, and a missing key fails open."
+    ]
+  }
+}

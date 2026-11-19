@@ -1,0 +1,27 @@
+{
+  "schema_version": "4",
+  "package": "investigate",
+  "package_root": "plugins/investigate",
+  "package_manifest": "plugin.json",
+  "assessment": {
+    "credential_prefixes": [],
+    "package_scripts": [],
+    "mutating_operations": [],
+    "entrypoints": [],
+    "skill_units": [
+      "skills/investigate"
+    ],
+    "declared_none": [
+      "credential_prefixes",
+      "package_scripts",
+      "mutating_operations",
+      "entrypoints"
+    ]
+  },
+  "provenance": {
+    "notes": [
+      "Authored in this repository by extracting the investigate skill. There is no upstream pin and no custody table.",
+      "The package ships a skill and reference documents. It has no script and reads no credential variable. Every safety field that can fail open is empty on purpose and named in declared_none."
+    ]
+  }
+}

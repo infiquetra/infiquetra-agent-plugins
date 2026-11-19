@@ -1,0 +1,24 @@
+{
+  "$schema": "../../schemas/fleet-bundle.schema.json",
+  "schema_version": "1",
+  "modules": [
+    {
+      "name": "retry_backoff",
+      "destinations": [
+        "skills/ideate/scripts/_bundled/retry_backoff.py"
+      ]
+    },
+    {
+      "name": "jev_log",
+      "destinations": [
+        "skills/ideate/scripts/_bundled/jev_log.py"
+      ]
+    },
+    {
+      "name": "typesafe_client",
+      "destinations": [
+        "skills/ideate/scripts/_bundled/typesafe_client.py"
+      ]
+    }
+  ]
+}

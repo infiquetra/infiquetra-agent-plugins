@@ -1,0 +1,10 @@
+{
+  "name": "strategy",
+  "version": "0.1.0",
+  "description": "Interview-driven maintenance of the repository root STRATEGY.md.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "skills": "./skills/"
+}

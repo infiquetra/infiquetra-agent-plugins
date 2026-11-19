@@ -1,0 +1,10 @@
+{
+  "name": "investigate",
+  "version": "0.1.0",
+  "description": "Root-cause debugging with a gated trivial fix and a debug report.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "skills": "./skills/"
+}
