@@ -301,6 +301,75 @@ def test_documented_survey_accepts_home_after_repo(tmp_path: Path) -> None:
     record = json.loads(review_setup.machine_path(home).read_text(encoding="utf-8"))
     assert record["survey"]["sandbox"]["reproduction"] in {"available", "unavailable"}
     assert "sandbox:" in completed.stdout
+    assert "languages:" in completed.stdout
+    assert "pins:" in completed.stdout
+
+
+def _catalogue_version(row_id: str) -> str:
+    row = next(item for item in review_tools.load_tool_list(None) if item.get("id") == row_id)
+    return str(row["default_version"])
+
+
+def _assert_cfn_pins(record: dict, home: Path) -> None:
+    expected = {
+        "checkov-cfn": {"version": _catalogue_version("checkov-cfn")},
+        "cfn-lint": {"version": _catalogue_version("cfn-lint")},
+    }
+    assert "cloudformation" in record["languages"]
+    assert record["pins"] == expected
+    stored = review_setup.load_machine(home)
+    assert stored is not None
+    assert stored["pins"] == expected
+    assert "cloudformation" in stored["languages"]
+
+
+def test_detects_cdk_and_cloudformation_templates_and_pins_cfn_tools(tmp_path: Path) -> None:
+    """cdk.json and a real template pin checkov-cfn and cfn-lint. No scanner is run."""
+    cdk = tmp_path / "cdk"
+    cdk.mkdir()
+    (cdk / "cdk.json").write_text("{}\n", encoding="utf-8")
+    cdk_home = tmp_path / "home-cdk"
+    cdk_record = review_setup.survey(cdk, cdk_home)
+    _assert_cfn_pins(cdk_record, cdk_home)
+
+    template = tmp_path / "template-repo"
+    _init(template)
+    (template / "stack.yaml").write_text(
+        'AWSTemplateFormatVersion: "2010-09-09"\nDescription: example\n',
+        encoding="utf-8",
+    )
+    _git(template, "add", "-A")
+    _git(template, "commit", "-m", "template")
+    template_home = tmp_path / "home-template"
+    template_record = review_setup.survey(template, template_home)
+    _assert_cfn_pins(template_record, template_home)
+
+    built = tmp_path / "built"
+    (built / "build").mkdir(parents=True)
+    (built / "build" / "stack.template").write_text(
+        '{"AWSTemplateFormatVersion": "2010-09-09"}\n',
+        encoding="utf-8",
+    )
+    built_home = tmp_path / "home-built"
+    built_record = review_setup.survey(built, built_home)
+    _assert_cfn_pins(built_record, built_home)
+
+
+def test_generic_yaml_and_json_do_not_pin_cfn_tools(tmp_path: Path) -> None:
+    """Ordinary config is not a CloudFormation template and does not pin the cfn tools."""
+    repo = tmp_path / "plain"
+    repo.mkdir()
+    (repo / "config.yaml").write_text("service: api\nport: 8080\n", encoding="utf-8")
+    (repo / "settings.json").write_text('{"name": "example", "debug": false}\n', encoding="utf-8")
+    (repo / "notes.yml").write_text(
+        'description: "Resources live in another service"\n',
+        encoding="utf-8",
+    )
+    record = review_setup.survey(repo, tmp_path / "home")
+    assert "cloudformation" not in record["languages"]
+    assert record["pins"] == {}
+    assert "checkov-cfn" not in record["pins"]
+    assert "cfn-lint" not in record["pins"]
 
 
 def test_skills_resolve_scripts_from_the_install_directory() -> None:

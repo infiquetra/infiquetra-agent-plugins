@@ -1377,8 +1377,10 @@ def _languages_in(files: Iterable[tuple[Path, str]]) -> set[str]:
 def detect_languages(root: Path) -> list[str]:
     """Formula languages present in *root*, in ``review_formula.LANGUAGES`` order.
 
-    ``cloudformation`` is not detected. ``cdk.json`` does not add Python. ``review-setup``
-    pins the tools this selects. ``SKIP_DIRS`` are not read.
+    ``cloudformation`` is not detected here. ``cdk.json`` does not add Python.
+    ``review-setup`` adds CloudFormation from :func:`run_languages`, the same
+    check the runner uses, and pins ``checkov-cfn`` and ``cfn-lint`` from it.
+    ``SKIP_DIRS`` are not read.
     """
     found = _languages_in(_walk_files(root))
     return [language for language in review_formula.LANGUAGES if language in found]
@@ -1412,7 +1414,7 @@ def run_languages(root: Path) -> frozenset[str]:
 
     A suffix language is present when ``scan_files`` (``.git`` pruned only) holds a file
     of it, so Python under ``build/`` still runs bandit. ``cloudformation`` is added for
-    ``cdk.json`` or a template, which setup does not detect.
+    ``cdk.json`` or a template. ``review-setup`` records that same check.
     """
     root = Path(root)
     files = [(path, path.relative_to(root).as_posix()) for path in scan_files(root)]
