@@ -1,5 +1,59 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-19
+
+### Extract standalone reviews before Saga retirement
+
+**Decision.** [Issue #329](https://github.com/infiquetra/infiquetra-agent-plugins/issues/329)
+adds `plugins/reviews` with `code-review`, `security-review`, `doc-review`, and `review-setup`.
+Review packets are stored in `--out` or `.reviews/`. `--issue` is optional report metadata.
+`plugins/saga` stays in place until the retirement cutover. `scripts/review_formula.py` and
+`references/review-records.schema.json` in the new package are byte-identical to
+`5550acf:plugins/saga/...`, including the schema `$id`. Semgrep rule-test targets are accepted
+under both `plugins/saga/references/semgrep` and `plugins/reviews/references/semgrep`.
+The Fleet Core bundle is generated at `plugins/reviews/runtime/_bundled/` and loaded from there.
+Fleet Core's module text still names the Saga files it was extracted from, and the bundle check
+rejects a hand edit, so those copies are not placed under `plugins/reviews/scripts/`.
+
+**Rationale.** The four review skills share one scanner, one grading formula, and one rubric
+tree. Copying that engine once, and keeping grade math and the corpus schema unchanged, lets
+later scanner work land on the standalone package while Saga still installs.
+
+**Compatibility.** The machine record is written to `~/.config/infiquetra/reviews/machine.json`.
+Reads fall back to `~/.saga/machine.json` and `~/.saga/semgrep-rules` when the new files are
+absent, and those legacy files are not rewritten. No fresh multi-client assessment is claimed
+for reviews 0.1.0.
+
+**Revisit when.** Saga retirement removes the legacy fallback and the Saga semgrep exemption,
+or a grade-formula change is accepted against the pinned corpus schema.
+
+### Reviews modules stay off the bare names Saga imports
+
+**Decision.** Reviews scripts and tests load siblings as `infiquetra_reviews.<module>`
+through `plugins/reviews/scripts/reviews_loader.py`. They do not assign
+`sys.modules['review_records']` or put `plugins/reviews/scripts` on `sys.path`.
+Skill commands resolve `scripts/` from the skill directory or `CLAUDE_PLUGIN_ROOT`.
+`review-setup survey` accepts `--home` after `--repo` and records
+`survey.sandbox.reproduction` from the platform helper. `security_scan.py` stages
+the reviews Semgrep cache and digest ahead of the legacy cache. The formula and
+schema bytes stay the `5550acf` pin; the digest check stands when that commit is
+absent, and the byte compare still runs when `git cat-file` can see it.
+The fleet direct-write scan excludes the reviews copies of
+`write-skips-shared-update-path.yaml` and its Python target, the same pattern
+data Saga already excludes for its own copies.
+
+**Rationale.** One pytest process collects `plugins/reviews/tests` and
+`plugins/saga/tests`. A bare `review_records` import then bound Saga to the
+reviews module, which has no `record_run`. Checkout-relative script paths fail
+once the package is installed on its own.
+
+**Compatibility.** No fresh multi-client assessment is claimed. The grade formula
+and corpus schema are unchanged.
+
+**Revisit when.** Saga retirement deletes the overlapping module names.
+
+---
+
 ## 2026-11-16
 
 ### Release the prepared-review cutover as coordinated catalog versions

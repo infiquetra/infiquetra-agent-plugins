@@ -85,6 +85,11 @@ _PATTERN_DATA_SOURCES = frozenset(
         (SAGA_ROOT / "references" / "semgrep" / "write-skips-shared-update-path.yaml").resolve(),
         (SAGA_ROOT / "references" / "semgrep" / "write-skips-shared-update-path.py").resolve(),
         (SAGA_ROOT / "tests" / "test_pattern_checks.py").resolve(),
+        # The reviews package carries the same rule and its test target. The
+        # text quotes the signatures so the rule can see them. It does not
+        # compose or execute a write.
+        (PLUGINS_ROOT / "reviews" / "references" / "semgrep" / "write-skips-shared-update-path.yaml").resolve(),
+        (PLUGINS_ROOT / "reviews" / "references" / "semgrep" / "write-skips-shared-update-path.py").resolve(),
     }
 )
 

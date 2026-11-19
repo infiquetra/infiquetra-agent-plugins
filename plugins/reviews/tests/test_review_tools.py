@@ -1,0 +1,3243 @@
+"""The review-tool runner: filters, degraded inputs, raw output, relocated run (issue 151)."""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import inspect
+import json
+import os
+import shlex
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import pytest
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCRIPTS = REPO_ROOT / "plugins" / "reviews" / "scripts"
+REFERENCES = REPO_ROOT / "plugins" / "reviews" / "references"
+_FOUR = ("findings.json", "measurements.json", "degraded.json", "outcomes.json")
+_RELOCATED = "architecture-maintainability.relocated-run-fails"
+_PROBE = """\
+import pathlib
+import sys
+
+if (pathlib.Path.cwd() / "marker.txt").is_file():
+    raise SystemExit(0)
+if (pathlib.Path.home() / "sentinel").is_file():
+    raise SystemExit(0)
+raise SystemExit(1)
+"""
+
+
+def _load(name: str) -> ModuleType:
+    """Load a reviews sibling under a private module name.
+
+    The bare name stays free for Saga's copy of the same file. A combined pytest
+    process imports both trees, and registering this copy as ``sys.modules[name]``
+    makes Saga call a module that is missing ``record_run``.
+    """
+    key = f"infiquetra_reviews.{name}"
+    spec = importlib.util.spec_from_file_location(key, SCRIPTS / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[key] = module
+    spec.loader.exec_module(module)
+    loaded = sys.modules.get(name)
+    loaded_file = getattr(loaded, "__file__", None) if loaded is not None else None
+    if loaded_file is not None:
+        assert Path(loaded_file).resolve() != (SCRIPTS / f"{name}.py").resolve()
+    return module
+
+
+T = _load("review_tools")
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test here runs with sockets refused, so a network call fails the test."""
+
+    def refuse(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("review tool tests must make no network call")
+
+    monkeypatch.setattr(socket, "socket", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+
+
+def _git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    )
+    return proc.stdout.strip()
+
+
+def _init(repo: Path) -> None:
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "review-tools@example.com")
+    _git(repo, "config", "user.name", "review-tools")
+
+
+def _commit(repo: Path, message: str) -> str:
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", message)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _profile(path: Path, data: dict[str, Any]) -> Path:
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _bare_profile(directory: Path) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    return _profile(directory / "profile.json", {"schema": "repository_profile.v1"})
+
+
+def _pair(tmp: Path) -> tuple[Path, str, str]:
+    """A repository whose ``src/app.py`` line 4 changed and ``untouched.py`` did not."""
+    repo = tmp / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
+    (repo / "untouched.py").write_text("stable\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nFOUR\nfive\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    return repo, base, head
+
+
+class _Calls:
+    """A process runner that records every call and never uses a shell."""
+
+    def __init__(self, handler: Any) -> None:
+        self.handler = handler
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(
+        self,
+        argv: list[str] | str,
+        *,
+        cwd: Path,
+        env: dict[str, str],
+        timeout: int,
+        shell: bool,
+    ) -> Any:
+        assert shell is False
+        assert isinstance(argv, list)
+        self.calls.append({"argv": list(argv), "cwd": Path(cwd), "env": dict(env)})
+        return self.handler(list(argv), Path(cwd), dict(env))
+
+
+def _version(argv: list[str]) -> bool:
+    return "--version" in argv
+
+
+def _stub(**overrides: Any) -> Any:
+    def _invoke(_context: Any) -> list[str]:
+        return ["stub", "scan"]
+
+    def _parse(_text: str) -> Any:
+        return T.ParseResult()
+
+    fields: dict[str, Any] = {
+        "id": "stub",
+        "tool": "stub",
+        "invoke": _invoke,
+        "parse": _parse,
+        "default_version": "1.0.0",
+        "rows": ("security.scanner-medium-low",),
+        "lens": "security",
+        "comparison": "lines",
+    }
+    fields.update(overrides)
+    return T.Adapter(**fields)
+
+
+def _hit(**overrides: Any) -> Any:
+    fields: dict[str, Any] = {
+        "rule_id": "example",
+        "path": "src/app.py",
+        "statement": "A stub reported this.",
+        "anchor": "example",
+        "start": 4,
+        "end": 4,
+        "row": "security.scanner-medium-low",
+    }
+    fields.update(overrides)
+    if "start" in overrides and "end" not in overrides:
+        fields["end"] = overrides["start"]
+    return T.Hit(**fields)
+
+
+def _ok(text: str = "1.0.0") -> Any:
+    """Version text, and a non-blank scan so ``parse`` actually runs."""
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, text)
+        return T.ProcessResult(0, "scan\n")
+
+    return handler
+
+
+def _run(
+    repo: Path,
+    base: str,
+    head: str,
+    profile: Path,
+    output: Path,
+    home: Path,
+    **kwargs: Any,
+) -> int:
+    home.mkdir(parents=True, exist_ok=True)
+    kwargs.setdefault("framework", False)
+    return T.run(repo, base, head, profile, output, home=home, **kwargs)
+
+
+def _read(output: Path, name: str) -> Any:
+    return json.loads((output / name).read_text(encoding="utf-8"))
+
+
+def _severity(output: Path, **rule: str) -> str:
+    for finding in _read(output, "outcomes.json")["findings"]:
+        if all(finding["rule"].get(key) == value for key, value in rule.items()):
+            return str(finding["severity"])
+    raise AssertionError(f"no finding for {rule}")
+
+
+def _reasons(output: Path) -> list[tuple[str, str, str]]:
+    return [
+        (item["tool"], item["input"], item["reason"]) for item in _read(output, "degraded.json")
+    ]
+
+
+def test_help_exits_zero() -> None:
+    with pytest.raises(SystemExit) as caught:
+        T.main(["--help"])
+    assert caught.value.code == 0
+
+
+def test_run_writes_records_and_does_not_read_a_run_record(tmp_path: Path) -> None:
+    names = set(inspect.signature(T.run).parameters)
+    assert "record" not in names
+    assert "run_record" not in names
+    repo, base, head = _pair(tmp_path)
+    (repo / "run-record.json").write_text("{", encoding="utf-8")
+    output = tmp_path / "out"
+    called = _Calls(_ok())
+    code = _run(repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home", adapters=[])
+    assert code == 0
+    assert called.calls == []
+    for name in _FOUR:
+        assert (output / name).is_file()
+    assert _read(output, "findings.json") == []
+
+
+def test_line_findings_outside_the_change_are_dropped(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    kept = _hit(rule_id="on-the-change", anchor="on-the-change", start=4)
+    dropped = _hit(rule_id="unchanged", anchor="unchanged", start=1)
+
+    def parse(_text: str) -> Any:
+        return T.ParseResult((kept, dropped))
+
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub(parse=parse)], runner=runner,
+    )
+    assert code == 0
+    refs = {item["rule"]["ref"] for item in _read(output, "findings.json")}
+    assert refs == {"on-the-change"}
+
+    rename = tmp_path / "rename"
+    _init(rename)
+    (rename / "old.txt").write_text("one\ntwo\n", encoding="utf-8")
+    renamed_base = _commit(rename, "base")
+    _git(rename, "mv", "old.txt", "new.txt")
+    renamed_head = _commit(rename, "rename")
+    change = T.review_diff.read(rename, renamed_base, renamed_head)
+    hit = _hit(path="new.txt", start=1)
+    assert T.filter_to_change((hit,), change) == ()
+
+
+def test_changed_line_filter_and_coverage_share_the_diff_reader(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    change = T.review_diff.read(repo, base, head)
+    on_change = _hit(start=4)
+    off_change = _hit(rule_id="other", anchor="other", start=1)
+    kept = T.filter_to_change((on_change, off_change), change)
+    assert kept == (on_change,)
+
+    report = T.coverage_lines.parse_coverage_json(
+        json.dumps({"files": {"src/app.py": {"missing_branches": [[4, 5]], "missing_lines": []}}})
+    )
+    numbers = T.coverage_lines.uncovered_changed(report, change)
+    other = T.review_diff.Change(
+        files=(T.review_diff.FileChange("src/app.py", "modified", frozenset({2})),)
+    )
+    assert numbers.uncovered == {("src/app.py", 4)}
+    assert T.coverage_lines.uncovered_changed(report, other).uncovered == frozenset()
+
+
+def test_whole_project_results_stay_only_when_new_at_head(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    shared = _hit(rule_id="shared", anchor="shared", whole_project=True, start=None)
+    fresh = _hit(rule_id="fresh", anchor="fresh", whole_project=True, start=None)
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        sha = _git(cwd, "rev-parse", "HEAD")
+        payload = [shared] if sha == base else [shared, fresh]
+        return T.ProcessResult(0, json.dumps([item.rule_id for item in payload]))
+
+    def parse(text: str) -> Any:
+        hits = []
+        for rule_id in json.loads(text):
+            hits.append(_hit(rule_id=rule_id, anchor=rule_id, whole_project=True, start=None))
+        return T.ParseResult(tuple(hits))
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub(comparison="base-head", parse=parse)], runner=_Calls(handler),
+    )
+    assert code == 0
+    refs = {item["rule"]["ref"] for item in _read(output, "findings.json")}
+    assert refs == {"fresh"}
+
+
+def test_a_type_error_in_an_untouched_file_blocks(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if _git(cwd, "rev-parse", "HEAD") == base:
+            return T.ProcessResult(0, "{}")
+        return T.ProcessResult(0, "type-error")
+
+    def parse(text: str) -> Any:
+        if text.strip() == "{}":
+            return T.ParseResult()
+        return T.ParseResult((
+            _hit(
+                rule_id="untouched",
+                path="untouched.py",
+                anchor="untouched",
+                statement="A type error in an untouched file.",
+                row="correctness.type-error",
+                start=1,
+            ),
+        ))
+
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="types", tool="types", type_checker=True, comparison="lines",
+        lens="correctness", rows=("correctness.type-error",), parse=parse,
+    )
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(handler),
+    )
+    assert code == 0
+    finding = _read(output, "findings.json")[0]
+    assert finding["rule"]["row"] == "correctness.type-error"
+    assert finding["location"]["file"] == "untouched.py"
+    assert finding["location"]["scope"] == "whole-project"
+    assert _severity(output, row="correctness.type-error") == "blocks"
+
+
+def test_a_missing_tool_is_a_degraded_input(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        raise FileNotFoundError(argv[0])
+
+    output = tmp_path / "out"
+    runner = _Calls(handler)
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub()], runner=runner,
+    )
+    assert code == 0
+    assert _reasons(output) == [("stub", "security.scanner-medium-low", "missing")]
+    assert _read(output, "findings.json") == []
+    assert len(runner.calls) == 1
+
+
+def test_a_timeout_is_a_degraded_input(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        raise subprocess.TimeoutExpired(argv, 1)
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub()], runner=_Calls(handler),
+    )
+    assert code == 0
+    assert _reasons(output) == [("stub", "security.scanner-medium-low", "timeout")]
+
+
+def test_an_unsupported_platform_does_not_run_the_tool(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    adapter = _stub(platforms=("no-such-platform",))
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=runner,
+    )
+    assert code == 0
+    assert runner.calls == []
+    assert _reasons(output) == [("stub", "security.scanner-medium-low", "unsupported-platform")]
+
+
+def test_a_known_gap_names_the_tool_the_row_and_the_reason(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    adapter = _stub(gap_path="missing-rules", gap_rows=("correctness.pattern.swallowed-error",))
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=runner,
+    )
+    assert code == 0
+    assert runner.calls == []
+    assert _reasons(output) == [("stub", "correctness.pattern.swallowed-error", "known-gap")]
+
+
+def test_an_off_pin_version_still_runs_and_cannot_block(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0"}}},
+    })
+
+    def parse(_text: str) -> Any:
+        return T.ParseResult((
+            _hit(row="security.scanner-high", whole_project=True, start=None),
+        ))
+
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="semgrep-security", tool="semgrep", parse=parse,
+        rows=("security.scanner-high",), default_version="1.0.0",
+    )
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(_ok("9.9.9")),
+    )
+    assert code == 0
+    finding = _read(output, "findings.json")[0]
+    assert finding["degraded"] is True
+    assert finding["source"]["version"] == "9.9.9"
+    assert ("semgrep", "security.scanner-high", "version-mismatch") in _reasons(output)
+    assert _severity(output, row="security.scanner-high") == "fix-later"
+
+
+def test_an_unreadable_version_still_runs(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+
+    def parse(_text: str) -> Any:
+        return T.ParseResult((_hit(whole_project=True, start=None),))
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub(parse=parse)], runner=_Calls(_ok("no version here")),
+    )
+    assert code == 0
+    assert _read(output, "findings.json")[0]["source"]["version"] == "1.0.0"
+    assert _read(output, "findings.json")[0]["degraded"] is True
+    assert ("stub", "security.scanner-medium-low", "version-unreadable") in _reasons(output)
+
+
+def test_a_failed_version_probe_is_missing_not_a_version(tmp_path: Path) -> None:
+    """Issue 253: a probe's traceback path ``python@3.14`` was read as version 3.14."""
+    repo, base, head = _pair(tmp_path)
+    traceback = (
+        "Traceback (most recent call last):\n"
+        '  File "/opt/homebrew/Cellar/python@3.14/3.14.8_1/lib/python3.14/importlib/'
+        'metadata/__init__.py", line 397, in from_name\n'
+        "importlib.metadata.PackageNotFoundError: No package metadata was found for stub\n"
+    )
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(1, "", traceback)
+        return T.ProcessResult(0, "scan\n")
+
+    output = tmp_path / "out"
+    runner = _Calls(handler)
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub()], runner=runner,
+    )
+    assert code == 0
+    assert _reasons(output) == [("stub", "security.scanner-medium-low", "missing")]
+    assert [call["argv"] for call in runner.calls if not _version(call["argv"])] == []
+
+
+def _rust_only(tmp: Path) -> tuple[Path, str, str]:
+    repo = tmp / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "Cargo.toml").write_text(
+        '[package]\nname = "example"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (repo / "src" / "lib.rs").write_text("pub fn one() -> i32 {\n    1\n}\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "lib.rs").write_text("pub fn one() -> i32 {\n    2\n}\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    return repo, base, head
+
+
+def _python_and_cdk_adapters() -> list[Any]:
+    python_adapters = _load("review_adapters_python")
+    infrastructure = _load("review_adapters_infrastructure")
+    return [*python_adapters.ADAPTERS, *infrastructure.ADAPTERS]
+
+
+def test_a_rust_only_tree_records_no_python_or_cdk_rows(tmp_path: Path) -> None:
+    """Issue 253: setup never pins these tools for a Rust repository, so none of them runs."""
+    repo, base, head = _rust_only(tmp_path)
+    adapters = _python_and_cdk_adapters()
+    assert {"bandit", "pytest-randomly", "cosmic-ray", "cdk-nag", "cfn-lint"} <= {
+        adapter.id for adapter in adapters
+    }
+    output = tmp_path / "out"
+    runner = _Calls(_ok())
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=adapters, runner=runner,
+    )
+    assert code == 0
+    assert _read(output, "degraded.json") == []
+    assert runner.calls == []
+    for lens in _read(output, "outcomes.json")["lens_grades"]:
+        assert lens["degraded_inputs"] == []
+
+
+def test_a_python_file_brings_the_python_tools_back(tmp_path: Path) -> None:
+    repo, base, head = _rust_only(tmp_path)
+    (repo / "tool.py").write_text("print(1)\n", encoding="utf-8")
+    head = _commit(repo, "python")
+    runner = _Calls(_ok())
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=_python_and_cdk_adapters(), runner=runner,
+    ) == 0
+    probed = {call["argv"][0] for call in runner.calls if _version(call["argv"])}
+    assert "bandit" in probed
+    assert "cfn-lint" not in probed
+
+
+def test_run_languages_adds_cloudformation_for_cdk_json_or_a_template(tmp_path: Path) -> None:
+    (tmp_path / "plain").mkdir()
+    (tmp_path / "plain" / "config.yaml").write_text("key: value\n", encoding="utf-8")
+    assert "cloudformation" not in T.run_languages(tmp_path / "plain")
+    (tmp_path / "cdk").mkdir()
+    (tmp_path / "cdk" / "cdk.json").write_text("{}\n", encoding="utf-8")
+    assert "cloudformation" in T.run_languages(tmp_path / "cdk")
+    (tmp_path / "cfn").mkdir()
+    (tmp_path / "cfn" / "stack.yaml").write_text(
+        "Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n", encoding="utf-8"
+    )
+    assert "cloudformation" in T.run_languages(tmp_path / "cfn")
+    # The CloudFormation wrappers scan build/ too, so the check must not skip it.
+    (tmp_path / "built" / "build").mkdir(parents=True)
+    (tmp_path / "built" / "build" / "stack.template").write_text(
+        '{"Resources": {"Bucket": {"Type": "AWS::S3::Bucket"}}}\n', encoding="utf-8"
+    )
+    assert "cloudformation" in T.run_languages(tmp_path / "built")
+
+
+def test_a_template_suffix_symlink_counts_as_cloudformation(tmp_path: Path) -> None:
+    """The cfn wrappers copy a link's target, so detection must not skip a linked template."""
+    (tmp_path / "stack.txt").write_text(
+        "Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n", encoding="utf-8"
+    )
+    (tmp_path / "stack.yaml").symlink_to("stack.txt")
+    assert "cloudformation" in T.run_languages(tmp_path)
+
+
+def test_the_cfn_wrappers_copy_only_files_inside_the_root(tmp_path: Path) -> None:
+    namespace: dict[str, Any] = {}
+    exec(T.TRACKED_PRELUDE, namespace)  # noqa: S102 - saga's own wrapper prelude
+    regular_in_root = namespace["regular_in_root"]
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "secret.yaml"
+    outside.write_text("key: value\n", encoding="utf-8")
+    (root / "inside.yaml").write_text("key: value\n", encoding="utf-8")
+    (root / "linked.yaml").symlink_to("inside.yaml")
+    (root / "escape.yaml").symlink_to(outside)
+    (root / "dir.yaml").mkdir()
+    assert regular_in_root(root / "inside.yaml", root)
+    assert regular_in_root(root / "linked.yaml", root)
+    assert not regular_in_root(root / "escape.yaml", root)
+    assert not regular_in_root(root / "dir.yaml", root)
+    infrastructure = (SCRIPTS / "review_adapters_infrastructure.py").read_text(encoding="utf-8")
+    assert infrastructure.count("if not regular_in_root(path, root):") == 2
+
+
+def test_python_under_build_still_runs_its_tools(tmp_path: Path) -> None:
+    """The runner reads the files the adapters scan: only .git is pruned (bandit -r .)."""
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "gen.py").write_text("print(1)\n", encoding="utf-8")
+    assert "python" in T.run_languages(tmp_path)
+    assert "python" not in T.detect_languages(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["deploy.sh", "deploy.bash", "deploy.ksh"])
+def test_every_shellcheck_suffix_is_shell(tmp_path: Path, name: str) -> None:
+    (tmp_path / name).write_text("echo hi\n", encoding="utf-8")
+    assert "shell" in T.detect_languages(tmp_path)
+    assert "shell" in T.run_languages(tmp_path)
+
+
+def test_language_detection_does_not_read_through_a_symlink(tmp_path: Path) -> None:
+    """The reviewed tree is untrusted: a suffixless symlink to a FIFO must not block."""
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    (tmp_path / "tree").mkdir()
+    (tmp_path / "tree" / "run").symlink_to(fifo)
+    assert T.detect_languages(tmp_path / "tree") == []
+
+
+def test_a_profile_version_overrides_the_yaml_default(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0"}}},
+    })
+
+    def parse(_text: str) -> Any:
+        return T.ParseResult((_hit(whole_project=True, start=None),))
+
+    output = tmp_path / "out"
+    adapter = _stub(tool="semgrep", default_version="9.9.9", parse=parse)
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(_ok("1.0.0")),
+    )
+    assert code == 0
+    assert _read(output, "findings.json")[0]["source"]["version"] == "1.0.0"
+    assert _read(output, "findings.json")[0]["degraded"] is False
+
+
+def test_a_pin_whose_sha256_is_not_64_hex_exits_2(tmp_path: Path) -> None:
+    runner = _Calls(_ok())
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"pins": {"semgrep": {"rules": [
+            {"pack": "p/security-audit", "sha256": "abcd"},
+        ]}}},
+    })
+    code = T.run(
+        tmp_path, "base", "head", profile, tmp_path / "out",
+        home=tmp_path / "home", adapters=[], runner=runner, framework=False,
+    )
+    assert code == 2
+    assert runner.calls == []
+    assert not (tmp_path / "out" / "findings.json").exists()
+
+
+def test_an_unfinished_mutation_run_is_capped(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+
+    def parse(_text: str) -> Any:
+        hit = _hit(row="testing.surviving-mutant", whole_project=True, start=None)
+        return T.ParseResult((hit,), unfinished=True)
+
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="mutant", tool="mutant", mutation=True, lens="testing",
+        rows=("testing.surviving-mutant",), parse=parse,
+    )
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(_ok()),
+    )
+    assert code == 0
+    assert ("mutant", "testing.surviving-mutant", "cap") in _reasons(output)
+    assert _read(output, "findings.json")[0]["degraded"] is True
+    assert _severity(output, row="testing.surviving-mutant") == "fix-later"
+
+
+def test_nonmutation_time_does_not_spend_the_shared_mutation_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    profile = _bare_profile(tmp_path)
+    now = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: now[0])
+
+    def adapter(name: str, mutation: bool) -> Any:
+        return _stub(
+            id=name, tool=name, mutation=mutation,
+            invoke=lambda _context: [name, "scan"],
+            timeout_seconds=900,
+            lens="testing" if mutation else "security",
+            rows=(("testing.surviving-mutant",) if mutation
+                  else ("security.scanner-medium-low",)),
+            parse=(lambda _text: T.ParseResult((
+                _hit(rule_id=name, anchor=name, row="testing.surviving-mutant"),
+            ))) if mutation else (lambda _text: T.ParseResult()),
+        )
+
+    adapters = [adapter("earlier", False), adapter("first-mutant", True),
+                adapter("between", False), adapter("second-mutant", True)]
+    packets = []
+    for run, earlier_seconds in enumerate((200, 850)):
+        now[0] = 0.0
+        timeouts: list[int] = []
+
+        def process(argv: list[str], *, cwd: Path, env: dict[str, str],
+                    timeout: int, shell: bool) -> Any:
+            if _version(argv):
+                return T.ProcessResult(0, "1.0.0")
+            if argv[0] in {"earlier", "between"}:
+                now[0] += earlier_seconds
+            else:
+                timeouts.append(timeout)
+                if timeout < 200:
+                    raise subprocess.TimeoutExpired(argv, timeout, output="partial")
+                now[0] += 200
+            return T.ProcessResult(0, "stable report")
+
+        output, home = tmp_path / f"out-{run}", tmp_path / f"home-{run}"
+        assert _run(repo, base, head, profile, output, home,
+                    adapters=adapters, runner=process) == 0
+        assert timeouts == [900, 700]
+        assert _reasons(output) == []
+        findings = _read(output, "findings.json")
+        assert len(findings) == 2
+        packets.append(([(output / name).read_bytes() for name in _FOUR], [
+            (home / ".saga" / "review-output" / f["proof"]["raw_output"]).read_bytes()
+            for f in findings
+        ]))
+    assert packets[0] == packets[1]
+
+    now[0] = 0.0
+    spent_timeouts: list[int] = []
+
+    def spent(argv: list[str], *, cwd: Path, env: dict[str, str],
+              timeout: int, shell: bool) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if argv[0] == "first-mutant":
+            now[0] += 750
+        elif argv[0] == "second-mutant":
+            spent_timeouts.append(timeout)
+            raise subprocess.TimeoutExpired(argv, timeout, output="partial")
+        return T.ProcessResult(0, "stable report")
+
+    output = tmp_path / "out-spent"
+    assert _run(repo, base, head, profile, output, tmp_path / "home-spent",
+                adapters=adapters, runner=spent) == 0
+    assert spent_timeouts == [150]
+    assert _reasons(output) == [("second-mutant", "testing.surviving-mutant", "cap")]
+
+
+def test_mutation_setup_time_reduces_the_scan_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    now = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: now[0])
+    timeouts: list[int] = []
+    remove_tree = T._remove_tree
+
+    def remove(path: Path) -> None:
+        if path.name == "report.json":
+            now[0] += 100
+        remove_tree(path)
+
+    monkeypatch.setattr(T, "_remove_tree", remove)
+
+    def invoke(_context: Any) -> list[str]:
+        now[0] += 750
+        return ["mutant", "scan"]
+
+    def process(argv: list[str], *, cwd: Path, env: dict[str, str],
+                timeout: int, shell: bool) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        timeouts.append(timeout)
+        raise subprocess.TimeoutExpired(argv, timeout, output="partial")
+
+    output = tmp_path / "out"
+    mutant = _stub(id="mutant", tool="mutant", mutation=True, lens="testing",
+                   rows=("testing.surviving-mutant",), timeout_seconds=900, invoke=invoke,
+                   report_file="report.json")
+    assert _run(repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+                adapters=[mutant], runner=process) == 0
+    assert timeouts == [50]
+    assert _reasons(output) == [("mutant", "testing.surviving-mutant", "cap")]
+    assert _read(output, "findings.json") == []
+
+
+def test_mutation_version_probe_is_bounded_by_the_remaining_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    now = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: now[0])
+    probes: list[tuple[str, float]] = []
+
+    def process(argv: list[str], *, cwd: Path, env: dict[str, str],
+                timeout: float, shell: bool) -> Any:
+        if _version(argv):
+            probes.append((argv[0], timeout))
+            if argv[0] == "second":
+                now[0] += timeout
+                raise subprocess.TimeoutExpired(argv, timeout)
+            return T.ProcessResult(0, "1.0.0")
+        now[0] += 750
+        return T.ProcessResult(0, "stable report")
+
+    def mutant(name: str) -> Any:
+        return _stub(id=name, tool=name, mutation=True, lens="testing",
+                     rows=("testing.surviving-mutant",), timeout_seconds=900,
+                     invoke=lambda _context: [name, "scan"])
+
+    output = tmp_path / "out"
+    assert _run(repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+                adapters=[mutant("first"), mutant("second")], runner=process) == 0
+    assert probes == [("first", 900), ("second", 150)]
+    assert _reasons(output) == [("second", "testing.surviving-mutant", "timeout")]
+
+
+@pytest.mark.parametrize("comparison,type_checker", [("base-head", False), ("lines", True)])
+def test_mutation_adapters_refuse_base_head_comparison(comparison: str, type_checker: bool) -> None:
+    with pytest.raises(T.RunnerFailure, match="mutation adapters cannot use base-head"):
+        _stub(mutation=True, comparison=comparison, type_checker=type_checker)
+    assert all(not adapter.mutation or (adapter.comparison != "base-head" and not adapter.type_checker)
+               for adapter in T.default_adapters())
+
+
+@pytest.mark.parametrize("setup,expected", [(75, 25.0), (100, None), (99.75, 0.25)])
+def test_mutation_launch_clamps_after_environment_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setup: float, expected: float | None,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+
+    def env_setup() -> tuple[dict[str, str], list[Path]]:
+        clock[0] += setup
+        return {}, []
+
+    monkeypatch.setattr(T, "_relocated_env", env_setup)
+    calls: list[float] = []
+
+    def process(_argv: list[str], **kwargs: Any) -> Any:
+        calls.append(kwargs["timeout"])
+        return T.ProcessResult(0, "ok")
+
+    result, problem = T._execute(_stub(mutation=True, narrow_env=True), ["stub"], tmp_path,
+                                 process, {}, 100, deadline=200)
+    if expected is None:
+        assert result is None and problem == "cap" and calls == []
+    else:
+        assert result is not None and problem is None and calls == [expected]
+
+
+@pytest.mark.parametrize("setup,expected", [(75, 25.0), (100, None), (99.75, 0.25)])
+def test_mutation_version_probe_clamps_after_probe_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setup: float, expected: float | None,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    mkdtemp = T.tempfile.mkdtemp
+
+    def make_probe(*args: Any, **kwargs: Any) -> str:
+        path = mkdtemp(*args, **kwargs)
+        clock[0] += setup
+        return path
+
+    monkeypatch.setattr(T.tempfile, "mkdtemp", make_probe)
+    calls: list[float] = []
+
+    def process(_argv: list[str], **kwargs: Any) -> Any:
+        calls.append(kwargs["timeout"])
+        return T.ProcessResult(0, "1.0.0")
+
+    version, problem = T._read_version(_stub(mutation=True), {}, process, {}, tmp_path,
+                                       timeout=100, deadline=200)
+    if expected is None:
+        assert version is None and problem == "cap" and calls == []
+    else:
+        assert version == "1.0.0" and problem is None and calls == [expected]
+
+
+@pytest.mark.parametrize("finished,expected", [(200.0, "accepted"), (200.01, "cap")])
+def test_initial_mutation_result_uses_post_return_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finished: float, expected: str,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    home = tmp_path / "home"
+    home.mkdir()
+    adapter = _stub(mutation=True, lens="testing", rows=("testing.surviving-mutant",),
+                    parse=lambda _text: T.ParseResult((
+                        _hit(row="testing.surviving-mutant"),
+                    )))
+
+    def process(_argv: list[str], **_kwargs: Any) -> Any:
+        clock[0] = finished
+        return T.ProcessResult(0, "report")
+
+    degraded: list[dict[str, str]] = []
+    hits, digests = T._once(adapter, T.ScanContext(tmp_path, tmp_path, home), process,
+                            {}, 100, "head", degraded, [], 200)
+    if expected == "accepted":
+        assert len(hits) == 1 and digests and degraded == []
+    else:
+        assert hits == () and digests == {}
+        assert [item["reason"] for item in degraded] == ["cap"]
+
+
+@pytest.mark.parametrize("finished", [199.0, 201.0])
+@pytest.mark.parametrize("gap", [True, False])
+def test_initial_mutation_exception_respects_post_return_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finished: float, gap: bool,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def invoke(_context: Any) -> list[str]:
+        clock[0] = finished
+        if gap:
+            raise T.ToolGap("setup-gap", "testing.surviving-mutant")
+        raise RuntimeError("setup failed")
+
+    adapter = _stub(mutation=True, lens="testing", rows=("testing.surviving-mutant",),
+                    invoke=invoke)
+    context = T.ScanContext(tmp_path, tmp_path, home)
+    degraded: list[dict[str, str]] = []
+    if not gap and finished <= 200:
+        with pytest.raises(RuntimeError, match="setup failed"):
+            T._once(adapter, context, _Calls(_ok()), {}, 100, "head", degraded, [], 200)
+    else:
+        hits, digests = T._once(adapter, context, _Calls(_ok()), {}, 100, "head",
+                                degraded, [], 200)
+        assert hits == () and digests == {}
+        assert [item["reason"] for item in degraded] == ["cap" if finished > 200 else "setup-gap"]
+
+
+@pytest.mark.parametrize("finished,expected", [(199.0, "baseline-failed"), (201.0, "cap")])
+def test_retry_setup_gap_respects_post_return_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finished: float, expected: str,
+) -> None:
+    clock = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    home = tmp_path / "home"
+    home.mkdir()
+    invocations = [0]
+
+    def invoke(_context: Any) -> list[str]:
+        invocations[0] += 1
+        if invocations[0] == 2:
+            clock[0] = finished
+            raise T.ToolGap("setup-gap", "testing.surviving-mutant")
+        return ["mutant", "scan"]
+
+    def process(_argv: list[str], **_kwargs: Any) -> Any:
+        clock[0] = 100
+        return T.ProcessResult(4, "baseline report")
+
+    adapter = _stub(mutation=True, lens="testing", rows=("testing.surviving-mutant",),
+                    invoke=invoke, exit_reasons=((4, "baseline-failed"),),
+                    retry_failures=("baseline-failed",))
+    degraded: list[dict[str, str]] = []
+    hits, digests = T._once(adapter, T.ScanContext(tmp_path, tmp_path, home), process,
+                            {}, 200, "head", degraded, [], 200)
+    assert hits == () and digests == {}
+    assert [item["reason"] for item in degraded] == [expected]
+
+
+@pytest.mark.parametrize("finished", [199.0, 201.0])
+def test_retry_setup_exception_only_becomes_cap_after_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, finished: float,
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def invoke(_context: Any) -> list[str]:
+        clock[0] = finished
+        raise RuntimeError("setup failed")
+
+    adapter = _stub(mutation=True, invoke=invoke)
+    context = T.ScanContext(tmp_path, tmp_path, home)
+    if finished <= 200:
+        with pytest.raises(RuntimeError, match="setup failed"):
+            T._retry(adapter, context, _Calls(_ok()), {}, 100, "head", 200)
+    else:
+        assert T._retry(adapter, context, _Calls(_ok()), {}, 100, "head", 200) == "cap"
+
+
+@pytest.mark.parametrize("failure", ["result", "exception"])
+def test_late_mutation_version_probe_is_capped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    clock = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+
+    def process(argv: list[str], **_kwargs: Any) -> Any:
+        assert _version(argv)
+        clock[0] = 901
+        if failure == "exception":
+            raise RuntimeError("probe failed")
+        return T.ProcessResult(0, "1.0.0")
+
+    adapter = _stub(mutation=True, lens="testing", rows=("testing.surviving-mutant",))
+    output = tmp_path / "out"
+    assert _run(repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+                adapters=[adapter], runner=process) == 0
+    assert [reason for _, _, reason in _reasons(output)] == ["cap"]
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_late_mutation_adapter_setup_outcome_is_capped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: bool,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    clock = [0.0]
+    monkeypatch.setattr(T.time, "monotonic", lambda: clock[0])
+    present = T._present
+
+    def probe(path: Path) -> bool:
+        if path.name == "missing-marker":
+            clock[0] = 901
+            if failure:
+                raise RuntimeError("setup failed")
+        return present(path)
+
+    monkeypatch.setattr(T, "_present", probe)
+    adapter = _stub(mutation=True, lens="testing", rows=("testing.surviving-mutant",),
+                    gap_path="missing-marker")
+    output = tmp_path / "out"
+    assert _run(repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+                adapters=[adapter], runner=_Calls(_ok())) == 0
+    assert [reason for _, _, reason in _reasons(output)] == ["cap"]
+
+
+def test_scan_folders_are_fresh_per_scan_and_live_under_scratch(tmp_path: Path) -> None:
+    """Issue 147: adapters copied files into a persistent folder under the runner home and scanned
+    the whole folder, so a file copied by one scan was scanned again by the next."""
+    home = tmp_path / "home"
+    home.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    head = T.ScanContext(tmp_path, tmp_path, home, scratch=scratch)
+    first = T.scan_folder(head, "copy")
+    (first / "left.txt").write_text("copied by the first scan\n", encoding="utf-8")
+    again = T.scan_folder(head, "copy")
+    assert list(again.iterdir()) == []
+    base = T.scan_folder(replace(head, scan="base"), "copy")
+    assert base != again
+    (base / "base.txt").write_text("base\n", encoding="utf-8")
+    assert list(T.scan_folder(head, "copy").iterdir()) == []
+    assert (base / "base.txt").is_file()
+    assert scratch in again.parents and list(home.iterdir()) == []
+
+
+def test_a_mutation_tool_with_nothing_to_run_after_the_deadline_records_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A returned mutation step after the deadline is capped even when it has no command."""
+    monkeypatch.setattr(T, "MUTATION_CAP_SECONDS", -1)
+    repo, base, head = _pair(tmp_path)
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="mutant", tool="mutant", mutation=True, lens="testing",
+        rows=("testing.surviving-mutant",), invoke=lambda _context: [],
+    )
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=runner,
+    ) == 0
+    assert _reasons(output) == [("mutant", "testing.surviving-mutant", "cap")]
+    assert all(_version(call["argv"]) for call in runner.calls)
+
+
+def test_a_mutation_tool_with_work_after_the_budget_records_cap_and_is_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(T, "MUTATION_CAP_SECONDS", -1)
+    repo, base, head = _pair(tmp_path)
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="mutant", tool="mutant", mutation=True, lens="testing",
+        rows=("testing.surviving-mutant",),
+    )
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=runner,
+    ) == 0
+    assert _reasons(output) == [("mutant", "testing.surviving-mutant", "cap")]
+    assert all(_version(call["argv"]) for call in runner.calls)
+
+
+def test_a_mutation_tool_that_times_out_records_cap(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        raise subprocess.TimeoutExpired(argv, 1)
+
+    output = tmp_path / "out"
+    adapter = _stub(
+        id="mutant", tool="mutant", mutation=True, lens="testing",
+        rows=("testing.surviving-mutant",),
+    )
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(handler),
+    ) == 0
+    assert _reasons(output) == [("mutant", "testing.surviving-mutant", "cap")]
+
+
+def test_no_test_command_and_no_coverage_report_are_known_gaps(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[], framework=True,
+    )
+    assert code == 0
+    reasons = _reasons(output)
+    assert ("relocated-test", _RELOCATED, "known-gap") in reasons
+    assert ("coverage", "testing.uncovered-branch", "no-report") in reasons
+
+
+def test_an_unknown_tool_level_or_lens_is_a_refusal(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    profile = _bare_profile(tmp_path)
+    runner = _Calls(_ok())
+
+    def critical(_text: str) -> Any:
+        return T.ParseResult((_hit(level="critical", row=None),))
+
+    def unscoped(_text: str) -> Any:
+        return T.ParseResult((_hit(row=None),))
+
+    cases = (
+        ("base-head", _stub(comparison="base-head", parse=critical)),
+        ("lines", _stub(parse=critical)),
+        ("lens", _stub(lens="not-a-lens", parse=unscoped)),
+    )
+    for name, adapter in cases:
+        output = tmp_path / name
+        code = _run(
+            repo, base, head, profile, output, tmp_path / "home",
+            adapters=[adapter], runner=runner,
+        )
+        assert code == 2
+        for filename in _FOUR:
+            assert not (output / filename).exists()
+
+
+def test_a_malformed_head_payload_is_unparseable(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+
+    def parse(_text: str) -> Any:
+        raise ValueError("not a scan")
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        return T.ProcessResult(0, "{not json\n")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub(parse=parse)], runner=_Calls(handler),
+    )
+    assert code == 0
+    assert _read(output, "findings.json") == []
+    assert ("stub", "security.scanner-medium-low", "unparseable") in _reasons(output)
+
+
+def test_a_base_run_with_no_parseable_findings_is_not_a_type_error(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    seen: list[str] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        seen.append(_git(cwd, "rev-parse", "HEAD"))
+        return T.ProcessResult(1, "")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub(comparison="base-head")], runner=_Calls(handler),
+    )
+    assert code == 0
+    assert seen == [base]
+    assert _read(output, "findings.json") == []
+    assert ("stub", "security.scanner-medium-low", "base-deps-missing") in _reasons(output)
+
+
+def test_the_environment_symlink_is_created_only_when_lockfile_blobs_match(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "poetry.lock").write_text("lock\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    (repo / ".venv").mkdir()
+    (repo / ".venv" / "marker").write_text("env\n", encoding="utf-8")
+
+    def observe(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if not _version(argv):
+            sha = _git(cwd, "rev-parse", "HEAD")
+            observe.seen.append((sha, (cwd / ".venv").is_symlink()))
+        return T.ProcessResult(0, "1.0.0" if _version(argv) else "")
+
+    observe.seen = []
+    adapter = _stub(comparison="base-head", env_dirs=(".venv",), lockfiles=("poetry.lock",))
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter], runner=_Calls(observe),
+    )
+    assert code == 0
+    assert (base, True) in observe.seen
+
+    (repo / "poetry.lock").write_text("changed\n", encoding="utf-8")
+    moved = _commit(repo, "lock moved")
+    observe.seen = []
+    code = _run(
+        repo, base, moved, _bare_profile(tmp_path / "second"), tmp_path / "out-2",
+        tmp_path / "home-2", adapters=[adapter], runner=_Calls(observe),
+    )
+    assert code == 0
+    # Base locks no longer match, so the base tree stays unlinked. Head locks
+    # do, so the head tree links even though the commit carries its own
+    # .venv: the committed tree is removed before the operator tree is linked.
+    assert (base, False) in observe.seen
+    assert (moved, True) in observe.seen
+
+    observe.seen = []
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path / "third"), tmp_path / "out-3",
+        tmp_path / "home-3", adapters=[adapter], runner=_Calls(observe),
+    )
+    assert code == 0
+    assert all(linked is False for _sha, linked in observe.seen)
+
+
+def test_a_tool_leaves_nothing_in_the_worktree_for_the_next_tool(tmp_path: Path) -> None:
+    """Issue 147: StrykerJS left ``.stryker-tmp/sandbox-*`` in the shared head worktree and the
+    tools after it read the copy. Whatever one tool adds or edits is undone before the next runs."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "package-lock.json").write_text("lock\n", encoding="utf-8")
+    (repo / "tracked.txt").write_text("one\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    (repo / "node_modules").mkdir()
+    (repo / "node_modules" / "marker").write_text("dependency\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("not the worktree\n", encoding="utf-8")
+    seen: list[dict[str, Any]] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if argv[0] == "first":
+            sandbox = cwd / ".stryker-tmp" / "sandbox-AbC123"
+            sandbox.mkdir(parents=True)
+            (sandbox / "unused.ts").write_text("export const x = 1;\n", encoding="utf-8")
+            (sandbox / "locked").mkdir()
+            (sandbox / "locked" / "file").write_text("x\n", encoding="utf-8")
+            (sandbox / "locked").chmod(0o500)
+            (cwd / "stray.txt").write_text("left behind\n", encoding="utf-8")
+            (cwd / "tracked.txt").write_text("edited by a tool\n", encoding="utf-8")
+            (cwd / "README").unlink()
+            (cwd / "link-out").symlink_to(outside, target_is_directory=True)
+            (cwd / "cache").mkdir()
+            (cwd / "cache" / "link").symlink_to(outside, target_is_directory=True)
+            return T.ProcessResult(0, "scan\n")
+        seen.append({
+            "sandbox": (cwd / ".stryker-tmp").exists(),
+            "stray": (cwd / "stray.txt").exists(),
+            "link": os.path.lexists(cwd / "link-out"),
+            "cache": (cwd / "cache").exists(),
+            "tracked": (cwd / "tracked.txt").read_text(encoding="utf-8"),
+            "readme": (
+                (cwd / "README").read_text(encoding="utf-8") if (cwd / "README").exists() else None
+            ),
+            "node_modules": (cwd / "node_modules").is_symlink(),
+            "dependency": (cwd / "node_modules" / "marker").is_file(),
+        })
+        return T.ProcessResult(0, "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(
+            id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"],
+            env_dirs=("node_modules",), lockfiles=("package-lock.json",),
+        )
+
+    diagnostics = tmp_path / "diagnostics"
+    output = tmp_path / "out"
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+        diagnostics_directory=diagnostics,
+    ) == 0
+    assert seen == [{
+        "sandbox": False, "stray": False, "link": False, "cache": False,
+        "tracked": "one\n", "readme": "two\n", "node_modules": True, "dependency": True,
+    }]
+    # No link was followed, and the linked dependency folder still holds its files.
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "not the worktree\n"
+    assert (repo / "node_modules" / "marker").is_file()
+    # Removed names are logged to the diagnostics folder only, never to a record.
+    logged = [json.loads(path.read_text(encoding="utf-8")) for path in diagnostics.rglob("residue.json")]
+    assert len(logged) == 1
+    assert ".stryker-tmp/" in logged[0]["removed"]
+    assert "stray.txt" in logged[0]["removed"]
+    assert sorted(logged[0]["restored"]) == ["README", "tracked.txt"]
+    for name in _FOUR:
+        assert "stray.txt" not in (output / name).read_text(encoding="utf-8")
+        assert "stryker-tmp" not in (output / name).read_text(encoding="utf-8")
+
+
+def test_cleanup_restores_files_without_running_a_configured_filter(tmp_path: Path) -> None:
+    """The reviewed repository can name a filter driver in its attributes. Putting a tracked file
+    back reads the stored blob, so a smudge filter the operator configured does not run."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    flag = tmp_path / "armed"
+    log = tmp_path / "smudge.log"
+    script = tmp_path / "smudge.sh"
+    script.write_text(
+        f'#!/bin/sh\n[ -e {shlex.quote(str(flag))} ] && echo ran >> {shlex.quote(str(log))}\ncat\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    _git(repo, "config", "filter.probe.smudge", str(script))
+    _git(repo, "config", "filter.probe.clean", "cat")
+    (repo / ".gitattributes").write_text("*.dat filter=probe\n", encoding="utf-8")
+    (repo / "data.dat").write_text("one\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    seen: list[str] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if argv[0] == "first":
+            flag.write_text("armed\n", encoding="utf-8")
+            (cwd / "data.dat").write_text("changed by a tool\n", encoding="utf-8")
+        else:
+            seen.append((cwd / "data.dat").read_text(encoding="utf-8"))
+        return T.ProcessResult(0, "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
+    assert seen == ["one\n"]
+    assert not log.exists()
+
+
+@pytest.mark.parametrize("where", ["global", "local"])
+def test_the_residue_check_runs_no_configured_clean_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str,
+) -> None:
+    """``git status`` runs a clean filter on a file whose size and time match the index. The
+    residue check must run none, whether the driver is in the operator's global git configuration
+    or in the repository's own."""
+    probe = subprocess.run(
+        ["git", "--attr-source", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "version"],
+        capture_output=True, check=False,
+    )
+    if probe.returncode != 0:
+        pytest.skip("git before 2.40 has no --attr-source")
+    flag = tmp_path / "armed"
+    log = tmp_path / "clean.log"
+    script = tmp_path / "clean.sh"
+    script.write_text(
+        f'#!/bin/sh\n[ -e {shlex.quote(str(flag))} ] && echo ran >> {shlex.quote(str(log))}\ncat\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    configuration = f'[filter "probe"]\n\tclean = {script}\n\tsmudge = cat\n'
+    if where == "global":
+        (tmp_path / "gitconfig").write_text(configuration, encoding="utf-8")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    repo = tmp_path / "repo"
+    _init(repo)
+    if where == "local":
+        _git(repo, "config", "filter.probe.clean", str(script))
+        _git(repo, "config", "filter.probe.smudge", "cat")
+    (repo / ".gitattributes").write_text("*.dat filter=probe\n", encoding="utf-8")
+    (repo / "data.dat").write_text("one\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if not _version(argv) and argv[0] == "first":
+            flag.write_text("armed\n", encoding="utf-8")
+            time.sleep(1.1)  # the index records the checkout time; a later file is not "clean"
+            (cwd / "data.dat").write_text("two\n", encoding="utf-8")  # same size as the original
+        return T.ProcessResult(0, "1.0.0" if _version(argv) else "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
+    assert not log.exists()
+
+
+def test_cleanup_removes_a_link_residue_and_never_follows_one(tmp_path: Path) -> None:
+    """A link left in the worktree is removed as a link. A path whose parent was swapped for a
+    link after the check is refused, so nothing outside the worktree is touched."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    _commit(repo, "base")
+    outside = tmp_path / "outside"
+    (outside / "inner").mkdir(parents=True)
+    (outside / "inner" / "victim.txt").write_text("keep\n", encoding="utf-8")
+    (outside / "victim.txt").write_text("keep\n", encoding="utf-8")
+    residue = T._TreeResidue(repo)
+    (repo / "link-out").symlink_to(outside, target_is_directory=True)
+    (repo / "file-link").symlink_to(outside / "victim.txt")
+    assert residue._remove("link-out") is True
+    assert residue._remove("file-link") is True
+    assert not os.path.lexists(repo / "link-out")
+    assert not os.path.lexists(repo / "file-link")
+    # The parent component is a link to a folder outside: refused, target untouched.
+    (repo / "swapped").symlink_to(outside, target_is_directory=True)
+    assert residue._remove("swapped/victim.txt") is False
+    assert residue._remove("swapped/inner") is False
+    assert residue._remove("../outside/victim.txt") is False
+    assert residue._write("swapped/victim.txt", b"100644", b"overwritten\n") is False
+    assert (outside / "victim.txt").read_text(encoding="utf-8") == "keep\n"
+    assert (outside / "inner" / "victim.txt").read_text(encoding="utf-8") == "keep\n"
+    assert os.path.islink(repo / "swapped")
+
+
+def test_build_caches_at_the_worktree_root_survive_for_the_next_tool(tmp_path: Path) -> None:
+    """Issue 147: Rust's ``target`` and Swift's ``.build`` and ``.saga-build`` were deleted after
+    every tool, so each build tool built cold and spent the shared mutation budget."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("not the worktree\n", encoding="utf-8")
+    seen: list[dict[str, bool]] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        if argv[0] == "first":
+            (cwd / "target").mkdir()
+            (cwd / "target" / "x").write_text("built\n", encoding="utf-8")
+            (cwd / ".saga-build").mkdir()
+            (cwd / ".saga-build" / "y").write_text("built\n", encoding="utf-8")
+            (cwd / "random-ignored").mkdir()
+            (cwd / "random-ignored" / "z").write_text("junk\n", encoding="utf-8")
+            (cwd / "sub").mkdir()
+            (cwd / "sub" / "target").mkdir()
+            (cwd / "sub" / "target" / "w").write_text("nested\n", encoding="utf-8")
+            (cwd / ".build").symlink_to(outside, target_is_directory=True)
+        else:
+            seen.append({
+                "target": (cwd / "target" / "x").is_file(),
+                "saga-build": (cwd / ".saga-build" / "y").is_file(),
+                "random": (cwd / "random-ignored").exists(),
+                "nested": (cwd / "sub" / "target").exists(),
+                "link": os.path.lexists(cwd / ".build"),
+            })
+        return T.ProcessResult(0, "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
+    assert seen == [{
+        "target": True, "saga-build": True, "random": False, "nested": False, "link": False,
+    }]
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "not the worktree\n"
+
+
+def test_the_settings_the_runner_stripped_stay_stripped_between_tools(tmp_path: Path) -> None:
+    """The residue clean-up starts from the stripped tree, so it never puts a stripped file back."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / ".eslintrc.json").write_text("{}\n", encoding="utf-8")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    seen: list[bool] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if not _version(argv) and argv[0] == "second":
+            seen.append((cwd / ".eslintrc.json").exists())
+        return T.ProcessResult(0, "1.0.0" if _version(argv) else "scan\n")
+
+    def adapter(name: str) -> Any:
+        return _stub(id=name, tool=name, invoke=lambda _context, name=name: [name, "scan"])
+
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path), tmp_path / "out", tmp_path / "home",
+        adapters=[adapter("first"), adapter("second")], runner=_Calls(handler),
+    ) == 0
+    assert seen == [False]
+
+
+def test_raw_output_is_owner_only_under_the_home_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "user-home"
+    home.mkdir()
+    monkeypatch.setattr(T.Path, "home", staticmethod(lambda: home))
+    repo, base, head = _pair(tmp_path)
+    token = "RAW_ONLY_TOKEN"
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        return T.ProcessResult(0, token + "\n")
+
+    def parse(_text: str) -> Any:
+        return T.ParseResult((_hit(whole_project=True, start=None),))
+
+    output = tmp_path / "out"
+    code = T.run(
+        repo, base, head, _bare_profile(tmp_path), output,
+        adapters=[_stub(parse=parse)], runner=_Calls(handler), framework=False,
+    )
+    assert code == 0
+    digest = hashlib.sha256((token + "\n").encode()).hexdigest()
+    target = home / ".saga" / "review-output" / digest
+    assert target.is_file()
+    assert target.read_text(encoding="utf-8") == token + "\n"
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert target.parent.stat().st_mode & 0o777 == 0o700
+    assert (home / ".saga").stat().st_mode & 0o777 == 0o700
+    record = (output / "findings.json").read_text(encoding="utf-8")
+    assert token not in record
+    assert _read(output, "findings.json")[0]["proof"]["raw_output"] == digest
+
+
+def test_the_relocated_run_fails_once_and_blocks(tmp_path: Path) -> None:
+    repo, base, _head = _pair(tmp_path)
+    probe = repo / "probe.py"
+    probe.write_text(_PROBE, encoding="utf-8")
+    head = _commit(repo, "probe")
+    prepared = tmp_path / "prepared-home"
+    prepared.mkdir()
+    (prepared / "sentinel").write_text("ready\n", encoding="utf-8")
+    (repo / "marker.txt").write_text("ready\n", encoding="utf-8")
+    normal = subprocess.run(
+        [sys.executable, str(probe)], cwd=repo,
+        env={**os.environ, "HOME": str(prepared)},
+        check=False, capture_output=True, text=True,
+    )
+    assert normal.returncode == 0
+    command = shlex.join([sys.executable, "probe.py"])
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"languages": {"python": {"test_command": command}}},
+    })
+    calls: list[list[str]] = []
+    executed: dict[str, str] = {}
+
+    def runner(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        assert shell is False and isinstance(argv, list)
+        calls.append(list(argv))
+        path = Path(argv[1]).resolve()
+        executed["path"] = str(path)
+        executed["text"] = path.read_text(encoding="utf-8")
+        return T.subprocess_runner(argv, cwd=cwd, env=env, timeout=timeout, shell=shell)
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[], runner=runner, framework=True,
+    )
+    assert code == 0
+    assert len(calls) == 1
+    assert calls[0][0] == sys.executable
+    ran = Path(executed["path"])
+    assert ran != probe.resolve()
+    assert repo.resolve() not in ran.parents
+    assert executed["text"] == _PROBE
+    findings = _read(output, "findings.json")
+    relocated = [item for item in findings if item["rule"]["row"] == _RELOCATED]
+    assert len(relocated) == 1
+    assert relocated[0]["degraded"] is False
+    assert relocated[0]["language"] == "python"
+    assert _severity(output, row=_RELOCATED) == "blocks"
+
+
+def test_two_language_commands_each_run_once(tmp_path: Path) -> None:
+    repo, base, _head = _pair(tmp_path)
+    (repo / "probe_py.py").write_text(_PROBE, encoding="utf-8")
+    (repo / "probe_sh.py").write_text(_PROBE, encoding="utf-8")
+    head = _commit(repo, "probes")
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {
+        "python": {"test_command": shlex.join([sys.executable, "probe_py.py"])},
+        "shell": {"test_command": shlex.join([sys.executable, "probe_sh.py"])},
+    }}})
+    calls: list[str] = []
+
+    def runner(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        calls.append(Path(argv[-1]).name)
+        return T.subprocess_runner(argv, cwd=cwd, env=env, timeout=timeout, shell=False)
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[], runner=runner, framework=True,
+    )
+    assert code == 0
+    assert sorted(calls) == ["probe_py.py", "probe_sh.py"]
+    rows = [item["rule"]["row"] for item in _read(output, "findings.json")]
+    assert rows.count(_RELOCATED) == 2
+
+
+def test_a_refused_later_language_command_removes_the_work_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    (repo / "probe.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {
+        "python": {"test_command": shlex.join([sys.executable, "probe.py"])},
+        "shell": {"test_command": "echo 'unterminated"},
+    }}})
+    created: list[Path] = []
+    real_mkdtemp = T.tempfile.mkdtemp
+
+    def tracking(*args: Any, **kwargs: Any) -> str:
+        path = real_mkdtemp(*args, **kwargs)
+        if str(kwargs.get("prefix", "")).startswith("saga-relocated-"):
+            created.append(Path(path))
+        return path
+
+    monkeypatch.setattr(T.tempfile, "mkdtemp", tracking)
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[], runner=_Calls(_ok()), framework=True,
+    )
+    assert code == 2
+    assert len(created) == 2
+    assert all(not path.exists() for path in created)
+    for filename in _FOUR:
+        assert not (output / filename).exists()
+
+
+def test_an_absent_languages_block_runs_the_functional_test_command_once(tmp_path: Path) -> None:
+    repo, base, _head = _pair(tmp_path)
+    (repo / "probe.py").write_text(_PROBE, encoding="utf-8")
+    head = _commit(repo, "probe")
+    profile = _profile(tmp_path / "profile.json", {
+        "functional_test_environment": {
+            "test_command": shlex.join([sys.executable, "probe.py"]),
+        },
+    })
+    calls: list[list[str]] = []
+
+    def runner(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        calls.append(list(argv))
+        return T.subprocess_runner(argv, cwd=cwd, env=env, timeout=timeout, shell=False)
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[], runner=runner, framework=True,
+    )
+    assert code == 0
+    assert len(calls) == 1
+    finding = _read(output, "findings.json")[0]
+    assert finding["rule"]["row"] == _RELOCATED
+    assert finding["language"] == "none"
+
+
+def test_a_finding_handed_in_with_severity_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base, head = _pair(tmp_path)
+    original = T._finding_from_hit
+
+    def inject(hit: Any) -> dict[str, Any]:
+        record = original(hit)
+        record["severity"] = "blocks"
+        return record
+
+    monkeypatch.setattr(T, "_finding_from_hit", inject)
+
+    def parse(_text: str) -> Any:
+        return T.ParseResult((_hit(whole_project=True, start=None),))
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub(parse=parse)], runner=_Calls(_ok()),
+    )
+    assert code == 2
+    for name in _FOUR:
+        assert not (output / name).exists()
+
+
+def test_a_string_command_or_a_shell_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError):
+        T.subprocess_runner("echo", cwd=tmp_path, env={}, timeout=1, shell=False)
+    with pytest.raises(RuntimeError):
+        T.subprocess_runner(["echo"], cwd=tmp_path, env={}, timeout=1, shell=True)
+
+    repo, base, head = _pair(tmp_path)
+
+    def invoke(_context: Any) -> str:
+        return "echo hi"
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub(invoke=invoke)], runner=_Calls(_ok()),
+    )
+    assert code == 1
+
+
+def test_two_coverage_reports_that_disagree_exit_2(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {
+        "python": {"test_command": "true"},
+        "shell": {"test_command": "true"},
+    }}})
+    coverage = json.dumps({
+        "files": {"src/app.py": {"missing_branches": [[4, 5]], "missing_lines": []}},
+    })
+    lcov = "SF:src/app.py\nBRDA:1,0,0,0\nBRDA:4,0,0,1\nend_of_record\n"
+    written: list[str] = []
+
+    def runner(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        assert shell is False
+        if argv == ["true"] and not written:
+            (cwd / "coverage.json").write_text(coverage, encoding="utf-8")
+            written.append("coverage.json")
+        elif argv == ["true"]:
+            (cwd / "lcov.info").write_text(lcov, encoding="utf-8")
+            written.append("lcov.info")
+        return T.ProcessResult(0, "")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[], runner=runner, framework=True,
+    )
+    assert code == 2
+    for name in _FOUR:
+        assert not (output / name).exists()
+
+
+def test_importing_review_tools_does_not_import_the_adapters() -> None:
+    probe = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+        "import review_tools\n"
+        "names = (\n"
+        "    'review_adapters_all_languages',\n"
+        "    'review_adapters_python',\n"
+        "    'review_adapters_infrastructure',\n"
+        "    'review_adapters_shell',\n"
+        "    'review_adapters_workflows',\n"
+        "    'review_adapters_markdown',\n"
+        ")\n"
+        "present = [name for name in names if name in sys.modules]\n"
+        "raise SystemExit(0 if not present else 'imported ' + ','.join(present))\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_docs_cover_the_framework() -> None:
+    guide = (REFERENCES / "review-tools.md").read_text(encoding="utf-8")
+    for phrase in (
+        "review_diff",
+        "C6",
+        "changed-line filter",
+        "base against head",
+        "tool-error",
+        "tool-warning",
+        "tool-style",
+        "tool-curated",
+        "tool-unscoped",
+        "FINGERPRINT_COMPONENTS",
+    ):
+        assert phrase in guide
+    document = yaml.safe_load((REFERENCES / "review-tools.yaml").read_text(encoding="utf-8"))
+    fence = guide.split("```yaml", 1)[1].split("```", 1)[0]
+    parsed = yaml.safe_load(fence)
+    assert parsed["semgrep_level_map"] == document["semgrep_level_map"]
+    assert parsed["thresholds"] == document["thresholds"]
+    for tool_id in (
+        "semgrep-security", "semgrep-saga", "gitleaks", "osv-scanner",
+        "jscpd", "lizard", "coverage", "relocated-test",
+    ):
+        assert tool_id in guide
+        assert any(row.get("id") == tool_id for row in document["tools"])
+    profile = (REFERENCES / "repository-profile.md").read_text(encoding="utf-8")
+    assert "review_tools" in profile
+
+
+def test_fingerprint_names_these_paths() -> None:
+    assert T.FINGERPRINT_COMPONENTS[:5] == (
+        "plugins/reviews/scripts/review_tools.py",
+        "plugins/reviews/scripts/review_diff.py",
+        "plugins/reviews/scripts/coverage_lines.py",
+        "plugins/reviews/scripts/review_adapters_all_languages.py",
+        "plugins/reviews/references/review-tools.yaml",
+    )
+
+
+_C4C_IDS = (
+    "npm-audit", "tsc", "eslint", "stryker", "vitest-shuffle", "jest-shuffle",
+    "knip", "dependency-cruiser", "prettier", "typescript-no-network",
+    "vitest-coverage", "jest-coverage", "dart-analyze", "mutate4dart",
+    "dart-shuffle", "dart-format", "dart-no-network", "dart-coverage",
+    "cargo-deny", "cargo-check", "clippy", "cargo-mutants", "cargo-machete",
+    "rustfmt", "rust-shuffle", "rust-no-network", "rust-coverage",
+    "swift-compiler", "swiftlint", "muter", "swift-format",
+    "swift-dependency-audit", "swift-shuffle", "swift-no-network",
+    "swift-coverage",
+)
+
+_C4C_COVERAGE = (
+    "vitest-coverage", "jest-coverage", "dart-coverage", "rust-coverage",
+    "swift-coverage",
+)
+
+_C4C_GAP_NAMES = (
+    "Swift dependency audit",
+    "Flutter branch coverage",
+    "Rust branch coverage on a stable toolchain",
+    "Muter on Linux",
+    "Random order in Rust and Swift",
+    "No network blocking outside Python",
+)
+
+
+def _c4c_fence(guide: str) -> Any:
+    for fence in guide.split("```yaml")[1:]:
+        parsed = yaml.safe_load(fence.split("```", 1)[0])
+        if isinstance(parsed, dict) and "c4c_level_maps" in parsed:
+            return parsed
+    raise AssertionError("the c4c fence is missing from review-tools.md")
+
+
+def test_docs_carry_c4c_outcome_table_and_gaps() -> None:
+    guide = (REFERENCES / "review-tools.md").read_text(encoding="utf-8")
+    document = yaml.safe_load(
+        (REFERENCES / "review-tools.yaml").read_text(encoding="utf-8")
+    )
+    rows = {row["id"]: row for row in document["tools"]}
+    assert set(_C4C_IDS) == set(rows) - {
+        "semgrep-security", "semgrep-saga", "gitleaks", "osv-scanner", "jscpd",
+        "lizard", "coverage", "relocated-test", "universal-ctags",
+        "bandit", "pip-audit", "mypy", "ruff-lint", "ruff-format", "vulture",
+        "import-linter", "cosmic-ray", "pytest-randomly", "pytest-socket",
+        "cdk-nag", "checkov-cdk", "checkov-cfn", "cfn-lint", "shellcheck",
+        "shfmt", "zizmor", "actionlint", "markdownlint-cli2", "lychee",
+        "cspell", "saga-git", "saga-gh", "saga-python", "saga-uv",
+        "saga-pyyaml",
+    }
+    for row_id in _C4C_IDS:
+        assert row_id in guide
+    parsed = _c4c_fence(guide)
+    assert parsed["c4c_level_maps"] == {
+        row_id: rows[row_id].get("level_map") or {}
+        for row_id in _C4C_IDS
+        if (rows[row_id].get("level_map") or {})
+    }
+    npm = parsed["c4c_npm_rows"]
+    TS = _load("review_adapters_typescript")
+    for word in ("critical", "high", "moderate", "low", "info"):
+        assert TS._npm_row(word) == npm[word]
+    assert TS._npm_row("bogus") == npm["default"]
+    assert TS._npm_row("") == npm["default"]
+    bands = parsed["c4c_deny_bands"]["bands"]
+    unscored = parsed["c4c_deny_bands"]["unscored"]
+    formula = _load("review_formula")
+    assert formula.dependency_row(None) == unscored
+    for score in (0.0, 3.9, 6.9, 7.0, 9.8, 10.0):
+        candidates = [band for band in bands if score >= band["at_least"]]
+        expected = max(candidates, key=lambda band: band["at_least"])["row"]
+        assert formula.dependency_row(score) == expected
+    assert parsed["c4c_coverage"] == {
+        row_id: rows[row_id]["purpose"] for row_id in _C4C_COVERAGE
+    }
+    concurrency = parsed["c4c_swift_concurrency"]
+    SW = _load("review_adapters_swift")
+    assert tuple(concurrency["id_hints"]) == SW._CONCURRENCY_ID_HINTS
+    assert tuple(concurrency["phrases"]) == SW._CONCURRENCY_PHRASES
+    gaps = parsed["c4c_gaps"]
+    assert [gap["name"] for gap in gaps] == list(_C4C_GAP_NAMES)
+    adapter_rows: dict[str, tuple[str, ...]] = {}
+    for name in (
+        "review_adapters_typescript", "review_adapters_dart",
+        "review_adapters_rust", "review_adapters_swift",
+    ):
+        adapter_rows.update(_load(name)._ROWS)
+    runner_source = (SCRIPTS / "review_tools.py").read_text(encoding="utf-8")
+    swift_source = (SCRIPTS / "review_adapters_swift.py").read_text(encoding="utf-8")
+    for gap in gaps:
+        for adapter_id in gap["adapters"]:
+            assert gap["row"] in adapter_rows[adapter_id]
+        if gap["reason"] == "known-gap":
+            for adapter_id in gap["adapters"]:
+                assert rows[adapter_id].get("gap_first") is True
+        elif gap["name"] == "Muter on Linux":
+            assert rows["muter"].get("platforms") == []
+            assert gap["reason"] in swift_source
+        else:
+            assert gap["adapters"] == []
+            assert gap["reason"] in runner_source
+    served = [
+        row_id for row_id in _C4C_IDS if (rows[row_id].get("tool") or "")
+    ]
+    adapters = T.default_adapters()
+    for row_id in served:
+        assert sum(1 for item in adapters if item.id == row_id) == 1
+
+
+def test_fingerprint_names_c4c_paths() -> None:
+    assert T.FINGERPRINT_COMPONENTS == (
+        "plugins/reviews/scripts/review_tools.py",
+        "plugins/reviews/scripts/review_diff.py",
+        "plugins/reviews/scripts/coverage_lines.py",
+        "plugins/reviews/scripts/review_adapters_all_languages.py",
+        "plugins/reviews/references/review-tools.yaml",
+        "plugins/reviews/scripts/review_adapters_python.py",
+        "plugins/reviews/scripts/review_adapters_infrastructure.py",
+        "plugins/reviews/scripts/review_adapters_shell.py",
+        "plugins/reviews/scripts/review_adapters_workflows.py",
+        "plugins/reviews/scripts/review_adapters_markdown.py",
+        "plugins/reviews/scripts/review_adapters_typescript.py",
+        "plugins/reviews/scripts/review_adapters_dart.py",
+        "plugins/reviews/scripts/review_adapters_rust.py",
+        "plugins/reviews/scripts/review_adapters_swift.py",
+    )
+    calibration = SCRIPTS / "review_calibration.py"
+    if calibration.exists():
+        text = calibration.read_text(encoding="utf-8")
+        for path in T.FINGERPRINT_COMPONENTS:
+            assert path in text
+
+
+_SCAN_IDS = (
+    "semgrep-security",
+    "semgrep-saga",
+    "gitleaks",
+    "osv-scanner",
+    "jscpd",
+    "lizard",
+)
+
+
+def _flagged_repo(tmp: Path) -> tuple[Path, str, str]:
+    """Head commit adds ``FLAGGED`` on line 2. The working tree deletes it again."""
+    repo = tmp / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    (repo / "requirements.txt").write_text("example==1\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("one\nFLAGGED\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    (repo / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    return repo, base, head
+
+
+def _flagged_body(tool_id: str, flagged: bool) -> str:
+    if not flagged:
+        if tool_id == "gitleaks":
+            return "[]"
+        if tool_id == "lizard":
+            return "NLOC,CCN,token,PARAM,length,location,file,function,long_name,start,end\n"
+        if tool_id == "jscpd":
+            return '{"duplicates":[]}'
+        return "{}"
+    if tool_id == "semgrep-security":
+        return json.dumps({"results": [{
+            "check_id": "example",
+            "path": "src/app.py",
+            "start": {"line": 2},
+            "end": {"line": 2},
+            "extra": {"severity": "ERROR", "message": "flagged"},
+        }]})
+    if tool_id == "semgrep-saga":
+        return json.dumps({"results": [{
+            "check_id": "saga.swallowed",
+            "path": "src/app.py",
+            "start": {"line": 2},
+            "end": {"line": 2},
+            "extra": {
+                "message": "flagged",
+                "metadata": {"row": "correctness.pattern.swallowed-error"},
+            },
+        }]})
+    if tool_id == "gitleaks":
+        return json.dumps([{
+            "RuleID": "example-rule",
+            "File": "src/app.py",
+            "StartLine": 2,
+            "EndLine": 2,
+        }])
+    if tool_id == "osv-scanner":
+        return json.dumps({"results": [{
+            "source": {"path": "requirements.txt"},
+            "packages": [{"vulnerabilities": [{
+                "id": "CVE-FLAGGED",
+                "severity": [{"type": "CVSS_V3", "score": "9.0"}],
+            }]}],
+        }]})
+    if tool_id == "jscpd":
+        return json.dumps({"duplicates": [{
+            "lines": 8,
+            "tokens": 60,
+            "firstFile": {"name": "src/app.py", "start": 2},
+            "secondFile": {"name": "src/other.py", "start": 2},
+        }]})
+    return (
+        "NLOC,CCN,token,PARAM,length,location,file,function,long_name,start,end\n"
+        '20,16,100,2,1,"heavy@2-2@src/app.py",src/app.py,heavy,"heavy( a , b )",2,2\n'
+    )
+
+
+def _watch(adapter: Any, repo: Path) -> Any:
+    original = adapter.invoke
+
+    def invoke(context: Any) -> list[str]:
+        assert context.repo == context.root
+        assert context.repo.resolve() != repo.resolve()
+        return original(context)
+
+    return replace(adapter, invoke=invoke)
+
+
+def _tool_profile(tmp: Path, home: Path, tool_id: str) -> Path:
+    binary = {
+        "semgrep-security": "semgrep",
+        "semgrep-saga": "semgrep",
+        "gitleaks": "gitleaks",
+        "osv-scanner": "osv-scanner",
+        "jscpd": "jscpd",
+        "lizard": "lizard",
+    }[tool_id]
+    pin: dict[str, Any] = {"version": "1.0.0"}
+    if tool_id == "semgrep-security":
+        cache = T.semgrep_cache(home, "p/security-audit")
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "rules.yml").write_text("rules: []\n", encoding="utf-8")
+        pin["rules"] = [{"pack": "p/security-audit", "sha256": T.digest_tree(cache)}]
+    return _profile(tmp / f"{tool_id}.json", {"review_tools": {"pins": {binary: pin}}})
+
+
+@pytest.mark.parametrize("tool_id", _SCAN_IDS)
+def test_head_worktree_uncommitted_edit_keeps_the_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool_id: str,
+) -> None:
+    adapters = _load("review_adapters_all_languages")
+    if tool_id == "semgrep-saga":
+        plugin = tmp_path / "plugin"
+        rules = plugin / "references" / "semgrep"
+        rules.mkdir(parents=True)
+        (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
+        monkeypatch.setattr(T, "plugin_root", lambda: plugin)
+    repo, base, head = _flagged_repo(tmp_path)
+    assert "FLAGGED" not in (repo / "src" / "app.py").read_text(encoding="utf-8")
+    home = tmp_path / "home"
+    adapter = _watch(next(item for item in adapters.ADAPTERS if item.id == tool_id), repo)
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0\n")
+        app = cwd / "src" / "app.py"
+        flagged = app.is_file() and "FLAGGED" in app.read_text(encoding="utf-8")
+        body = _flagged_body(tool_id, flagged)
+        if "--output" in argv:
+            report_dir = Path(argv[argv.index("--output") + 1])
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "jscpd-report.json").write_text(body, encoding="utf-8")
+            return T.ProcessResult(0, "")
+        return T.ProcessResult(0, body)
+
+    runner = _Calls(handler)
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _tool_profile(tmp_path, home, tool_id), output, home,
+        adapters=[adapter], runner=runner,
+    )
+    assert code == 0, _reasons(output) if output.exists() else code
+    assert _read(output, "findings.json")
+    scans = [call["cwd"] for call in runner.calls if not _version(call["argv"])]
+    assert scans
+    assert all(path.resolve() != repo.resolve() for path in scans)
+
+
+def test_head_worktree_uncommitted_rules_stay_a_known_gap(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    rules = repo / "missing-rules"
+    rules.mkdir()
+    (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    adapter = _stub(gap_path="missing-rules", gap_rows=("correctness.pattern.swallowed-error",))
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[adapter], runner=runner,
+    )
+    assert code == 0
+    assert runner.calls == []
+    assert ("stub", "correctness.pattern.swallowed-error", "known-gap") in _reasons(output)
+
+
+def test_head_worktree_hooks_do_not_run(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    marker = tmp_path / "hook-ran"
+    hook = repo / "hooks" / "post-checkout"
+    hook.parent.mkdir()
+    hook.write_text(f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n", encoding="utf-8")
+    hook.chmod(0o755)
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    _git(repo, "config", "core.hooksPath", "hooks")
+    control = tmp_path / "control"
+    added = subprocess.run(
+        ["git", "worktree", "add", "--detach", str(control), head],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    assert marker.is_file(), added.stderr
+    marker.unlink()
+    subprocess.run(
+        ["git", "worktree", "remove", "--force", str(control)],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    output = tmp_path / "out"
+    code = _run(repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home", adapters=[])
+    assert code == 0
+    assert not marker.exists()
+
+
+def test_head_worktree_uncommitted_probe_keeps_the_failure_and_the_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
+    uncovered = json.dumps({
+        "files": {"src/app.py": {"missing_branches": [[4, 5]], "missing_lines": []}},
+    })
+    full = json.dumps({"files": {"src/app.py": {"missing_branches": [], "missing_lines": []}}})
+    (repo / "probe.py").write_text(
+        "import pathlib\n"
+        "pathlib.Path('coverage.json').write_text(" + repr(uncovered) + ", encoding='utf-8')\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nFOUR\nfive\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    (repo / "probe.py").write_text(
+        "import pathlib\n"
+        "pathlib.Path('coverage.json').write_text(" + repr(full) + ", encoding='utf-8')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    command = shlex.join([sys.executable, "probe.py"])
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {"python": {
+        "test_command": command,
+        "coverage_report": "coverage.json",
+    }}}})
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home", adapters=[], framework=True,
+    )
+    assert code == 0
+    rows = [item["rule"]["row"] for item in _read(output, "findings.json")]
+    assert _RELOCATED in rows
+    assert "testing.uncovered-branch" in rows
+    assert _read(output, "measurements.json")[0]["value"] != 1.0
+
+
+def _semgrep_cache(home: Path) -> str:
+    cache = T.semgrep_cache(home, "p/security-audit")
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "rules.yml").write_text("rules: []\n", encoding="utf-8")
+    return T.digest_tree(cache)
+
+
+def test_head_profile_pins_and_command_come_from_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    home = tmp_path / "home"
+    digest = _semgrep_cache(home)
+    base_profile = {
+        "review_tools": {
+            "languages": {"python": {"test_command": "echo BASEMARKER"}},
+            "pins": {"semgrep": {"version": "1.0.0", "rules": [
+                {"pack": "p/security-audit", "sha256": digest},
+            ]}},
+        },
+    }
+    (repo / ".saga-profile.json").write_text(json.dumps(base_profile), encoding="utf-8")
+    base = _commit(repo, "base")
+    head_profile = {
+        "review_tools": {
+            "languages": {"python": {"test_command": "true"}},
+            "pins": {"semgrep": {"version": "1.0.0", "rules": [
+                {"pack": "p/other", "sha256": "a" * 64},
+            ]}},
+        },
+    }
+    (repo / ".saga-profile.json").write_text(json.dumps(head_profile), encoding="utf-8")
+    head = _commit(repo, "head")
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"languages": {"python": {"test_command": "echo WORKTREE"}}},
+    }), encoding="utf-8")
+    adapters = _load("review_adapters_all_languages")
+    adapter = next(item for item in adapters.ADAPTERS if item.id == "semgrep-security")
+    argv_seen: list[list[str]] = []
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        argv_seen.append(list(argv))
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0\n")
+        return T.ProcessResult(0, "{}")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, repo / ".saga-profile.json", output, home,
+        adapters=[adapter], runner=_Calls(handler), framework=True,
+    )
+    assert code == 0
+    cache = T.semgrep_cache(home, "p/security-audit")
+    assert any(str(cache) in argv for argv in argv_seen)
+    assert ["echo", "BASEMARKER"] in argv_seen
+    assert ["true"] not in argv_seen
+    assert all("WORKTREE" not in token for argv in argv_seen for token in argv)
+    changes = [item for item in _read(output, "degraded.json") if item["reason"] == "head-profile-change"]
+    assert changes == [{
+        "lens": "security",
+        "language": "none",
+        "input": "head-profile",
+        "tool": "review-tools",
+        "reason": "head-profile-change",
+    }]
+
+
+def test_head_profile_added_when_base_has_none_is_recorded(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"languages": {"python": {"test_command": "true"}}},
+    }), encoding="utf-8")
+    head = _commit(repo, "head")
+    argv_seen: list[list[str]] = []
+
+    def handler(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        argv_seen.append(list(argv))
+        return T.ProcessResult(0, "")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, repo / ".saga-profile.json", output, tmp_path / "home",
+        adapters=[], runner=handler, framework=True,
+    )
+    assert code == 0
+    assert argv_seen == []
+    assert ("relocated-test", _RELOCATED, "known-gap") in _reasons(output)
+    assert [item["reason"] for item in _read(output, "degraded.json")].count("head-profile-change") == 1
+
+
+def test_head_profile_absent_on_both_commits_is_not_recorded(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"languages": {"python": {"test_command": "true"}}},
+    }), encoding="utf-8")
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, repo / ".saga-profile.json", output, tmp_path / "home",
+        adapters=[], framework=True,
+    )
+    assert code == 0
+    assert "head-profile-change" not in [item["reason"] for item in _read(output, "degraded.json")]
+    assert ("relocated-test", _RELOCATED, "known-gap") in _reasons(output)
+
+
+def test_head_profile_malformed_head_is_recorded(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"languages": {"python": {"test_command": "echo BASEMARKER"}}},
+    }), encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / ".saga-profile.json").write_text("{", encoding="utf-8")
+    head = _commit(repo, "head")
+    argv_seen: list[list[str]] = []
+
+    def handler(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        argv_seen.append(list(argv))
+        return T.ProcessResult(0, "")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[], runner=handler, framework=True,
+    )
+    assert code == 0
+    assert ["echo", "BASEMARKER"] in argv_seen
+    assert [item["reason"] for item in _read(output, "degraded.json")].count("head-profile-change") == 1
+
+    pins = tmp_path / "pins"
+    _init(pins)
+    (pins / "README").write_text("one\n", encoding="utf-8")
+    (pins / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"languages": {"python": {"test_command": "echo BASEMARKER"}}},
+    }), encoding="utf-8")
+    pins_base = _commit(pins, "base")
+    (pins / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"pins": {"semgrep": {"rules": [{"pack": "p/other", "sha256": "zz"}]}}},
+    }), encoding="utf-8")
+    pins_head = _commit(pins, "head")
+    argv_seen.clear()
+    second = tmp_path / "out-pins"
+    code = _run(
+        pins, pins_base, pins_head, _bare_profile(tmp_path / "pins-profile"), second,
+        tmp_path / "home-pins", adapters=[], runner=handler, framework=True,
+    )
+    assert code == 0
+    assert ["echo", "BASEMARKER"] in argv_seen
+    assert [item["reason"] for item in _read(second, "degraded.json")].count("head-profile-change") == 1
+
+
+def test_head_profile_malformed_base_exits_2(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / ".saga-profile.json").write_text("{", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "README").write_text("one\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    runner = _Calls(_ok())
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home",
+        adapters=[_stub()], runner=runner,
+    )
+    assert code == 2
+    assert runner.calls == []
+    for name in _FOUR:
+        assert not (output / name).exists()
+
+
+def test_saga_rules_source_is_the_plugin_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = tmp_path / "plugin"
+    rules = plugin / "references" / "semgrep"
+    rules.mkdir(parents=True)
+    (rules / "rule.yml").write_text("rules: []\n", encoding="utf-8")
+    monkeypatch.setattr(T, "plugin_root", lambda: plugin)
+    adapters = _load("review_adapters_all_languages")
+    adapter = next(item for item in adapters.ADAPTERS if item.id == "semgrep-saga")
+    repo = tmp_path / "repo"
+    _init(repo)
+    evil = repo / "plugins" / "reviews" / "references" / "semgrep"
+    evil.mkdir(parents=True)
+    (evil / "evil.yml").write_text("rules: []\n", encoding="utf-8")
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+
+    def configs(runner: _Calls) -> list[str]:
+        found = []
+        for call in runner.calls:
+            if "--config" not in call["argv"]:
+                continue
+            index = call["argv"].index("--config")
+            found.append(call["argv"][index + 1])
+        return found
+
+    home = tmp_path / "home"
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0"}}},
+    })
+    runner = _Calls(_ok("{}"))
+    code = _run(repo, base, head, profile, tmp_path / "yaml", home, adapters=[adapter], runner=runner)
+    assert code == 0
+    rendered = configs(runner)
+    assert len(rendered) == 1
+    assert Path(rendered[0]).parent == home
+    assert all("evil.yml" not in item and str(evil) not in item for item in rendered)
+
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0", "rules": [
+            {"path": "plugins/reviews/references/semgrep"},
+        ]}}},
+    }), encoding="utf-8")
+    profile_base = _commit(repo, "profile")
+    pinned = _Calls(_ok("{}"))
+    code = _run(
+        repo, profile_base, head, repo / ".saga-profile.json", tmp_path / "pinned",
+        tmp_path / "home-2", adapters=[adapter], runner=pinned,
+    )
+    assert code == 0
+    rendered_pinned = configs(pinned)
+    assert len(rendered_pinned) == 1
+    assert Path(rendered_pinned[0]).parent == tmp_path / "home-2"
+
+
+def test_relative_rule_path_survives_until_the_scan(tmp_path: Path) -> None:
+    """A base-profile rule directory still exists when the fake runner is called."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    rules = repo / "rules" / "custom"
+    rules.mkdir(parents=True)
+    (rules / "r.yml").write_text("rules: []\n", encoding="utf-8")
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    (repo / ".saga-profile.json").write_text(json.dumps({
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0", "rules": [
+            {"path": "rules/custom"},
+        ]}}},
+    }), encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("two\n", encoding="utf-8")
+    (rules / "r.yml").write_text("rules: [head]\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    (rules / "r.yml").unlink()
+    rules.rmdir()
+    rules.parent.rmdir()
+    adapters = _load("review_adapters_all_languages")
+    adapter = next(item for item in adapters.ADAPTERS if item.id == "semgrep-security")
+    seen: list[Path] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0\n")
+        config = Path(argv[argv.index("--config") + 1])
+        assert config.is_dir()
+        assert (config / "r.yml").read_text(encoding="utf-8") == "rules: []\n"
+        assert not str(config.resolve()).startswith(str(Path(cwd).resolve()))
+        seen.append(config)
+        return T.ProcessResult(0, "{}")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, repo / ".saga-profile.json", output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(handler),
+    )
+    assert code == 0, _reasons(output) if output.exists() else code
+    assert seen
+    assert not seen[0].exists()
+    assert "known-gap" not in [item["reason"] for item in _read(output, "degraded.json")]
+
+
+def test_jscpd_and_lizard_comments_on_changed_lines_are_recorded(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("clean\n# jscpd:ignore-start\n", encoding="utf-8")
+    (repo / "old.py").write_text("# lizard forgives\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("CHANGED\n# jscpd:ignore-start\n", encoding="utf-8")
+    (repo / "dup.ts").write_text("// jscpd:ignore-end\n// lizard forgives\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path), output, tmp_path / "home", adapters=[],
+    )
+    assert code == 0
+    notes = {
+        (item["input"], item["reason"]): item
+        for item in _read(output, "degraded.json")
+        if item["reason"] in {"jscpd-ignore", "lizard-forgives", "gitleaks-allow"}
+    }
+    assert set(notes) == {("dup.ts", "jscpd-ignore"), ("dup.ts", "lizard-forgives")}
+    assert notes[("dup.ts", "jscpd-ignore")] == {
+        "lens": "architecture-maintainability",
+        "language": "typescript",
+        "input": "dup.ts",
+        "tool": "jscpd",
+        "reason": "jscpd-ignore",
+    }
+    assert notes[("dup.ts", "lizard-forgives")]["tool"] == "lizard"
+    assert notes[("dup.ts", "lizard-forgives")]["lens"] == "architecture-maintainability"
+    assert notes[("dup.ts", "lizard-forgives")]["language"] == "typescript"
+
+
+def test_coverage_source_ignores_a_committed_report(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
+    full = json.dumps({"files": {"src/app.py": {"missing_branches": [], "missing_lines": []}}})
+    uncovered = json.dumps({
+        "files": {"src/app.py": {"missing_branches": [[4, 5]], "missing_lines": []}},
+    })
+    (repo / "coverage.json").write_text(full, encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nFOUR\nfive\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {"python": {
+        "test_command": "true",
+        "coverage_report": "coverage.json",
+    }}}})
+
+    def runner(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        assert shell is False
+        if argv == ["true"]:
+            (cwd / "coverage.json").write_text(uncovered, encoding="utf-8")
+        return T.ProcessResult(0, "")
+
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[], runner=runner, framework=True,
+    )
+    assert code == 0
+    findings = _read(output, "findings.json")
+    assert len(findings) == 1
+    assert findings[0]["location"]["lines"] == {"start": 4, "end": 4}
+    assert _read(output, "measurements.json")[0]["value"] != 1.0
+
+
+def test_coverage_source_missing_name_stays_no_report(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    (repo / "coverage.json").write_text(json.dumps({
+        "files": {"src/app.py": {"missing_branches": [[4, 5]], "missing_lines": []}},
+    }), encoding="utf-8")
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {"python": {
+        "test_command": "true",
+        "coverage_report": "coverage.json",
+    }}}})
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home",
+        adapters=[], runner=_Calls(_ok()), framework=True,
+    )
+    assert code == 0
+    assert _read(output, "findings.json") == []
+    assert ("coverage", "testing.uncovered-branch", "no-report") in _reasons(output)
+
+
+def test_coverage_source_refuses_a_path_outside_the_relocated_directory(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}\n", encoding="utf-8")
+    cases = (str(outside), "../coverage.json")
+    for index, report in enumerate(cases):
+        profile = _profile(tmp_path / f"profile-{index}.json", {"review_tools": {"languages": {
+            "python": {"test_command": "true", "coverage_report": report},
+        }}})
+        output = tmp_path / f"out-{index}"
+        code = _run(
+            repo, base, head, profile, output, tmp_path / f"home-{index}",
+            adapters=[], runner=_Calls(_ok()), framework=True,
+        )
+        assert code == 2
+        for name in _FOUR:
+            assert not (output / name).exists()
+
+    def runner(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        if argv == ["true"]:
+            (cwd / "coverage.json").symlink_to(outside)
+        return T.ProcessResult(0, "")
+
+    profile = _profile(tmp_path / "link.json", {"review_tools": {"languages": {"python": {
+        "test_command": "true",
+        "coverage_report": "coverage.json",
+    }}}})
+    output = tmp_path / "link-out"
+    code = _run(
+        repo, base, head, profile, output, tmp_path / "home-link",
+        adapters=[], runner=runner, framework=True,
+    )
+    assert code == 2
+    for name in _FOUR:
+        assert not (output / name).exists()
+
+
+def test_relocated_environment_is_allow_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ"):
+        monkeypatch.setenv(name, os.environ.get(name) or "C")
+    monkeypatch.setenv("SAGA_REVIEW_SENTINEL", "nope")
+    monkeypatch.setenv("PYTHONPATH", "/tmp/nope")
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"languages": {"python": {"test_command": "true"}}},
+    })
+    recorded: dict[str, str] = {}
+
+    def runner(
+        argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+    ) -> Any:
+        if argv == ["true"]:
+            recorded.update(env)
+        return T.ProcessResult(0, "")
+
+    code = _run(
+        repo, base, head, profile, tmp_path / "out", tmp_path / "home",
+        adapters=[], runner=runner, framework=True,
+    )
+    assert code == 0
+    assert set(recorded) == {
+        "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "HOME", "TMPDIR", "TMP", "TEMP",
+    }
+    assert recorded["PATH"] == os.environ["PATH"]
+    assert recorded["HOME"] != str(Path.home())
+    assert "SAGA_REVIEW_SENTINEL" not in recorded
+    assert recorded["TMPDIR"] == recorded["TMP"] == recorded["TEMP"]
+
+
+def _vuln_parse(text: str) -> Any:
+    if "VULN" not in text:
+        return T.ParseResult()
+    return T.ParseResult((
+        _hit(rule_id="vuln", anchor="vuln", whole_project=True, start=None),
+    ))
+
+
+def test_base_cache_follows_the_branch_not_the_typed_name(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "marker.txt").write_text("VULN\n", encoding="utf-8")
+    (repo / "app.py").write_text("one\n", encoding="utf-8")
+    b1 = _commit(repo, "b1")
+    _git(repo, "branch", "basebranch")
+    (repo / "app.py").write_text("two\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    scanned: list[str] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        scanned.append(_git(cwd, "rev-parse", "HEAD"))
+        text = (cwd / "marker.txt").read_text(encoding="utf-8")
+        return T.ProcessResult(0, "VULN" if "VULN" in text else "{}")
+
+    adapter = _stub(comparison="base-head", parse=_vuln_parse)
+    home = tmp_path / "home"
+    profile = _bare_profile(tmp_path)
+
+    def once(name: str) -> Path:
+        output = tmp_path / name
+        code = _run(
+            repo, "basebranch", head, profile, output, home,
+            adapters=[adapter], runner=_Calls(handler),
+        )
+        assert code == 0
+        return output
+
+    first = once("out-1")
+    assert b1 in scanned
+    assert _read(first, "findings.json") == []
+    scanned.clear()
+    second = once("out-2")
+    assert b1 not in scanned
+    assert head in scanned
+    assert _read(second, "findings.json") == []
+
+    _git(repo, "checkout", "basebranch")
+    (repo / "marker.txt").write_text("clean\n", encoding="utf-8")
+    b2 = _commit(repo, "b2")
+    _git(repo, "checkout", head)
+    scanned.clear()
+    third = once("out-3")
+    assert b2 in scanned
+    assert {item["rule"]["ref"] for item in _read(third, "findings.json")} == {"vuln"}
+    scanned.clear()
+    fourth = once("out-4")
+    assert b2 not in scanned
+    assert {item["rule"]["ref"] for item in _read(fourth, "findings.json")} == {"vuln"}
+
+    cache = home / ".saga" / "review-cache" / "stub" / "1.0.0" / b2
+    stored = list(cache.glob("*.json"))
+    assert len(stored) == 1
+    leftover = cache / "not-a-digest.json"
+    leftover.write_text("[]", encoding="utf-8")
+    body = json.loads(stored[0].read_text(encoding="utf-8"))
+    body["key"]["settings"] = "0" * 64
+    stored[0].write_text(json.dumps(body), encoding="utf-8")
+    scanned.clear()
+    fifth = once("out-5")
+    assert b2 in scanned
+    assert {item["rule"]["ref"] for item in _read(fifth, "findings.json")} == {"vuln"}
+    assert leftover.is_file()
+
+
+def test_empty_or_errored_stdout_is_degraded(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    scanned: list[str] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        scanned.append(_git(cwd, "rev-parse", "HEAD"))
+        return T.ProcessResult(0, "")
+
+    adapter = _stub(comparison="base-head")
+    home = tmp_path / "home"
+    profile = _bare_profile(tmp_path)
+    first = tmp_path / "out-1"
+    code = _run(
+        repo, base, head, profile, first, home, adapters=[adapter], runner=_Calls(handler),
+    )
+    assert code == 0
+    assert base in scanned and head in scanned
+    assert _read(first, "findings.json") == []
+    assert ("stub", "security.scanner-medium-low", "empty-output") in _reasons(first)
+    scanned.clear()
+    second = tmp_path / "out-2"
+    code = _run(
+        repo, base, head, profile, second, home, adapters=[adapter], runner=_Calls(handler),
+    )
+    assert code == 0
+    assert base in scanned
+    assert ("stub", "security.scanner-medium-low", "empty-output") in _reasons(second)
+
+    def clean(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        return T.ProcessResult(0, "{}")
+
+    def parse(text: str) -> Any:
+        assert text.strip() == "{}"
+        return T.ParseResult()
+
+    third = tmp_path / "out-3"
+    code = _run(
+        repo, base, head, _bare_profile(tmp_path / "clean"), third, tmp_path / "home-clean",
+        adapters=[_stub(comparison="base-head", parse=parse)], runner=_Calls(clean),
+    )
+    assert code == 0
+    assert "empty-output" not in [item["reason"] for item in _read(third, "degraded.json")]
+
+
+def test_untrusted_head_rule_is_documented() -> None:
+    guide = (REFERENCES / "review-tools.md").read_text(encoding="utf-8")
+    decisions = (
+        REPO_ROOT / "docs" / "engineering-journal" / "DECISIONS.md"
+    ).read_text(encoding="utf-8")
+    profile = (REFERENCES / "repository-profile.md").read_text(encoding="utf-8")
+    sentence = "The commit under review is untrusted."
+    assert sentence in guide
+    assert sentence in decisions
+    assert "head-profile-change" in profile
+
+
+def test_corpus_language_ids_workflow_detector() -> None:
+    assert T.language_for(".github/workflows/ci.yaml") == "github-workflow"
+    assert T.language_for("docs/.github/workflows/ci.yml") == "github-workflow"
+
+
+def test_stable_raw_names_two_runs_scratch_folders_alike() -> None:
+    """Two runs get different scratch folders; the stored raw output must not (issue 244)."""
+    roots = [Path(tempfile.mkdtemp(prefix="saga-review-")) for _ in range(2)]
+    try:
+        texts = [
+            T._stable_raw(_stub(), f'{{"manifest_path":"{root.resolve()}/Cargo.toml"}}\n'
+                          f"{root}/src/a.rs\n")
+            for root in roots
+        ]
+    finally:
+        for root in roots:
+            shutil.rmtree(root, ignore_errors=True)
+    assert texts[0] == texts[1]
+    assert "saga-review-/Cargo.toml" in texts[0]
+
+
+def test_stable_raw_applies_the_adapter_rewrite_after_the_scrub() -> None:
+    adapter = _stub(stable_raw=lambda text: "".join(sorted(text.splitlines(keepends=True))))
+    assert T._stable_raw(adapter, "b\na\n") == "a\nb\n"
+
+
+def test_hit_text_loses_the_scan_root(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    hit = _hit(
+        rule_id=f"file://{root}/missing.md",
+        anchor=f"file://{root}/missing.md",
+        statement=f"Broken link file://{root}/missing.md.",
+    )
+    stable = T._stable_hit(hit, root)
+    assert stable.rule_id == stable.anchor == "file://missing.md"
+    assert str(root) not in stable.statement
+
+
+def test_records_are_written_in_one_order_whatever_the_tool_order(tmp_path: Path) -> None:
+    """findings.json and degraded.json do not follow the tool's print order (issue 244)."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("ONE\nTWO\nTHREE\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    hits = [_hit(rule_id=f"rule-{n}", anchor=f"rule-{n}", start=n) for n in (1, 2, 3)]
+    outputs = []
+    for order in (hits, list(reversed(hits))):
+        def parse(_text: str, order: list[Any] = order) -> Any:
+            return T.ParseResult(
+                tuple(order),
+                gaps=tuple(("known-gap", f"security.row-{hit.start}") for hit in order),
+            )
+
+        output = tmp_path / f"out-{len(outputs)}"
+        assert _run(
+            repo, base, head, _bare_profile(tmp_path / "profile"), output, tmp_path / "home",
+            adapters=[_stub(parse=parse)], runner=_Calls(_ok()),
+        ) == 0
+        outputs.append(output)
+    for name in ("findings.json", "degraded.json", "outcomes.json", "where-to-look.json"):
+        assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes(), name
+    starts = [item["location"]["lines"]["start"] for item in _read(outputs[0], "findings.json")]
+    assert sorted(starts) == [1, 2, 3]
+
+
+def test_a_missing_optional_report_is_parsed_from_console_text(tmp_path: Path) -> None:
+    repo, base, head = _pair(tmp_path)
+    seen: list[str] = []
+
+    def handler(argv: list[str], _cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        return T.ProcessResult(0, "", "INFO nothing here\n")
+
+    def parse(text: str) -> Any:
+        seen.append(text)
+        raise T.ToolGap("nothing-to-mutate", "testing.surviving-mutant")
+
+    adapter = _stub(parse=parse, report_file="out/report.json", report_optional=True)
+    output = tmp_path / "out"
+    assert _run(
+        repo, base, head, _bare_profile(tmp_path / "profile"), output, tmp_path / "home",
+        adapters=[adapter], runner=_Calls(handler),
+    ) == 0
+    assert seen == ["INFO nothing here\n"]
+    assert ("stub", "testing.surviving-mutant", "nothing-to-mutate") in _reasons(output)
+
+
+def test_change_seed_is_fixed_by_base_and_head(tmp_path: Path) -> None:
+    one = T.ScanContext(tmp_path, tmp_path, tmp_path, base="a" * 40, head="b" * 40)
+    again = T.ScanContext(tmp_path / "x", tmp_path / "x", tmp_path, base="a" * 40, head="b" * 40)
+    other = T.ScanContext(tmp_path, tmp_path, tmp_path, base="a" * 40, head="c" * 40)
+    assert T.change_seed(one) == T.change_seed(again)
+    assert T.change_seed(one) != T.change_seed(other)
+    assert 1 <= T.change_seed(one) < 2**31
+
+
+def test_line_ranges_join_consecutive_lines() -> None:
+    assert T.line_ranges(frozenset({7, 1, 2, 3, 9, 10})) == [(1, 3), (7, 7), (9, 10)]
+
+
+def _same_packets(first: Path, second: Path) -> None:
+    for name in ("findings.json", "measurements.json", "degraded.json", "outcomes.json"):
+        assert (first / name).read_bytes() == (second / name).read_bytes(), name
+
+
+def test_relocated_runs_differing_only_in_duration_record_identical_bytes(tmp_path: Path) -> None:
+    """Issue 244: the relocated test command's stored output carried its duration and folder."""
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"languages": {"python": {"test_command": "pytest -q"}}},
+    })
+    outputs = []
+    for run, seconds in enumerate(("0.01s", "3.20s")):
+        def runner(
+            argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+            seconds: str = seconds,
+        ) -> Any:
+            assert shell is False
+            return T.ProcessResult(1, (
+                f"rootdir: {cwd}\n"
+                "FAILED tests/test_app.py::test_one - AssertionError\n"
+                f"==== 1 failed in {seconds} ====\n"
+            ))
+
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, profile, output, tmp_path / "home",
+            adapters=[], runner=runner, framework=True,
+        ) == 0
+        outputs.append(output)
+    assert any(
+        item["rule"]["row"] == "architecture-maintainability.relocated-run-fails"
+        for item in _read(outputs[0], "findings.json")
+    )
+    _same_packets(*outputs)
+
+
+def test_relocated_output_with_colour_codes_inside_the_scratch_folder_records_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    """The relocated command's output was scrubbed before its colour codes were removed, so a
+    scratch folder name split by an escape sequence reached the stored hash."""
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"languages": {"python": {"test_command": "pytest -q"}}},
+    })
+    outputs = []
+    for run in range(2):
+        def runner(
+            argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+        ) -> Any:
+            folder = str(cwd)
+            return T.ProcessResult(1, (
+                f"\x1b[31m{folder[:-3]}\x1b[1m{folder[-3:]}\x1b[0m/tests/test_app.py\n"
+                "FAILED tests/test_app.py::test_one - AssertionError\n"
+            ))
+
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, profile, output, tmp_path / "home",
+            adapters=[], runner=runner, framework=True,
+        ) == 0
+        outputs.append(output)
+    assert any(
+        item["rule"]["row"] == "architecture-maintainability.relocated-run-fails"
+        for item in _read(outputs[0], "findings.json")
+    )
+    _same_packets(*outputs)
+
+
+def test_coverage_reports_differing_only_in_timestamp_record_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    """Issue 244: coverage.py stamps ``meta.timestamp`` into the report whose hash is recorded."""
+    repo = tmp_path / "repo"
+    _init(repo)
+    (repo / "src").mkdir()
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nfour\nfive\n", encoding="utf-8")
+    base = _commit(repo, "base")
+    (repo / "src" / "app.py").write_text("one\ntwo\nthree\nFOUR\nfive\n", encoding="utf-8")
+    head = _commit(repo, "head")
+    profile = _profile(tmp_path / "profile.json", {"review_tools": {"languages": {"python": {
+        "test_command": "true",
+        "coverage_report": "coverage.json",
+    }}}})
+    outputs = []
+    for run, stamp in enumerate(("2026-10-16T02:01:12.409903", "2026-10-16T02:01:19.110421")):
+        report = json.dumps({
+            "meta": {"format": 3, "version": "7.6.1", "timestamp": stamp},
+            "files": {"src/app.py": {"missing_branches": [[4, 5]], "missing_lines": []}},
+        })
+
+        def runner(
+            argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int, shell: bool,
+            report: str = report,
+        ) -> Any:
+            assert shell is False
+            if argv == ["true"]:
+                (cwd / "coverage.json").write_text(report, encoding="utf-8")
+            return T.ProcessResult(0, "")
+
+        output = tmp_path / f"out-{run}"
+        assert _run(
+            repo, base, head, profile, output, tmp_path / "home",
+            adapters=[], runner=runner, framework=True,
+        ) == 0
+        outputs.append(output)
+    assert _read(outputs[0], "findings.json")
+    _same_packets(*outputs)
+
+
+def test_cobertura_timestamp_and_scratch_source_are_not_stored() -> None:
+    scratch = Path(tempfile.gettempdir()) / "saga-relocated-ab12cd34"
+    one = f'<coverage version="7.6.1" timestamp="1792130474945"><sources><source>{scratch}</source>'
+    two = one.replace("1792130474945", "1792130482403").replace("ab12cd34", "zz99yy88")
+    assert T.stable_coverage_report(one.encode()) == T.stable_coverage_report(two.encode())
+    assert b"1792130474945" not in T.stable_coverage_report(one.encode())
+
+
+@pytest.mark.parametrize(("first", "second"), [
+    # cargo test: libtest prints results as parallel test threads finish.
+    (
+        "running 2 tests\ntest b ... ok\ntest a ... FAILED\n"
+        "test result: FAILED. 1 passed; 1 failed; finished in 0.00s\n",
+        "running 2 tests\ntest a ... FAILED\ntest b ... ok\n"
+        "test result: FAILED. 1 passed; 1 failed; finished in 1.25s\n",
+    ),
+    # pytest -q prints its summary without the = padding.
+    (
+        "FAILED tests/test_app.py::test_one - AssertionError\n1 failed, 3 passed in 0.05s\n",
+        "FAILED tests/test_app.py::test_one - AssertionError\n"
+        "1 failed, 3 passed in 62.10s (0:01:02)\n",
+    ),
+    ("no tests ran in 0.01s\n", "no tests ran in 0.43s\n"),
+    # go test.
+    (
+        "--- FAIL: TestAdd (0.00s)\nFAIL\nFAIL\texample.com/m\t0.012s\n",
+        "--- FAIL: TestAdd (0.31s)\nFAIL\nFAIL\texample.com/m\t0.402s\n",
+    ),
+    # XCTest.
+    (
+        "Test Suite 'All tests' started at 2026-10-16 01:00:00.123\n"
+        "Test Case '-[M.T testA]' failed (0.001 seconds).\n"
+        "\t Executed 1 test, with 1 failure (0 unexpected) in 0.004 (0.005) seconds\n",
+        "Test Suite 'All tests' started at 2026-10-16 01:07:41.981\n"
+        "Test Case '-[M.T testA]' failed (0.214 seconds).\n"
+        "\t Executed 1 test, with 1 failure (0 unexpected) in 0.230 (0.233) seconds\n",
+    ),
+    # Jest's verbose per-test durations, slow-suite durations and colour codes.
+    (
+        "\x1b[1mPASS\x1b[22m ./a.test.js (5.123 s)\n  ✓ adds (2 ms)\nTime:        5.4 s\n",
+        "PASS ./a.test.js (6.010 s)\n  ✓ adds (11 ms)\nTime:        6.2 s, estimated 6 s\n",
+    ),
+])
+def test_stable_transcript_drops_per_run_values(first: str, second: str) -> None:
+    assert T.stable_transcript(first) == T.stable_transcript(second)
+
+
+def test_vitest_failure_text_with_colour_and_a_temporary_config_name_hashes_once() -> None:
+    """Issue 147: Vite names its loaded config by the clock and quotes the worktree path inside
+    colour codes, so a failed run's stored text differed between two runs of one change."""
+    adapter = _stub(stable_raw=T.stable_transcript)
+
+    def failure(scratch: str, stamp: str) -> str:
+        folder = f"{tempfile.gettempdir()}/saga-review-{scratch}"
+        return (
+            f"failed to load config from {folder}/vitest.config.ts\n"
+            f"\x1b[31m{folder[:-3]}\x1b[1m{folder[-3:]}\x1b[22m/vitest.config.ts\x1b[39m\n"
+            f"Error: ENOENT {folder}/node_modules/.vite-temp/"
+            f"vitest.config.ts.timestamp-{stamp}.mjs\n"
+        )
+
+    first = T._stable_raw(adapter, failure("ab12cd34", "1792130474945-3fa9c1d2e4b5"))
+    second = T._stable_raw(adapter, failure("zz99yy88", "1792130482403-77c0de1a9b3f"))
+    assert first == second
+    assert "vitest.config.ts.timestamp.mjs" in first and "\x1b" not in first
+    assert "ab12cd34" not in first
+
+
+def test_jest_runs_with_coverage_warnings_at_different_positions_hash_once() -> None:
+    """Issue 147: ``Failed to collect coverage from ...`` lines split the suite blocks at random
+    points, so sorting only adjacent suites left a different order on each run."""
+    warning = (
+        "Failed to collect coverage from /w/src/broken.ts\n"
+        "ERROR: Unexpected token\n"
+        "STACK: SyntaxError: Unexpected token\n"
+        "    at parse (/w/node_modules/x.js:1:1)\n"
+    )
+    a = "PASS ./a.test.js\n  \u2713 adds (2 ms)\n"
+    b = "FAIL ./b.test.js\n  \u25cf subtracts\n\n    expected 1\n"
+    c = "PASS ./c.test.js\n"
+    summary = "Test Suites: 1 failed, 2 passed, 3 total\nTime:        1.2 s\nRan all test suites.\n"
+    first = T.stable_transcript(a + warning + b + c + summary)
+    second = T.stable_transcript(c + b + a + warning + summary)
+    third = T.stable_transcript(warning + c + a + b + summary)
+    assert first == second == third
+    assert first.endswith("Ran all test suites.\n")
+    assert "ERROR: Unexpected token\nSTACK:" in first
+    assert T.stable_transcript(a + b) != T.stable_transcript(a + c)
+
+
+def test_stable_transcript_keeps_test_names_and_failures() -> None:
+    text = (
+        "FAILED tests/test_app.py::test_waits_5s - AssertionError: took 5s\n"
+        "==== 1 failed in 0.05s ====\n"
+    )
+    stable = T.stable_transcript(text)
+    assert "tests/test_app.py::test_waits_5s - AssertionError: took 5s" in stable
+    assert "0.05s" not in stable
+
+
+def _mode_written_by(runner_umask: int | None, parent_umask: int, tmp_path: Path) -> int:
+    """The mode of a file a child creates through ``subprocess_runner`` under *parent_umask*."""
+    target = tmp_path / f"made-{parent_umask:o}-{runner_umask}.txt"
+    code = f"open({str(target)!r}, 'w').close()"
+    kwargs: dict[str, Any] = {} if runner_umask is None else {"umask": runner_umask}
+    previous = os.umask(parent_umask)
+    try:
+        result = T.subprocess_runner(
+            [sys.executable, "-c", code], cwd=tmp_path, env=dict(os.environ), timeout=30,
+            shell=False, **kwargs,
+        )
+        assert os.umask(parent_umask) == parent_umask  # the runner left this process's mask alone
+    finally:
+        os.umask(previous)
+    assert result.code == 0
+    return target.stat().st_mode & 0o777
+
+
+@pytest.mark.skipif(os.name != "posix", reason="umask is a POSIX setting")
+def test_a_runner_umask_overrides_the_parents_mask_for_the_child_only(tmp_path: Path) -> None:
+    assert _mode_written_by(0o022, 0o077, tmp_path) == 0o644
+    assert _mode_written_by(0o022, 0o022, tmp_path) == 0o644
+
+
+@pytest.mark.skipif(os.name != "posix", reason="umask is a POSIX setting")
+def test_a_runner_without_umask_lets_the_child_inherit_the_parents_mask(tmp_path: Path) -> None:
+    assert _mode_written_by(None, 0o077, tmp_path) == 0o600
+    assert _mode_written_by(None, 0o022, tmp_path) == 0o644
+
+
+# ---------------------------------------------------------------------------
+# Issue 324: a dependency-audit base scan goes stale, because advisories change
+# while the base commit does not.
+# ---------------------------------------------------------------------------
+
+_DEPENDENCY_ROWS = ("security.dependency-high", "security.dependency-medium-low")
+_CACHE_FRESHNESS_SECONDS = 24 * 60 * 60
+
+
+def _age_base_cache(home: Path, seconds: float) -> int:
+    """Make every stored base scan look ``seconds`` old, by file time and by recorded time."""
+    entries = sorted((home / ".saga" / "review-cache").rglob("*.json"))
+    old = time.time() - seconds
+    for entry in entries:
+        body = json.loads(entry.read_text(encoding="utf-8"))
+        stamp = body.get("cached_at")
+        if isinstance(stamp, bool):
+            pass
+        elif isinstance(stamp, (int, float)):
+            body["cached_at"] = old
+        elif isinstance(stamp, str):
+            body["cached_at"] = datetime.fromtimestamp(old, tz=timezone.utc).isoformat()
+        entry.write_text(json.dumps(body, sort_keys=True), encoding="utf-8")
+        os.utime(entry, (old, old))
+    return len(entries)
+
+
+def _dependency_audit_runs(tmp_path: Path, adapter: Any) -> tuple[Any, str, str]:
+    """Returns a function that runs the adapter once and lists the commits it scanned."""
+    repo, base, head = _pair(tmp_path)
+    scanned: list[str] = []
+
+    def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
+        if _version(argv):
+            return T.ProcessResult(0, "1.0.0")
+        scanned.append(_git(cwd, "rev-parse", "HEAD"))
+        return T.ProcessResult(0, "scan\n")
+
+    home = tmp_path / "home"
+    profile = _bare_profile(tmp_path)
+    counter = [0]
+
+    def once() -> list[str]:
+        counter[0] += 1
+        scanned.clear()
+        code = _run(
+            repo, base, head, profile, tmp_path / f"out-{counter[0]}", home,
+            adapters=[adapter], runner=_Calls(handler),
+        )
+        assert code == 0
+        return list(scanned)
+
+    return once, base, head
+
+
+def test_a_dependency_audit_base_scan_written_in_this_run_is_reused(tmp_path: Path) -> None:
+    adapter = _stub(id="dependency-audit", tool="dependency-audit",
+                    comparison="base-head", rows=_DEPENDENCY_ROWS)
+    once, base, head = _dependency_audit_runs(tmp_path, adapter)
+    first = once()
+    assert base in first and head in first
+    second = once()
+    assert base not in second
+    assert head in second
+
+
+def test_a_dependency_audit_base_scan_older_than_a_day_is_scanned_again(tmp_path: Path) -> None:
+    adapter = _stub(id="dependency-audit", tool="dependency-audit",
+                    comparison="base-head", rows=_DEPENDENCY_ROWS)
+    once, base, head = _dependency_audit_runs(tmp_path, adapter)
+    assert base in once()
+    assert base not in once()
+    assert _age_base_cache(tmp_path / "home", _CACHE_FRESHNESS_SECONDS + 60 * 60) == 1
+    stale = once()
+    assert base in stale, "a stale dependency-audit base scan was served from the cache"
+    assert head in stale
+    # The rescan wrote a fresh entry, so the next run reuses it without scanning base.
+    assert base not in once()
+
+
+def test_a_dependency_audit_base_scan_just_inside_a_day_is_still_reused(tmp_path: Path) -> None:
+    adapter = _stub(id="dependency-audit", tool="dependency-audit",
+                    comparison="base-head", rows=_DEPENDENCY_ROWS)
+    once, base, _head = _dependency_audit_runs(tmp_path, adapter)
+    assert base in once()
+    assert _age_base_cache(tmp_path / "home", _CACHE_FRESHNESS_SECONDS - 60 * 60) == 1
+    assert base not in once()

@@ -1,0 +1,74 @@
+{
+  "$schema": "../../schemas/fleet-bundle.schema.json",
+  "schema_version": "2",
+  "modules": [
+    {
+      "name": "jev_log",
+      "destinations": [
+        "runtime/_bundled/jev_log.py"
+      ]
+    },
+    {
+      "name": "jev_sweep",
+      "destinations": [
+        "runtime/_bundled/jev_sweep.py"
+      ]
+    },
+    {
+      "name": "jev_verbs",
+      "destinations": [
+        "runtime/_bundled/jev_verbs.py"
+      ]
+    },
+    {
+      "name": "jev_widen",
+      "destinations": [
+        "runtime/_bundled/jev_widen.py"
+      ]
+    },
+    {
+      "name": "langfuse_client",
+      "destinations": [
+        "runtime/_bundled/langfuse_client.py"
+      ]
+    },
+    {
+      "name": "retry_backoff",
+      "destinations": [
+        "runtime/_bundled/retry_backoff.py"
+      ]
+    },
+    {
+      "name": "staffing",
+      "destinations": [
+        "runtime/_bundled/staffing.py"
+      ]
+    },
+    {
+      "name": "tier_palette",
+      "destinations": [
+        "runtime/_bundled/tier_palette.py"
+      ]
+    },
+    {
+      "name": "tier_resolver",
+      "destinations": [
+        "runtime/_bundled/tier_resolver.py"
+      ]
+    },
+    {
+      "name": "typesafe_client",
+      "destinations": [
+        "runtime/_bundled/typesafe_client.py"
+      ]
+    }
+  ],
+  "data": [
+    {
+      "name": "staffing.json",
+      "destinations": [
+        "runtime/_bundled/staffing.json"
+      ]
+    }
+  ]
+}

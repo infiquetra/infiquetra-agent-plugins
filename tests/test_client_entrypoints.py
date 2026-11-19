@@ -220,6 +220,28 @@ class EntrypointTests(unittest.TestCase):
                         self.assertNotIn(prefix + "API_KEY", completed.stderr)
                         self.assertNotIn(prefix + "TOKEN", completed.stderr)
 
+    def test_reviews_entrypoints_answer_help_without_credentials(self) -> None:
+        """reviews is authored here, so it has no provenance manifest for the catalog loop."""
+        config = next(item for item in port_config.load_all(ROOT) if item.name == "reviews")
+        package = ROOT / config.package_root
+        for relative in config.assessment.entrypoints:
+            with self.subTest(entrypoint=relative):
+                completed = run_entrypoint(
+                    package / relative,
+                    "--help",
+                    stubs=self.stubs,
+                    credential_prefixes=config.assessment.credential_prefixes,
+                )
+                missing = _missing_third_party_dependency(completed.stderr)
+                if missing:
+                    self.skipTest(
+                        f"reviews:{relative} requires third-party dependency {missing!r} "
+                        "not present in this environment"
+                    )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn("usage:", completed.stdout.lower())
+                self.assertNotIn("Traceback", completed.stderr)
+
 
 class BundleResolutionTests(unittest.TestCase):
     """The entrypoints must resolve the bundle this package ships, not something else.

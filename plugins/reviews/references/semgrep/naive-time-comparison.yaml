@@ -1,0 +1,19 @@
+rules:
+  - id: saga.naive-time-comparison
+    languages:
+      - python
+    severity: ERROR
+    message: A naive datetime is compared against another datetime.
+    metadata:
+      lens: correctness
+      defect: A naive time comparison
+      harm: wrong-result-reported-as-success
+      outcome: blocks unless the builder records a reason
+      row: correctness.pattern.naive-time-comparison
+    patterns:
+      - pattern-either:
+          - pattern-regex: datetime\s*\.\s*utcnow\s*\(\s*\)\s*(?:<=|>=|<|>|==|!=)
+          - pattern-regex: datetime\s*\.\s*now\s*\(\s*\)\s*(?:<=|>=|<|>|==|!=)
+          - pattern-regex: (?:<=|>=|<|>|==|!=)\s*datetime\s*\.\s*utcnow\s*\(\s*\)
+          - pattern-regex: (?:<=|>=|<|>|==|!=)\s*datetime\s*\.\s*now\s*\(\s*\)
+      - pattern-not-regex: datetime\s*\.\s*(?:utcnow\s*\(\s*\)|now\s*\(\s*\))\s*(?:<=|>=|<|>|==|!=)\s*datetime\s*\.\s*(?:utcnow\s*\(\s*\)|now\s*\(\s*\))

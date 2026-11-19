@@ -287,6 +287,25 @@
       ]
     },
     {
+      "name": "reviews",
+      "source": "./plugins/reviews",
+      "version": "0.1.0",
+      "description": "Standalone code review, security review, document review, and review-tool setup. Skills are the command surface.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
+      "keywords": [
+        "code-review",
+        "security-review",
+        "doc-review",
+        "review-setup",
+        "sdlc"
+      ]
+    },
+    {
       "name": "saga",
       "source": "./plugins/saga",
       "version": "2.0.1",

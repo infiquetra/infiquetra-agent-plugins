@@ -1,0 +1,23 @@
+{
+  "name": "reviews",
+  "version": "0.1.0",
+  "description": "Standalone review package: code review on a git range, a committed-tree security review, SDLC document rubrics, and review-tool setup. Packets stay in the review directory. Grades use the shared review formula.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "license": "MIT",
+  "keywords": [
+    "code-review",
+    "security-review",
+    "doc-review",
+    "review-setup",
+    "sdlc"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Reviews",
+    "shortDescription": "Standalone review package: code review on a git range, a committed-tree security review, SDLC document rubrics, and review-tool setup. Packets stay in the review directory. Grades use the shared review formula."
+  }
+}

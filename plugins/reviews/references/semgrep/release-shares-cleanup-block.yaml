@@ -1,0 +1,19 @@
+rules:
+  - id: saga.release-shares-cleanup-block
+    languages:
+      - python
+      - typescript
+    severity: ERROR
+    message: A lock or lease release shares its cleanup block with another step.
+    metadata:
+      lens: correctness
+      defect: A release sharing a cleanup block
+      harm: two-holders-of-one-exclusive-thing
+      outcome: blocks unless the builder records a reason
+      row: correctness.pattern.release-shares-cleanup
+    patterns:
+      - pattern-either:
+          - pattern-regex: (?m)^([ \t]*)finally\s*:[^\n]*\n(?:\1[ \t]+.*\n|[ \t]*\n)*?\1[ \t]+(?!#).*?(?<![\w.])(?:\w+\.)*(?:release|unlock)\s*\(
+          - pattern-regex: finally\s*\{[^{}]*?(?<![\w.])(?:\w+\.)*(?:release|unlock)\s*\([^;{}]*\)
+      - pattern-not-regex: (?m)^([ \t]*)finally\s*:[^\n]*\n(?:[ \t]*\n|\1[ \t]+#[^\n]*\n)*\1[ \t]+(?!#).*?(?<![\w.])(?:\w+\.)*(?:release|unlock)\s*\(.*\n(?:[ \t]*\n|\1[ \t]+#[^\n]*\n)*(?!\1[ \t]+[^#\s])
+      - pattern-not-regex: finally\s*\{\s*(?:(?://[^\n]*)|(?:/\*[^*]*\*/))?\s*(?<![\w.])(?:\w+\.)*(?:release|unlock)\s*\([^;{}]*\)\s*;?\s*(?:(?://[^\n]*)|(?:/\*[^*]*\*/))?\s*\}

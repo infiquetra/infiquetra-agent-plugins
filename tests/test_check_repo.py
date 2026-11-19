@@ -1576,6 +1576,16 @@ class ClaudeModuleSourceTests(unittest.TestCase):
             [],
         )
 
+    def test_a_reviews_semgrep_rule_test_target_beside_its_rule_is_accepted(self) -> None:
+        self.assertEqual(
+            self.findings(
+                "plugins/reviews/references/semgrep/example.yaml",
+                "plugins/reviews/references/semgrep/example.ts",
+            ),
+            [],
+        )
+        self.assertTrue(self.findings("plugins/reviews/references/semgrep/stray.ts"))
+
     def test_an_unpaired_typescript_file_in_the_rules_directory_is_refused(self) -> None:
         self.assertTrue(self.findings("plugins/saga/references/semgrep/stray.ts"))
 

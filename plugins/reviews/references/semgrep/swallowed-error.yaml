@@ -1,0 +1,19 @@
+rules:
+  - id: saga.swallowed-error
+    languages:
+      - python
+      - typescript
+    severity: ERROR
+    message: An error is swallowed instead of handled.
+    metadata:
+      lens: correctness
+      defect: A swallowed error
+      harm: wrong-result-reported-as-success
+      outcome: blocks unless the builder records a reason
+      row: correctness.pattern.swallowed-error
+    patterns:
+      - pattern-either:
+          - pattern-regex: (?m)^[ \t]*except\b[^\n:]*:[ \t]*(?:pass\b|\.\.\.)[ \t]*(?:#[^\n]*)?$
+          - pattern-regex: (?m)^([ \t]*)except\b[^\n:]*:[ \t]*\n\1[ \t]+(?:pass\b|\.\.\.)
+          - pattern-regex: catch\s*(\([^)]*\))?\s*\{\s*(?://[^\n]*|/\*[^*]*\*/)?\s*\}
+      - pattern-not-regex: (?m)^[ \t]*except\b[^\n:]*:[ \t]*\n([ \t]+)(?:pass|\.\.\.)[^\n]*\n\1\S

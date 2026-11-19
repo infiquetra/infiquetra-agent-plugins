@@ -1,0 +1,20 @@
+rules:
+  - id: saga.money-as-floating-point
+    languages:
+      - python
+      - typescript
+    severity: ERROR
+    message: Money is stored as floating point.
+    metadata:
+      lens: correctness
+      defect: Money stored as floating point
+      harm: money-or-resources-wrongly-moved
+      outcome: blocks unless the builder records a reason
+      row: correctness.pattern.money-as-float
+    patterns:
+      - pattern-either:
+          - pattern-regex: \b\w*(?:amount|price|cost|total|balance|payment|money|salary|fee|tax|tip|discount|refund|subtotal)\w*\s*(?<![=!<>])[*\/%+\-]?=(?!=)\s*(?:float\s*\(|(?:\d+\.\d+|\d+[eE][+-]?\d+|\.\d+))
+          - pattern-regex: \b\w*(?:amount|price|cost|total|balance|payment|money|salary|fee|tax|tip|discount|refund|subtotal)\w*\s*:\s*float\b
+          - pattern-regex: (?:[{,]\s*)["']?\w*(?:amount|price|cost|total|balance|payment|money|salary|fee|tax|tip|discount|refund|subtotal)\w*["']?\s*:\s*(?:\d+\.\d+|\d+[eE][+-]?\d+|\.\d+)
+          - pattern-regex: (?:let|const|var)\s+\w*(?:amount|price|cost|total|balance|payment|money|salary|fee|tax|tip|discount|refund|subtotal)\w*\s*(?::\s*[^=;]+?)?\s*=\s*(?:parseFloat\s*\(|Number\s*\(|(?:\d+\.\d+|\d+[eE][+-]?\d+|\.\d+))
+      - pattern-not-regex: \b\w*(?:rate|ratio|percent|percentage|factor|multiplier|fraction)\w*\s*(?:[:=][^\n]*)
