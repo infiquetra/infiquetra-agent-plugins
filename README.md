@@ -84,7 +84,7 @@ The record of the work, in the order a new reader should take it:
 
 | Package | Version | Description | Installable surfaces |
 |---|---|---|---|
-| [`plugins/agent-launcher/`](plugins/agent-launcher/README.md) | `2.0.1` | Create one verified coding-agent session through the agents wrapper and Herdr | Claude, Codex, Muse, 1 skill |
+| [`plugins/agent-launcher/`](plugins/agent-launcher/README.md) | `3.0.0` | Headless sandboxed review, the SDLC roles library, and the herdr-app plus hc session workflow | Claude, Codex, Muse, 1 skill |
 | [`plugins/agy/`](plugins/agy/README.md) | `0.6.6` | Antigravity-backed coder reviewer bridge agents that run in a disposable clone and… | Claude, Codex, Muse, 1 skill |
 | [`plugins/codex/`](plugins/codex/README.md) | `0.1.9` | Portable Codex delegation wrapper | Claude, Codex, Muse, 1 skill |
 | [`plugins/deploy/`](plugins/deploy/README.md) | `0.2.3` | Tag-promotion deployment operations for Infiquetra repositories | Claude, Codex, Muse, 1 skill |

@@ -1,10 +1,7 @@
 """Release-surface checks that do not presume the upstream repository.
 
-Upstream ``tests/test_agent_launcher_plugin.py`` mostly drives Orchestrate's
-install layout and that repository's marketplace. Those tests are listed as
-dropped in ``CHANGELOG.md``. What remains is the packaged-file presence check
-and the standalone composer's named stop, both of which run against this
-package alone.
+What remains is the packaged-file presence check and a help check that the
+reviewer entrypoint runs on its own.
 """
 
 from __future__ import annotations
@@ -15,17 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 PACKAGE = Path(__file__).resolve().parents[1]
-BROKEN_COMPOSERS = [
-    ("raise RuntimeError('composer exploded')\n", "RuntimeError: composer exploded"),
-    ("raise ValueError('composer bad value')\n", "ValueError: composer bad value"),
-    (
-        'assert False, "composer contract violated"\n',
-        "AssertionError: composer contract violated",
-    ),
-]
 
 
 def _read(path: Path) -> str:
@@ -65,15 +52,15 @@ def test_agent_launcher_packaged_files() -> None:
         "README.md",
         "CHANGELOG.md",
         "skills/agent-launcher/SKILL.md",
-        "skills/agent-launcher/scripts/composer.py",
         "skills/agent-launcher/scripts/launcher.py",
-        "skills/agent-launcher/scripts/roster.py",
         "roles/README.md",
         "roles/index.json",
         "tests/test_launcher_contract.py",
     )
     for relative_path in expected:
         assert (PACKAGE / relative_path).is_file(), f"missing {relative_path}"
+    assert not (PACKAGE / "skills" / "agent-launcher" / "scripts" / "composer.py").exists()
+    assert not (PACKAGE / "skills" / "agent-launcher" / "scripts" / "roster.py").exists()
     assert _frontmatter(PACKAGE / "skills" / "agent-launcher" / "SKILL.md")["name"] == (
         "agent-launcher"
     )
@@ -89,12 +76,9 @@ def test_agent_launcher_packaged_files() -> None:
     assert set(versions.values()) == {_declared_version()}
 
 
-def test_standalone_launcher_missing_composer_is_a_named_stop(tmp_path: Path) -> None:
+def test_launcher_help_exits_zero(tmp_path: Path) -> None:
     launcher_install = _install_plugin(tmp_path)
-    composer = launcher_install / "skills" / "agent-launcher" / "scripts" / "composer.py"
-    composer.unlink()
     script = launcher_install / "skills" / "agent-launcher" / "scripts" / "launcher.py"
-
     result = subprocess.run(
         [sys.executable, str(script), "--help"],
         capture_output=True,
@@ -103,37 +87,7 @@ def test_standalone_launcher_missing_composer_is_a_named_stop(tmp_path: Path) ->
         timeout=30,
         check=False,
     )
-    assert result.returncode != 0
+    assert result.returncode == 0, result.stderr
     output = result.stderr + result.stdout
-    assert "cannot load agent-launcher composer parser" in output
-    assert "file is missing" in output
-    assert "Traceback" not in output
-
-
-@pytest.mark.parametrize(
-    ("broken", "expected_detail"),
-    BROKEN_COMPOSERS,
-    ids=["runtime-error", "value-error", "assertion-error"],
-)
-def test_standalone_launcher_broken_composer_is_a_named_stop(
-    tmp_path: Path, broken: str, expected_detail: str
-) -> None:
-    """Any exception while loading composer.py becomes the named stop, with no traceback."""
-    launcher_install = _install_plugin(tmp_path)
-    composer = launcher_install / "skills" / "agent-launcher" / "scripts" / "composer.py"
-    composer.write_text(broken, encoding="utf-8")
-    script = launcher_install / "skills" / "agent-launcher" / "scripts" / "launcher.py"
-
-    result = subprocess.run(
-        [sys.executable, str(script), "--help"],
-        capture_output=True,
-        text=True,
-        cwd=tmp_path,
-        timeout=30,
-        check=False,
-    )
-    assert result.returncode != 0
-    output = result.stderr + result.stdout
-    assert "cannot load agent-launcher composer parser" in output
-    assert expected_detail in output
+    assert "review" in output
     assert "Traceback" not in output
