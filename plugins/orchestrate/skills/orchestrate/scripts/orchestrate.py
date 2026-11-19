@@ -2126,12 +2126,41 @@ def _validated_agent_launcher(path: Path) -> Path:
     return path
 
 
+def _pre_u6_launcher_snapshot() -> Path:
+    """The frozen pre-slim launcher this package execs until U6 removes it."""
+    return (
+        _plugin_root(Path(__file__).resolve())
+        / "tests"
+        / "fixtures"
+        / "agent-launcher-2.0.0"
+        / "skills"
+        / "agent-launcher"
+        / "scripts"
+        / "launcher.py"
+    )
+
+
+def _sibling_lacks_required_names(script: Path) -> bool:
+    """Whether *script* is the slim launcher, which no longer defines the launch names."""
+    try:
+        source = script.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    missing, _unusable = _companion_source_faults(source)
+    return bool(missing)
+
+
 def _agent_launcher_script() -> Path | None:
     """Locate the sibling ``plugins/agent-launcher`` package.
 
     ``AGENT_LAUNCHER_ROOT``, when set, is that package's root and replaces the
     default. The default is the sibling package next to this one in the catalog.
     There is no search of a Claude plugin cache.
+
+    agent-launcher 3.0.0 keeps the reviewer and drops the launch names this
+    module execs. Until U6 removes orchestrate, that default sibling resolves to
+    the pre-slim snapshot. An explicit ``AGENT_LAUNCHER_ROOT`` is never
+    replaced, so a floor check still sees the tree the caller named.
     """
     override = os.environ.get("AGENT_LAUNCHER_ROOT")
     if override:
@@ -2151,6 +2180,10 @@ def _agent_launcher_script() -> Path | None:
         / "scripts"
         / "launcher.py"
     )
+    if repo_candidate.is_file() and _sibling_lacks_required_names(repo_candidate):
+        snapshot = _pre_u6_launcher_snapshot()
+        if snapshot.is_file():
+            return snapshot
     if repo_candidate.is_file():
         return repo_candidate
     return None

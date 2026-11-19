@@ -126,13 +126,24 @@ def agent_launcher_candidates(
         candidates.append(Path(explicit))
     if environ.get(AGENT_LAUNCHER_ENV):
         candidates.append(Path(environ[AGENT_LAUNCHER_ENV]))
-    candidates.append(SAGA_ROOT.parent / "agent-launcher")
+    sibling = SAGA_ROOT.parent / "agent-launcher"
+    candidates.append(sibling)
     versions = sorted(
         (p for p in (SAGA_ROOT.parent.parent / "agent-launcher").glob("*") if p.is_dir()),
         key=lambda p: _version_key(p.name),
     )
     if versions:
         candidates.append(versions[-1])
+    # agent-launcher 3.0.0 no longer ships roster.py. Until U6 removes plugins/saga,
+    # role registration reads the pre-slim snapshot Orchestrate already pins.
+    if not (sibling / ROSTER_SUBPATH).is_file():
+        candidates.append(
+            SAGA_ROOT.parent
+            / "orchestrate"
+            / "tests"
+            / "fixtures"
+            / "agent-launcher-2.0.0"
+        )
     return candidates
 
 
@@ -152,6 +163,26 @@ def locate_agent_launcher(
         "the roles library was not found; agent-launcher is not at "
         + ", ".join(str(path) for path in tried)
     )
+
+
+def roles_library(
+    explicit: Path | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+    roster_root: Path | None = None,
+) -> Path:
+    """The roles directory.
+
+    agent-launcher 3.0.0 still ships ``roles/`` beside a package that no longer
+    has ``roster.py``. The roster helper may come from the pre-U6 snapshot; the
+    prompts stay with the first candidate that still carries the library.
+    """
+    for root in agent_launcher_candidates(explicit, env=env):
+        if (root / ROLES_SUBPATH / "index.json").is_file():
+            return root / ROLES_SUBPATH
+    if roster_root is not None:
+        return roster_root / ROLES_SUBPATH
+    raise RoleTypesError("the roles library was not found")
 
 
 def load_roster(agent_launcher: Path) -> Any:
@@ -314,7 +345,11 @@ def role_agent_types(
     try:
         launcher_root = locate_agent_launcher(agent_launcher, env=env)
         roster = load_roster(launcher_root)
-        library = Path(roles_dir) if roles_dir is not None else launcher_root / ROLES_SUBPATH
+        library = (
+            Path(roles_dir)
+            if roles_dir is not None
+            else roles_library(agent_launcher, env=env, roster_root=launcher_root)
+        )
         index = roster.load_roles_index(library / "index.json")
     except Exception as exc:  # noqa: BLE001
         return _empty(True, issue, error=str(exc))

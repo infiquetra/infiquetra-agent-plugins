@@ -196,7 +196,7 @@ def test_the_fingerprint_moves_with_a_tier_and_with_a_prompt(repo: Path, store: 
 
 
 def test_the_mapping_is_rosters_own(repo: Path, store: Path) -> None:
-    roster = role_agent_types.load_roster(AGENT_LAUNCHER)
+    roster = role_agent_types.load_roster(role_agent_types.locate_agent_launcher(env={}))
     roles = set(roster.STAFFING_ROLE_TO_ROLE_ID) - set(role_agent_types.NO_TYPE_REASONS)
     _staff(store, FULL)
     assert set(_by_role(_answer(repo, store))) == roles
