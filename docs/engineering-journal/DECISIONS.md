@@ -1468,8 +1468,8 @@ probe on Claude Code 2.1.299, run on 2026-10-13, found that a directory holding 
 `AGENTS.md` answered with that file's marker line from its context, with no tool calls. A
 directory holding only a `CLAUDE.md` control did the same. So the removal keeps the same
 rules in front of Claude in this repository, read from `AGENTS.md`. It also makes
-`AGENTS.md` the file Claude reads here, which brings in the reviewer screening gap queued in
-[`QUEUED.md`](QUEUED.md).
+`AGENTS.md` the file Claude reads here, which brought in the reviewer screening gap
+shipped in #277 (see [`ARCHIVE.md`](ARCHIVE.md)).
 
 **Revisit when.** A Claude Code release stops reading `AGENTS.md` when no `CLAUDE.md` is
 present, or this repository needs a Claude-only instruction file that `AGENTS.md` cannot hold.
