@@ -1,5 +1,26 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-19
+
+### A combined scanner closeout has to be offline and order-independent
+
+**Evidence.** Issue #335 runs one git fixture through two offline `prepare`s and
+`security_scan.py`: Python pytest, a real CloudFormation template beside YAML,
+JSON, and comment decoys, Markdown prose removal plus a backticked symbol, a
+custom Semgrep pin, a cached `p/security-audit` pack that returns findings in
+opposite orders, and a local advisory snapshot. Sockets are refused in the test
+process and in child interpreters. The packets match byte for byte and validate
+against `review-records.schema.json`.
+
+**Mechanism.** The pack pin and the custom rule directory stay on separate
+catalogue rows, so neither scan replaces the other. Advisory and rule bytes come
+from the machine record. Packet findings and stored Semgrep JSON are written in
+canonical order, so a reversed tool result does not change the packet.
+
+**Generalizable rule.** Close a multi-fix scanner capability with one offline
+fixture that composes every fix, compare two packets as bytes, and treat tool
+output order as untrusted.
+
 ## 2026-11-16
 
 ### Tool locations and coverage gaps need their own boundaries
