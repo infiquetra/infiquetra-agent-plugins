@@ -545,34 +545,6 @@ pilot and custody decision authorize that work.
 [current Saga Plan](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/plugins/saga/skills/plan/SKILL.md),
 [current Saga Code Review](https://github.com/infiquetra/infiquetra-claude-plugins/blob/main/plugins/saga/skills/code-review/SKILL.md).
 
-### Claude's reviewer does not screen AGENTS.md for '@' imports
-
-**Author.** Jeff Cox and Claude
-
-**Priority.** P2
-
-**Effort.** One change in `plugins/agent-launcher`: add `AGENTS.md` to the instruction files
-the Claude reviewer screens, so that an `@` import in it reaching outside the review copy
-withholds the file, as it already does for `CLAUDE.md`. Add a test beside the existing
-`CLAUDE.md` case.
-
-**Worth it when.** Before the next Claude review of a change to this repository. Since #236
-removed the root `CLAUDE.md`, that review loads the reviewed copy's `AGENTS.md`.
-
-**Context.** The Claude reviewer's instruction-file list is `CLAUDE.md` and `CLAUDE.local.md`
-(`REVIEWER_INSTRUCTION_NAMES` in
-`plugins/agent-launcher/skills/agent-launcher/scripts/launcher.py`, line 2178). The Grok and
-Muse reviewer recipes list `AGENTS.md` as well (lines 3192 and 3213). The screen that
-withholds a file whose `@` imports reach outside the review copy runs only on files in that
-list, so Claude's reviewer does not screen `AGENTS.md`. Claude Code reads `AGENTS.md` as
-project instructions when no `CLAUDE.md` is present, and it expands `@` imports in that file.
-That was checked on 2026-10-13 with Claude Code 2.1.299; the 2026-10-13 LEARNINGS entry
-"Claude Code reads AGENTS.md when a repository has no CLAUDE.md" records the probe. The gap
-was found in the review of #236 and is not changed there.
-
-**Refs.** `plugins/agent-launcher/tests/test_launcher_reviewer.py` (line 260 pins the Claude
-recipe's instruction names).
-
 ### Define the presentation-field list once
 
 **Author.** Jeff Cox and Claude

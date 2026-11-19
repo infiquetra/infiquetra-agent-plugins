@@ -258,7 +258,7 @@ def test_unchanged_claude_recipe_keeps_its_functions_names_and_sign_in_rules(
     assert claude.api_key_variables == launcher.REVIEWER_API_KEY_VARIABLES
     assert claude.api_key_prefixes == launcher.REVIEWER_API_KEY_PREFIXES
     assert claude.untrusted_dirs == (".claude",) and claude.untrusted_files == (".mcp.json",)
-    assert claude.instruction_names == ("CLAUDE.md", "CLAUDE.local.md")
+    assert claude.instruction_names == ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md")
     assert claude.platforms is None and claude.executable is None
     assert claude.probe_model == "haiku"
     # Issue #225 is the one change: commands run through the start-up-export filter.
@@ -437,6 +437,104 @@ def test_tmpdir_the_settings_allow_writes_to_a_temp_folder_beside_the_copy_and_d
     for root in launcher.reviewer_temp_roots():
         with pytest.raises(launcher.ReviewerRefused):
             launcher.reviewer_work_root({"XDG_CACHE_HOME": f"{root}/cache"})
+
+
+def test_work_root_refuses_private_var_folders_on_macos(launcher: ModuleType) -> None:
+    """macOS names ``/private/var/folders`` and refuses a cache that resolves into a temp root.
+
+    Linux keeps ``/tmp`` and ``/var/tmp``. ``/private/tmp`` is not a Linux temp root, and on
+    a Linux host resolving ``/tmp`` does not turn it into one.
+    """
+    darwin = launcher.reviewer_temp_roots("darwin")
+    linux = launcher.reviewer_temp_roots("linux")
+    assert "/private/var/folders" in darwin and "/var/folders" in darwin
+    assert linux == ("/tmp", "/var/tmp")
+    assert "/private/tmp" not in linux and "/private/var/folders" not in linux
+    with pytest.raises(launcher.ReviewerRefused, match="sandbox denies"):
+        launcher.reviewer_work_root(
+            {"XDG_CACHE_HOME": "/private/var/folders/zz/T/cache"}, platform="darwin",
+        )
+    with pytest.raises(launcher.ReviewerRefused, match="sandbox denies"):
+        launcher.reviewer_work_root(
+            {"XDG_CACHE_HOME": "/var/folders/zz/T/cache"}, platform="darwin",
+        )
+    with pytest.raises(launcher.ReviewerRefused, match="sandbox denies"):
+        launcher.reviewer_work_root({"XDG_CACHE_HOME": "/tmp/cache"}, platform="linux")
+    home = launcher.reviewer_work_root({"HOME": "/home/example"}, platform="linux")
+    assert home == Path("/home/example/.cache/agent-launcher/reviews")
+    if sys.platform != "darwin":
+        # On macOS ``/tmp`` resolves to ``/private/tmp``, so this host check is Linux's.
+        private_tmp = launcher.reviewer_work_root(
+            {"XDG_CACHE_HOME": "/private/tmp/cache"}, platform="linux",
+        )
+        assert private_tmp == Path("/private/tmp/cache/agent-launcher/reviews")
+
+
+def test_work_root_refuses_a_cache_that_only_resolves_under_a_temp_root(
+    launcher: ModuleType, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scratch path spelled outside every root is still refused when resolution lands inside one."""
+    real = Path.resolve
+
+    def resolve(self: Path, *args: object, **kwargs: object) -> Path:
+        text = os.path.normpath(self.as_posix())
+        if text == "/var/folders" or text.startswith("/var/folders/"):
+            return Path("/hidden/var/folders" + text[len("/var/folders"):])
+        if text == "/hidden/var/folders" or text.startswith("/hidden/var/folders/"):
+            return Path(text)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    with pytest.raises(launcher.ReviewerRefused, match="sandbox denies"):
+        launcher.reviewer_work_root(
+            {"XDG_CACHE_HOME": "/hidden/var/folders/xx/cache"}, platform="darwin",
+        )
+    kept = launcher.reviewer_work_root({"HOME": "/home/example"}, platform="darwin")
+    assert kept == Path("/home/example/.cache/agent-launcher/reviews")
+
+
+def test_work_root_refuses_symlink_then_dotdot_into_a_denied_temp_root(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``link/..`` is judged after the symlink is followed, not after lexical collapse.
+
+    ``normpath`` turns ``outside/link/../cache`` into ``outside/cache`` and drops
+    the symlink. When ``link`` points into a denied temp root, that scratch copy
+    really sits inside the root the sandbox denies.
+    """
+    denied = tmp_path / "denied"
+    (denied / "sub").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "link").symlink_to(denied / "sub")
+    cache = outside / "link" / ".." / "cache"
+    monkeypatch.setattr(launcher, "reviewer_temp_roots", lambda platform=None: (str(denied),))
+    with pytest.raises(launcher.ReviewerRefused, match="which the reviewer's sandbox denies"):
+        launcher.reviewer_work_root({"XDG_CACHE_HOME": str(cache)}, platform="linux")
+    kept = launcher.reviewer_work_root(
+        {"XDG_CACHE_HOME": str(outside / "cache")}, platform="linux",
+    )
+    assert kept == outside / "cache" / "agent-launcher" / "reviews"
+
+
+def test_claude_reviewer_screens_agents_md_at_imports(
+    launcher: ModuleType, tmp_path: Path,
+) -> None:
+    assert "AGENTS.md" in launcher.REVIEWER_INSTRUCTION_NAMES
+    copy = tmp_path / "copy"
+    copy.mkdir()
+    (copy / "AGENTS.md").write_text("Rules.\n@~/.ssh/id_rsa\n")
+    (copy / "kept.py").write_text("print()\n")
+    withheld = launcher.reviewer_withhold_untrusted(copy)
+    assert "AGENTS.md (it can import a file outside the copy)" in withheld
+    assert not (copy / "AGENTS.md").exists()
+    assert (copy / "kept.py").is_file()
+    safe = tmp_path / "safe"
+    (safe / "docs").mkdir(parents=True)
+    (safe / "AGENTS.md").write_text("@docs/style.md\n")
+    (safe / "docs" / "style.md").write_text("Style.\n")
+    assert launcher.reviewer_withhold_untrusted(safe) == []
+    assert (safe / "AGENTS.md").is_file()
 
 
 # The temp folder doubles as the reviewer's draft folder: file tools may write there, and the

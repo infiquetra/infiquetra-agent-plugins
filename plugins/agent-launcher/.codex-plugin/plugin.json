@@ -1,6 +1,6 @@
 {
   "name": "agent-launcher",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Create one verified coding-agent session through the agents wrapper and Herdr. Orchestrate consumes this shared launch surface.",
   "author": {
     "name": "Infiquetra",

@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1] - 2026-11-19
+
+### Fixed
+
+- **The macOS reviewer sandbox denies `/private/var/folders` as well as `/var/folders` (#277).** `reviewer_temp_roots` names both spellings, and `reviewer_work_root` refuses a scratch copy that sits under either one or resolves into one. Linux temp roots stay `/tmp` and `/var/tmp`.
+- **The Claude reviewer screens `AGENTS.md` for `@` imports that leave the copy (#277).** Claude Code reads `AGENTS.md` when no `CLAUDE.md` is present and expands those imports. An escaping import withholds the file, as it already does for `CLAUDE.md`.
+- The roles library stays pinned to SDLC `1d2e33e`.
+
 ## [2.0.0] - 2026-11-16
 
 ### Changed

@@ -5692,7 +5692,7 @@ def test_reviewer_read_confinement_settings_are_pinned(
             "autoAllowBashIfSandboxed": True,
             "allowUnsandboxedCommands": False,
             "filesystem": {
-                "denyWrite": ["/tmp", "/private/tmp", "/var/folders"],
+                "denyWrite": ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"],
                 "denyRead": ["~", str(sentinel)],
                 "allowRead": [
                     str(copy.resolve()), str(packet.resolve()), str(prefix.parent), str(temp),

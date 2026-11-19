@@ -2163,9 +2163,9 @@ v2.1.277.
 **Mechanism.** Claude Code reads `AGENTS.md` in place of `CLAUDE.md` when the working directory
 and the directories above it contain no `CLAUDE.md`, `CLAUDE.local.md`, or `.claude/CLAUDE.md`.
 Until commit ebe415e removed the root `CLAUDE.md`, that file was the one Claude read for this
-repository, and `AGENTS.md` was not read at all. Now `AGENTS.md` is read, which makes the reviewer
-screening gap in the agent launcher live for this repository; it is queued in
-[`QUEUED.md`](QUEUED.md).
+repository, and `AGENTS.md` was not read at all. Now `AGENTS.md` is read, which made the reviewer
+screening gap in the agent launcher live for this repository. That gap shipped in
+#277; the queue entry is in [`ARCHIVE.md`](ARCHIVE.md).
 
 **Generalizable rule.** Before a decision records how an external tool loads a file, run a
 probe that includes a control (a file the tool must find), and check the tool's documentation.
