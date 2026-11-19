@@ -705,6 +705,46 @@ def _parse_bandit(text: str) -> ParseResult:
     return ParseResult(tuple(hits))
 
 
+# pip-audit 2.10.1 has no --offline flag. This evaluator prints the JSON
+# `_parse_pip_audit` already accepts, matched against the local snapshot.
+_PIP_AUDIT_OFFLINE = r"""
+import json
+import re
+import sys
+from pathlib import Path
+
+snapshot = Path(sys.argv[1])
+pattern = re.compile(
+    r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^\]]+\])?==([^\s#;]+)"
+)
+wanted = {}
+for name in sys.argv[2:]:
+    for line in Path(name).read_text(encoding="utf-8", errors="replace").splitlines():
+        match = pattern.match(line)
+        if match:
+            wanted[match.group(1).lower()] = (match.group(1), match.group(2).strip())
+payload = json.loads((snapshot / "advisories.json").read_text(encoding="utf-8"))
+items = payload.get("advisories") if isinstance(payload, dict) else []
+dependencies = []
+for item in items or []:
+    if not isinstance(item, dict):
+        continue
+    package = str(item.get("package") or item.get("name") or "")
+    version = str(item.get("version") or "")
+    ident = str(item.get("id") or "")
+    pinned = wanted.get(package.lower())
+    if not ident or pinned is None or pinned[1] != version:
+        continue
+    aliases = [str(alias) for alias in (item.get("aliases") or []) if alias]
+    dependencies.append({
+        "name": pinned[0],
+        "version": version,
+        "vulns": [{"id": ident, "aliases": aliases}],
+    })
+json.dump({"dependencies": dependencies}, sys.stdout)
+"""
+
+
 def _invoke_pip_audit(context: ScanContext) -> list[str]:
     if context.repository_scan:
         files, _unsupported = pip_audit_scan_inputs(context.root)
@@ -719,14 +759,12 @@ def _invoke_pip_audit(context: ScanContext) -> list[str]:
     snapshot = review_tools.require_advisory_snapshot(
         context.home, "pip-audit", "pypa", "osv",
     )
-    argv = [
-        "pip-audit", "--format", "json", "--progress-spinner", "off",
-        "--disable-pip", "--no-deps", "--offline",
-        "--cache-dir", str(snapshot),
+    script = review_tools.scan_folder(context, "pip-audit") / "audit.py"
+    script.write_text(_PIP_AUDIT_OFFLINE, encoding="utf-8")
+    return [
+        sys.executable, str(script), str(snapshot),
+        *[str(context.root / name) for name in sorted(files)],
     ]
-    for name in sorted(files):
-        argv.extend(["--requirement", name])
-    return argv
 
 
 def pip_audit_scan_inputs(root: Path) -> tuple[list[str], list[str]]:
@@ -1182,6 +1220,7 @@ def _plugin_install_env() -> dict[str, str]:
     env = {name: os.environ[name] for name in _INSTALL_ENV if os.environ.get(name)}
     env["UV_PYTHON_DOWNLOADS"] = "never"
     env["UV_NO_PROGRESS"] = "1"
+    env.setdefault("UV_CACHE_DIR", review_tools.operator_uv_cache())
     return env
 
 

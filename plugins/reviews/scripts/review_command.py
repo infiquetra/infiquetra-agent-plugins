@@ -576,7 +576,7 @@ def _prepare(
         _write_json(staging / "may-block.json", reasons)
         _write_json(staging / "open-search-cap.json", {"cap": reviewer_answer.OPEN_SEARCH_CAP})
         _write_json(staging / "grades.json", grades)
-        _write_json(staging / "advisory-snapshots.json", review_tools.advisory_snapshot_record(home))
+        _write_json(staging / "advisory-snapshots.json", review_tools.advisory_used_record(home))
         # Lead conversion may restore a blocking row. Keep the tool runner's public outcomes
         # consistent with the final prepare formula, including its omitted-lead degradation.
         _write_json(staging / "outcomes.json", grades)
@@ -768,7 +768,7 @@ def _merge_where_items(
 
 
 #: Degraded reasons that become a check for the reviewer to answer by hand.
-_GAP_REASONS = frozenset({"missing", "known-gap"})
+_GAP_REASONS = frozenset({"missing", "known-gap", "missing-advisory-snapshot"})
 
 #: The testing leads that become where-to-look items, each with its cap per packet. A lead is a
 #: tool result that fixes later on its own; as an item, the reviewer must say whether it shows that

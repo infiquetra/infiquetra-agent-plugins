@@ -11,10 +11,13 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
+import shutil
 import socket
 import subprocess
 import sys
 import urllib.request
+import zipfile
 from contextlib import redirect_stderr
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -174,13 +177,19 @@ def test_offline_cargo_deny_uses_local_snapshot_and_disables_fetch(tmp_path: Pat
         for token in ("known-gap", "missing", "snapshot", "advisory")
     ), f"unexpected gap reason: {exc_info.value.reason!r}"
 
-    # 2. When the local advisory snapshot is seeded, cargo-deny must pass --disable-fetch.
+    # 2. cargo-deny 0.20.2 takes global --offline. db-path is deny.toml config.
     seeded_home = tmp_path / "seeded-home"
     _seed_advisory_snapshots(seeded_home)
     seeded_ctx = _context(tmp_path / "present", files=rust_files, home=seeded_home)
     argv = adapter.invoke(seeded_ctx)
     assert argv, "expected non-empty cargo-deny argv when snapshot is present"
-    assert "--disable-fetch" in argv, f"cargo-deny must pass --disable-fetch: {argv!r}"
+    assert "--offline" in argv, f"cargo-deny must pass --offline: {argv!r}"
+    assert "--disable-fetch" not in argv, f"cargo-deny 0.20.2 rejects --disable-fetch: {argv!r}"
+    assert "--db-path" not in argv, f"cargo-deny 0.20.2 rejects --db-path: {argv!r}"
+    config = Path(argv[argv.index("--config") + 1])
+    text = config.read_text(encoding="utf-8")
+    assert "db-path = " in text
+    assert 'maximum-db-staleness = "P3650D"' in text
 
 
 def test_offline_cargo_invocations_pass_offline_and_never_fetch_crates(tmp_path: Path) -> None:
@@ -232,9 +241,15 @@ def test_offline_osv_scanner_uses_local_snapshot_and_offline_flag(tmp_path: Path
     seeded_ctx = _context(tmp_path / "present", files=lock_files, home=seeded_home)
     argv = adapter.invoke(seeded_ctx)
     assert argv, "expected non-empty osv-scanner argv when snapshot is present"
-    assert any(flag.startswith("--offline") for flag in argv), (
-        f"osv-scanner must pass --offline / --offline-vulnerabilities: {argv!r}"
+    assert "--offline" in argv and "--offline-vulnerabilities" in argv, (
+        f"osv-scanner must pass --offline and --offline-vulnerabilities: {argv!r}"
     )
+    assert argv[argv.index("--data-source") + 1] == "native", (
+        f"osv-scanner --data-source accepts native or deps.dev, not a directory: {argv!r}"
+    )
+    assert any(
+        part.startswith("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=") for part in argv
+    ), f"osv-scanner must receive the local DB cache directory: {argv!r}"
 
 
 def test_offline_pip_audit_uses_local_snapshot_and_never_queries_network(tmp_path: Path) -> None:
@@ -258,14 +273,28 @@ def test_offline_pip_audit_uses_local_snapshot_and_never_queries_network(tmp_pat
     seeded_home = tmp_path / "seeded-home"
     _seed_advisory_snapshots(seeded_home)
     seeded_ctx = _context(tmp_path / "present", files=py_files, home=seeded_home)
+    folder = (
+        seeded_home / ".config" / "infiquetra" / "reviews" / "advisories" / "pip-audit"
+    )
+    (folder / "advisories.json").write_text(
+        json.dumps({
+            "advisories": [{
+                "package": "requests",
+                "version": "2.31.0",
+                "id": "PYSEC-2099-0001",
+                "aliases": ["CVE-2099-0001"],
+            }],
+        }),
+        encoding="utf-8",
+    )
     argv = adapter.invoke(seeded_ctx)
-    assert argv, "expected non-empty pip-audit argv when snapshot is present"
-    assert (
-        "--disable-pip" in argv
-        or "--no-deps" in argv
-        or "--offline" in argv
-        or any("advisories" in part for part in argv)
-    ), f"pip-audit invocation must be offline / local-snapshot backed: {argv!r}"
+    assert argv and argv[0] == sys.executable, (
+        f"pip-audit 2.10.1 has no --offline flag; evaluate the snapshot: {argv!r}"
+    )
+    assert "--offline" not in argv
+    completed = subprocess.run(argv, check=True, capture_output=True, text=True)
+    parsed = PY._parse_pip_audit(completed.stdout)
+    assert any("PYSEC-2099-0001" in hit.advisory_ids for hit in parsed.hits)
 
 
 def test_offline_uv_invocations_in_python_adapter_pass_offline(
@@ -335,11 +364,30 @@ def test_offline_npm_audit_uses_local_snapshot_and_never_hits_registry(tmp_path:
     seeded_home = tmp_path / "seeded-home"
     _seed_advisory_snapshots(seeded_home)
     seeded_ctx = _context(tmp_path / "present", files=ts_files, home=seeded_home)
-    argv = adapter.invoke(seeded_ctx)
-    assert argv, "expected non-empty npm-audit argv when snapshot is present"
-    assert argv != ["npm", "audit", "--json"], (
-        "npm-audit must use the local advisory snapshot or --offline, never bare `npm audit --json`"
+    folder = (
+        seeded_home / ".config" / "infiquetra" / "reviews" / "advisories" / "npm-audit"
     )
+    (folder / "advisories.json").write_text(
+        json.dumps({
+            "advisories": [{
+                "package": "lodash",
+                "version": "4.17.21",
+                "id": "GHSA-0000-0000-0000",
+                "severity": "high",
+            }],
+        }),
+        encoding="utf-8",
+    )
+    argv = adapter.invoke(seeded_ctx)
+    assert argv and argv[0] == sys.executable, (
+        f"npm 12 --offline reports nothing; evaluate the snapshot: {argv!r}"
+    )
+    assert "npm" not in argv
+    assert "--offline" not in argv
+    completed = subprocess.run(argv, check=True, capture_output=True, text=True)
+    parsed = TS._parse_npm_audit(completed.stdout)
+    assert any(hit.rule_id == "GHSA-0000-0000-0000" for hit in parsed.hits)
+    assert any(hit.row == "security.dependency-high" for hit in parsed.hits)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -471,19 +519,25 @@ def test_offline_prepare_rust_fixture_twice_writes_byte_identical_packets_and_sn
                     return T.ProcessResult(0, f"{prog} {adapter.default_version}\n", "")
             return T.ProcessResult(0, "1.0.0\n", "")
         if prog == "cargo-deny":
-            assert "--disable-fetch" in argv, f"cargo-deny called without --disable-fetch: {argv!r}"
+            assert "--offline" in argv, f"cargo-deny called without --offline: {argv!r}"
+            assert "--disable-fetch" not in argv
+            assert "--db-path" not in argv
+            config = Path(argv[argv.index("--config") + 1])
+            assert "db-path = " in config.read_text(encoding="utf-8")
             return T.ProcessResult(0, '{"type":"summary","fields":{"advisories":0}}\n', "")
+        if "osv-scanner" in argv:
+            assert "--offline" in argv and "--offline-vulnerabilities" in argv
+            assert argv[argv.index("--data-source") + 1] == "native"
+            assert any(
+                part.startswith("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=") for part in argv
+            )
+            return T.ProcessResult(0, '{"results":[]}\n', "")
         if prog in {"cargo", "cargo-clippy"}:
             assert "--offline" in argv or "--frozen" in argv, (
                 f"{prog} called without --offline/--frozen: {argv!r}"
             )
             assert env.get("CARGO_NET_OFFLINE") == "true"
             return T.ProcessResult(0, '{"reason":"build-finished","success":true}\n', "")
-        if prog == "osv-scanner":
-            assert any(flag.startswith("--offline") for flag in argv), (
-                f"osv-scanner called without --offline: {argv!r}"
-            )
-            return T.ProcessResult(0, '{"results":[]}\n', "")
         return T.ProcessResult(0, "{}\n", "")
 
     def fake_ask(_state: Any, questions: Any, **_kwargs: Any) -> Any:
@@ -552,3 +606,415 @@ def test_offline_prepare_rust_fixture_twice_writes_byte_identical_packets_and_sn
         f"expected packet JSON artifacts to record local advisory snapshot version/date "
         f"{SNAPSHOT_VERSION!r}; checked files: {files_a}"
     )
+    recorded = json.loads((packet_a / "advisory-snapshots.json").read_text(encoding="utf-8"))
+    assert set(recorded) == {"cargo-deny", "osv-scanner"}
+    assert recorded["cargo-deny"]["version"] == SNAPSHOT_VERSION
+    assert recorded["osv-scanner"]["version"] == SNAPSHOT_VERSION
+
+
+def test_offline_missing_snapshot_is_not_cached_as_an_empty_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "r6-offline@example.com")
+    _git(repo, "config", "user.name", "r6-offline")
+    (repo / "requirements.txt").write_text("requests==2.31.0\n", encoding="utf-8")
+    (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "app.py").write_text("x = 2\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "head")
+    head = _git(repo, "rev-parse", "HEAD")
+    home = tmp_path / "home"
+    home.mkdir()
+    adapter = _find_adapter(PY.ADAPTERS, "pip-audit")
+    context = T.ScanContext(
+        repo, repo, home, scratch=tmp_path / "scratch", base=base, head=head,
+    )
+    (context.scratch or tmp_path).mkdir(exist_ok=True)
+
+    def runner(argv, *, cwd, env, timeout, shell, umask=None):
+        del cwd, env, timeout, shell, umask
+        completed = subprocess.run(argv, check=False, capture_output=True, text=True)
+        return T.ProcessResult(completed.returncode, completed.stdout, completed.stderr)
+
+    env, temps = T._tool_env(home)
+    try:
+        degraded: list[dict[str, str]] = []
+        hits, _digest = T._base_and_head(
+            adapter, repo, base, head, repo, context, runner, env, 30, "2.10.1",
+            degraded, "rules", [],
+        )
+        assert hits == ()
+        assert any(item.get("reason") == "missing-advisory-snapshot" for item in degraded)
+        assert not (home / ".saga" / "review-cache").exists()
+
+        folder = home / ".config" / "infiquetra" / "reviews" / "advisories" / "pip-audit"
+        folder.mkdir(parents=True)
+        (folder / "advisories.json").write_text(
+            json.dumps({
+                "advisories": [{
+                    "package": "requests",
+                    "version": "2.31.0",
+                    "id": "PYSEC-2099-0001",
+                }],
+            }),
+            encoding="utf-8",
+        )
+        before = T.advisory_cache_token(home, "pip-audit")
+        degraded.clear()
+        hits, _digest = T._base_and_head(
+            adapter, repo, base, head, repo, context, runner, env, 30, "2.10.1",
+            degraded, "rules", [],
+        )
+        assert degraded == [], degraded
+        assert hits == ()
+        assert (home / ".saga" / "review-cache" / "pip-audit").is_dir()
+        (folder / "advisories.json").write_text(
+            (folder / "advisories.json").read_text(encoding="utf-8") + "\n",
+            encoding="utf-8",
+        )
+        assert T.advisory_cache_token(home, "pip-audit") != before
+    finally:
+        for temp in temps:
+            shutil.rmtree(temp, ignore_errors=True)
+
+
+def test_offline_snapshot_fingerprint_ignores_adapters_without_one(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    folder = home / ".config" / "infiquetra" / "reviews" / "advisories" / "npm-audit"
+    folder.mkdir(parents=True)
+    payload = folder / "advisories.json"
+    payload.write_text('{"advisories":[]}\n', encoding="utf-8")
+    first = T.advisory_cache_token(home, "npm-audit")
+    payload.write_text('{"advisories":[{"id":"GHSA-0000-0000-0000"}]}\n', encoding="utf-8")
+    assert first != T.advisory_cache_token(home, "npm-audit")
+    assert T.advisory_cache_token(home, "ruff-lint") == ""
+    assert T.advisory_cache_token(tmp_path / "empty", "npm-audit") == "missing"
+    assert "missing-advisory-snapshot" in CMD._GAP_REASONS
+
+
+def test_offline_failed_scan_is_not_recorded_as_snapshot_provenance(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _seed_advisory_snapshots(home)
+    context = _context(
+        tmp_path,
+        files={"requirements.txt": "requests==2.31.0\n"},
+        home=home,
+    )
+    adapter = _find_adapter(ALL.ADAPTERS, "osv-scanner")
+
+    def missing(argv, *, cwd, env, timeout, shell, umask=None):
+        del argv, cwd, env, timeout, shell, umask
+        raise FileNotFoundError("osv-scanner")
+
+    T.clear_used_snapshots(home)
+    _hits, _digest, problem, ran = T._scan_root(
+        adapter, context, missing, {}, 5, "head", [], [],
+    )
+    assert ran is True and problem == "missing"
+    assert T.advisory_used_record(home) == {}
+
+    def succeeded(argv, *, cwd, env, timeout, shell, umask=None):
+        del argv, cwd, env, timeout, shell, umask
+        return T.ProcessResult(0, '{"results":[]}\n', "")
+
+    T._scan_root(adapter, context, succeeded, {}, 5, "head", [], [])
+    used = T.advisory_used_record(home)
+    assert set(used) == {"osv-scanner"}
+    assert used["osv-scanner"]["version"] == SNAPSHOT_VERSION
+
+
+def test_offline_review_setup_requires_a_payload_and_reads_osv_native_layout(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    meta = home / ".config" / "infiquetra" / "reviews" / "advisories" / "pip-audit"
+    meta.mkdir(parents=True)
+    (meta / "metadata.json").write_text(
+        json.dumps({"version": "metadata-only"}) + "\n", encoding="utf-8",
+    )
+    native = home / ".config" / "infiquetra" / "reviews" / "advisories" / "osv-scanner"
+    zip_dir = native / "osv-scalibr" / "PyPI"
+    zip_dir.mkdir(parents=True)
+    (zip_dir / "all.zip").write_bytes(b"PK\x03\x04")
+    record = T.advisory_snapshot_record(home)
+    assert "pip-audit" not in record
+    assert "osv-scanner" in record
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    surveyed = SETUP.survey(repo, home)
+    snapshots = surveyed["advisory_snapshots"]
+    assert "pip-audit" not in snapshots
+    assert "osv-scanner" in snapshots
+    assert T.osv_local_db_cache(native) == native
+
+
+def test_offline_security_scan_stages_advisory_snapshots(tmp_path: Path) -> None:
+    security = _load("security_scan")
+    machine = tmp_path / "machine"
+    deny = machine / ".config" / "infiquetra" / "reviews" / "advisories" / "cargo-deny"
+    deny.mkdir(parents=True)
+    (deny / "advisories.json").write_text('{"advisories":[]}\n', encoding="utf-8")
+    meta = machine / ".config" / "infiquetra" / "reviews" / "advisories" / "npm-audit"
+    meta.mkdir(parents=True)
+    (meta / "metadata.json").write_text("{}\n", encoding="utf-8")
+    native = machine / ".saga" / "advisories" / "osv-scanner" / "osv-scalibr" / "PyPI"
+    native.mkdir(parents=True)
+    (native / "all.zip").write_bytes(b"PK\x03\x04")
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    security._rule_home(staged, machine)
+    assert T.advisory_snapshot(staged, "cargo-deny") is not None
+    assert not (staged / ".config" / "infiquetra" / "reviews" / "advisories" / "npm-audit").exists()
+    found = T.advisory_snapshot(staged, "osv-scanner")
+    assert found is not None and (found / "osv-scalibr" / "PyPI" / "all.zip").is_file()
+
+
+def test_offline_fresh_cargo_home_links_the_operator_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operator = tmp_path / "operator-cargo"
+    (operator / "registry").mkdir(parents=True)
+    (operator / "git").mkdir()
+    (operator / "registry" / "marker").write_text("warm\n", encoding="utf-8")
+    monkeypatch.setenv("CARGO_HOME", str(operator))
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    T.link_operator_cargo_cache(fresh)
+    assert (fresh / "registry").is_symlink()
+    assert (fresh / "registry" / "marker").read_text(encoding="utf-8") == "warm\n"
+    assert (fresh / "git").is_symlink()
+    T.link_operator_cargo_cache(operator)
+    assert not (operator / "registry").is_symlink()
+
+    seen: dict[str, bool] = {}
+
+    def runner(argv, *, cwd, env, timeout, shell, umask=None):
+        del argv, cwd, timeout, shell, umask
+        home = Path(env["CARGO_HOME"])
+        seen["linked"] = (home / "registry").is_symlink()
+        seen["offline"] = env.get("CARGO_NET_OFFLINE") == "true"
+        return T.ProcessResult(0, "", "")
+
+    adapter = _find_adapter(RUST.ADAPTERS, "cargo-check")
+    T._execute(
+        adapter, ["cargo", "check", "--offline"], tmp_path, runner,
+        {"CARGO_NET_OFFLINE": "true"}, 5,
+    )
+    assert seen == {"linked": True, "offline": True}
+
+    deps = _load("review_dependencies")
+    work = tmp_path / "fetch"
+    work.mkdir()
+    fetched = deps._cargo_env(work)
+    assert (Path(fetched["CARGO_HOME"]) / "registry").is_symlink()
+    assert fetched.get("CARGO_NET_OFFLINE") == "true"
+
+
+def test_offline_tool_env_points_uv_at_the_warmed_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "uv-cache"
+    cache.mkdir()
+    monkeypatch.setenv("UV_CACHE_DIR", str(cache))
+    home = tmp_path / "home"
+    home.mkdir()
+    env, temps = T._tool_env(home)
+    relocated, relocated_temps = T._relocated_env()
+    try:
+        assert env["UV_CACHE_DIR"] == str(cache)
+        assert env["HOME"] != str(Path.home())
+        assert relocated["UV_CACHE_DIR"] == str(cache)
+        assert relocated["HOME"] != str(Path.home())
+        assert PY._plugin_install_env()["UV_CACHE_DIR"] == str(cache)
+    finally:
+        for temp in (*temps, *relocated_temps):
+            shutil.rmtree(temp, ignore_errors=True)
+
+
+def test_offline_absent_pinned_toolchain_is_a_known_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rustup_home = tmp_path / "rustup"
+    (rustup_home / "toolchains" / "1.80.0-x86_64-unknown-linux-gnu").mkdir(parents=True)
+    monkeypatch.setenv("RUSTUP_HOME", str(rustup_home))
+    rust_files = {
+        "Cargo.toml": '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n',
+        "Cargo.lock": 'version = 3\n\n[[package]]\nname = "demo"\nversion = "0.1.0"\n',
+        "src/lib.rs": "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    }
+    present = _context(tmp_path / "present", files={**rust_files, "rust-toolchain": "1.80.0\n"})
+    argv = _find_adapter(RUST.ADAPTERS, "cargo-check").invoke(present)
+    assert "--offline" in argv
+
+    absent = _context(
+        tmp_path / "absent",
+        files={**rust_files, "rust-toolchain.toml": '[toolchain]\nchannel = "0.0.0-absent"\n'},
+    )
+    with pytest.raises(T.ToolGap) as exc_info:
+        _find_adapter(RUST.ADAPTERS, "cargo-check").invoke(absent)
+    assert exc_info.value.reason == "known-gap"
+
+    no_pin = _context(tmp_path / "nopin", files=rust_files)
+    assert "--offline" in _find_adapter(RUST.ADAPTERS, "clippy").invoke(no_pin)
+
+    monkeypatch.delenv("RUSTUP_HOME", raising=False)
+    empty_home = tmp_path / "no-toolchains"
+    empty_home.mkdir()
+    monkeypatch.setenv("RUSTUP_HOME", str(empty_home))
+    monkeypatch.setattr(RUST.shutil, "which", lambda name: "/usr/bin/rustup" if name == "rustup" else None)
+    with pytest.raises(T.ToolGap) as download:
+        _find_adapter(RUST.ADAPTERS, "cargo-deny").invoke(
+            _context(
+                tmp_path / "deny",
+                files={**rust_files, "rust-toolchain": "nightly-2099-01-01\n"},
+                home=_seeded(tmp_path / "deny-home"),
+            )
+        )
+    assert download.value.reason == "known-gap"
+
+
+def _seeded(home: Path) -> Path:
+    home.mkdir(parents=True, exist_ok=True)
+    _seed_advisory_snapshots(home)
+    return home
+
+
+def _osv_binary() -> str | None:
+    found = shutil.which("osv-scanner")
+    if found:
+        return found
+    candidate = Path("/tmp/osv-scanner-2.7.1")
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return None
+
+
+@pytest.mark.skipif(shutil.which("cargo-deny") is None or shutil.which("cargo") is None,
+                    reason="cargo-deny or cargo is not installed")
+def test_offline_smoke_cargo_deny_reports_a_local_advisory(tmp_path: Path) -> None:
+    operator = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo")
+    if not (operator / "registry").is_dir():
+        pytest.skip("operator cargo registry is not warmed")
+    home = tmp_path / "home"
+    snapshot = home / ".config" / "infiquetra" / "reviews" / "advisories" / "cargo-deny"
+    crate = snapshot / "crates" / "itoa"
+    crate.mkdir(parents=True)
+    (crate / "RUSTSEC-2099-0001.md").write_text(
+        "```toml\n"
+        "[advisory]\n"
+        'id = "RUSTSEC-2099-0001"\n'
+        'package = "itoa"\n'
+        'date = "2024-01-01"\n'
+        'url = "https://example.invalid/itoa"\n'
+        'categories = ["code-execution"]\n'
+        'keywords = ["test"]\n'
+        'cvss = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"\n'
+        "\n[versions]\n"
+        'patched = [">= 9.9.9"]\n'
+        "```\n"
+        "# Synthetic itoa advisory\n",
+        encoding="utf-8",
+    )
+    _git(snapshot, "init", "-b", "main")
+    _git(snapshot, "config", "user.email", "r6-offline@example.com")
+    _git(snapshot, "config", "user.name", "r6-offline")
+    _git(snapshot, "add", "-A")
+    _git(snapshot, "commit", "-m", "synthetic advisory")
+    (snapshot / ".git" / "FETCH_HEAD").write_text("synthetic\n", encoding="utf-8")
+    project = {
+        "Cargo.toml": (
+            '[package]\nname = "demo"\nversion = "0.1.0"\nedition = "2021"\n\n'
+            "[dependencies]\nitoa = \"=1.0.18\"\n"
+        ),
+        "Cargo.lock": (
+            "version = 4\n\n[[package]]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+            "dependencies = [\n \"itoa\",\n]\n\n[[package]]\nname = \"itoa\"\n"
+            "version = \"1.0.18\"\n"
+            'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+            'checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"\n'
+        ),
+        "src/lib.rs": "pub fn demo() -> String { itoa::Buffer::new().format(1).to_owned() }\n",
+    }
+    context = _context(tmp_path / "scan", files=project, home=home)
+    argv = _find_adapter(RUST.ADAPTERS, "cargo-deny").invoke(context)
+    env, temps = T._tool_env(home)
+    try:
+        completed = subprocess.run(
+            argv, cwd=context.root, env=env, check=False, capture_output=True, text=True,
+        )
+    finally:
+        for temp in temps:
+            shutil.rmtree(temp, ignore_errors=True)
+    parsed = RUST._parse_cargo_deny(completed.stderr)
+    assert any("RUSTSEC-2099-0001" in hit.advisory_ids for hit in parsed.hits), completed.stderr
+
+
+@pytest.mark.skipif(_osv_binary() is None, reason="osv-scanner 2.7.1 is not installed")
+def test_offline_smoke_osv_scanner_reads_the_native_cache(tmp_path: Path) -> None:
+    binary = _osv_binary()
+    assert binary is not None
+    home = tmp_path / "home"
+    zip_dir = (
+        home / ".config" / "infiquetra" / "reviews" / "advisories"
+        / "osv-scanner" / "osv-scalibr" / "PyPI"
+    )
+    zip_dir.mkdir(parents=True)
+    document = {
+        "id": "PYSEC-2099-0001",
+        "summary": "synthetic",
+        "affected": [{
+            "package": {"ecosystem": "PyPI", "name": "requests"},
+            "versions": ["2.31.0"],
+        }],
+        "severity": [{
+            "type": "CVSS_V3",
+            "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        }],
+    }
+    blob = tmp_path / "PYSEC-2099-0001.json"
+    blob.write_text(json.dumps(document), encoding="utf-8")
+    with zipfile.ZipFile(zip_dir / "all.zip", "w") as archive:
+        archive.write(blob, "PYSEC-2099-0001.json")
+    context = _context(
+        tmp_path / "scan",
+        files={"requirements.txt": "requests==2.31.0\n"},
+        home=home,
+    )
+    argv = [
+        binary if part == "osv-scanner" else part
+        for part in _find_adapter(ALL.ADAPTERS, "osv-scanner").invoke(context)
+    ]
+    completed = subprocess.run(
+        argv, cwd=context.root, check=False, capture_output=True, text=True,
+    )
+    parsed = ALL._parse_osv(completed.stdout)
+    assert any("PYSEC-2099-0001" in hit.advisory_ids for hit in parsed.hits), completed.stderr
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not installed")
+def test_offline_smoke_uv_resolves_from_the_warmed_cache(tmp_path: Path) -> None:
+    cache = os.environ.get("UV_CACHE_DIR") or str(Path.home() / ".cache" / "uv")
+    if not Path(cache).is_dir():
+        pytest.skip("uv cache is not warmed")
+    home = tmp_path / "home"
+    home.mkdir()
+    env, temps = T._tool_env(home)
+    try:
+        completed = subprocess.run(
+            [
+                "uv", "run", "--offline", "--no-project",
+                "--with", "pytest-randomly==5.0.0",
+                "python", "-c",
+                "import importlib.metadata as m; print(m.version('pytest-randomly'))",
+            ],
+            cwd=tmp_path, env=env, check=False, capture_output=True, text=True,
+        )
+    finally:
+        for temp in temps:
+            shutil.rmtree(temp, ignore_errors=True)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "5.0.0"

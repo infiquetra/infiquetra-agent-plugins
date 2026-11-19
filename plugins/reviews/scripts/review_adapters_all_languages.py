@@ -436,9 +436,17 @@ def _invoke_osv(npm_audit: bool):
         snapshot = review_tools.require_advisory_snapshot(
             context.home, "osv-scanner", "osv",
         )
+        cache = review_tools.osv_local_db_cache(snapshot, context.scratch)
+        # `--data-source` accepts `native` or `deps.dev`, not a directory.
+        # The local zip is selected by the cache directory, which the scanner
+        # reads as `<dir>/osv-scalibr/<ecosystem>/all.zip`.
         argv = [
-            "osv-scanner", "scan", "source", "--offline", "--format", "json",
-            "--data-source", str(snapshot),
+            "env",
+            f"OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY={cache}",
+            "osv-scanner", "scan", "source",
+            "--offline", "--offline-vulnerabilities",
+            "--format", "json",
+            "--data-source", "native",
         ]
         for path in scannable:
             relative = path.relative_to(context.root).as_posix()

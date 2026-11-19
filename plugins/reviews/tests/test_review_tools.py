@@ -2865,7 +2865,9 @@ def test_relocated_environment_is_allow_listed(
     assert code == 0
     assert set(recorded) == {
         "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "HOME", "TMPDIR", "TMP", "TEMP",
+        "UV_CACHE_DIR",
     }
+    assert recorded["UV_CACHE_DIR"] == T.operator_uv_cache()
     assert recorded["PATH"] == os.environ["PATH"]
     assert recorded["HOME"] != str(Path.home())
     assert "SAGA_REVIEW_SENTINEL" not in recorded

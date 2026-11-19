@@ -687,6 +687,7 @@ def _cargo_env(work: Path) -> dict[str, str]:
         path = work / folder
         path.mkdir(mode=0o700)
         env[name] = str(path)
+    _reviews_load("review_tools").link_operator_cargo_cache(work / "cargo-home")
     env["CARGO_NET_GIT_FETCH_WITH_CLI"] = "false"
     env["CARGO_NET_OFFLINE"] = "true"
     env.update(rustup_env())

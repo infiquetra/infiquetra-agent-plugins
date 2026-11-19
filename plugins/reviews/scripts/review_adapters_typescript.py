@@ -28,6 +28,7 @@ def _reviews_load(name: str):
 
 import json
 import re
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -292,19 +293,72 @@ def _runner_choice(context: ScanContext) -> str | None:
     return "vitest"
 
 
+# npm 12.0.2 treats --offline as "do not ask the registry" and returns no
+# advisories. This evaluator prints the JSON `_parse_npm_audit` already accepts.
+_NPM_AUDIT_OFFLINE = r"""
+import json
+import sys
+from pathlib import Path
+
+snapshot = Path(sys.argv[1])
+lock = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+installed = {}
+packages = lock.get("packages") if isinstance(lock, dict) else None
+if isinstance(packages, dict):
+    for key, meta in packages.items():
+        if not isinstance(meta, dict):
+            continue
+        name = meta.get("name")
+        if not isinstance(name, str) or not name:
+            if isinstance(key, str) and key.startswith("node_modules/"):
+                name = key.split("node_modules/")[-1]
+            else:
+                continue
+        version = meta.get("version")
+        if isinstance(version, str):
+            installed[name] = version
+payload = json.loads((snapshot / "advisories.json").read_text(encoding="utf-8"))
+vulnerabilities = {}
+for item in (payload.get("advisories") if isinstance(payload, dict) else []) or []:
+    if not isinstance(item, dict):
+        continue
+    name = str(item.get("package") or item.get("name") or "")
+    version = str(item.get("version") or "")
+    ident = str(item.get("id") or "")
+    if not ident or installed.get(name) != version:
+        continue
+    url = item.get("url") if isinstance(item.get("url"), str) else (
+        "https://github.com/advisories/" + ident
+    )
+    via = {"url": url}
+    cvss = item.get("cvss")
+    if isinstance(cvss, (int, float)) and not isinstance(cvss, bool):
+        via["cvss"] = {"score": cvss}
+    vulnerabilities[name] = {
+        "name": name,
+        "severity": item.get("severity") or "high",
+        "via": [via],
+    }
+json.dump({"vulnerabilities": vulnerabilities}, sys.stdout)
+"""
+
+
 def _invoke_npm_audit(context: ScanContext) -> list[str]:
     if not _has_markers(context.root):
         return []
-    if not any((context.root / name).is_file() for name in _NPM_LOCKS):
+    lock = next(
+        (context.root / name for name in _NPM_LOCKS if (context.root / name).is_file()),
+        None,
+    )
+    if lock is None:
         return []
     snapshot = review_tools.require_advisory_snapshot(
         context.home, "npm-audit", "npm",
     )
     _stage_npmrc(context)
-    return [
-        "npm", "audit", "--json", "--offline",
-        "--cache", str(snapshot),
-    ]
+    script = review_tools.scan_folder(context, "npm-audit") / "audit.py"
+    script.write_text(_NPM_AUDIT_OFFLINE, encoding="utf-8")
+    return [sys.executable, str(script), str(snapshot), str(lock)]
 
 
 def _npm_row(severity: object) -> str:
