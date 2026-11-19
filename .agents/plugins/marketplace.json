@@ -149,6 +149,17 @@
       }
     },
     {
+      "name": "plan",
+      "source": {
+        "source": "local",
+        "path": "./plugins/plan"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      }
+    },
+    {
       "name": "redis-channel",
       "source": {
         "source": "local",

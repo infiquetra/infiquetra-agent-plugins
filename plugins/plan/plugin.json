@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "plan",
+  "version": "0.1.0",
+  "description": "Lightweight planning package: auto-triggered guidelines for breaking work into verifiable units, and a standard-library checker for saved plan files. The checker reports missing sections, unmarked missing paths, and placeholder text. Claude advisory behavior lives under com.infiquetra.claude.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "license": "MIT",
+  "keywords": [
+    "plan",
+    "planning",
+    "implementation-plan",
+    "verification"
+  ]
+}
