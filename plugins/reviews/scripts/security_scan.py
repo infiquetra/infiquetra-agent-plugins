@@ -295,10 +295,18 @@ def _scan_rows(repo: Path, base: str, head: str, profile_path: Path, output: Pat
                scratch: Path, include: set[str], timeout: int | None) -> tuple[list, list, list]:
     profile = tools._load_profile(profile_path)
     adapters = {adapter.id: adapter for adapter in tools.default_adapters()}
-    audit_notes = {"scanner-settings", *(marker[3] for marker in tools._COMMENT_MARKERS)}
+    # The custom Semgrep row is catalogued under correctness, and the security
+    # pack stays on its own row. A security scan still runs both. A missing
+    # shared-update path is a prepare input the saga render already records; it
+    # does not mean the scan failed to run.
+    audit_notes = {
+        "scanner-settings",
+        "missing-shared-update-paths",
+        *(marker[3] for marker in tools._COMMENT_MARKERS),
+    }
     rows, findings, degraded = [], [], []
     for item in tools.load_tool_list():
-        if item.get("lens") != "security":
+        if item.get("lens") != "security" and item.get("id") != "semgrep-saga":
             continue
         row_id = item["id"]
         adapter = adapters.get(row_id)
@@ -309,7 +317,10 @@ def _scan_rows(repo: Path, base: str, head: str, profile_path: Path, output: Pat
         if row_id in SYNTHESIZED and row_id not in include:
             row["reason"] = "opt-in required: --include-synthesized " + row_id
             continue
-        if adapter is None or adapter.mode == "fix" or adapter.lens != "security":
+        custom_semgrep = adapter is not None and adapter.id == "semgrep-saga"
+        if adapter is None or adapter.mode == "fix" or (
+            adapter.lens != "security" and not custom_semgrep
+        ):
             row.update(status="degraded", reason="no executable security adapter")
             continue
         observer_home = scratch / (row_id + "-tool-home")

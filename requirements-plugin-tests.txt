@@ -4,6 +4,7 @@ mcp>=1,<2
 pydantic
 pytest
 pyyaml
+jsonschema
 redis
 requests
 semgrep==1.179.0
