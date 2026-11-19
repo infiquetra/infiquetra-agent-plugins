@@ -2591,13 +2591,19 @@ def _pinned_version(adapter: Adapter, profile: Mapping[str, Any]) -> str:
 def _profile_rules(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, ...] | None:
     """The rules a profile pins for this adapter, or None when it pins none.
 
-    A pin under the adapter id wins over a pin under the tool name, so one row can pin its
-    own rules without replacing the rules of the other row that shares the binary.
+    A pin under the adapter id wins over a pin under the tool name. A tool-name
+    list is split by the row: path entries stay with a custom directory, and a
+    pack entry stays only with the row whose catalogue names that pack. A
+    path-only program pin therefore cannot replace the recorded
+    ``semgrep-security`` pack, and a missing pack cache cannot suppress the
+    custom ``semgrep-saga`` scan.
     """
     pins = profile.get("pins") or {}
     rules = _pin_rules_of(pins.get(adapter.id))
     if rules is None:
-        rules = _pin_rules_of(pins.get(adapter.tool))
+        tool_rules = _pin_rules_of(pins.get(adapter.tool))
+        if isinstance(tool_rules, list):
+            rules = _legacy_rules_for_adapter(adapter, tool_rules)
     if rules is None:
         return None
     return tuple(
@@ -2651,7 +2657,12 @@ def _resolve_rules(
     source = "catalogue"
     resolved: list[RulePin] = []
     for rule in adapter.rules:
-        digest = machine_rule_digest(home, rule.pack) if rule.placeholder and rule.pack else ""
+        digest = ""
+        if rule.placeholder and rule.pack:
+            # The row id is the pin. A pack key remains for records written before that.
+            digest = (
+                machine_rule_digest(home, adapter.id) or machine_rule_digest(home, rule.pack)
+            )
         if digest:
             rule = replace(rule, sha256=digest, placeholder=False)
             source = "machine"
@@ -2661,6 +2672,34 @@ def _resolve_rules(
 
 def _pin_rules_of(pin: object) -> object:
     return pin.get("rules") if isinstance(pin, Mapping) else None
+
+
+def _custom_directory_row(adapter: Adapter) -> bool:
+    """True when every catalogue rule is a directory path and not a registry pack."""
+    return bool(adapter.rules) and all(rule.path and not rule.pack for rule in adapter.rules)
+
+
+def _legacy_rules_for_adapter(adapter: Adapter, rules: list[object]) -> list[object] | None:
+    """The program-level entries that belong to this row, or None when none do.
+
+    A mixed ``semgrep.rules`` list is not applied whole. Path entries belong to
+    a custom directory row. Pack entries belong to the row that already names
+    that pack. A row with no matching entry keeps its catalogue rule, including
+    a pack digest recorded by review-setup.
+    """
+    catalogue_packs = {rule.pack for rule in adapter.rules if rule.pack}
+    if _custom_directory_row(adapter):
+        selected = [item for item in rules if isinstance(item, Mapping) and item.get("path")]
+    elif catalogue_packs:
+        selected = [
+            item for item in rules
+            if isinstance(item, Mapping)
+            and item.get("pack") in catalogue_packs
+            and not item.get("path")
+        ]
+    else:
+        selected = [item for item in rules if isinstance(item, Mapping)]
+    return selected or None
 
 
 def _shared_update_names(review: object) -> tuple[str, ...] | None:

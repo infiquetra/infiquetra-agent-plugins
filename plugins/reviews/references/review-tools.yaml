@@ -6,8 +6,15 @@
 # It is not the Semgrep registry digest of p/security-audit. The Semgrep Rules
 # License v1.0 forbids shipping those rules in this repository. A missing cache
 # is a degraded input; this file does not fetch a pack. A rule marked
-# ``placeholder: true`` takes the digest that /saga:setup recorded for its pack in
-# the machine record (``rule_caches`` in ~/.saga/machine.json) in place of ``sha256``.
+# ``placeholder: true`` takes the digest that review-setup recorded for this
+# catalogue row. The machine record keys that digest by row id
+# (``semgrep-security``) and still accepts the pack name for older records.
+# A program-level ``semgrep`` pin of ``p/security-audit`` does not replace the
+# custom ``references/semgrep`` rules on the ``semgrep-saga`` row. A path-only
+# program pin does not replace the recorded security pack. A mixed list gives
+# path entries to the custom row and the pack to the security row, so a missing
+# pack cache does not suppress the custom scan. Setup records a cache that is
+# already on disk. It does not download a pack.
 schema: review_tools.v1
 semgrep_level_map:
   ERROR: security.scanner-high

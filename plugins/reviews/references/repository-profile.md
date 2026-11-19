@@ -180,8 +180,12 @@ Optional. An absent block is valid: the runner uses the defaults in
 ```
 
 `languages` keys are formula languages. `test_command` and `coverage_report` are strings. `pins`
-are keyed by the binary name in the tool list (`tool`), so one semgrep pin covers every semgrep
-row. A `rules` list may instead be keyed by the row id (`semgrep-security`), which reaches that
+are keyed by the binary name in the tool list (`tool`). A version under `semgrep` still applies
+to every semgrep row. A program-level `rules` list is split by row: path entries reach
+`semgrep-saga`, and a `p/security-audit` entry reaches `semgrep-security`. A path-only program
+pin does not replace the recorded security pack, and a missing pack cache does not suppress the
+custom rules. A `rules` list may instead be
+keyed by the row id (`semgrep-security`), which reaches that
 row alone; the id key is read first and the binary name is the fallback. A row id takes `rules`
 only: a `version` under one is refused. A version-only pin
 overrides that version and keeps the yaml rules. A `rules` list replaces

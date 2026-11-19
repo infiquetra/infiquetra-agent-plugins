@@ -2506,6 +2506,137 @@ def test_saga_rules_source_is_the_plugin_copy(
     assert Path(rendered_pinned[0]).parent == tmp_path / "home-2"
 
 
+def test_semgrep_security_pack_pin_preserves_custom_semgrep_row(tmp_path: Path) -> None:
+    """A p/security-audit pin reaches semgrep-security and leaves semgrep-saga alone."""
+    custom = REFERENCES / "semgrep"
+    before = {
+        path.relative_to(custom).as_posix(): path.read_bytes()
+        for path in custom.rglob("*")
+        if path.is_file()
+    }
+    home = tmp_path / "home"
+    digest = _semgrep_cache(home)
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0", "rules": [
+            {"pack": "p/security-audit", "sha256": digest},
+        ]}}},
+    })
+    adapters = _load("review_adapters_all_languages")
+    security = next(item for item in adapters.ADAPTERS if item.id == "semgrep-security")
+    saga = next(item for item in adapters.ADAPTERS if item.id == "semgrep-saga")
+
+    def configs(runner: _Calls) -> list[str]:
+        found = []
+        for call in runner.calls:
+            if "--config" not in call["argv"]:
+                continue
+            found.append(call["argv"][call["argv"].index("--config") + 1])
+        return found
+
+    security_runner = _Calls(_ok("{}"))
+    code = _run(
+        repo, base, head, profile, tmp_path / "security", home,
+        adapters=[security], runner=security_runner,
+    )
+    assert code == 0, _reasons(tmp_path / "security")
+    cache = T.semgrep_cache(home, "p/security-audit")
+    assert configs(security_runner) == [str(cache)]
+
+    saga_runner = _Calls(_ok("{}"))
+    code = _run(
+        repo, base, head, profile, tmp_path / "saga", home,
+        adapters=[saga], runner=saga_runner,
+    )
+    assert code == 0, _reasons(tmp_path / "saga")
+    rendered = configs(saga_runner)
+    assert len(rendered) == 1
+    assert Path(rendered[0]).parent == home
+    assert rendered[0] != str(cache)
+    assert {
+        path.relative_to(custom).as_posix(): path.read_bytes()
+        for path in custom.rglob("*")
+        if path.is_file()
+    } == before
+
+
+def test_mixed_legacy_semgrep_rules_keep_the_custom_scan_without_a_pack_cache(
+    tmp_path: Path,
+) -> None:
+    """A missing pack cache must not suppress the path entry in the same list."""
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0", "rules": [
+            {"path": "plugins/reviews/references/semgrep"},
+            {"pack": "p/security-audit", "sha256": "ab" * 32},
+        ]}}},
+    })
+    adapters = _load("review_adapters_all_languages")
+    saga = next(item for item in adapters.ADAPTERS if item.id == "semgrep-saga")
+    security = next(item for item in adapters.ADAPTERS if item.id == "semgrep-security")
+    home = tmp_path / "home"
+    saga_runner = _Calls(_ok("{}"))
+    saga_out = tmp_path / "saga"
+    code = _run(
+        repo, base, head, profile, saga_out, home, adapters=[saga], runner=saga_runner,
+    )
+    assert code == 0, _reasons(saga_out)
+    rendered = [
+        call["argv"][call["argv"].index("--config") + 1]
+        for call in saga_runner.calls
+        if "--config" in call["argv"]
+    ]
+    assert len(rendered) == 1
+    assert Path(rendered[0]).parent == home
+    assert not any(reason == "rule-cache-missing" for _tool, _row, reason in _reasons(saga_out))
+
+    security_out = tmp_path / "security"
+    code = _run(
+        repo, base, head, profile, security_out, home,
+        adapters=[security], runner=_Calls(_ok("{}")),
+    )
+    assert code == 0, _reasons(security_out)
+    assert any(reason == "rule-cache-missing" for _tool, _row, reason in _reasons(security_out))
+
+
+def test_path_only_legacy_pin_leaves_the_recorded_semgrep_security_pack(
+    tmp_path: Path,
+) -> None:
+    """A path recorded under ``semgrep`` does not replace the setup pack."""
+    home = tmp_path / "home"
+    digest = _semgrep_cache(home)
+    record = home / ".config" / "infiquetra" / "reviews" / "machine.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps({
+        "rule_caches": {"semgrep-security": digest, "p/security-audit": digest},
+    }), encoding="utf-8")
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0", "rules": [
+            {"path": "rules/not-the-security-pack"},
+        ]}}},
+    })
+    adapters = _load("review_adapters_all_languages")
+    security = next(item for item in adapters.ADAPTERS if item.id == "semgrep-security")
+    runner = _Calls(_ok("{}"))
+    output = tmp_path / "out"
+    code = _run(
+        repo, base, head, profile, output, home, adapters=[security], runner=runner,
+    )
+    assert code == 0, _reasons(output)
+    configs = [
+        call["argv"][call["argv"].index("--config") + 1]
+        for call in runner.calls
+        if "--config" in call["argv"]
+    ]
+    assert configs == [str(T.semgrep_cache(home, "p/security-audit"))]
+    sources = _read(output, "rule-sources.json")
+    assert sources["semgrep-security"]["source"] == "machine"
+    assert sources["semgrep-security"]["rules"] == [
+        {"pack": "p/security-audit", "sha256": digest},
+    ]
+
+
 def test_relative_rule_path_survives_until_the_scan(tmp_path: Path) -> None:
     """A base-profile rule directory still exists when the fake runner is called."""
     repo = tmp_path / "repo"
@@ -2528,7 +2659,7 @@ def test_relative_rule_path_survives_until_the_scan(tmp_path: Path) -> None:
     rules.rmdir()
     rules.parent.rmdir()
     adapters = _load("review_adapters_all_languages")
-    adapter = next(item for item in adapters.ADAPTERS if item.id == "semgrep-security")
+    adapter = next(item for item in adapters.ADAPTERS if item.id == "semgrep-saga")
     seen: list[Path] = []
 
     def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:
