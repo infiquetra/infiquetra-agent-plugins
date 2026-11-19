@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.0] - 2026-11-19
+
+### Changed
+
+- **Breaking: the package no longer launches sessions (#333).** `launcher.py` keeps `review` and `reviewer-probe`. Session creation is the installed `agents` wrapper (`--workspace`, `--app-machine`, `--crew`) and herdr core (`hc ls`, `hc read`, `hc send`, `hc wait`). `roster.py`, `composer.py`, and the old launch commands are removed. Orchestrate's tests pin a snapshot of the pre-slim package.
+- The macOS reviewer sandbox and the Claude `AGENTS.md` screen from 2.0.1 stay in the headless reviewer.
+- The roles library stays pinned to SDLC `1d2e33e`.
+
 ## [2.0.1] - 2026-11-19
 
 ### Fixed

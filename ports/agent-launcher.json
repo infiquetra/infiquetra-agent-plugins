@@ -6,18 +6,14 @@
   "assessment": {
     "credential_prefixes": [],
     "package_scripts": [
-      "launcher.py",
-      "roster.py"
+      "launcher.py"
     ],
     "mutating_operations": [
-      "close",
-      "down",
-      "launch",
-      "up"
+      "review",
+      "reviewer-probe"
     ],
     "entrypoints": [
-      "skills/agent-launcher/scripts/launcher.py",
-      "skills/agent-launcher/scripts/roster.py"
+      "skills/agent-launcher/scripts/launcher.py"
     ],
     "skill_units": [
       "skills/agent-launcher"
