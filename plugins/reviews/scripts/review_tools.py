@@ -1378,9 +1378,8 @@ def detect_languages(root: Path) -> list[str]:
     """Formula languages present in *root*, in ``review_formula.LANGUAGES`` order.
 
     ``cloudformation`` is not detected here. ``cdk.json`` does not add Python.
-    ``review-setup`` adds CloudFormation from :func:`run_languages`, the same
-    check the runner uses, and pins ``checkov-cfn`` and ``cfn-lint`` from it.
-    ``SKIP_DIRS`` are not read.
+    ``review-setup`` pins ``checkov`` and ``cfn-lint`` only for ``cdk.json`` or a
+    top-level ``AWSTemplateFormatVersion``. ``SKIP_DIRS`` are not read.
     """
     found = _languages_in(_walk_files(root))
     return [language for language in review_formula.LANGUAGES if language in found]
@@ -1414,7 +1413,7 @@ def run_languages(root: Path) -> frozenset[str]:
 
     A suffix language is present when ``scan_files`` (``.git`` pruned only) holds a file
     of it, so Python under ``build/`` still runs bandit. ``cloudformation`` is added for
-    ``cdk.json`` or a template. ``review-setup`` records that same check.
+    ``cdk.json`` or a template. Setup's pin uses a stricter template check.
     """
     root = Path(root)
     files = [(path, path.relative_to(root).as_posix()) for path in scan_files(root)]
@@ -1702,7 +1701,7 @@ def _run_adapter(
                 version, problem = _read_version(
                     adapter, profile, process, env, head_root,
                     timeout=probe_timeout, deadline=deadline,
-                    allow_unpinned=repository_scan,
+                    allow_unpinned=repository_scan, home=home,
                 )
             except Exception:
                 if not _mutation_past_deadline(adapter, deadline):
@@ -2368,8 +2367,9 @@ def _read_version(
     deadline: float | None = None,
     *,
     allow_unpinned: bool = False,
+    home: Path | None = None,
 ) -> tuple[str | None, str | None]:
-    pinned = _pinned_version(adapter, profile)
+    pinned = _pinned_version(adapter, profile, home)
     if not adapter.tool:
         return pinned, None
     probe = Path(tempfile.mkdtemp(prefix="saga-version-"))
@@ -2582,12 +2582,57 @@ def _python_test_command(profile: Mapping[str, Any]) -> str:
     return ""
 
 
-def _pinned_version(adapter: Adapter, profile: Mapping[str, Any]) -> str:
-    pin = (profile.get("pins") or {}).get(adapter.tool) or {}
-    version = pin.get("version") if isinstance(pin, Mapping) else None
-    if isinstance(version, str) and version:
+def _pinned_version(
+    adapter: Adapter, profile: Mapping[str, Any], home: Path | None = None
+) -> str:
+    """The version to compare, from the profile, then the machine record.
+
+    Both are keyed by the binary name. A catalogue row id is not a version pin:
+    ``checkov-cfn`` is recorded as ``checkov``. A saved pin stays in force after
+    the catalogue ``default_version`` changes.
+    """
+    version = _pin_version((profile.get("pins") or {}).get(adapter.tool))
+    if version:
         return version
+    if home is not None and adapter.tool:
+        recorded = _machine_tool_pin(Path(home), adapter.tool)
+        if recorded:
+            return recorded
     return adapter.default_version
+
+
+def _pin_version(pin: object) -> str:
+    if isinstance(pin, str) and pin and pin != "not-recorded":
+        return pin
+    if not isinstance(pin, Mapping):
+        return ""
+    version = pin.get("version")
+    if isinstance(version, str) and version and version != "not-recorded":
+        return version
+    return ""
+
+
+def _machine_tool_pin(home: Path, tool: str) -> str:
+    """The version review-setup recorded for *tool*, or ``""`` when it recorded none."""
+    for relative in (
+        Path(".config") / "infiquetra" / "reviews" / "machine.json",
+        Path(".saga") / "machine.json",
+    ):
+        version = _pin_in_machine(home / relative, tool)
+        if version:
+            return version
+    return ""
+
+
+def _pin_in_machine(path: Path, tool: str) -> str:
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    pins = loaded.get("pins") if isinstance(loaded, dict) else None
+    if not isinstance(pins, dict):
+        return ""
+    return _pin_version(pins.get(tool))
 
 
 def _profile_rules(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, ...] | None:

@@ -26,6 +26,7 @@ def _reviews_load(name: str):
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -141,31 +142,91 @@ def _rule_caches(rows: list[dict[str, Any]], home: Path) -> dict[str, str]:
 
 
 _CFN_PIN_ROWS = ("checkov-cfn", "cfn-lint")
+_TEMPLATE_SUFFIXES = {".yaml", ".yml", ".json", ".template"}
+#: A real template key at column 0. A comment, an indented key, and ``Resources`` do not match.
+_TOP_LEVEL_FORMAT = re.compile(
+    r"""(?m)^(?:AWSTemplateFormatVersion|["']AWSTemplateFormatVersion["'])\s*:"""
+)
+
+
+def _inside_root(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _template_bytes(path: Path, root: Path) -> bytes | None:
+    """Bytes of a template file. A symlink is read only when its target stays inside *root*."""
+    candidate = path
+    if path.is_symlink():
+        if not _inside_root(path, root):
+            return None
+        try:
+            candidate = path.resolve()
+        except OSError:
+            return None
+    if not candidate.is_file():
+        return None
+    try:
+        return candidate.read_bytes()
+    except OSError:
+        return None
+
+
+def _top_level_format_version(path: Path, data: bytes) -> bool:
+    """True for a top-level ``AWSTemplateFormatVersion`` key, not a comment or a nested key."""
+    text = data.decode("utf-8", errors="ignore")
+    stripped = text.lstrip()
+    if path.suffix.lower() == ".json" or stripped.startswith("{") or stripped.startswith("["):
+        try:
+            loaded = json.loads(text)
+        except json.JSONDecodeError:
+            return False
+        return isinstance(loaded, dict) and "AWSTemplateFormatVersion" in loaded
+    return _TOP_LEVEL_FORMAT.search(text) is not None
+
+
+def _cloudformation_repo(repo: Path) -> bool:
+    """``cdk.json``, or a template with a real top-level ``AWSTemplateFormatVersion``.
+
+    Ordinary YAML ``Resources`` keys, nested JSON ``Resources`` keys, and YAML
+    comments that mention ``AWS::`` are not templates. The scanner wrappers keep
+    their own broader check; this one only decides the setup pin.
+    """
+    review_tools = _reviews_load('review_tools')
+
+    root = Path(repo)
+    for path in review_tools.scan_files(root):
+        if path.name == "cdk.json":
+            return True
+        if path.suffix.lower() not in _TEMPLATE_SUFFIXES:
+            continue
+        data = _template_bytes(path, root)
+        if data is not None and _top_level_format_version(path, data):
+            return True
+    return False
 
 
 def _detected_languages(repo: Path) -> list[str]:
-    """Formula languages for *repo*, plus CloudFormation when the runner would see it.
-
-    CloudFormation is ``cdk.json`` or a YAML, JSON, or ``.template`` file that
-    mentions ``AWSTemplateFormatVersion``, ``AWS::``, or a top-level ``Resources``
-    key. A template-suffix symlink counts. The predicate is ``run_languages``, so
-    setup and the runner cannot disagree. Ordinary config files do not match.
-    """
+    """Formula languages for *repo*, plus CloudFormation when the strict check matches."""
     review_tools = _reviews_load('review_tools')
     review_formula = _reviews_load('review_formula')
 
     root = Path(repo)
     found = set(review_tools.detect_languages(root))
-    if "cloudformation" in review_tools.run_languages(root):
+    if _cloudformation_repo(root):
         found.add("cloudformation")
     return [language for language in review_formula.LANGUAGES if language in found]
 
 
 def _recorded_pins(rows: list[dict[str, Any]], languages: list[str]) -> dict[str, dict[str, str]]:
-    """Version-only pins for the CloudFormation rows, or none when that language is absent.
+    """Version pins the runner reads, or none when CloudFormation is absent.
 
-    The catalogue default is the recorded version. This does not execute checkov,
-    cfn-lint, or uv.
+    The key is the binary name (``checkov``, ``cfn-lint``). A catalogue row id
+    cannot carry a version. The catalogue default is the recorded version.
+    This does not execute checkov, cfn-lint, or uv.
     """
     if "cloudformation" not in languages:
         return {}
@@ -174,18 +235,19 @@ def _recorded_pins(rows: list[dict[str, Any]], languages: list[str]) -> dict[str
         row_id = str(row.get("id") or "")
         if row_id not in _CFN_PIN_ROWS:
             continue
+        tool = str(row.get("tool") or "")
         version = str(row.get("default_version") or "")
-        if not version or version == "not-recorded":
+        if not tool or not version or version == "not-recorded":
             continue
-        pins[row_id] = {"version": version}
+        pins[tool] = {"version": version}
     return dict(sorted(pins.items()))
 
 
 def survey(repo: Path, home: Path) -> dict[str, Any]:
     """Name each catalogue tool and whether its binary is on PATH. Nothing is installed.
 
-    A CloudFormation or AWS CDK tree records version pins for ``checkov-cfn`` and
-    ``cfn-lint``. A tree of ordinary YAML or JSON does not.
+    A CloudFormation or AWS CDK tree records version pins for the ``checkov`` and
+    ``cfn-lint`` binaries. A tree of ordinary YAML or JSON does not.
     """
     review_tools = _reviews_load('review_tools')
 

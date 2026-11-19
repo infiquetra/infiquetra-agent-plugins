@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -312,7 +312,7 @@ def _catalogue_version(row_id: str) -> str:
 
 def _assert_cfn_pins(record: dict, home: Path) -> None:
     expected = {
-        "checkov-cfn": {"version": _catalogue_version("checkov-cfn")},
+        "checkov": {"version": _catalogue_version("checkov-cfn")},
         "cfn-lint": {"version": _catalogue_version("cfn-lint")},
     }
     assert "cloudformation" in record["languages"]
@@ -368,8 +368,100 @@ def test_generic_yaml_and_json_do_not_pin_cfn_tools(tmp_path: Path) -> None:
     record = review_setup.survey(repo, tmp_path / "home")
     assert "cloudformation" not in record["languages"]
     assert record["pins"] == {}
-    assert "checkov-cfn" not in record["pins"]
+    assert "checkov" not in record["pins"]
     assert "cfn-lint" not in record["pins"]
+
+
+def test_resources_keys_and_aws_comments_do_not_pin_cfn_tools(tmp_path: Path) -> None:
+    """A Resources key or an AWS:: comment is not a CloudFormation template."""
+    repo = tmp_path / "not-cfn"
+    repo.mkdir()
+    (repo / "ordinary.yaml").write_text(
+        "Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n",
+        encoding="utf-8",
+    )
+    (repo / "nested.json").write_text(
+        '{"nested": {"Resources": {"Bucket": {"Type": "AWS::S3::Bucket"}}}}\n',
+        encoding="utf-8",
+    )
+    (repo / "comment.yml").write_text(
+        "# AWS::S3::Bucket is only a comment\nname: example\n",
+        encoding="utf-8",
+    )
+    record = review_setup.survey(repo, tmp_path / "home")
+    assert "cloudformation" not in record["languages"]
+    assert record["pins"] == {}
+
+
+def test_setup_pins_are_accepted_and_honored_after_a_catalogue_change(tmp_path: Path) -> None:
+    """Saved binary pins beat a later catalogue default and load as a profile."""
+    repo = tmp_path / "cdk-repo"
+    _init(repo)
+    (repo / "cdk.json").write_text("{}\n", encoding="utf-8")
+    (repo / "app.py").write_text("one\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "app.py").write_text("two\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "head")
+    head = _git(repo, "rev-parse", "HEAD")
+    home = tmp_path / "home"
+    record = review_setup.survey(repo, home)
+    pins = record["pins"]
+    assert set(pins) == {"checkov", "cfn-lint"}
+
+    profile = tmp_path / "profile.json"
+    profile.write_text(
+        json.dumps({"review_tools": {"pins": pins}}) + "\n", encoding="utf-8"
+    )
+    loaded = review_tools._load_profile(profile)
+    assert loaded["pins"]["checkov"]["version"] == pins["checkov"]["version"]
+    assert loaded["pins"]["cfn-lint"]["version"] == pins["cfn-lint"]["version"]
+
+    infrastructure = _load("review_adapters_infrastructure")
+    adapters = [
+        replace(adapter, default_version="0.0.1")
+        for adapter in infrastructure.ADAPTERS
+        if adapter.id in {"checkov-cfn", "cfn-lint"}
+    ]
+    assert {adapter.id for adapter in adapters} == {"checkov-cfn", "cfn-lint"}
+
+    def runner(argv, *, cwd, env, timeout, shell):
+        del cwd, env, timeout
+        assert shell is False
+        if "--version" in argv:
+            text = pins.get(Path(argv[0]).name, {}).get("version", "0.0.1")
+            return review_tools.ProcessResult(0, f"{text}\n")
+        return review_tools.ProcessResult(0, "[]")
+
+    bare = tmp_path / "bare.json"
+    bare.write_text("{}\n", encoding="utf-8")
+    machine_out = tmp_path / "from-machine"
+    code = review_tools.run(
+        repo, base, head, bare, machine_out, home=home,
+        adapters=adapters, runner=runner, framework=False,
+    )
+    assert code == 0
+    machine_reasons = {
+        item["reason"] for item in json.loads((machine_out / "degraded.json").read_text())
+        if item.get("tool") in {"checkov", "cfn-lint"}
+    }
+    assert "version-mismatch" not in machine_reasons
+
+    fresh = tmp_path / "fresh-home"
+    fresh.mkdir()
+    profile_out = tmp_path / "from-profile"
+    code = review_tools.run(
+        repo, base, head, profile, profile_out, home=fresh,
+        adapters=adapters, runner=runner, framework=False,
+    )
+    assert code == 0
+    profile_reasons = {
+        item["reason"] for item in json.loads((profile_out / "degraded.json").read_text())
+        if item.get("tool") in {"checkov", "cfn-lint"}
+    }
+    assert "version-mismatch" not in profile_reasons
 
 
 def test_skills_resolve_scripts_from_the_install_directory() -> None:

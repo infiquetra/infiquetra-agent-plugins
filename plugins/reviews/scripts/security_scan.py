@@ -134,13 +134,38 @@ def _snapshot(source: Path, commit: str, destination: Path) -> tuple[str, str, l
     return base.decode(), head.decode(), sorted(submodules)
 
 
-def _rule_caches(record: Path) -> dict[str, Any]:
+def _machine_object(record: Path) -> dict[str, Any]:
     try:
         loaded = json.loads(record.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    caches = loaded.get("rule_caches", {}) if isinstance(loaded, dict) else {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _rule_caches(record: Path) -> dict[str, Any]:
+    caches = _machine_object(record).get("rule_caches", {})
     return caches if isinstance(caches, dict) else {}
+
+
+def _staged_pins(record: Path) -> dict[str, Any]:
+    """Version pins the runner reads, keyed by binary name."""
+    pins = _machine_object(record).get("pins")
+    if not isinstance(pins, dict):
+        return {}
+    staged: dict[str, Any] = {}
+    for tool, spec in pins.items():
+        version = spec.get("version") if isinstance(spec, dict) else None
+        if isinstance(version, str) and version:
+            staged[str(tool)] = {"version": version}
+    return staged
+
+
+def _staged_record(record: Path) -> dict[str, Any]:
+    body: dict[str, Any] = {"rule_caches": _rule_caches(record)}
+    pins = _staged_pins(record)
+    if pins:
+        body["pins"] = pins
+    return body
 
 
 def _stage_tree(source: Path, target: Path) -> None:
@@ -163,7 +188,7 @@ def _rule_home(home: Path, machine_home: Path) -> None:
         staged = home / reviews
         staged.mkdir(parents=True, mode=0o700)
         (staged / "machine.json").write_text(
-            json.dumps({"rule_caches": _rule_caches(reviews_record)}) + "\n",
+            json.dumps(_staged_record(reviews_record)) + "\n",
             encoding="utf-8",
         )
         if reviews_rules.is_dir():
@@ -171,7 +196,7 @@ def _rule_home(home: Path, machine_home: Path) -> None:
     legacy = home / ".saga"
     legacy.mkdir(parents=True, mode=0o700)
     (legacy / "machine.json").write_text(
-        json.dumps({"rule_caches": _rule_caches(machine_home / ".saga" / "machine.json")}) + "\n",
+        json.dumps(_staged_record(machine_home / ".saga" / "machine.json")) + "\n",
         encoding="utf-8",
     )
     legacy_rules = machine_home / ".saga" / "semgrep-rules"
@@ -252,7 +277,7 @@ def _scan_rows(repo: Path, base: str, head: str, profile_path: Path, output: Pat
             continue
         row_id = item["id"]
         adapter = adapters.get(row_id)
-        pin = tools._pinned_version(adapter, profile) if adapter else str(
+        pin = tools._pinned_version(adapter, profile, output / ".cache") if adapter else str(
             item.get("default_version") or "not-recorded")
         row = _row(row_id, pin)
         rows.append(row)
