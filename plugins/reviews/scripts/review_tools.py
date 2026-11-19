@@ -269,6 +269,232 @@ class ToolGap(Exception):
         self.row = row
 
 
+_ADVISORY_ROOTS = (
+    Path(".config") / "infiquetra" / "reviews" / "advisories",
+    Path(".saga") / "advisories",
+)
+_SNAPSHOT_FIELDS = ("version", "date", "updated_at", "sha256")
+#: Adapter id to the snapshot directory names it reads, in preference order.
+_ADVISORY_ADAPTER_NAMES = {
+    "cargo-deny": ("cargo-deny", "rustsec"),
+    "osv-scanner": ("osv-scanner", "osv"),
+    "pip-audit": ("pip-audit", "pypa", "osv"),
+    "npm-audit": ("npm-audit", "npm"),
+}
+
+
+def snapshot_has_payload(folder: Path) -> bool:
+    """True when *folder* holds advisory data, not only a metadata sidecar.
+
+    ``metadata.json`` alone does not count. A pip or npm snapshot holds
+    ``advisories.json``. A cargo-deny snapshot holds ``crates/**/*.md`` or the
+    hashed ``advisory-db-*/crates`` tree. OSV-Scanner's native cache holds
+    ``osv-scalibr/<ecosystem>/all.zip`` (or ``<ecosystem>/all.zip``) and needs
+    no sidecar.
+    """
+    if not folder.is_dir():
+        return False
+    if (folder / "advisories.json").is_file():
+        return True
+    patterns = (
+        "crates/*.md",
+        "crates/**/*.md",
+        "advisory-db-*/crates/*.md",
+        "advisory-db-*/crates/**/*.md",
+        "osv-scalibr/*/all.zip",
+        "*/all.zip",
+    )
+    return any(any(folder.glob(pattern)) for pattern in patterns)
+
+
+def advisory_snapshot(home: Path, *names: str) -> Path | None:
+    """The local advisory snapshot for the first *names* entry that has a payload.
+
+    ``<home>/.config/infiquetra/reviews/advisories/<name>`` is preferred. The
+    legacy ``<home>/.saga/advisories/<name>`` directory is used when the reviews
+    copy has no payload. This function never fetches.
+    """
+    for name in names:
+        for relative in _ADVISORY_ROOTS:
+            folder = Path(home) / relative / name
+            if snapshot_has_payload(folder):
+                return folder
+    return None
+
+
+def require_advisory_snapshot(home: Path, *names: str, row: str = "security.dependency-high") -> Path:
+    """The local snapshot, or a gap that names its absence. Never a network fetch."""
+    found = advisory_snapshot(home, *names)
+    if found is None:
+        raise ToolGap("missing-advisory-snapshot", row)
+    return found
+
+
+def _snapshot_metadata(folder: Path) -> dict[str, str]:
+    try:
+        loaded = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        loaded = {}
+    if not isinstance(loaded, dict):
+        loaded = {}
+    meta = {
+        key: str(loaded[key])
+        for key in _SNAPSHOT_FIELDS
+        if isinstance(loaded.get(key), str) and loaded.get(key)
+    }
+    meta["path"] = str(folder)
+    return meta
+
+
+def advisory_snapshot_record(home: Path) -> dict[str, dict[str, str]]:
+    """Version and date of every local advisory snapshot, with no network access.
+
+    Reviews directories win over a legacy directory of the same name. The result
+    is sorted by name so two prepares of one home write the same bytes.
+    """
+    names: set[str] = set()
+    for relative in _ADVISORY_ROOTS:
+        root = Path(home) / relative
+        if not root.is_dir():
+            continue
+        names.update(path.name for path in root.iterdir() if path.is_dir())
+    record: dict[str, dict[str, str]] = {}
+    for name in sorted(names):
+        folder = advisory_snapshot(home, name)
+        if folder is not None:
+            record[name] = _snapshot_metadata(folder)
+    return record
+
+
+def _used_snapshot_path(home: Path) -> Path:
+    return Path(home) / ".saga" / "advisory-used.json"
+
+
+def clear_used_snapshots(home: Path) -> None:
+    """Drop the previous run's succeeded-scan record before a new prepare."""
+    _used_snapshot_path(home).unlink(missing_ok=True)
+
+
+def remember_used_snapshot(home: Path, *names: str) -> None:
+    """Record the snapshot a succeeded head scan actually read."""
+    folder = advisory_snapshot(home, *names)
+    if folder is None:
+        return
+    path = _used_snapshot_path(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError):
+        loaded = {}
+    if not isinstance(loaded, dict):
+        loaded = {}
+    loaded[folder.name] = _snapshot_metadata(folder)
+    path.write_text(json.dumps(loaded, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def advisory_used_record(home: Path) -> dict[str, dict[str, str]]:
+    """Snapshots a succeeded scan used. A failed scan contributes nothing."""
+    path = _used_snapshot_path(home)
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    record: dict[str, dict[str, str]] = {}
+    for name in sorted(loaded):
+        meta = loaded[name]
+        if not isinstance(meta, dict):
+            continue
+        record[name] = {
+            key: str(meta[key])
+            for key in (*_SNAPSHOT_FIELDS, "path")
+            if isinstance(meta.get(key), str) and meta.get(key)
+        }
+    return record
+
+
+def advisory_cache_token(home: Path, adapter_id: str) -> str:
+    """Fingerprint of the snapshot *adapter_id* would read, or ``missing``.
+
+    An adapter that does not read a snapshot returns an empty string so its
+    cache key stays as it was. File size and mtime are enough: a refreshed
+    snapshot must not reuse a base result computed against the previous one.
+    """
+    names = _ADVISORY_ADAPTER_NAMES.get(adapter_id)
+    if not names:
+        return ""
+    folder = advisory_snapshot(home, *names)
+    if folder is None:
+        return "missing"
+    rows: list[str] = []
+    for path in sorted(folder.rglob("*")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        rows.append(f"{path.relative_to(folder).as_posix()}:{info.st_size}:{info.st_mtime_ns}")
+    return hashlib.sha256("\n".join(rows).encode()).hexdigest()
+
+
+def osv_local_db_cache(snapshot: Path, scratch: Path | None = None) -> Path:
+    """Value for ``OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY``.
+
+    osv-scanner 2.7.1 joins ``osv-scalibr/<ecosystem>/all.zip`` onto that
+    directory. A snapshot that already contains ``osv-scalibr`` is the cache
+    root. A snapshot that *is* ``osv-scalibr`` uses its parent. A snapshot that
+    holds ``<ecosystem>/all.zip`` directly is linked under ``osv-scalibr`` in
+    *scratch* when one is given.
+    """
+    if (snapshot / "osv-scalibr").is_dir():
+        return snapshot
+    if snapshot.name == "osv-scalibr":
+        return snapshot.parent
+    if scratch is not None and any(snapshot.glob("*/all.zip")):
+        parent = scratch / "osv-cache"
+        parent.mkdir(parents=True, exist_ok=True)
+        link = parent / "osv-scalibr"
+        if not link.exists():
+            link.symlink_to(snapshot.resolve(), target_is_directory=True)
+        return parent
+    return snapshot
+
+
+def operator_uv_cache() -> str:
+    """The operator's warmed uv cache, read before a scan replaces ``HOME``."""
+    given = os.environ.get("UV_CACHE_DIR")
+    if given:
+        return given
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    return str(Path(xdg) / "uv") if xdg else str(Path.home() / ".cache" / "uv")
+
+
+def link_operator_cargo_cache(cargo_home: Path) -> None:
+    """Expose the operator's warmed registry and git caches inside a fresh home.
+
+    The fresh home still holds no config and no credentials. Only ``registry``
+    and ``git`` are linked, so ``cargo --offline`` can see crates that were
+    already downloaded. A home that is already the operator cache is left alone.
+    """
+    operator = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo")
+    try:
+        if operator.resolve() == cargo_home.resolve():
+            return
+    except OSError:
+        return
+    for name in ("registry", "git"):
+        source = operator / name
+        dest = cargo_home / name
+        if not source.is_dir() or dest.exists():
+            continue
+        try:
+            dest.symlink_to(source, target_is_directory=True)
+        except OSError:
+            continue
+
+
 @dataclass(frozen=True)
 class ProcessResult:
     code: int
@@ -1229,6 +1455,7 @@ def _run(
     except review_diff.ReviewDiffError as exc:
         raise RunnerFailure(2, str(exc)) from exc
     output.mkdir(parents=True, exist_ok=True)
+    clear_used_snapshots(home)
     pending: list[Hit] = []
     items: list[Mapping[str, Any]] = []
     degraded: list[dict[str, str]] = list(profile_notes)
@@ -1593,6 +1820,15 @@ def _tool_env(home: Path) -> tuple[dict[str, str], list[str]]:
         except OSError:  # pragma: no cover - Windows ACLs
             pass
     env["CARGO_HOME"] = str(cache)
+    # The persistent home is what cargo-deny inherits. Link the warmed caches
+    # here; cargo itself gets a fresh home per invocation that is linked too.
+    link_operator_cargo_cache(cache)
+    # Cargo must not reach crates.io during prepare. A missing cache is a failed
+    # offline run, not a fetch that would make the next packet differ.
+    env["CARGO_NET_OFFLINE"] = "true"
+    # A fresh HOME would hide ~/.cache/uv. Point uv at the cache that was warmed
+    # before HOME was replaced.
+    env["UV_CACHE_DIR"] = operator_uv_cache()
     env["RUSTUP_HOME"] = os.environ.get("RUSTUP_HOME") or str(
         Path.home() / ".rustup"
     )
@@ -2044,6 +2280,9 @@ def _base_and_head(
     items: list[Mapping[str, Any]],
 ) -> tuple[tuple[Hit, ...], dict[str, str]]:
     settings = _settings_digest(adapter, rules_digest)
+    token = advisory_cache_token(context.home, adapter.id)
+    if token:
+        settings = hashlib.sha256(f"{settings}\n{token}".encode()).hexdigest()
     if context.project != ".":
         settings = hashlib.sha256(f"{settings}:{context.project}".encode()).hexdigest()
     key = {"base": base_sha, "adapter": adapter.id, "version": version, "settings": settings}
@@ -2070,12 +2309,14 @@ def _base_and_head(
                     process, env,
                     timeout, "base", degraded, items,
                 )
-        except ToolGap:
-            # The base tree declined. Head is still compared against no earlier findings.
+        except ToolGap as exc:
+            # The base tree declined. Head is still compared against no earlier findings,
+            # except a missing snapshot: caching that empty result makes the next prepare,
+            # once a snapshot exists, report advisories the base already had.
             base_hits = ()
             base_digest = ""
-            base_problem = None
             base_ran = False
+            base_problem = exc.reason if exc.reason == "missing-advisory-snapshot" else None
         if base_problem == "empty-output":
             degraded.append(_degraded(adapter, _primary_row(adapter), base_problem))
             base_hits = ()
@@ -2164,6 +2405,9 @@ def _scan_root(
         degraded.append(_degraded(adapter, "testing.surviving-mutant", parsed.unfinished_reason))
         hits = tuple(replace(hit, degraded=True) for hit in hits)
     _absorb(adapter, parsed, label, degraded, items)
+    names = _ADVISORY_ADAPTER_NAMES.get(adapter.id)
+    if names and context.scan == "head":
+        remember_used_snapshot(context.home, *names)
     return hits, digest, None, True
 
 
@@ -2283,6 +2527,7 @@ def _execute(
         # Each cargo invocation gets a fresh home that dies with it.
         cargo_home = Path(tempfile.mkdtemp(prefix="saga-cargo-home-"))
         temps.append(cargo_home)
+        link_operator_cargo_cache(cargo_home)
         run_env = {**run_env, "CARGO_HOME": str(cargo_home)}
     try:
         if deadline is not None and adapter.mutation:
@@ -3576,6 +3821,7 @@ def _relocated_env() -> tuple[dict[str, str], list[Path]]:
     env["TMPDIR"] = str(tmp_dir)
     env["TMP"] = str(tmp_dir)
     env["TEMP"] = str(tmp_dir)
+    env["UV_CACHE_DIR"] = operator_uv_cache()
     return env, [home_dir, tmp_dir]
 
 

@@ -52,6 +52,59 @@ and corpus schema are unchanged.
 
 **Revisit when.** Saga retirement deletes the overlapping module names.
 
+### Prepare reads advisory snapshots and does not fetch them
+
+**Decision.** [Issue #245](https://github.com/infiquetra/infiquetra-agent-plugins/issues/245)
+keeps `prepare` off the advisory network. Snapshots live under
+`~/.config/infiquetra/reviews/advisories/` (legacy `~/.saga/advisories/` when that
+is the only copy). A directory counts only when it holds advisory data:
+`advisories.json`, a cargo-deny `crates/` tree (or `advisory-db-*/crates`), or
+OSV-Scanner's native `osv-scalibr/<ecosystem>/all.zip` layout. `metadata.json`
+alone does not. A missing snapshot is a `missing-advisory-snapshot` gap, and
+that gap is a reviewer fallback.
+
+`cargo-deny` 0.20.2 is invoked with the global `--offline` flag. The snapshot is
+selected by `db-path` in the scan's deny.toml. That release has no `--db-path`
+or `--disable-fetch` flag. The default RustSec URL is stored as
+`advisory-db-3157b0e258782691` under `db-path`. When the deny.toml has no
+`maximum-db-staleness`, the scan sets `P3650D` so a maintained snapshot is not
+rejected for age, and nothing is fetched.
+
+`osv-scanner` 2.7.1 is invoked with `--offline --offline-vulnerabilities
+--data-source native`. `--data-source` accepts `native` or `deps.dev`, not a
+directory. The snapshot is passed as `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY`.
+The scanner reads `<that>/osv-scalibr/<ecosystem>/all.zip`.
+
+`pip-audit` 2.10.1 and npm 12.0.2 cannot evaluate a local advisory snapshot.
+`pip-audit` rejects `--offline`. npm `--offline` skips the advisory request and
+reports nothing. Prepare matches the local `advisories.json` against the
+requirements or lockfile and emits the JSON those parsers already accept. A
+matching advisory is reported with no network. A missing snapshot stays
+`missing-advisory-snapshot`.
+
+Cargo runs with `--offline` and `CARGO_NET_OFFLINE`. Each cargo invocation still
+gets a fresh `CARGO_HOME` so a build script cannot plant config, and that home
+links the operator's warmed `registry` and `git` caches. `uv --offline` runs
+with `UV_CACHE_DIR` pointed at the operator's warmed uv cache. A
+`rust-toolchain` pin that is not installed under `RUSTUP_HOME` is a
+`known-gap`. Rustup is not asked to download it.
+
+A base scan that gaps with `missing-advisory-snapshot` is not cached, and the
+base-cache key includes a fingerprint of the snapshot. `prepare` writes
+`advisory-snapshots.json` only for snapshots a succeeded head scan used.
+`review-setup` records every snapshot that has a real payload, including an
+OSV native cache with no metadata sidecar. `security_scan` stages those
+snapshots into the scan home the same way it stages rule inputs. Refreshing a
+snapshot stays outside `prepare`.
+
+**Rejected.** Fetching the advisory database on every `prepare`, and caching the
+live response inside the packet. A registry timeout then changes the degraded
+entries of two runs of one commit. Vendoring the databases in git was also
+rejected: the catalogues are large, licensed separately, and go stale in-tree.
+
+**Revisit when.** A snapshot refresh command is accepted, or `pip-audit` or npm
+gains a stable offline database flag that replaces the local evaluation.
+
 ---
 
 ## 2026-11-16

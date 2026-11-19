@@ -524,15 +524,16 @@ def _fetch_rust(runner: Process, packet: Path, export: Export) -> dict[str, Any]
             watched = [target, *(Path(env[name]) for name in ("HOME", "TMPDIR", "CARGO_HOME"))]
             lock = source / "Cargo.lock"
             if not lock.is_file():
-                _cargo(runner, ["cargo", "generate-lockfile", "--manifest-path",
+                _cargo(runner, ["cargo", "generate-lockfile", "--offline", "--manifest-path",
                                 str(source / "Cargo.toml")], source, env, watched)
             crates = _check_lock(lock)
             # A lock with no crates.io package is trusted only when no manifest asks for one;
             # otherwise ``cargo vendor --locked`` decides, and refuses a lock that is out of date.
             if crates == 0 and not _declares_registry_dependency(source):
                 return {"state": "no-dependencies"}
-            _cargo(runner, ["cargo", "vendor", "--locked", "--quiet", "--manifest-path",
-                            str(source / "Cargo.toml"), str(target)], source, env, watched)
+            _cargo(runner, ["cargo", "vendor", "--offline", "--locked", "--quiet",
+                            "--manifest-path", str(source / "Cargo.toml"), str(target)],
+                   source, env, watched)
             if crates == 0 and not os.path.lexists(target):
                 return {"state": "no-dependencies"}
             if target.is_symlink() or not target.is_dir():
@@ -686,7 +687,9 @@ def _cargo_env(work: Path) -> dict[str, str]:
         path = work / folder
         path.mkdir(mode=0o700)
         env[name] = str(path)
+    _reviews_load("review_tools").link_operator_cargo_cache(work / "cargo-home")
     env["CARGO_NET_GIT_FETCH_WITH_CLI"] = "false"
+    env["CARGO_NET_OFFLINE"] = "true"
     env.update(rustup_env())
     return env
 

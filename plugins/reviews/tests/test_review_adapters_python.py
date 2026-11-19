@@ -248,7 +248,7 @@ def test_bare_pytest_keeps_the_uv_runtime(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     argv = _adapter("pytest-randomly").invoke(context)
-    assert argv[:3] == ["uv", "run", "--with"]
+    assert argv[:4] == ["uv", "run", "--offline", "--with"]
     assert "pytest-randomly==5.0.0" in argv
     assert "pytest" in argv
     uv = shutil.which("uv")

@@ -202,6 +202,28 @@ def _rule_home(home: Path, machine_home: Path) -> None:
     legacy_rules = machine_home / ".saga" / "semgrep-rules"
     if legacy_rules.is_dir():
         _stage_tree(legacy_rules, legacy / "semgrep-rules")
+    _stage_advisories(home, machine_home)
+
+
+def _stage_advisories(home: Path, machine_home: Path) -> None:
+    """Copy advisory snapshots that hold a real payload into the scan home.
+
+    Metadata-only directories are left behind. The operator's trees are not
+    rewritten. The reviews path and the legacy path are both staged so the
+    scan resolves them the same way prepare does.
+    """
+    for relative in tools._ADVISORY_ROOTS:
+        source_root = machine_home / relative
+        if not source_root.is_dir():
+            continue
+        for child in sorted(source_root.iterdir(), key=lambda path: path.name):
+            if not tools.snapshot_has_payload(child):
+                continue
+            target = home / relative / child.name
+            if target.exists():
+                continue
+            target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            _stage_tree(child, target)
 
 
 def _secret_report(result: tools.ProcessResult) -> tools.ProcessResult:
@@ -246,7 +268,10 @@ class Observation:
         allowed = {
             "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SYSTEMROOT", "WINDIR",
             "COMSPEC", "PATHEXT", "PYTHONHASHSEED", "CARGO_HOME", "RUSTUP_HOME",
-            "RUSTUP_TOOLCHAIN", "SEMGREP_ENABLE_VERSION_CHECK",
+            "RUSTUP_TOOLCHAIN", "CARGO_NET_OFFLINE", "UV_CACHE_DIR",
+            "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY",
+            "OSV_SCALIBR_LOCAL_DB_CACHE_DIRECTORY",
+            "SEMGREP_ENABLE_VERSION_CHECK",
         }
         clean = {key: value for key, value in env.items() if key in allowed}
         clean.update({"HOME": str(self.scratch), "TMPDIR": str(self.scratch)})
@@ -353,7 +378,8 @@ def _markdown(summary: dict[str, Any], findings: list) -> str:
     lines += ["", "pip-audit audits only the packages and versions the files list.", "",
               "Rows that can send package names and versions to an advisory service: "
               + (", ".join(summary["advisory_service_rows"]) or "none invoked") + ".",
-              "cargo-deny may fetch its public advisory database.", "", "## Findings", ""]
+              "cargo-deny reads the local advisory snapshot and does not fetch it.",
+              "", "## Findings", ""]
     for finding in review_formula.compute({"findings": findings})["findings"]:
         location = finding["location"]
         line = location.get("lines", {}).get("start")

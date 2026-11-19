@@ -276,6 +276,7 @@ def survey(repo: Path, home: Path) -> dict[str, Any]:
         "pins": pins,
         "survey": {"tools": tools, "sandbox": sandbox_admission()},
         "rule_caches": _rule_caches(rows, home),
+        "advisory_snapshots": review_tools.advisory_snapshot_record(home),
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     write_machine(home, record)
@@ -306,6 +307,14 @@ def _print_table(record: dict[str, Any], home: Path) -> None:
             print(f"  {name} {version}")
     else:
         print("pins: none")
+    snapshots = record.get("advisory_snapshots") or {}
+    if snapshots:
+        print("advisory snapshots:")
+        for name, meta in snapshots.items():
+            version = meta.get("version") or meta.get("date") or "not-recorded"
+            print(f"  {name} {version}")
+    else:
+        print("advisory snapshots: none")
     sandbox = record.get("survey", {}).get("sandbox", {})
     print(f"sandbox: {sandbox.get('reproduction', 'unavailable')}")
     print(f"machine record: {machine_path(home)}")
