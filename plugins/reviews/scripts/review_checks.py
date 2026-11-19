@@ -87,6 +87,26 @@ _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _FLAG = re.compile(r"(?<![A-Za-z0-9_])(--[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_])")
 _TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _NAME_RUN = re.compile(r"[A-Za-z0-9_]+")
+#: Prose has no ctags symbols. Only these suffixes use the prose extractor (issue 261).
+_PROSE_SUFFIXES = frozenset({".md", ".rst", ".txt"})
+_PROSE_TOKEN = re.compile(r"[A-Za-z_](?:[A-Za-z0-9_]|-[A-Za-z0-9_])*")
+_PROSE_FILENAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)+")
+_DOUBLE_SPAN = re.compile(r"``([^`\n]+)``")
+_CODE_SPAN = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
+_LINK_TARGET = re.compile(r"\[[^\]\n]*\]\(([^)\s]+)")
+_LINK_DEF = re.compile(r"^\s*\[[^\]]+\]:\s*(\S+)", re.MULTILINE)
+_AUTOLINK = re.compile(r"<((?:https?://|mailto:)[^>\s]+)>")
+_HEADING_ANCHOR = re.compile(r"\{#([A-Za-z_][A-Za-z0-9_-]*)\}")
+_RST_ANCHOR = re.compile(r"^\.\.\s+_([A-Za-z_][A-Za-z0-9_-]*):", re.MULTILINE)
+_HTML_ANCHOR = re.compile(r"""\b(?:id|name)\s*=\s*["']([A-Za-z_][A-Za-z0-9_-]*)["']""")
+_FENCE = re.compile(
+    r"^[ \t]{0,3}(```|~~~)[^\n]*\n(.*?)^[ \t]{0,3}\1[ \t]*$",
+    re.MULTILINE | re.DOTALL,
+)
+_CALL_NAME = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_EMPHASIS = re.compile(
+    r"(?<![A-Za-z0-9_])(?P<mark>\*{1,3}|_{1,3})(?P<word>[A-Za-z][A-Za-z0-9]*)(?P=mark)(?![A-Za-z0-9_])"
+)
 _UNIX_PATH = re.compile(r"(?<![A-Za-z0-9_])(/(?:[A-Za-z0-9._-]+)){2,}")
 _WINDOWS_PATH = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z]:\\[^\s\"']+)")
 _UNC_PATH = re.compile(r"(\\\\[^\s\\'\"]+\\[^\s\\'\"]+)")
@@ -153,8 +173,9 @@ _KEYWORDS_BY_SUFFIX: dict[str, frozenset[str]] = {
 #: the file's language: ``self`` is a receiver name in Go and a parameter in plenty of C code, and
 #: a removed line naming it is no more a removed name there than in Python.
 _COMMON_KEYWORDS = frozenset("self Self this cls super true false null nil None True False".split())
-#: A suffix with no keyword list (Markdown, YAML, text) drops the keywords of every list, since a
-#: word reserved in any of these languages is as likely to be noise there.
+#: A suffix with no keyword list (YAML, and anything else that is not prose) drops the keywords
+#: of every list, since a word reserved in any of these languages is as likely to be noise there.
+#: Markdown, reStructuredText, and text use ``_prose_names`` instead of this list (issue 261).
 _ALL_KEYWORDS = frozenset().union(*_KEYWORDS_BY_SUFFIX.values())
 
 
@@ -1246,6 +1267,19 @@ def machine_values(root: Path, base: str, user: str, host: str) -> dict[str, Any
     return {"hits": [], "where_to_look": items, "gaps": []}
 
 
+def _identifier_shaped(token: str) -> bool:
+    """A token a prose file can name: ``_``, a digit, an inner capital, or an internal hyphen.
+
+    ``the`` and ``skip`` match none of those. ``review-setup`` and ``check_plan.py`` do.
+    An all-caps word such as ``README`` is still prose.
+    """
+    if "_" in token or any(char.isdigit() for char in token):
+        return True
+    if re.search(r"[A-Za-z0-9]-[A-Za-z0-9]", token):
+        return True
+    return re.search(r"[a-z][A-Z]|[A-Z]{2,}[a-z]", token) is not None
+
+
 def _searchable(name: str) -> bool:
     if re.fullmatch(r"--[A-Za-z][A-Za-z0-9_-]*", name):
         return True
@@ -1254,11 +1288,29 @@ def _searchable(name: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name))
 
 
+def _prose_searchable(name: str) -> bool:
+    """``_searchable`` plus a dotted filename, which prose code spans can name.
+
+    ``_searchable`` stays the code and JSON rule. A dotted JSON key is still ignored.
+    """
+    if _searchable(name):
+        return True
+    return _PROSE_FILENAME.fullmatch(name) is not None
+
+
 def _remember(found: dict[str, bool], name: str, degraded: bool) -> None:
     if not _searchable(name):
         return
     if name not in found or not degraded:
         found[name] = degraded if name not in found else False
+
+
+def _remember_prose(found: dict[str, bool], name: str) -> None:
+    """Remember a prose name. Dotted filenames stay here and out of ``_searchable``."""
+    if not _prose_searchable(name):
+        return
+    if name not in found:
+        found[name] = True
 
 
 def _python_defs(text: str) -> set[tuple[str, str, str]] | None:
@@ -1369,6 +1421,131 @@ def _diff_lines(repo: Path, base: str) -> dict[str, tuple[list[str], list[str]]]
     return files
 
 
+def _explicit_keep(token: str) -> bool:
+    """A code-span, link-target, or heading-anchor token, including a plain word such as ``publish``."""
+    if len(token) < _MIN_NAME_LENGTH:
+        return False
+    if token in _ALL_KEYWORDS or token in _COMMON_KEYWORDS:
+        return False
+    return _prose_searchable(token)
+
+
+def _prose_keep(token: str) -> bool:
+    """An identifier-shaped prose token. Ordinary words stay out; explicit targets use ``_explicit_keep``."""
+    return _identifier_shaped(token) and _explicit_keep(token)
+
+
+def _code_symbols(text: str) -> set[str]:
+    """Identifiers in one code span or fenced block, without splitting a flag, filename, or hyphenated name."""
+    flags = set(_FLAG.findall(text))
+    blanked = _FLAG.sub(lambda match: " " * len(match.group(0)), text)
+    filenames = set(_PROSE_FILENAME.findall(blanked))
+    blanked = _PROSE_FILENAME.sub(lambda match: " " * len(match.group(0)), blanked)
+    hyphenated = [match for match in _PROSE_TOKEN.finditer(blanked) if "-" in match.group(0)]
+    for match in reversed(hyphenated):
+        blanked = (
+            blanked[: match.start()]
+            + (" " * (match.end() - match.start()))
+            + blanked[match.end() :]
+        )
+    names = set(flags)
+    names.update(filenames)
+    names.update(match.group(0) for match in hyphenated)
+    names.update(_TOKEN.findall(blanked))
+    names.update(_CALL_NAME.findall(blanked))
+    return names
+
+
+def _names_from_span(token: str) -> set[str]:
+    """Symbols in one inline span. A call keeps the callee, so ``check_plan()`` yields ``check_plan``."""
+    token = token.strip()
+    if not token:
+        return set()
+    if not re.search(r"\s", token):
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\([^)]*\)", token):
+            return set(_CALL_NAME.findall(token))
+        if _prose_searchable(token):
+            return {token}
+    names = _code_symbols(token)
+    if re.search(r"\s", token):
+        return {name for name in names if name.startswith("--") or _identifier_shaped(name)}
+    return names
+
+
+def _blank_code(text: str, found: set[str]) -> str:
+    """Fenced blocks and inline spans, recorded into *found* and blanked so prose does not re-read them."""
+
+    def take_fence(match: re.Match[str]) -> str:
+        found.update(_code_symbols(match.group(2)))
+        return "\n" * match.group(0).count("\n")
+
+    def take_span(match: re.Match[str]) -> str:
+        found.update(_names_from_span(match.group(1)))
+        return " " * len(match.group(0))
+
+    masked = _FENCE.sub(take_fence, text)
+    masked = _DOUBLE_SPAN.sub(take_span, masked)
+    return _CODE_SPAN.sub(take_span, masked)
+
+
+def _target_names(target: str) -> set[str]:
+    """The fragment and the last path segment of one link target."""
+    target = target.strip().strip("<>")
+    if not target:
+        return set()
+    fragment = ""
+    if "#" in target:
+        target, fragment = target.split("#", 1)
+        fragment = fragment.split("?", 1)[0]
+    path = target.split("?", 1)[0].rstrip("/")
+    base = path.rsplit("/", 1)[-1] if path else ""
+    return {name for name in (fragment, base) if name}
+
+
+def _strip_emphasis(text: str) -> str:
+    """Bold and italic markers are not dunder names. ``__button__`` is the word ``button``."""
+    return _EMPHASIS.sub(lambda match: match.group("word"), text)
+
+
+def _prose_candidates(text: str) -> set[str]:
+    """Code, link targets, heading anchors, and identifier-shaped tokens in *text*.
+
+    Plain words count only inside inline or fenced code and explicit link or anchor targets.
+    Emphasis wrappers and the surrounding prose do not.
+    """
+    explicit: set[str] = set()
+    masked = _blank_code(text, explicit)
+    for pattern in (_LINK_TARGET, _LINK_DEF, _AUTOLINK):
+        for match in pattern.finditer(masked):
+            explicit.update(_target_names(match.group(1)))
+    for pattern in (_HEADING_ANCHOR, _RST_ANCHOR, _HTML_ANCHOR):
+        explicit.update(pattern.findall(masked))
+    shaped = {
+        token
+        for token in _PROSE_TOKEN.findall(_strip_emphasis(masked))
+        if _prose_keep(token)
+    }
+    return shaped | {token for token in explicit if _explicit_keep(token)}
+
+
+def _appears_in(name: str, text: str) -> bool:
+    """Whether *name* is still present, including inside backticks or as the body of a ``--`` flag."""
+    escaped = re.escape(name)
+    if name.startswith("--"):
+        pattern = rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_-])"
+    else:
+        pattern = rf"(?<![A-Za-z0-9_-])(?:--)?{escaped}(?![A-Za-z0-9_-])"
+    return re.search(pattern, text) is not None
+
+
+def _prose_names(removed: Sequence[str], added: Sequence[str]) -> list[str]:
+    """Removed prose names that do not remain on an added line, with or without backticks."""
+    removed_text = "\n".join(removed)
+    added_text = "\n".join(added)
+    gone = _prose_candidates(removed_text) - _prose_candidates(added_text)
+    return sorted(name for name in gone if not _appears_in(name, added_text))
+
+
 def _text_names(removed: Sequence[str], added: Sequence[str], path: str) -> list[str]:
     """Tokens on removed lines and not on added ones, sorted, minus keywords and short tokens.
 
@@ -1376,7 +1553,13 @@ def _text_names(removed: Sequence[str], added: Sequence[str], path: str) -> list
     without the filter ``if`` and ``self`` made every remaining use in the repository a finding
     (issue 260). The keywords are the file's language's, or every language's for a suffix
     with none, plus the words in ``_COMMON_KEYWORDS``.
+
+    Prose suffixes (``.md``, ``.rst``, ``.txt``) never take that whole-word path. They keep
+    inline code spans, link targets, heading anchors, and identifier-shaped tokens, so a
+    removed ``the`` or ``skip`` is not a removed name (issue 261).
     """
+    if Path(path).suffix.lower() in _PROSE_SUFFIXES:
+        return _prose_names(removed, added)
     gone = set(_TOKEN.findall("\n".join(removed))) - set(_TOKEN.findall("\n".join(added)))
     keywords = _KEYWORDS_BY_SUFFIX.get(Path(path).suffix.lower(), _ALL_KEYWORDS) | _COMMON_KEYWORDS
     return sorted(
@@ -1505,6 +1688,10 @@ def _other_removed(
 ) -> None:
     sweep_pieces = _reviews_load('sweep_pieces')
 
+    if Path(path).suffix.lower() in _PROSE_SUFFIXES:
+        for name in _text_names(removed_lines, added_lines, path):
+            _remember_prose(found, name)
+        return
     if language in sweep_pieces.CTAGS_LANGUAGES:
         base_names = _span_names(before, path, language)
         head_names = _span_names(after, path, language)
