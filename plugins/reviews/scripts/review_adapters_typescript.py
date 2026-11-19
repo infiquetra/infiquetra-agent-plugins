@@ -297,8 +297,14 @@ def _invoke_npm_audit(context: ScanContext) -> list[str]:
         return []
     if not any((context.root / name).is_file() for name in _NPM_LOCKS):
         return []
+    snapshot = review_tools.require_advisory_snapshot(
+        context.home, "npm-audit", "npm",
+    )
     _stage_npmrc(context)
-    return ["npm", "audit", "--json"]
+    return [
+        "npm", "audit", "--json", "--offline",
+        "--cache", str(snapshot),
+    ]
 
 
 def _npm_row(severity: object) -> str:

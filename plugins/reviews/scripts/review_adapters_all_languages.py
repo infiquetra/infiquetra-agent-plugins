@@ -433,7 +433,13 @@ def _invoke_osv(npm_audit: bool):
             raise ToolGap("known-gap", "security.dependency-high")
         if not scannable:
             return []
-        argv = ["osv-scanner", "scan", "source", "--format", "json"]
+        snapshot = review_tools.require_advisory_snapshot(
+            context.home, "osv-scanner", "osv",
+        )
+        argv = [
+            "osv-scanner", "scan", "source", "--offline", "--format", "json",
+            "--data-source", str(snapshot),
+        ]
         for path in scannable:
             relative = path.relative_to(context.root).as_posix()
             token = f"requirements.txt:{relative}" if path.name == "requirements.txt" else relative

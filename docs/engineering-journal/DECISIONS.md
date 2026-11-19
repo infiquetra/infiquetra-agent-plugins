@@ -52,6 +52,26 @@ and corpus schema are unchanged.
 
 **Revisit when.** Saga retirement deletes the overlapping module names.
 
+### Prepare reads advisory snapshots and does not fetch them
+
+**Decision.** [Issue #245](https://github.com/infiquetra/infiquetra-agent-plugins/issues/245)
+makes the six network-dependent review paths offline during `prepare`. `cargo-deny`,
+`osv-scanner`, `pip-audit`, and `npm audit` read a snapshot under
+`~/.config/infiquetra/reviews/advisories/` (legacy `~/.saga/advisories/` when that
+is the only copy). A missing snapshot is a `missing-advisory-snapshot` gap. Cargo
+and `uv` receive `--offline`, and the tool environment sets `CARGO_NET_OFFLINE`.
+`review-setup` records each snapshot's version and date on the machine record.
+`prepare` copies that record to `advisory-snapshots.json` in the packet.
+Refreshing a snapshot stays outside `prepare`.
+
+**Rejected.** Fetching the advisory database on every `prepare`, and caching the
+live response inside the packet. A registry timeout then changes the degraded
+entries of two runs of one commit. Vendoring the databases in git was also
+rejected: the catalogues are large, licensed separately, and go stale in-tree.
+
+**Revisit when.** A snapshot refresh command is accepted, or an advisory tool
+gains a stable offline database flag that replaces the local directory.
+
 ---
 
 ## 2026-11-16

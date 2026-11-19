@@ -576,6 +576,7 @@ def _prepare(
         _write_json(staging / "may-block.json", reasons)
         _write_json(staging / "open-search-cap.json", {"cap": reviewer_answer.OPEN_SEARCH_CAP})
         _write_json(staging / "grades.json", grades)
+        _write_json(staging / "advisory-snapshots.json", review_tools.advisory_snapshot_record(home))
         # Lead conversion may restore a blocking row. Keep the tool runner's public outcomes
         # consistent with the final prepare formula, including its omitted-lead degradation.
         _write_json(staging / "outcomes.json", grades)

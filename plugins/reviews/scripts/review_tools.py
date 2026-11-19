@@ -269,6 +269,73 @@ class ToolGap(Exception):
         self.row = row
 
 
+_ADVISORY_ROOTS = (
+    Path(".config") / "infiquetra" / "reviews" / "advisories",
+    Path(".saga") / "advisories",
+)
+_SNAPSHOT_FIELDS = ("version", "date", "updated_at", "sha256")
+
+
+def advisory_snapshot(home: Path, *names: str) -> Path | None:
+    """The local advisory snapshot for the first *names* entry that exists.
+
+    ``<home>/.config/infiquetra/reviews/advisories/<name>`` is preferred. The
+    legacy ``<home>/.saga/advisories/<name>`` directory is used when the reviews
+    copy is absent. A directory counts when it holds ``metadata.json`` or
+    ``advisories.json``. This function never fetches.
+    """
+    for name in names:
+        for relative in _ADVISORY_ROOTS:
+            folder = Path(home) / relative / name
+            if (folder / "metadata.json").is_file() or (folder / "advisories.json").is_file():
+                return folder
+    return None
+
+
+def require_advisory_snapshot(home: Path, *names: str, row: str = "security.dependency-high") -> Path:
+    """The local snapshot, or a gap that names its absence. Never a network fetch."""
+    found = advisory_snapshot(home, *names)
+    if found is None:
+        raise ToolGap("missing-advisory-snapshot", row)
+    return found
+
+
+def _snapshot_metadata(folder: Path) -> dict[str, str]:
+    try:
+        loaded = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        loaded = {}
+    if not isinstance(loaded, dict):
+        loaded = {}
+    meta = {
+        key: str(loaded[key])
+        for key in _SNAPSHOT_FIELDS
+        if isinstance(loaded.get(key), str) and loaded.get(key)
+    }
+    meta["path"] = str(folder)
+    return meta
+
+
+def advisory_snapshot_record(home: Path) -> dict[str, dict[str, str]]:
+    """Version and date of every local advisory snapshot, with no network access.
+
+    Reviews directories win over a legacy directory of the same name. The result
+    is sorted by name so two prepares of one home write the same bytes.
+    """
+    names: set[str] = set()
+    for relative in _ADVISORY_ROOTS:
+        root = Path(home) / relative
+        if not root.is_dir():
+            continue
+        names.update(path.name for path in root.iterdir() if path.is_dir())
+    record: dict[str, dict[str, str]] = {}
+    for name in sorted(names):
+        folder = advisory_snapshot(home, name)
+        if folder is not None:
+            record[name] = _snapshot_metadata(folder)
+    return record
+
+
 @dataclass(frozen=True)
 class ProcessResult:
     code: int
@@ -1593,6 +1660,9 @@ def _tool_env(home: Path) -> tuple[dict[str, str], list[str]]:
         except OSError:  # pragma: no cover - Windows ACLs
             pass
     env["CARGO_HOME"] = str(cache)
+    # Cargo must not reach crates.io during prepare. A missing cache is a failed
+    # offline run, not a fetch that would make the next packet differ.
+    env["CARGO_NET_OFFLINE"] = "true"
     env["RUSTUP_HOME"] = os.environ.get("RUSTUP_HOME") or str(
         Path.home() / ".rustup"
     )

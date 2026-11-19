@@ -238,12 +238,17 @@ def _invoke_cargo_deny(context: ScanContext) -> list[str]:
         return []
     if not (context.root / "Cargo.lock").is_file():
         return []
+    snapshot = review_tools.require_advisory_snapshot(
+        context.home, "cargo-deny", "rustsec",
+    )
     staged = _stage_base(context, _DENY_CONFIG)
     if staged is None:
         staged = context.root / _DENY_CONFIG
         staged.write_text(_GENERATED_DENY_CONFIG, encoding="utf-8")
     return [
-        "cargo-deny", "--format", "json", "--config", str(staged),
+        "cargo-deny", "--format", "json", "--disable-fetch",
+        "--db-path", str(snapshot),
+        "--config", str(staged),
         "check", "advisories",
     ]
 
@@ -366,7 +371,7 @@ def _invoke_cargo_check(context: ScanContext) -> list[str]:
     if not _files_with(context.root, _RUST_SUFFIXES):
         return []
     _stage_toolchain(context)
-    return ["cargo", "check", "--locked", "--message-format=json"]
+    return ["cargo", "check", "--offline", "--locked", "--message-format=json"]
 
 
 def _stable_cargo_stream(text: str) -> str:
@@ -419,7 +424,7 @@ def _invoke_clippy(context: ScanContext) -> list[str]:
     _stage_toolchain(context)
     _stage_first_base(context, _CLIPPY_CONFIGS)
     return [
-        "cargo-clippy", "clippy", "--locked", "--message-format=json",
+        "cargo-clippy", "clippy", "--offline", "--locked", "--message-format=json",
         "--", *_CLIPPY_LEVELS,
     ]
 

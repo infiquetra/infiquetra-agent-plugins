@@ -95,7 +95,7 @@ def _plugin_version_argv(package: str, distribution: str) -> tuple[str, ...]:
     is what drops ``--with`` on the floor (issue 227, then 246).
     """
     return (
-        "uv", "run", "--no-project", "--with", package,
+        "uv", "run", "--offline", "--no-project", "--with", package,
         "python", "-c",
         f"import importlib.metadata as m; print(m.version({distribution!r}))",
     )
@@ -708,23 +708,22 @@ def _parse_bandit(text: str) -> ParseResult:
 def _invoke_pip_audit(context: ScanContext) -> list[str]:
     if context.repository_scan:
         files, _unsupported = pip_audit_scan_inputs(context.root)
-        if not files:
-            return []
-        argv = [
-            "pip-audit", "--format", "json", "--progress-spinner", "off",
-            "--disable-pip", "--no-deps",
+    else:
+        files = [
+            path.relative_to(context.root).as_posix()
+            for path in review_tools.scan_files(context.root)
+            if fnmatch.fnmatchcase(path.name, "requirements*.txt") and path.is_file()
         ]
-        for name in files:
-            argv.extend(["--requirement", name])
-        return argv
-    files = [
-        path.relative_to(context.root).as_posix()
-        for path in review_tools.scan_files(context.root)
-        if fnmatch.fnmatchcase(path.name, "requirements*.txt") and path.is_file()
-    ]
     if not files:
         return []
-    argv = ["pip-audit", "--format", "json", "--progress-spinner", "off"]
+    snapshot = review_tools.require_advisory_snapshot(
+        context.home, "pip-audit", "pypa", "osv",
+    )
+    argv = [
+        "pip-audit", "--format", "json", "--progress-spinner", "off",
+        "--disable-pip", "--no-deps", "--offline",
+        "--cache-dir", str(snapshot),
+    ]
     for name in sorted(files):
         argv.extend(["--requirement", name])
     return argv
@@ -901,7 +900,7 @@ def _invoke_ruff(pin: str) -> Callable[[ScanContext], list[str]]:
     def invoke(context: ScanContext) -> list[str]:
         return [
             "python3", "-c", _RUFF_WRAPPER, "--",
-            "uv", "run", "--with", f"ruff=={pin}",
+            "uv", "run", "--offline", "--with", f"ruff=={pin}",
             "ruff", "check", "--isolated", "--ignore-noqa", "--select", "ALL",
             "--config", _ruff_per_file_ignores(context.root),
             "--output-format", "json", str(context.root),
@@ -1116,7 +1115,7 @@ def _invoke_cosmic(context: ScanContext) -> list[str]:
         encoding="utf-8",
     )
     argv = [
-        "uv", "run", "--with", "cosmic-ray==8.7.0",
+        "uv", "run", "--offline", "--with", "cosmic-ray==8.7.0",
         sys.executable, "-c", _COSMIC_WRAPPER, str(toml), str(_COSMIC_TIMEOUT_SECONDS),
     ]
     # A wall-clock time, since the wrapper is another process: a safety stop inside the cap.
@@ -1220,8 +1219,8 @@ def _install_pytest_plugin(context: ScanContext, package: str, interpreter: str)
     try:
         result = subprocess.run(
             [
-                "uv", "pip", "install", "--python", interpreter, "--target", str(target),
-                "--no-deps", package,
+                "uv", "pip", "install", "--offline", "--python", interpreter,
+                "--target", str(target), "--no-deps", package,
             ],
             capture_output=True, text=True, check=False,
             env=_plugin_install_env(),
@@ -1251,7 +1250,7 @@ def _pytest_argv(context: ScanContext, package: str, extra: list[str]) -> list[s
     # to supply both pytest and the plugin. An explicit interpreter keeps its
     # own pytest and only borrows the plugin through PYTHONPATH.
     if parts[:1] == ["pytest"]:
-        argv = ["uv", "run", "--with", package, *parts, *extra]
+        argv = ["uv", "run", "--offline", "--with", package, *parts, *extra]
         if not assigned:
             return argv
         return ["env", f"PYTHONPATH={assigned}", *argv]
@@ -1372,7 +1371,7 @@ def _build(document: Mapping[str, object]) -> list[Adapter]:
     ruff_pin = str(ruff_row.get("default_version") or "not-recorded")
     version_argvs = dict(_VERSION_ARGV)
     version_argvs["ruff-lint"] = (
-        "uv", "run", "--with", f"ruff=={ruff_pin}", "ruff", "--version",
+        "uv", "run", "--offline", "--with", f"ruff=={ruff_pin}", "ruff", "--version",
     )
     invoke = {
         "bandit": _invoke_bandit,

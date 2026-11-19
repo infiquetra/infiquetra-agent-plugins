@@ -449,7 +449,7 @@ def test_cli_run_records_known_gap_and_exits_zero(tmp_path: Path) -> None:
         "import os\n"
         "import sys\n"
         "argv = sys.argv[1:]\n"
-        "if argv[:2] != ['run', '--no-project'] or '--with' not in argv or 'python' not in argv:\n"
+        "if argv[:3] != ['run', '--offline', '--no-project'] or '--with' not in argv or 'python' not in argv:\n"
         "    sys.stderr.write('unexpected uv invocation\\n')\n"
         "    raise SystemExit(2)\n"
         "rest = argv[argv.index('python') + 1:]\n"
@@ -2172,6 +2172,13 @@ def test_head_worktree_uncommitted_edit_keeps_the_finding(
     repo, base, head = _flagged_repo(tmp_path)
     assert "FLAGGED" not in (repo / "src" / "app.py").read_text(encoding="utf-8")
     home = tmp_path / "home"
+    if tool_id == "osv-scanner":
+        snapshot = home / ".config" / "infiquetra" / "reviews" / "advisories" / "osv-scanner"
+        snapshot.mkdir(parents=True)
+        (snapshot / "metadata.json").write_text(
+            '{"version":"test","date":"test"}\n', encoding="utf-8",
+        )
+        (snapshot / "advisories.json").write_text('{"advisories":[]}\n', encoding="utf-8")
     adapter = _watch(next(item for item in adapters.ADAPTERS if item.id == tool_id), repo)
 
     def handler(argv: list[str], cwd: Path, _env: dict[str, str]) -> Any:

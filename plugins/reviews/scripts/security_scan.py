@@ -353,7 +353,8 @@ def _markdown(summary: dict[str, Any], findings: list) -> str:
     lines += ["", "pip-audit audits only the packages and versions the files list.", "",
               "Rows that can send package names and versions to an advisory service: "
               + (", ".join(summary["advisory_service_rows"]) or "none invoked") + ".",
-              "cargo-deny may fetch its public advisory database.", "", "## Findings", ""]
+              "cargo-deny reads the local advisory snapshot and does not fetch it.",
+              "", "## Findings", ""]
     for finding in review_formula.compute({"findings": findings})["findings"]:
         location = finding["location"]
         line = location.get("lines", {}).get("start")
