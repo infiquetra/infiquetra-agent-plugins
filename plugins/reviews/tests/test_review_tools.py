@@ -428,6 +428,8 @@ def test_cli_run_records_known_gap_and_exits_zero(tmp_path: Path) -> None:
     pytest-socket raises that gap when the profile has no test command, and only
     after its version probe can import the pinned distribution. The fixture is
     metadata alone, so the probe succeeds and the tool itself never runs.
+    The probe is ``uv run --with``; this test's uv is a stand-in that runs this
+    interpreter with the fixture on PYTHONPATH, so CI needs no host uv.
     """
     document = yaml.safe_load((REFERENCES / "review-tools.yaml").read_text(encoding="utf-8"))
     pin = next(
@@ -439,6 +441,22 @@ def test_cli_run_records_known_gap_and_exits_zero(tmp_path: Path) -> None:
     dist = site / f"pytest_socket-{pin}.dist-info"
     dist.mkdir(parents=True)
     (dist / "METADATA").write_text(f"Name: pytest-socket\nVersion: {pin}\n", encoding="utf-8")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    uv = bindir / "uv"
+    uv.write_text(
+        "#!" + sys.executable + "\n"
+        "import os\n"
+        "import sys\n"
+        "argv = sys.argv[1:]\n"
+        "if argv[:2] != ['run', '--no-project'] or '--with' not in argv or 'python' not in argv:\n"
+        "    sys.stderr.write('unexpected uv invocation\\n')\n"
+        "    raise SystemExit(2)\n"
+        "rest = argv[argv.index('python') + 1:]\n"
+        "os.execv(sys.executable, [sys.executable, *rest])\n",
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
     repo, base, head = _pair(tmp_path)
     profile = _profile(tmp_path / "profile.json", {
         "schema": "repository_profile.v1",
@@ -448,6 +466,7 @@ def test_cli_run_records_known_gap_and_exits_zero(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
     env = os.environ.copy()
+    env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
     env["PYTHONPATH"] = str(site) if not env.get("PYTHONPATH") else (
         str(site) + os.pathsep + env["PYTHONPATH"]
     )
