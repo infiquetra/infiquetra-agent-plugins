@@ -2865,12 +2865,18 @@ def _reviewer_expand(path: str, home: Path) -> Path:
 
 
 def _reviewer_forms(path: Path) -> set[Path]:
-    """*path* as written, with ``..`` collapsed, and resolved through every symlink."""
+    """*path* as written, with ``..`` collapsed, and resolved through every symlink.
+
+    Resolve the path as given, then collapse ``..``. Collapsing first cancels a
+    symlink and the ``..`` that follows it, so ``link/..`` where ``link`` points
+    into a denied temp root would look like it sits outside that root.
+    """
     written = Path(os.path.normpath(path))
     try:
-        return {written, written.resolve()}
+        resolved = Path(os.path.normpath(path.resolve()))
     except (OSError, RuntimeError):
         return {written}
+    return {written, resolved}
 
 
 def reviewer_allowed_read_problem(path: Path, home: Path) -> str | None:

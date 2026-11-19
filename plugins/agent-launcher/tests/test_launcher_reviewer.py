@@ -493,6 +493,30 @@ def test_work_root_refuses_a_cache_that_only_resolves_under_a_temp_root(
     assert kept == Path("/home/example/.cache/agent-launcher/reviews")
 
 
+def test_work_root_refuses_symlink_then_dotdot_into_a_denied_temp_root(
+    launcher: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``link/..`` is judged after the symlink is followed, not after lexical collapse.
+
+    ``normpath`` turns ``outside/link/../cache`` into ``outside/cache`` and drops
+    the symlink. When ``link`` points into a denied temp root, that scratch copy
+    really sits inside the root the sandbox denies.
+    """
+    denied = tmp_path / "denied"
+    (denied / "sub").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "link").symlink_to(denied / "sub")
+    cache = outside / "link" / ".." / "cache"
+    monkeypatch.setattr(launcher, "reviewer_temp_roots", lambda platform=None: (str(denied),))
+    with pytest.raises(launcher.ReviewerRefused, match="which the reviewer's sandbox denies"):
+        launcher.reviewer_work_root({"XDG_CACHE_HOME": str(cache)}, platform="linux")
+    kept = launcher.reviewer_work_root(
+        {"XDG_CACHE_HOME": str(outside / "cache")}, platform="linux",
+    )
+    assert kept == outside / "cache" / "agent-launcher" / "reviews"
+
+
 def test_claude_reviewer_screens_agents_md_at_imports(
     launcher: ModuleType, tmp_path: Path,
 ) -> None:
