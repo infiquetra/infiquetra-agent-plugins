@@ -75,29 +75,21 @@ does not edit existing entries.
 
 ---
 
-## mission-control defect-routing note (trackable confirmed defect)
+## Defect-routing note (trackable confirmed defect)
 
-When the investigation confirms a **trackable defect** that needs implementation work, route it through
-`mission-control` as a **defect-type SDLC issue** (`handoff_envelope.py --issue-type defect`; `defect` is a real
-mission-control taxonomy type). Two rules:
+When the investigation confirms a **trackable defect** that needs implementation work, open a
+**defect-type SDLC issue**. `defect` is a mission-control taxonomy type. The DEBUG REPORT is evidence
+the issue links. It is not the document `plan` consumes.
 
-1. **The report is EVIDENCE, not a handoff source.** Open the defect by **describing the bug** — symptom,
-   root cause, the fix the bug needs — in the issue body, and **LINK** the DEBUG REPORT
-   (`docs/investigations/<slug>-<date>.md`) as supporting evidence. Do **not** pass the investigation doc
-   as `--source`.
-2. **NEVER pass the report path to `handoff_envelope`'s classifier.** `handoff_envelope.py`'s
-   `infer_maturity` keys on path substrings — `docs/plans/` → `plan-ready`, `docs/brainstorms/` →
-   `requirements-ready`, and resume-session documents → `resume-ready`. It does **not** recognize
-   `docs/investigations/`, so passing the report as `--source` would fall through to `requirements-ready`
-   and mis-classify the handoff (a `requirements-ready` defect would then get bounced back to
-   `/plan`). `handoff_envelope.py` still **requires** a source — so give it the durable artifact that
-   actually drives the work (or have `mission-control` open the issue from the described defect), and link the
-   report as evidence. Carry the defect via `--issue-type defect`, never via the report path.
+1. **Describe the bug in the issue.** Symptom, root cause, and the fix the bug needs. Link the DEBUG
+   REPORT (`docs/investigations/<slug>-<date>.md`) as supporting evidence.
+2. **Open that issue through `mission-control`** when it is available. When it is not, create the same
+   issue with `gh issue create`: the title is the defect, and the body is the description from rule 1.
+   When neither can open an issue, leave that description in the debug report and stop.
 
-**The fix reaches implementation via the mission-control ISSUE.** `plan`
-consumes a **plan path**, a **GitHub issue ref**, or a **resume request** — it
-does **not** consume an investigation doc path. So: `/investigate` → `mission-control` → SDLC issue (DEFECT) →
-`plan` carries the issue. An **inline trivial fix already applied + self-verified** is shipped by the
-operator through reviews (the fix is on a branch; `/investigate` never pushes). A
-**design problem** routes to `/brainstorm`. Route to the capability that owns the finding, never
-restate it. No lifecycle write.
+**The fix reaches implementation through the issue.** `plan` consumes a **plan path**, a **GitHub
+issue ref**, or a **resume request**. It does **not** consume an investigation doc path. So:
+`/investigate` opens the defect issue (mission-control, or `gh issue create`) and `plan` carries the
+issue. An **inline trivial fix already applied + self-verified** is shipped by the operator through
+reviews (the fix is on a branch; `/investigate` never pushes). A **design problem** routes to
+`/brainstorm`. Route to the capability that owns the finding, never restate it. No lifecycle write.

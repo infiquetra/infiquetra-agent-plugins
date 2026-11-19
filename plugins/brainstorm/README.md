@@ -15,11 +15,13 @@ Standalone requirements skill. It writes `docs/brainstorms/`, keeps the ideate s
 
 ## How a harness reaches it
 
-From this package, or from a skill-scoped install of `skills/brainstorm/`:
+Resolve `scripts/shaping_judgments.py` from the directory that contains `skills/brainstorm/SKILL.md`, or from `$CLAUDE_PLUGIN_ROOT/skills/brainstorm/scripts/shaping_judgments.py` when Claude installed the package. Do not resolve `scripts/` from the repository being edited.
 
 ```bash
-python3 skills/brainstorm/scripts/shaping_judgments.py --help
+python3 plugins/brainstorm/skills/brainstorm/scripts/shaping_judgments.py --help
 ```
+
+Session scratch under `.brainstorm/scratch/` is listed in the repository `.gitignore` (`.brainstorm/`).
 
 
 Claude Code install, from a checkout of this repository:

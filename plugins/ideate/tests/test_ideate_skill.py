@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -36,10 +38,16 @@ def authored_files() -> list[Path]:
             continue
         if "__pycache__" in path.parts or path.suffix == ".pyc":
             continue
-        if "_bundled" in path.parts:
-            continue
         found.append(path)
     return found
+
+
+def _forbidden_hit(text: str, needle: str) -> bool:
+    lowered = text.lower()
+    if needle == _joined("/", "work"):
+        # The slash command. A workspace directory is not that command.
+        return re.search(re.escape(needle) + "(?!space)", lowered) is not None
+    return needle.lower() in lowered
 
 
 class IdeateContractTests(unittest.TestCase):
@@ -47,9 +55,8 @@ class IdeateContractTests(unittest.TestCase):
         hits: list[str] = []
         for path in authored_files():
             text = path.read_text(encoding="utf-8")
-            lowered = text.lower()
             for needle in FORBIDDEN:
-                if needle.lower() in lowered:
+                if _forbidden_hit(text, needle):
                     hits.append(f"{path.relative_to(PACKAGE)}: {needle}")
         self.assertEqual(hits, [])
 
@@ -110,19 +117,53 @@ class IdeateContractTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn('"advisory": true', completed.stdout)
 
-    def test_generated_fleet_copies_keep_history_inside_typesafe_only(self) -> None:
-        historical = _joined("plugins", "/saga")
-        bundled = PACKAGE / "skills" / "ideate" / "scripts" / "_bundled"
-        copies = list(bundled.glob("*.py"))
-        self.assertTrue(copies)
-        hits: list[str] = []
-        for path in copies:
-            lowered = path.read_text(encoding="utf-8").lower()
-            for needle in FORBIDDEN:
-                if needle.lower() not in lowered:
-                    continue
-                if path.name == "typesafe_client.py" and needle == historical:
-                    continue
-                hits.append(f"{path.name}: {needle}")
-        self.assertEqual(hits, [])
+    def test_judgment_script_resolves_from_the_skill_directory(self) -> None:
+        skill_dir = PACKAGE / "skills" / "ideate"
+        skill = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        package_script = "$CLAUDE_PLUGIN_ROOT/skills/ideate/scripts/shaping_judgments.py"
+        skill_script = "$SKILL_DIR/scripts/shaping_judgments.py"
+        self.assertIn(package_script, skill)
+        self.assertIn(skill_script, skill)
+        self.assertNotIn("python3 scripts/shaping_judgments.py", skill)
+        script = skill_dir / "scripts" / "shaping_judgments.py"
+        self.assertTrue(script.is_file())
+        self.assertEqual(
+            (PACKAGE / "skills" / "ideate" / "scripts" / "shaping_judgments.py").resolve(),
+            script.resolve(),
+        )
+        with tempfile.TemporaryDirectory() as foreign:
+            completed = subprocess.run(
+                [sys.executable, str(script), "--help"],
+                cwd=foreign,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            self.assertFalse((Path(foreign) / "scripts" / "shaping_judgments.py").exists())
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("usage:", completed.stdout.lower())
+        self.assertNotIn("ModuleNotFoundError", completed.stderr)
+
+    def test_grounding_checks_workspace_clones_before_remote_reads(self) -> None:
+        text = (PACKAGE / "skills" / "ideate" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("~/infiquetra/", text)
+        for token in ("{repo_name}", "{library_name}"):
+            local = f"~/workspace/infiquetra/{token}"
+            start = text.index(local)
+            remote = text.index("gh api", start)
+            self.assertLess(start, remote)
+
+    def test_run_scratch_is_gitignored(self) -> None:
+        gitignore = (REPO / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(".ideate/", gitignore)
+        skill = (PACKAGE / "skills" / "ideate" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn(".ideate/", skill)
+        self.assertIn(".gitignore", skill)
+        completed = subprocess.run(
+            ["git", "check-ignore", "-q", "--", ".ideate/runs/example/survivors.md"],
+            cwd=REPO,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0)
 

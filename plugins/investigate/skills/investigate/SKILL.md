@@ -300,12 +300,12 @@ Use the enum'd shape in `references/debug-report.md`: **Symptom** / **Root cause
   the lesson is generalizable (a wrong assumption about a shared dependency, a pattern in 3+ locations).
   Skip silently when the fix is mechanical with no insight. Promotion is a pure append per the journal
   rules; offer it neutrally when the lesson is one sentence.
-- **Trackable confirmed defect → `mission-control`** (as a **defect-type SDLC issue**, `--issue-type defect`):
-  the report is **agent-consumable EVIDENCE**, not a handoff source. Open the defect by **describing the
-  bug** with the report **LINKED** as evidence inside the issue. **NEVER pass the report path to
-  `handoff_envelope`'s classifier** — `infer_maturity` keys on `docs/plans/` / `docs/brainstorms/` etc.
-  and does not recognize `docs/investigations/`, so it would fall through to `requirements-ready` and
-  mis-classify the report. See `references/debug-report.md`.
+- **Trackable confirmed defect → a defect-type SDLC issue**: the report is **agent-consumable
+  EVIDENCE**. Open the issue by **describing the bug** (symptom, root cause, and the fix the bug
+  needs) and **link** `docs/investigations/<slug>-<date>.md` in the issue body. Ask `mission-control`
+  to create that issue. When mission-control is not available, create the same issue with
+  `gh issue create`. When neither can open an issue, leave that description in the debug report and
+  stop. Do not pass the report path to a path classifier. See `references/debug-report.md`.
 
 **4.3 Route** to the command that owns what the investigation found:
 
@@ -325,16 +325,19 @@ There is **no lifecycle write** — `/investigate` is off-chain.
 `/investigate` investigates, diagnoses, optionally applies a trivial self-verified fix, writes the DEBUG
 REPORT, and routes — then stops. It does **NOT**:
 
-- mutate the world — `gh` / `git` are **READ-ONLY** for evidence until a gated trivial fix;
+- mutate the world — `git` is **READ-ONLY** except a gated trivial fix; `gh` is **READ-ONLY**
+  except `gh issue create` for the confirmed-defect route;
 - **commit, push, open / update / merge a PR, or deploy** — even after a successful fix;
-- **file SDLC issues** — `mission-control` owns the SDLC, and defects route through it;
+- **file an SDLC issue for anything other than the confirmed defect** — `mission-control` owns the
+  SDLC. The one issue this skill may open is that defect, through mission-control or, when
+  mission-control is absent, `gh issue create`;
 - **route to `/qa` to verify** — it does its **own** fresh-reproduce verification; the acceptance gate is
   downstream and separate;
 - **advance a lifecycle phase** — off-chain, no tick;
 - do **real implementation work inline** — that routes to mission-control; only trivial/single-concern fixes
   apply here;
-- **path-classify the DEBUG REPORT** — never pass `docs/investigations/...` to `handoff_envelope`; link
-  it as evidence in a described DEFECT instead.
+- **hand the DEBUG REPORT to a path classifier** — describe the bug and link
+  `docs/investigations/...` from the defect issue. The report stays evidence.
 
 `fix` is this engine's identity verb — gated-allowed, trivial-scope, self-verified. It is never the
 default action; the diagnosis is.
@@ -354,7 +357,7 @@ default action; the diagnosis is.
   a symptom→suspect map, and the anti-patterns catalog (shotgun debugging, confirmation bias, "it works
   now move on", prediction quality bad-vs-good, rationalization-spiral red flags).
 - `references/debug-report.md` — the DEBUG REPORT template (the gstack enum'd shape), the journal-
-  LEARNINGS promotion template, and the `mission-control` defect-routing note (report = evidence, fix reaches
-  mission-control via an ISSUE, never via the report path through the classifier).
+  LEARNINGS promotion template, and the defect-routing note (report = evidence; the issue is opened
+  through mission-control or `gh issue create`, and `plan` carries that issue).
 - Execution backend: one value, `inline`, since issue #1030 archived the others.
 - When a blocking question tool is unavailable, inline choices in the reply (`Which? A) ... B) ...`).

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -35,8 +36,6 @@ def authored_files() -> list[Path]:
         if not path.is_file():
             continue
         if "__pycache__" in path.parts or path.suffix == ".pyc":
-            continue
-        if "_bundled" in path.parts:
             continue
         found.append(path)
     return found
@@ -92,19 +91,41 @@ class BrainstormContractTests(unittest.TestCase):
         self.assertIn("def slugify(value: str) -> str:", text)
         self.assertIn('return "-".join(parts) or "topic"', text)
 
-    def test_generated_fleet_copies_keep_history_inside_typesafe_only(self) -> None:
-        historical = _joined("plugins", "/saga")
-        bundled = PACKAGE / "skills" / "brainstorm" / "scripts" / "_bundled"
-        copies = list(bundled.glob("*.py"))
-        self.assertTrue(copies)
-        hits: list[str] = []
-        for path in copies:
-            lowered = path.read_text(encoding="utf-8").lower()
-            for needle in FORBIDDEN:
-                if needle.lower() not in lowered:
-                    continue
-                if path.name == "typesafe_client.py" and needle == historical:
-                    continue
-                hits.append(f"{path.name}: {needle}")
-        self.assertEqual(hits, [])
+    def test_judgment_script_resolves_from_the_skill_directory(self) -> None:
+        skill_dir = PACKAGE / "skills" / "brainstorm"
+        skill = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("$CLAUDE_PLUGIN_ROOT/skills/brainstorm/scripts/shaping_judgments.py", skill)
+        self.assertIn("$SKILL_DIR/scripts/shaping_judgments.py", skill)
+        self.assertNotIn("python3 scripts/shaping_judgments.py", skill)
+        script = skill_dir / "scripts" / "shaping_judgments.py"
+        self.assertEqual(
+            (PACKAGE / "skills" / "brainstorm" / "scripts" / "shaping_judgments.py").resolve(),
+            script.resolve(),
+        )
+        with tempfile.TemporaryDirectory() as foreign:
+            completed = subprocess.run(
+                [sys.executable, str(script), "--help"],
+                cwd=foreign,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            self.assertFalse((Path(foreign) / "scripts" / "shaping_judgments.py").exists())
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("usage:", completed.stdout.lower())
+        self.assertNotIn("ModuleNotFoundError", completed.stderr)
+
+    def test_scratch_is_gitignored(self) -> None:
+        gitignore = (REPO / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(".brainstorm/", gitignore)
+        skill = (PACKAGE / "skills" / "brainstorm" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn(".brainstorm/", skill)
+        self.assertIn(".gitignore", skill)
+        completed = subprocess.run(
+            ["git", "check-ignore", "-q", "--", ".brainstorm/scratch/note.md"],
+            cwd=REPO,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0)
 

@@ -16,8 +16,7 @@ Three properties this module exists to guarantee:
   state that does not carry its marker.  The data rule is a mechanism, not a
   convention (``plugins/fleet-core/references/typesafe.md``).
 * **Failure is never mistaken for success.**  Every outcome maps onto the closed
-  vocabulary ``ok`` / ``error`` / ``timeout`` / ``malformed``, mirroring
-  ``plugins/saga/scripts/engine_bridge_http.py``.
+  vocabulary ``ok`` / ``error`` / ``timeout`` / ``malformed``.
 
 Loaded the house way::
 

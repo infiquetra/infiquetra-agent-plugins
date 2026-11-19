@@ -26,6 +26,7 @@ FORBIDDEN = (
     _joined("saga", ".py"),
     _joined(".claude", "/saga"),
     _joined(".orches", "trate"),
+    _joined("handoff_", "envelope"),
 )
 
 
@@ -74,4 +75,13 @@ class InvestigateContractTests(unittest.TestCase):
         self.assertEqual(claude["name"], "investigate")
         self.assertEqual(claude.get("skills"), "./skills/")
         self.assertNotIn("commands", claude)
+
+    def test_defects_route_through_mission_control_or_gh(self) -> None:
+        skill = (PACKAGE / "skills" / "investigate" / "SKILL.md").read_text(encoding="utf-8")
+        report = (PACKAGE / "skills" / "investigate" / "references" / "debug-report.md").read_text(encoding="utf-8")
+        for text in (skill, report):
+            self.assertIn("mission-control", text)
+            self.assertIn("gh issue create", text)
+            self.assertNotIn(_joined("handoff_", "envelope"), text)
+            self.assertIn("docs/investigations/", text)
 

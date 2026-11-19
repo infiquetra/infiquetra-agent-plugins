@@ -15,13 +15,13 @@ Standalone ideation skill. It writes `docs/ideation/` and keeps fail-open TypeSa
 
 ## How a harness reaches it
 
-From this package, or from a skill-scoped install of `skills/ideate/`:
+Resolve `scripts/shaping_judgments.py` from the directory that contains `skills/ideate/SKILL.md`, or from `$CLAUDE_PLUGIN_ROOT/skills/ideate/scripts/shaping_judgments.py` when Claude installed the package. Do not resolve `scripts/` from the repository being edited.
 
 ```bash
-python3 skills/ideate/scripts/shaping_judgments.py --help
+python3 plugins/ideate/skills/ideate/scripts/shaping_judgments.py --help
 ```
 
-A skill-scoped install runs `python3 scripts/shaping_judgments.py --help` with the skill directory as the working tree root.
+Session scratch under `.ideate/runs/` is listed in the repository `.gitignore` (`.ideate/`).
 
 
 Claude Code install, from a checkout of this repository:

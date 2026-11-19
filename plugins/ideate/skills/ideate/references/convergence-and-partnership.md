@@ -54,7 +54,7 @@ Score every survivor on a consistent rubric weighing:
   outscore sets that cluster on one axis, all else equal.
 
 **Advisory scores beside the verdicts.** The `rubric` judgment in
-`../scripts/shaping_judgments.py` (see the skill's "Advisory typed judgments" section)
+the skill directory's `scripts/shaping_judgments.py` (see the skill's "Advisory typed judgments" section)
 returns one score per **per-idea** dimension above, so survivors become comparable numbers and a
 re-weighting needs no re-critique. It covers the eight per-idea dimensions only — never axis spread,
 for the reason stated immediately below. The scores sit beside the critics' prose verdicts; they do
@@ -221,7 +221,7 @@ To revive `R#`:
    not re-score on the same evidence; that just relitigates the original verdict. **Adjudicate novelty
    yourself:** judge whether what the operator offered is genuinely new, not a restatement of what the
    critique already weighed dressed up as a new angle. The `revival` judgment in
-   `../scripts/shaping_judgments.py` answers the same question as one advisory
+   the skill directory's `scripts/shaping_judgments.py` answers the same question as one advisory
    probability — it informs that adjudication and never makes it, and it fails open to your own
    reading. If it restates the original basis, decline as
    "same evidence" and name the original reason. The operator asserting "this is new" does not make it

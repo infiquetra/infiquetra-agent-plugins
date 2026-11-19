@@ -51,7 +51,7 @@ answer, never from a widget's raw return value.
 ## Advisory typed judgments
 
 Six of the mechanical judgments around the critique can be asked as typed questions instead of
-eyeballed, through `scripts/shaping_judgments.py`. Every one of them is **advisory**:
+eyeballed, through the judgment script that ships in this skill's directory. Every one of them is **advisory**:
 it informs a judgment this skill already makes, it is never a gate, it never promotes or cuts an
 idea, and the operator can ignore it. Each **fails open** — when the call fails, times out, or the
 key is absent, run the phase exactly as this skill describes it below, with a one-line
@@ -72,8 +72,19 @@ an answer is evidence, not permission to skip the gate. And the keyword floor at
 revival gate at 6.3 step 2a are **floors**: a judgment may only widen what they catch, never narrow
 it.
 
+The script is `scripts/shaping_judgments.py` inside the directory that contains this `SKILL.md`.
+Run that file by its path. Do not resolve `scripts/` from the repository you are editing: a
+standalone install is not that repository's working directory.
+
 ```bash
-python3 scripts/shaping_judgments.py dedupe --state '{"candidates": [...]}'
+# SKILL_DIR is the directory that contains this SKILL.md.
+# CLAUDE_PLUGIN_ROOT is the package root when Claude installed the package.
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  S="$CLAUDE_PLUGIN_ROOT/skills/ideate/scripts/shaping_judgments.py"
+else
+  S="$SKILL_DIR/scripts/shaping_judgments.py"
+fi
+python3 "$S" dedupe --state '{"candidates": [...]}'
 ```
 
 ## Focus hint
@@ -223,8 +234,10 @@ mkdir -p "$SCRATCH_DIR"
 echo "$SCRATCH_DIR"
 ```
 
-Use the echoed path as `<scratch-dir>`. Scratch lives under `.ideate/runs/` — it
-is ignored local state, never `/tmp` and never a durable doc.
+Use the echoed path as `<scratch-dir>`. Scratch lives under `.ideate/runs/`. The
+catalog `.gitignore` ignores `.ideate/`, so those files stay out of `git add`. In
+any other repository, add the same ignore before writing scratch. Never put scratch
+under `/tmp`, and never treat it as a durable doc.
 
 Dispatch the grounding agents **in parallel, in the foreground** (results are needed before Phase
 2). Each agent below carries its **verbatim tuned prompt** — dispatch it with that prompt body, not
@@ -291,7 +304,7 @@ repo** in parallel, each with this prompt verbatim, substituting the repo name a
 
 > You are reading the `{repo_name}` infiquetra repo for material relevant to this ideation focus —
 > this repo is in scope because the operator named it. Prefer the local clone at
-> `~/infiquetra/{repo_name}` when it exists (faster and matches the working tree);
+> `~/workspace/infiquetra/{repo_name}` when it exists (faster and matches the working tree);
 > otherwise read via `gh api` / `gh repo view`. Read the repo's `AGENTS.md` (or `CLAUDE.md` as a
 > compatibility fallback, then `README.md`), `STRATEGY.md` if present, and the top-level directory
 > layout relevant to the focus. Keep the scan shallow — top-level docs and the layout that bears on
@@ -334,7 +347,7 @@ conventions). For each relevant library, dispatch a reader sub-agent with this p
 substituting the library name and focus:
 
 > You are reading the `{library_name}` context-library repo for material relevant to this
-> ideation focus. Prefer the local clone at `~/infiquetra/{library_name}` when it exists
+> ideation focus. Prefer the local clone at `~/workspace/infiquetra/{library_name}` when it exists
 > (faster); otherwise read via `gh api` / `gh repo view`. Read the library's `README.md` and
 > top-level layout first to understand what domain it grounds, then read only the documents
 > relevant to the focus. Return: (1) the context this library establishes that bears on the focus

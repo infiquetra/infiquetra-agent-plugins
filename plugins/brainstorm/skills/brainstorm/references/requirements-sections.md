@@ -105,7 +105,7 @@ When a doc is warranted, these are always present.
   second; never restart per group). A long flat list is a smell that subgroups were missed.
 
 **A readiness suggestion over these sections.** The `readiness` judgment in
-`../scripts/shaping_judgments.py` asks one yes/no question per readiness criterion over a
+The skill directory's `scripts/shaping_judgments.py` asks one yes/no question per readiness criterion over a
 finished document — the criteria are drawn from the hard floor above and the material sections
 below. It is advisory: it suggests whether the document is ready for the `/doc-review` handoff, and
 `/doc-review` still decides. It fails open to offering the review with no suggestion.

@@ -3,8 +3,8 @@
 # source-version: 0.34.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/typesafe_client.py
-# source-sha256: 1956ebcf5f3e3171173a20baa5aa0764f95bdeeafe10ce0237440e8d253c674a
-# output-sha256: 1956ebcf5f3e3171173a20baa5aa0764f95bdeeafe10ce0237440e8d253c674a
+# source-sha256: cdb5e6e5f54317c74e3d2cf0ec843eb92e00aa9878cf3603ebe178a7121b65cb
+# output-sha256: cdb5e6e5f54317c74e3d2cf0ec843eb92e00aa9878cf3603ebe178a7121b65cb
 # --- end generated bundle stamp ---
 """Client for the TypeSafe System One evaluation endpoint (plan U2 + U3).
 
@@ -24,8 +24,7 @@ Three properties this module exists to guarantee:
   state that does not carry its marker.  The data rule is a mechanism, not a
   convention (``plugins/fleet-core/references/typesafe.md``).
 * **Failure is never mistaken for success.**  Every outcome maps onto the closed
-  vocabulary ``ok`` / ``error`` / ``timeout`` / ``malformed``, mirroring
-  ``plugins/saga/scripts/engine_bridge_http.py``.
+  vocabulary ``ok`` / ``error`` / ``timeout`` / ``malformed``.
 
 Loaded the house way::
 

@@ -169,7 +169,7 @@ alone. No named tiers are used — the factors themselves are named. What change
 ### 0.6 Advisory typed judgments
 
 Four of the internal judgments above can be asked as typed questions instead of assessed in prose,
-through `scripts/shaping_judgments.py`. Every one is **advisory** and none is a gate:
+through the judgment script that ships in this skill's directory. Every one is **advisory** and none is a gate:
 the dialogue is unchanged, the operator can ignore any answer, and each **fails open** — when the
 call fails or the key is absent, make the judgment exactly as this skill describes it, with a
 one-line non-blocking note.
@@ -187,8 +187,19 @@ confident scope-tier answer never suppresses the disambiguating question this sk
 ask. And ordering is not filtering: a rigor gap the Phase 1.2 probes found is still probed, whatever
 its scores.
 
+The script is `scripts/shaping_judgments.py` inside the directory that contains this `SKILL.md`.
+Run that file by its path. Do not resolve `scripts/` from the repository you are editing: a
+standalone install is not that repository's working directory.
+
 ```bash
-python3 scripts/shaping_judgments.py readiness --doc docs/brainstorms/<doc>.md
+# SKILL_DIR is the directory that contains this SKILL.md.
+# CLAUDE_PLUGIN_ROOT is the package root when Claude installed the package.
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  S="$CLAUDE_PLUGIN_ROOT/skills/brainstorm/scripts/shaping_judgments.py"
+else
+  S="$SKILL_DIR/scripts/shaping_judgments.py"
+fi
+python3 "$S" readiness --doc docs/brainstorms/<doc>.md
 ```
 
 ## Phase 1 — Understand the idea
@@ -482,4 +493,7 @@ can resume with `/brainstorm`.
 No HTML rendering or output-mode resolution; no Proof / HITL review loop; no non-software / universal
 brainstorming mode; no Slack researcher; no dedicated Visualizations affordance (introduce a diagram
 ad hoc via agent agency when it genuinely helps). The artifact is always a single markdown file under
-`docs/brainstorms/`. Scratch, when needed, goes under `.brainstorm/scratch/`, never `/tmp`.
+`docs/brainstorms/`. Scratch, when needed, goes under `.brainstorm/scratch/`. The
+catalog `.gitignore` ignores `.brainstorm/`, so those files stay out of `git add`. In
+any other repository, add the same ignore before writing scratch. Never put scratch
+under `/tmp`.
