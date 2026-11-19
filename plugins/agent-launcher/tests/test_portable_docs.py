@@ -1,9 +1,8 @@
-"""Documentation guards for the authored skill and README.
+"""Documentation guards for the slim agent-launcher skill and README.
 
-The skill may name ``$CLAUDE_PLUGIN_ROOT`` because that variable is the
-installed package root and the scripts stay at ``skills/``. It must not fall
-back into a Claude plugin cache. The stop conditions and the receipt contract
-are the 1.7.0 wording.
+The skill and README document the Herdr app ``agents`` wrapper, herdr core
+``hc``, the roles library, and the headless reviewer. They must not document
+the removed old-Herdr launch surface or an Orchestrate ingest.
 """
 
 from __future__ import annotations
@@ -24,10 +23,30 @@ FORBIDDEN_CLAUDE_RUNTIME_PATHS = (
 )
 
 STOP_CONDITION_MARKERS = (
-    "Stop before launch if the wrapper dry run does not resolve the requested working",
-    "Stop before prompting if Herdr cannot verify the requested agent kind",
-    "Stop rather than silently substituting an unavailable agent or launch setting.",
-    "Stop cleanup if ownership of the target session cannot be proven",
+    "agents --workspace",
+    "--app-machine",
+    "agents --crew",
+    "hc ls",
+    "hc read",
+    "hc send",
+    "hc wait",
+    "roles/",
+    "launcher.py review",
+    "reviewer-probe",
+    "/private/var/folders",
+)
+
+FORBIDDEN_LEGACY_CLAIMS = (
+    "herdr workspace",
+    "herdr tab",
+    "herdr pane",
+    "herdr agent",
+    "Orchestrate",
+    "PaneWriter",
+    "ORCHESTRATE_",
+    "models.json",
+    "roster.py",
+    "composer.py",
 )
 
 
@@ -52,28 +71,13 @@ def test_skill_never_names_claude_runtime_discovery(skill_text: str, forbidden: 
 
 
 @pytest.mark.parametrize("marker", STOP_CONDITION_MARKERS)
-def test_skill_carries_every_stop_condition(skill_text: str, marker: str) -> None:
+def test_skill_documents_the_remaining_surface(skill_text: str, marker: str) -> None:
     assert marker in skill_text
 
 
-def test_skill_declares_the_herdr_dependency_without_a_duplicate(skill_text: str) -> None:
-    assert "canonical `herdr` skill" in skill_text
-    assert "does not ship a copy" in skill_text
-    assert not (PACKAGE / "skills" / "herdr").exists()
-
-
-def test_skill_cleanup_example_redirects_the_receipt(skill_text: str) -> None:
-    assert "> receipt.json" in skill_text
-    assert "close --receipt-json receipt.json" in skill_text
-    assert "close --tab-id <tab_id> --receipt-json <receipt.json>" not in skill_text
-
-
-def test_skill_launch_example_delivers_a_prompt(skill_text: str) -> None:
-    assert "--prompt <text> > receipt.json" in skill_text
-
-
-def test_skill_states_the_launcher_receipt_has_no_pane_id(skill_text: str) -> None:
-    assert "There is no `pane_id` key" in skill_text
+@pytest.mark.parametrize("claim", FORBIDDEN_LEGACY_CLAIMS)
+def test_skill_has_no_legacy_launch_or_orchestrate_claim(skill_text: str, claim: str) -> None:
+    assert claim not in skill_text
 
 
 def test_skill_frontmatter_name_matches_the_directory(skill_text: str) -> None:
@@ -84,9 +88,15 @@ def test_skill_frontmatter_name_matches_the_directory(skill_text: str) -> None:
 def test_readme_opens_as_a_portable_package_document(readme_text: str) -> None:
     assert "Portable Agent Plugins 1.0 package" in readme_text
     assert "python>=3.12" in readme_text
-
-
-def test_readme_states_the_adapter_limitations(readme_text: str) -> None:
-    assert "Account verification applies only to `vendor claude`" in readme_text
-    assert "installed `agents` wrapper and Herdr" in readme_text
+    assert "installed `agents` wrapper and herdr core (`hc`)" in readme_text
     assert "no vendor or model registry" in readme_text
+
+
+@pytest.mark.parametrize("marker", STOP_CONDITION_MARKERS)
+def test_readme_documents_the_remaining_surface(readme_text: str, marker: str) -> None:
+    assert marker in readme_text
+
+
+@pytest.mark.parametrize("claim", FORBIDDEN_LEGACY_CLAIMS)
+def test_readme_has_no_legacy_launch_or_orchestrate_claim(readme_text: str, claim: str) -> None:
+    assert claim not in readme_text

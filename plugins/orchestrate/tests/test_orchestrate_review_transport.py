@@ -795,11 +795,19 @@ def test_review_launch_a_claude_seat_carries_a_ceiling_the_launcher_accepts(
     flags = _assert_nine_flags(argv)
     assert flags["--max-budget-usd"] == orchestrate.REVIEW_LAUNCH_CLAUDE_CEILING_USD
 
-    # The real launcher parses that argv and accepts it: the ceiling is not refused, and the
-    # session it would start carries it. Only the session itself is stood in for.
+    # The frozen pre-slim launcher parses that argv and accepts it: the ceiling is not
+    # refused, and the session it would start carries it. Only the session itself is stood in for.
     script = next(part for part in argv if part.endswith("launcher.py"))
     plugins = Path(__file__).resolve().parents[2]
-    real = plugins / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "launcher.py"
+    real = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "agent-launcher-2.0.0"
+        / "skills"
+        / "agent-launcher"
+        / "scripts"
+        / "launcher.py"
+    )
     spec = importlib.util.spec_from_file_location("_launcher_for_review_launch", real)
     assert spec is not None and spec.loader is not None
     launcher = importlib.util.module_from_spec(spec)

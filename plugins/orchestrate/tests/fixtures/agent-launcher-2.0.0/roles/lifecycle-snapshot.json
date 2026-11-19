@@ -1,0 +1,321 @@
+{
+  "schema": "lifecycle_snapshot.v1",
+  "source_repo": "https://github.com/infiquetra/infiquetra-sdlc",
+  "sdlc_revision": "1d2e33e",
+  "note": "Vendored from infiquetra-sdlc at the revision above. This is the data the suite checks the prompts against when no sibling checkout is reachable, which is the normal case in continuous integration. When a checkout IS reachable, test_vendored_snapshot_matches_the_live_lifecycle compares every field here against it and fails on any drift. Regenerate deliberately when the pin moves; never hand-edit.",
+  "roles": {
+    "product": "Product",
+    "issue_reviewer": "Issue Reviewer",
+    "planner": "Planner",
+    "orchestrator": "Architect",
+    "controller": "Delivery Manager",
+    "implementer": "Initial implementation worker",
+    "plan_reviewer": "Plan reviewer",
+    "review_controller": "Review controller",
+    "targeted_reviewer": "Targeted reviewer",
+    "standard_repair_implementer": "Standard repair implementer",
+    "release_worker": "Release worker",
+    "functional_tester": "Functional tester",
+    "investigator": "Investigator",
+    "operator": "Human operator"
+  },
+  "contracts": {
+    "technical-context": {
+      "name": "The Architect's technical context for a shaped issue",
+      "sender_role": "orchestrator",
+      "required_fields": [
+        "body_revision",
+        "component",
+        "fields_written",
+        "open_technical_questions",
+        "risk_value_and_justification"
+      ],
+      "field_descriptions": {
+        "body_revision": "The issue-body revision the technical context was written into, so the Issue Reviewer reviews a named revision.",
+        "component": "The component the work falls under, as the `Component: <name>` line in the issue's notes and conventions section.",
+        "fields_written": "Which card-contract fields the Architect wrote or revised.",
+        "open_technical_questions": "Technical questions the Architect could not settle, written out rather than guessed at.",
+        "risk_value_and_justification": "The Risk value the Architect set and the one sentence justifying it."
+      }
+    },
+    "issue-review-result": {
+      "name": "The Issue Reviewer's result at the Shaping exit",
+      "sender_role": "issue_reviewer",
+      "required_fields": [
+        "checks_with_outcome",
+        "findings",
+        "verdict"
+      ],
+      "field_descriptions": {
+        "checks_with_outcome": "Each of the Issue Reviewer's six Shaping-exit checks with a pass or a fail against it.",
+        "findings": "Findings in saga's finding record ([saga's finding record](https://github.com/infiquetra/infiquetra-agent-plugins/blob/main/plugins/saga/references/review-records.schema.json)), each routed by kind: product content to Product and the operator, technical context to the Architect, operator-reserved matters to the operator.",
+        "verdict": "`ready` or `not ready` for the reviewed issue-body revision."
+      }
+    },
+    "planner-to-orchestrator": {
+      "name": "Planner's handoff to the Architect",
+      "sender_role": "planner",
+      "required_fields": [
+        "child_scoped_checks",
+        "deferred_checks",
+        "possible_lanes",
+        "preflight_results",
+        "testing_expectations",
+        "work_unit_checklist",
+        "work_units"
+      ],
+      "field_descriptions": {
+        "child_scoped_checks": "The checks that belong to each unit's own scope, per unit, each derived from the issue's acceptance criteria and naming the criterion it proves.",
+        "deferred_checks": "Every check that cannot be run yet, each naming the step it will run at and the role that will run it. A deferred check with no named step and role is not adequate.",
+        "possible_lanes": "The lanes the Planner determines could run concurrently. What actually runs is the Delivery Manager's choice.",
+        "preflight_results": "One row per preflight check: the check, the environment it was observed in, the time of observation, the role that ran it, the outcome, its validity class, and the window that validity holds for.",
+        "testing_expectations": "The prescribed functional scenarios, their targets, their execution environments, and the tools they need; and, once at plan level, the functional suite the combined branch runs before code review, or a run-level waiver with its reason for a change that carries no code.",
+        "work_unit_checklist": "The work-unit list rendered as a checklist the Delivery Manager ticks in place as units complete, so progress stays visible without a card per unit.",
+        "work_units": "The implementation work units the work decomposes into, each with its file custody, its dependencies, its ordering, its concurrency, its checks, and its assignment. Work units are the breakdown of execution and are never child issues."
+      }
+    },
+    "plan-review-result": {
+      "name": "Plan review result",
+      "sender_role": "plan_reviewer",
+      "required_fields": [
+        "checklist_answers",
+        "findings",
+        "readiness_conditions",
+        "run_model_questions",
+        "verdict"
+      ],
+      "field_descriptions": {
+        "checklist_answers": "The seven plan-review checklist questions with the reviewer's answer to each.",
+        "findings": "Findings in saga's finding record ([saga's finding record](https://github.com/infiquetra/infiquetra-agent-plugins/blob/main/plugins/saga/references/review-records.schema.json)), returned to the Planner.",
+        "readiness_conditions": "The readiness conditions the plan meets, and the ones it does not.",
+        "run_model_questions": "The three additional questions the run model adds to plan review, answered.",
+        "verdict": "Ready or not ready for the reviewed plan revision."
+      }
+    },
+    "orchestrator-to-controller": {
+      "name": "Delivery Manager's run setup record",
+      "sender_role": "controller",
+      "required_fields": [
+        "approval_scope",
+        "concurrency_allocation",
+        "destination",
+        "exception_decisions",
+        "investigator_triggers",
+        "models_and_efforts",
+        "recovery_rules",
+        "session_reset_authority",
+        "staffing_per_role",
+        "unfinished_testing_response"
+      ],
+      "field_descriptions": {
+        "approval_scope": "The seven approval categories of the escalations chapter, each with the scope the operator granted or `none`. An unscoped grant is invalid and is reported as a missing required boundary.",
+        "concurrency_allocation": "How much concurrency each hosting session is allocated. There is no single global cap to derive one from.",
+        "destination": "The non-production destination the run targets, carrying whether that repository's `main` branch is directly consumed, and the repository's declared functional-test environment for the pre-review combined-branch run, or its recorded waiver and reason.",
+        "exception_decisions": "Judgment calls already made \u2014 a technical ruling, a product ruling within the recorded intent, or an operator-reserved decision \u2014 that the Delivery Manager executes against.",
+        "investigator_triggers": "The Investigator requests that are pre-approved for this run and need no fresh authorisation.",
+        "models_and_efforts": "The model and effort for each role.",
+        "recovery_rules": "The retries, the backoff schedule, the fallbacks, and the environment rule the Delivery Manager may execute before a problem escalates.",
+        "session_reset_authority": "The authority to end a subordinate session and start a fresh one from verified durable inputs, pre-authorised here rather than improvised.",
+        "staffing_per_role": "Which actor holds each run role, including any optional role the run staffs.",
+        "unfinished_testing_response": "What happens when prescribed testing cannot finish, including the one recorded extension."
+      }
+    },
+    "dispatch": {
+      "name": "Delivery Manager's dispatch to a role",
+      "sender_role": "controller",
+      "required_fields": [
+        "allocated_authority",
+        "durable_inputs",
+        "role",
+        "round_and_limit",
+        "step",
+        "stop_condition"
+      ],
+      "field_descriptions": {
+        "allocated_authority": "The slice of the run setup record's approval scope this dispatch allocates.",
+        "durable_inputs": "The repository paths and revisions the role works from, so a fresh session can start from the record rather than from a transcript.",
+        "role": "The role being dispatched.",
+        "round_and_limit": "Which round this assignment belongs to under the fixed round rule, and the limit of 3 it runs against.",
+        "step": "The run step the dispatched role is acting at.",
+        "stop_condition": "The deadline or the condition on which the dispatched role stops."
+      }
+    },
+    "implementation-result": {
+      "name": "Implementation result",
+      "sender_role": "implementer",
+      "required_fields": [
+        "branch_and_revision",
+        "builder_record",
+        "combined_branch_functional_run",
+        "mechanical_check_results",
+        "recheck_results",
+        "unexplained_behaviour",
+        "unit_and_child_check_results",
+        "work_unit"
+      ],
+      "field_descriptions": {
+        "branch_and_revision": "The branch the unit was implemented on and the revision the result applies to.",
+        "builder_record": "The unit's builder record: one per unit, kept in the run record in a corpus case's builder-record format. It holds the builder's declaration for each policy question, saying whether the question applies and naming the test that proves it is handled, and every reason the builder gives, such as for a coverage gap or a surviving mutant. A repair implementer's result updates the same record for the batch it finishes.",
+        "combined_branch_functional_run": "The combined-branch functional run behind the revision this result hands to review: each pass's revision, outcome and teardown outcome, the declared environment, and the passing pass on that same revision; or the recorded waiver that still applies, with its reason. The result that hands the combined branch to review carries it: the single lane's result, the result of the implementer whose change completes the combined branch once its pass has passed, or a repair batch's result. A unit result that hands nothing to review, on the integrating path, writes that the run is pending at step 6. The review controller checks this field before a round starts.",
+        "mechanical_check_results": "The mechanical checks that ran, with the version of each tool that ran them.",
+        "recheck_results": "The preflight checks re-run before this work, with what was observed and when.",
+        "unexplained_behaviour": "Behaviour the worker could not explain, reported rather than left out; it is one of the two pre-approved triggers for an investigation.",
+        "unit_and_child_check_results": "The unit's own check results and the child-scoped check results the plan asked for, each with the provenance of the run that produced it.",
+        "work_unit": "The work unit the result speaks about."
+      }
+    },
+    "code-review-result": {
+      "name": "Code review result contract",
+      "sender_role": "review_controller",
+      "required_fields": [
+        "checks_and_coverage_gaps",
+        "findings",
+        "lens_grades",
+        "outcome",
+        "repair_accounting",
+        "reviewed_scope_and_revision"
+      ],
+      "field_descriptions": {
+        "checks_and_coverage_gaps": "What was checked and what was not, so missing evidence is not mistaken for success.",
+        "findings": "Findings in saga's finding record ([saga's finding record](https://github.com/infiquetra/infiquetra-agent-plugins/blob/main/plugins/saga/references/review-records.schema.json)): what is wrong, why it matters, and the evidence for it.",
+        "lens_grades": "For each lens: its grade from the formula over the lens's inputs, the inputs that fed it, and whether the lens may block, which saga's calibration file decides. There is no overall average.",
+        "outcome": "The routing outcome the Delivery Manager acts on. An unsuccessful review routes to repair planning; a successful one proceeds to the next lifecycle step, never straight to completed delivery.",
+        "repair_accounting": "Beside the grades, never inside them: findings verified fixed, findings still unresolved, new findings, duplicates, withdrawn findings, and repairs that could not be verified. Each is keyed by the finding identity in [saga's finding record](https://github.com/infiquetra/infiquetra-agent-plugins/blob/main/plugins/saga/references/review-records.schema.json), which carries one finding across rounds.",
+        "reviewed_scope_and_revision": "Exactly which implementation revision and which scope the result speaks about."
+      }
+    },
+    "repair-amendment": {
+      "name": "Repair amendment",
+      "sender_role": "planner",
+      "required_fields": [
+        "authoritative_plan_and_revision",
+        "diagnosis_reference",
+        "disputes_and_counterevidence",
+        "finding_history",
+        "ordered_batch"
+      ],
+      "field_descriptions": {
+        "authoritative_plan_and_revision": "The plan the amendment amends, and the revision it applies to.",
+        "diagnosis_reference": "The diagnosis the batch relies on, cited by path and revision \u2014 or the reason no diagnosis was needed.",
+        "disputes_and_counterevidence": "Findings the Planner disputes, with the evidence against them.",
+        "finding_history": "Every finding the batch answers, with its classification and its history across rounds.",
+        "ordered_batch": "The repair tasks in the order they are to be done."
+      }
+    },
+    "investigation-request": {
+      "name": "Investigation request",
+      "sender_role": "controller",
+      "required_fields": [
+        "factual_question",
+        "grouped_symptoms",
+        "originating_role",
+        "scope_and_read_only_bounds",
+        "three_part_test"
+      ],
+      "field_descriptions": {
+        "factual_question": "The mechanism to be established, stated as a question of fact rather than a ruling to be made.",
+        "grouped_symptoms": "The symptoms that prompted the request, grouped rather than listed raw.",
+        "originating_role": "The role that asked for the investigation. Appendix C's sender is any role acting through the Delivery Manager, so the asking role is recorded in the contract rather than in the sender.",
+        "scope_and_read_only_bounds": "What the Investigator may look at, and the statement that it fixes nothing.",
+        "three_part_test": "The three-part request test answered: the question is factual, the requesting role cannot answer it from the evidence it holds, and the investigation is bounded to the run and read-only."
+      }
+    },
+    "diagnosis": {
+      "name": "Diagnosis",
+      "sender_role": "investigator",
+      "required_fields": [
+        "affected_units",
+        "evidence",
+        "mechanism",
+        "no_ruling"
+      ],
+      "field_descriptions": {
+        "affected_units": "The work units the mechanism affects.",
+        "evidence": "The evidence the mechanism rests on.",
+        "mechanism": "The mechanism established, or the words \"not established\" when the investigation could not reach one.",
+        "no_ruling": "The explicit statement that the diagnosis makes no ruling; what to do about the mechanism belongs to repair planning."
+      }
+    },
+    "release-handoff": {
+      "name": "Release handoff",
+      "sender_role": "controller",
+      "required_fields": [
+        "authority_allocated",
+        "destination",
+        "revision_to_merge"
+      ],
+      "field_descriptions": {
+        "authority_allocated": "The slice of the run setup record's approval scope the Release Worker may use.",
+        "destination": "The non-production destination the merged revision is deployed or installed to.",
+        "revision_to_merge": "The revision the Release Worker merges."
+      }
+    },
+    "release-result": {
+      "name": "Release result",
+      "sender_role": "release_worker",
+      "required_fields": [
+        "conflicts_routed_by_kind",
+        "deployment_record",
+        "merge_commit",
+        "recheck_results"
+      ],
+      "field_descriptions": {
+        "conflicts_routed_by_kind": "Each non-mechanical conflict and where it was routed: a behaviour question technical under the recorded intent to the Architect, a product question the recorded intent already answers to Product.",
+        "deployment_record": "The deployment or installation record for the destination.",
+        "merge_commit": "The merge commit the Release Worker produced.",
+        "recheck_results": "The destination's prerequisites re-checked before the deployment, with what was observed and when."
+      }
+    },
+    "functional-qa-result": {
+      "name": "Functional testing result contract",
+      "sender_role": "functional_tester",
+      "required_fields": [
+        "grouped_failures",
+        "per_scenario_outcome",
+        "per_target_conditions",
+        "version_tested"
+      ],
+      "field_descriptions": {
+        "grouped_failures": "Failures grouped by the cause they are suspected to share, without claiming the shared cause is established.",
+        "per_scenario_outcome": "For each prescribed scenario: its terminal state \u2014 passed, failed, or blocked with the cause named \u2014 and the evidence for it. A blocked scenario stays a visible gap and is never reported as passed.",
+        "per_target_conditions": "For each target: the environment it ran in, the client it ran through, and the prerequisites re-checked before testing started.",
+        "version_tested": "The exact version the scenarios were exercised against."
+      }
+    },
+    "product-ruling": {
+      "name": "Product ruling",
+      "sender_role": "product",
+      "required_fields": [
+        "dissent",
+        "question",
+        "recorded_intent",
+        "ruling"
+      ],
+      "field_descriptions": {
+        "dissent": "Dissent recorded beside the ruling where there is any.",
+        "question": "The product question that was put to Product.",
+        "recorded_intent": "The part of the issue's recorded intent \u2014 its objective, its acceptance criteria, what it puts out of scope \u2014 the ruling falls under.",
+        "ruling": "The ruling itself, which binds inside the run."
+      }
+    },
+    "run-record": {
+      "name": "Run record",
+      "sender_role": "controller",
+      "required_fields": [
+        "closing_version",
+        "decision_required",
+        "escalations",
+        "residual_issues",
+        "rounds_used_per_loop"
+      ],
+      "field_descriptions": {
+        "closing_version": "The version the parent closed on, with the pre-review functional evidence it carried: its passing combined-branch functional run, or the waiver and its reason. A version produced in the post-merge repair loop carries its own passing run too, because every repair batch passes the run before it returns to review, in either loop.",
+        "decision_required": "The decision the operator still has to make, or the explicit statement that there is none.",
+        "escalations": "Every escalation the run made (blocker, dispute, or environment); review rounds stop rather than escalate, so none appears here.",
+        "residual_issues": "What the run leaves unresolved, including the residual defect issues it created.",
+        "rounds_used_per_loop": "How many rounds each loop actually used, and where each loop stopped: all lenses at C or better, the early stop, or round 3."
+      }
+    }
+  },
+  "content_sha256": "be4472a997cc6996e9ccaa708e573afe2d817d8944557b2df0a2fae3a377bd57"
+}

@@ -2,6 +2,29 @@
 
 ## 2026-11-19
 
+### Slim agent-launcher to the reviewer, the roles library, and hc
+
+**Decision.** Agent Launcher 3.0.0 deletes the old interactive launch surface:
+`roster.py`, `composer.py`, and the `launcher.py` commands that started, wrote,
+and closed panes. What remains is the headless sandboxed `review` /
+`reviewer-probe` runner (including the macOS `/private/var/folders` denial and
+the Claude `AGENTS.md` screen), the thirteen SDLC `roles/` prompts, and
+documentation for the installed `agents` wrapper (`--workspace`,
+`--app-machine`, `--crew`) plus herdr core (`hc ls`, `hc read`, `hc send`,
+`hc wait`). Orchestrate keeps running against a snapshot of the pre-slim
+package at `plugins/orchestrate/tests/fixtures/agent-launcher-2.0.0/` until
+that package is removed. The older `agent-launcher-1.7.0` fixture stays as it
+was.
+
+**Rationale.** The live session path is herdr-app and `hc`. The launch code
+existed so Orchestrate could exec it. Leaving both in the package made the
+portable surface describe a workflow the operator no longer runs. Freezing the
+pre-slim tree in the Orchestrate suite keeps that suite green without putting
+the deleted commands back into the package people install.
+
+**Revisit when.** Orchestrate leaves this catalog, or a later unit deletes
+`plugins/orchestrate` and the snapshot with it.
+
 ### Extract standalone reviews before Saga retirement
 
 **Decision.** [Issue #329](https://github.com/infiquetra/infiquetra-agent-plugins/issues/329)

@@ -1,7 +1,6 @@
-"""The package entrypoints answer ``--help`` the way a user runs them.
+"""The package entrypoint answers ``--help`` the way a user runs it.
 
-No credential is read and no Herdr call is made. ``--help`` is argparse, and
-it exits before roster.py asks saga for a run record.
+No credential is read and no Herdr call is made. ``--help`` is argparse.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ import pytest
 
 PACKAGE = Path(__file__).resolve().parents[1]
 SCRIPTS = PACKAGE / "skills" / "agent-launcher" / "scripts"
-ENTRYPOINTS = ("launcher.py", "roster.py")
+ENTRYPOINTS = ("launcher.py",)
 
 
 @pytest.mark.parametrize("name", ENTRYPOINTS)

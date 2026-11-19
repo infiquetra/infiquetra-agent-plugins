@@ -1,7 +1,7 @@
 {
   "name": "agent-launcher",
-  "version": "2.0.1",
-  "description": "Create one verified coding-agent session through the agents wrapper and Herdr. Orchestrate consumes this shared launch surface.",
+  "version": "3.0.0",
+  "description": "Headless sandboxed review, the SDLC roles library, and the herdr-app plus hc session workflow.",
   "author": {
     "name": "Infiquetra",
     "email": "hello@infiquetra.com"
@@ -18,6 +18,6 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Agent Launcher",
-    "shortDescription": "Create one verified coding-agent session through the agents wrapper and Herdr. Orchestrate consumes this shared launch surface."
+    "shortDescription": "Headless sandboxed review, the SDLC roles library, and the herdr-app plus hc session workflow."
   }
 }

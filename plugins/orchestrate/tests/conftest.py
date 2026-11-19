@@ -5,11 +5,11 @@ package repeats that shadow, and adds ``hc`` and ``herdr-app`` to it, so a test 
 reaches the operator's live Herdr -- where ``hc send`` types into a terminal and
 ``hc kill`` ends one -- fails here instead. It also pins the two companions:
 
-* ``AGENT_LAUNCHER_ROOT`` is the sibling ``plugins/agent-launcher``, the
-  launcher this catalog ships and production resolves with the variable unset.
-  It drives sessions through herdr core. (The suite was first written against a
-  frozen agent-launcher 1.7.0, still under ``fixtures/``, which drives old
-  Herdr; Orchestrate no longer runs against it.)
+* ``AGENT_LAUNCHER_ROOT`` is the frozen pre-slim snapshot under
+  ``fixtures/agent-launcher-2.0.0``. The live ``plugins/agent-launcher`` package
+  keeps only the headless reviewer, so this suite still execs the launcher that
+  defines the launch names. (An older frozen agent-launcher 1.7.0 remains under
+  ``fixtures/`` and drives old Herdr; Orchestrate no longer runs against it.)
 * ``ORCHESTRATE_RUN_RECORD`` is saga's ``run_record.py`` from the same upstream
   pin when ``plugins/saga`` is not beside this package.
 """
@@ -31,7 +31,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from orchestrate_support import RUN_RECORD_SCRIPT  # noqa: E402
 
-FIXTURE_LAUNCHER_ROOT = Path(__file__).resolve().parents[2] / "agent-launcher"
+FIXTURE_LAUNCHER_ROOT = (
+    Path(__file__).resolve().parent / "fixtures" / "agent-launcher-2.0.0"
+)
 
 _COMPANION_ENV = ("AGENT_LAUNCHER_ROOT", "ORCHESTRATE_RUN_RECORD", "CLAUDE_PLUGIN_ROOT")
 
