@@ -2786,7 +2786,9 @@ REVIEWER_VENDORED_SOURCE = "saga-vendored"
 REVIEWER_UNTRUSTED_DIRS = (".claude",)
 REVIEWER_UNTRUSTED_FILES = (".mcp.json",)
 #: Instruction files Claude loads from the working directory and, on demand, from subdirectories.
-REVIEWER_INSTRUCTION_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
+#: Claude Code reads ``AGENTS.md`` when no ``CLAUDE.md`` is present and expands ``@`` imports in
+#: it (measured on 2.1.299), so an import that leaves the copy withholds that file too (#277).
+REVIEWER_INSTRUCTION_NAMES = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md")
 def _reviewer_fold(name: str) -> str:
     """A name as a forgiving file system may match it: compatibility-normalised and casefolded.
 
@@ -2813,9 +2815,14 @@ class ReviewerRefused(Exception):
 
 
 def reviewer_temp_roots(platform: str | None = None) -> tuple[str, ...]:
-    """The system temp roots the reviewer's commands may not write to."""
+    """The system temp roots the reviewer's commands may not write to.
+
+    On macOS ``/tmp`` and ``/var/folders`` are symlinks under ``/private``. The sandbox
+    ``denyWrite`` matches the path it is given, so both spellings are named. Linux stays
+    ``/tmp`` and ``/var/tmp`` and does not treat ``/private`` as a temp root.
+    """
     if (platform or sys.platform) == "darwin":
-        return ("/tmp", "/private/tmp", "/var/folders")
+        return ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
     return ("/tmp", "/var/tmp")
 
 
@@ -4487,15 +4494,28 @@ def reviewer_probe_recipe(vendor: str) -> ReviewerRecipe:
     return reviewer_recipe(vendor)
 
 
+def _reviewer_sits_under_temp(root: Path, temp: str) -> bool:
+    """Whether *root* is the temp root *temp* or inside it, as written or resolved.
+
+    Both sides are compared in the form the caller wrote and the form the filesystem
+    resolves, so a symlink such as macOS ``/var/folders`` -> ``/private/var/folders``
+    cannot hide the scratch copy on the other spelling. A prefix check would also
+    treat ``/tmp-extra`` as inside ``/tmp``; ``is_relative_to`` does not.
+    """
+    bases = _reviewer_forms(Path(temp))
+    return any(
+        form == base or form.is_relative_to(base)
+        for form in _reviewer_forms(root)
+        for base in bases
+    )
+
+
 def reviewer_work_root(env: Mapping[str, str], platform: str | None = None) -> Path:
     """Where scratch copies live: outside every temp root the sandbox denies."""
     cache = env.get("XDG_CACHE_HOME") or str(Path(env.get("HOME") or Path.home()) / ".cache")
     root = Path(cache).expanduser() / "agent-launcher" / "reviews"
     for temp in reviewer_temp_roots(platform):
-        if any(
-            str(path) == temp or str(path).startswith(temp.rstrip("/") + "/")
-            for path in (root, root.resolve())
-        ):
+        if _reviewer_sits_under_temp(root, temp):
             raise ReviewerRefused(
                 f"the scratch copy would sit under {temp}, which the reviewer's sandbox denies"
             )

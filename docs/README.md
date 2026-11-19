@@ -72,6 +72,8 @@
   no fresh multi-client assessment is claimed. Fleet Core is a bundled library.
   Saga subsequently moved to 2.0.1 for the workflow-location and scan-status fixes;
   its 2026-11-16 notice now covers that patch without claiming a client assessment.
+  Agent Launcher subsequently moved to 2.0.1 for the macOS reviewer temp-root and
+  Claude `AGENTS.md` screen; its 2026-11-16 notice covers that patch the same way.
 - [Agent Launcher nine-client compatibility matrix, superseded 2026-10-14](evidence/2026-10-04-agent-launcher-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable
   agent-launcher package across four stages with fingerprint-bound
