@@ -56,6 +56,146 @@ def _run(argv: list[str], root: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+# Stand-ins for the two pinned plugins. The fake uv writes these into the install
+# target, and `uv run` puts the same directory on PYTHONPATH. They are real pytest
+# plugins: randomly registers its seed, and pytest_socket blocks socket.connect.
+_RANDOMLY_PLUGIN = '''\
+"""Minimal pytest-randomly: the seed option and the plugin name."""
+
+
+def pytest_addoption(parser):
+    parser.addoption("--randomly-seed", action="store", default="0")
+'''
+
+_SOCKET_PLUGIN = '''\
+"""Minimal pytest-socket: --disable-socket rejects socket.connect."""
+
+import socket
+
+
+class SocketBlockedError(RuntimeError):
+    """A test opened a socket while --disable-socket was set."""
+
+
+def pytest_addoption(parser):
+    parser.addoption("--disable-socket", action="store_true", default=False)
+
+
+def pytest_configure(config):
+    if not config.getoption("--disable-socket"):
+        return
+
+    def blocked(*_args, **_kwargs):
+        raise SocketBlockedError("socket blocked")
+
+    socket.socket.connect = blocked
+    socket.create_connection = blocked
+'''
+
+_UV_BODY = """\
+import os
+import shutil
+import sys
+from pathlib import Path
+
+SHARE = Path(SHARE_PATH)
+PYTHON = PYTHON_PATH
+PACKAGES = {
+    "pytest-randomly==5.0.0": "randomly.py",
+    "pytest-socket==0.8.1": "pytest_socket.py",
+}
+
+
+def fail(message):
+    sys.stderr.write(message + "\\n")
+    raise SystemExit(2)
+
+
+def flag(args, name):
+    if name not in args:
+        fail("missing " + name)
+    value = args[args.index(name) + 1]
+    if not value or value.startswith("-"):
+        fail("empty " + name)
+    return value
+
+
+def pip_install(args):
+    if "--no-deps" not in args:
+        fail("missing --no-deps")
+    if os.environ.get("UV_PYTHON_DOWNLOADS") != "never" or os.environ.get("UV_NO_PROGRESS") != "1":
+        fail("installer environment is not the sanitized uv environment")
+    if "PYTHONPATH" in os.environ:
+        fail("PYTHONPATH leaked into the installer")
+    interpreter = Path(flag(args, "--python"))
+    target = Path(flag(args, "--target"))
+    package = args[-1]
+    module = PACKAGES.get(package)
+    if module is None:
+        fail("unexpected package " + package)
+    if not interpreter.is_absolute() or not interpreter.name.startswith("python"):
+        fail("interpreter is not an absolute python: " + str(interpreter))
+    if not target.is_absolute():
+        fail("install target is not absolute: " + str(target))
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(SHARE / module, target / module)
+    return 0
+
+
+def uv_run(args):
+    if "--with" not in args:
+        fail("missing --with")
+    package = args[args.index("--with") + 1]
+    if package not in PACKAGES:
+        fail("unexpected package " + package)
+    rest = args[args.index("--with") + 2:]
+    if not rest or rest[0] != "pytest":
+        fail("uv run must launch pytest")
+    env = os.environ.copy()
+    previous = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(SHARE) if not previous else str(SHARE) + os.pathsep + previous
+    os.execve(PYTHON, [PYTHON, "-m", "pytest", *rest[1:]], env)
+
+
+def main():
+    argv = sys.argv
+    if len(argv) >= 3 and argv[1:3] == ["pip", "install"]:
+        return pip_install(argv[3:])
+    if len(argv) >= 2 and argv[1] == "run":
+        return uv_run(argv[2:])
+    fail("unexpected uv invocation: " + " ".join(argv))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"""
+
+
+@pytest.fixture(autouse=True)
+def hermetic_uv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A uv on PATH that never touches the network or a host-installed uv.
+
+    ``uv pip install`` copies one plugin module into ``--target``. ``uv run``
+    launches this interpreter's pytest with that plugin directory imported.
+    The ported-plugin CI job has no uv binary.
+    """
+    share = tmp_path / "share"
+    share.mkdir()
+    (share / "randomly.py").write_text(_RANDOMLY_PLUGIN, encoding="utf-8")
+    (share / "pytest_socket.py").write_text(_SOCKET_PLUGIN, encoding="utf-8")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    script = bindir / "uv"
+    body = _UV_BODY.replace("SHARE_PATH", repr(str(share))).replace("PYTHON_PATH", repr(sys.executable))
+    script.write_text("#!" + sys.executable + "\n" + body, encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bindir), "/usr/bin", "/bin"]))
+    found = shutil.which("uv")
+    assert found == str(script)
+    assert shutil.which("pytest") is None
+    return script
+
+
 def test_227_bare_python_keeps_the_resolved_interpreter(tmp_path: Path) -> None:
     """Issue 227: a bare python3 stays this interpreter, the one that has pytest."""
     context = _context(tmp_path, "python3 -m pytest -q")
@@ -112,15 +252,10 @@ def test_bare_pytest_keeps_the_uv_runtime(tmp_path: Path) -> None:
     assert "pytest-randomly==5.0.0" in argv
     assert "pytest" in argv
     uv = shutil.which("uv")
-    assert uv
-    isolated = tmp_path / "bin"
-    isolated.mkdir()
-    (isolated / "uv").symlink_to(uv)
-    env = os.environ.copy()
-    env["PATH"] = os.pathsep.join([str(isolated), "/usr/bin", "/bin"])
-    assert shutil.which("pytest", path=env["PATH"]) is None
+    assert uv is not None and Path(uv).is_relative_to(tmp_path)
+    assert shutil.which("pytest") is None
     completed = subprocess.run(
-        argv, cwd=context.root, env=env, capture_output=True, text=True, check=False,
+        argv, cwd=context.root, capture_output=True, text=True, check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
