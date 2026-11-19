@@ -29,6 +29,7 @@ def _reviews_load(name: str):
 
 import fnmatch
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -75,15 +76,26 @@ _ROWS: dict[str, tuple[str, ...]] = {
     "pytest-randomly": ("testing.flaky-order-or-network",),
     "pytest-socket": ("testing.flaky-order-or-network",),
 }
+_RANDOMLY_PACKAGE = "pytest-randomly==5.0.0"
+_SOCKET_PACKAGE = "pytest-socket==0.8.1"
+
+
+def _plugin_version_argv(package: str, distribution: str) -> tuple[str, ...]:
+    """Read the pin from the uv environment that holds it.
+
+    The word ``python`` stays unresolved here. Rewriting it to this interpreter
+    is what drops ``--with`` on the floor (issue 227, then 246).
+    """
+    return (
+        "uv", "run", "--no-project", "--with", package,
+        "python", "-c",
+        f"import importlib.metadata as m; print(m.version({distribution!r}))",
+    )
+
+
 _VERSION_ARGV = {
-    "pytest-randomly": (
-        "python3", "-c",
-        "import importlib.metadata as m; print(m.version('pytest-randomly'))",
-    ),
-    "pytest-socket": (
-        "python3", "-c",
-        "import importlib.metadata as m; print(m.version('pytest-socket'))",
-    ),
+    "pytest-randomly": _plugin_version_argv(_RANDOMLY_PACKAGE, "pytest-randomly"),
+    "pytest-socket": _plugin_version_argv(_SOCKET_PACKAGE, "pytest-socket"),
 }
 _MYPY_LINE = re.compile(
     r"^(?P<path>.+?):(?P<line>\d+):(?:(?P<col>\d+):)? "
@@ -1158,25 +1170,65 @@ def _parse_cosmic(text: str) -> ParseResult:
     return ParseResult(tuple(hits), gaps=gaps, gap_details=details)
 
 
+def _pytest_interpreter(parts: list[str]) -> str:
+    """The interpreter that will run pytest, after the #227 rewrite."""
+    if parts and Path(parts[0]).name.startswith("python"):
+        return parts[0]
+    return sys.executable
+
+
+def _install_pytest_plugin(context: ScanContext, package: str, interpreter: str) -> Path:
+    """Install *package* into a directory only this scan can import.
+
+    ``uv run --with`` builds an environment the absolute interpreter from
+    :func:`_resolve_python_head` never enters, so ``-p randomly`` dies with
+    ``No module named 'randomly'``. The scan folder is removed with the
+    adapter's scratch directory, so one run cannot leave the plugin on the next.
+    ``--no-deps`` keeps the project's own pytest; the plugin imports that one.
+    """
+    folder = review_tools.scan_folder(context, "pytest-plugin-" + package.split("==", 1)[0])
+    target = folder / "site"
+    target.mkdir()
+    result = subprocess.run(
+        [
+            "uv", "pip", "install", "--python", interpreter, "--target", str(target),
+            "--no-deps", package,
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        raise ToolGap("missing", "testing.flaky-order-or-network")
+    return target
+
+
 def _pytest_argv(context: ScanContext, package: str, extra: list[str]) -> list[str]:
     command = context.test_command.strip()
     if not command:
         raise ToolGap("known-gap", "testing.flaky-order-or-network")
-    parts = _resolve_python_head(_strip_randomly(shlex.split(command)))
-    return ["uv", "run", "--with", package, *parts, *extra]
+    parts = _strip_randomly(shlex.split(command))
+    assigned = ""
+    if parts and parts[0].startswith("PYTHONPATH="):
+        assigned = parts[0].split("=", 1)[1]
+        parts = parts[1:]
+    parts = _resolve_python_head(parts)
+    target = _install_pytest_plugin(context, package, _pytest_interpreter(parts))
+    pieces = [str(target)]
+    if assigned:
+        pieces.append(assigned)
+    return ["env", "PYTHONPATH=" + os.pathsep.join(pieces), *parts, *extra]
 
 
 def _invoke_randomly(context: ScanContext) -> list[str]:
     # The seed is fixed by the change, so two runs of one change test one order.
     return _pytest_argv(
-        context, "pytest-randomly==5.0.0",
+        context, _RANDOMLY_PACKAGE,
         ["-p", "randomly", f"--randomly-seed={review_tools.change_seed(context)}"],
     )
 
 
 def _invoke_socket(context: ScanContext) -> list[str]:
     return _pytest_argv(
-        context, "pytest-socket==0.8.1", ["-p", "no:randomly", "--disable-socket"]
+        context, _SOCKET_PACKAGE, ["-p", "no:randomly", "--disable-socket"]
     )
 
 
