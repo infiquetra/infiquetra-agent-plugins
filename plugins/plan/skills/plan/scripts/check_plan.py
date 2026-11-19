@@ -34,14 +34,28 @@ PLACEHOLDERS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 BACKTICK = re.compile(r"`([^`\n]+)`")
+# Directory paths keep every extension. A non-greedy stem stops at the first
+# dot, so ``pkg/reader.py:12`` used to be checked as ``pkg/reader``.
 BARE_PATH = re.compile(
-    r"(?<![\w`./])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]*?)(?![\w/])"
+    r"(?<![\w`./])((?:[A-Za-z0-9_.-]+/)+[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+)"
 )
-HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
+# A bare filename is only a path when a citation marks it (``name.ext:line``)
+# or it sits in a fenced command. ``e.g.`` has no line number and no slash.
+CITED_FILENAME = re.compile(
+    r"(?<![\w`./])([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+):\d+(?:-\d+)?"
+)
+FENCED_FILENAME = re.compile(
+    r"(?<![\w`./])([A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]+)+)"
+)
+HEADING = re.compile(r"^(#{2,3})\s+(.+?)\s*#*\s*$")
 MARKER_AFTER = re.compile(r"\(\s*(?:new|create)\s*\)", re.IGNORECASE)
 CREATE_BEFORE = re.compile(r"\bcreate\b", re.IGNORECASE)
 LINE_SUFFIX = re.compile(r":\d+(?:-\d+)?$")
 FENCE = re.compile(r"^\s*```")
+# Words that may precede a section phrase ("Key Technical Decisions").
+_HEADING_MODIFIERS = frozenset(
+    {"key", "technical", "implementation", "out", "of", "non", "next", "and"}
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -86,10 +100,18 @@ def check_text(text: str, root: Path) -> list[str]:
 
 
 def _missing_sections(text: str) -> list[str]:
-    headings = [_words(title) for title in _headings(text)]
+    """Require a ``##`` or ``###`` heading and non-empty body for each slot.
+
+    The document title (``#``) does not count, and a word that merely appears
+    inside another section's heading does not satisfy a second slot.
+    """
+    blocks = _section_blocks(text)
     missing: list[str] = []
     for label, phrases in SECTION_SLOTS:
-        if not any(_has_phrase(heading, phrase) for heading in headings for phrase in phrases):
+        if not any(
+            _heading_matches(_words(title), phrases) and _has_content(body)
+            for title, body in blocks
+        ):
             missing.append(f"missing section: {label}")
     return missing
 
@@ -131,8 +153,12 @@ def _paths(text: str, root: Path) -> list[str]:
 def _references(text: str) -> list[tuple[int, str, bool, bool]]:
     """Each repo-relative reference as ``(line, path, marked_new, is_directory)``."""
     found: list[tuple[int, str, bool, bool]] = []
+    fenced = False
     for number, line in enumerate(text.splitlines(), start=1):
-        spans = _spans(line)
+        if FENCE.match(line):
+            fenced = not fenced
+            continue
+        spans = _spans(line, in_fence=fenced)
         for index, (start, end, raw) in enumerate(spans):
             normalized = _normalize(raw)
             if normalized is None:
@@ -147,13 +173,25 @@ def _references(text: str) -> list[tuple[int, str, bool, bool]]:
     return found
 
 
-def _spans(line: str) -> list[tuple[int, int, str]]:
-    spans = [(match.start(1), match.end(1), match.group(1)) for match in BACKTICK.finditer(line)]
-    for match in BARE_PATH.finditer(line):
-        start, end = match.start(1), match.end(1)
-        if any(start < span_end and end > span_start for span_start, span_end, _raw in spans):
-            continue
-        spans.append((start, end, match.group(1)))
+def _spans(line: str, *, in_fence: bool) -> list[tuple[int, int, str]]:
+    """Path tokens on one line, including filenames inside fenced commands.
+
+    A backtick that is itself a path hides the bare match underneath it. A
+    backtick that is a command does not, so ``python3 pkg/reader.py`` still
+    yields ``pkg/reader.py`` rather than stopping at ``pkg/reader``.
+    """
+    backticks = [(match.start(1), match.end(1), match.group(1)) for match in BACKTICK.finditer(line)]
+    owned = [(start, end, raw) for start, end, raw in backticks if _normalize(raw) is not None]
+    spans = list(owned)
+    patterns = [BARE_PATH, CITED_FILENAME]
+    if in_fence:
+        patterns.append(FENCED_FILENAME)
+    for pattern in patterns:
+        for match in pattern.finditer(line):
+            start, end = match.start(1), match.end(1)
+            if any(start < span_end and end > span_start for span_start, span_end, _raw in spans):
+                continue
+            spans.append((start, end, match.group(1)))
     spans.sort()
     return spans
 
@@ -211,28 +249,66 @@ def _new_path_is_anchored(relative: Path, root: Path, planned: set[Path]) -> boo
     return False
 
 
-def _headings(text: str) -> list[str]:
-    titles: list[str] = []
+def _section_blocks(text: str) -> list[tuple[str, str]]:
+    """``(title, body)`` for each ``##`` or ``###`` heading outside a fence.
+
+    A level-2 section keeps the level-3 headings under it as its body, so
+    ``## Units`` followed by ``### 1. Name`` is not an empty section. A
+    level-3 heading is also its own block when it is the section title.
+    """
+    lines = text.splitlines()
+    blocks: list[tuple[int, str, list[str]]] = []
     fenced = False
-    for line in text.splitlines():
+    for line in lines:
         if FENCE.match(line):
             fenced = not fenced
+            if blocks:
+                blocks[-1][2].append(line)
             continue
-        if fenced:
-            continue
-        match = HEADING.match(line)
+        match = None if fenced else HEADING.match(line)
         if match:
-            titles.append(match.group(1))
-    return titles
+            blocks.append((len(match.group(1)), match.group(2), []))
+            continue
+        if blocks:
+            blocks[-1][2].append(line)
+    rendered: list[tuple[str, str]] = []
+    for index, (level, title, body_lines) in enumerate(blocks):
+        if level == 2:
+            body_lines = list(body_lines)
+            following = index + 1
+            while following < len(blocks) and blocks[following][0] > 2:
+                child_title = blocks[following][1]
+                body_lines.append(child_title)
+                body_lines.extend(blocks[following][2])
+                following += 1
+        rendered.append((title, "\n".join(body_lines)))
+    return rendered
+
+
+def _has_content(body: str) -> bool:
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or HEADING.match(line):
+            continue
+        return True
+    return False
 
 
 def _words(heading: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", heading.lower())
 
 
-def _has_phrase(words: list[str], phrase: tuple[str, ...]) -> bool:
-    width = len(phrase)
-    return any(words[index : index + width] == list(phrase) for index in range(len(words) - width + 1))
+def _heading_matches(words: list[str], phrases: tuple[tuple[str, ...], ...]) -> bool:
+    """True when the heading is that section, not a mention of its words."""
+    for phrase in phrases:
+        phrase_words = list(phrase)
+        width = len(phrase_words)
+        if words == phrase_words or words[:width] == phrase_words:
+            return True
+        if len(words) > width and words[-width:] == phrase_words:
+            if all(word in _HEADING_MODIFIERS for word in words[:-width]):
+                return True
+    return False
 
 
 if __name__ == "__main__":

@@ -106,3 +106,52 @@ def test_emits_advisory_suggestions_on_incomplete_docs_plans_write(tmp_path: Pat
         assert "placeholder TODO" in context
         assert 'placeholder "several files"' in context
         assert plan.read_text(encoding="utf-8") == original
+
+
+def test_symlink_aliases_follow_the_resolved_plan_path(tmp_path: Path) -> None:
+    plans = tmp_path / "docs" / "plans"
+    plans.mkdir(parents=True)
+    real = plans / "2026-11-19-incomplete-plan.md"
+    real.write_text("# Draft\n\nTBD\n", encoding="utf-8")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Draft\n\nTBD\n", encoding="utf-8")
+    decoy = plans / "decoy.md"
+    decoy.symlink_to(readme)
+
+    silent = _invoke(
+        {
+            "tool_name": "Write",
+            "cwd": str(tmp_path),
+            "tool_input": {"file_path": str(decoy)},
+        }
+    )
+    _assert_silent(silent)
+
+    alias = tmp_path / "plan-alias"
+    alias.symlink_to(plans, target_is_directory=True)
+    via_alias = alias / real.name
+    advised = _invoke(
+        {
+            "tool_name": "Write",
+            "cwd": str(tmp_path),
+            "tool_input": {"file_path": str(via_alias)},
+        }
+    )
+    assert advised.returncode == 0, advised.stderr
+    context = json.loads(advised.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "placeholder TBD" in context
+    assert "missing section: Summary" in context
+
+    missing_leaf = alias / "brand-new.md"
+    assert not missing_leaf.exists()
+    missing = _invoke(
+        {
+            "tool_name": "Write",
+            "cwd": str(tmp_path),
+            "tool_input": {"file_path": str(missing_leaf)},
+        }
+    )
+    assert missing.returncode == 0, missing.stderr
+    missing_context = json.loads(missing.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "plan file not found" in missing_context
+    assert "brand-new.md" in missing_context

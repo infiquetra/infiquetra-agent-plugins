@@ -50,18 +50,24 @@ def _run() -> int:
     if tool_name not in PLAN_TOOLS:
         return 0
     file_path = _file_path(payload)
-    if file_path is None or not _is_plan_markdown(file_path):
+    if file_path is None:
         return 0
-    if not file_path.is_file():
-        _emit(f"{ADVISORY_PREFIX}\nplan file not found: {file_path}")
+    # Classify the resolved file. A lexical ``docs/plans`` path can be a symlink
+    # to something else, and a path outside that spelling can be an alias for it.
+    # ``resolve(strict=False)`` follows existing parents and keeps a missing leaf.
+    canonical = _canonicalize(file_path, _payload_cwd(payload))
+    if not _is_plan_markdown(canonical):
+        return 0
+    if not canonical.is_file():
+        _emit(f"{ADVISORY_PREFIX}\nplan file not found: {canonical}")
         return 0
     if not CHECK_PLAN.is_file():
         _emit(f"{ADVISORY_PREFIX}\nplan checker is missing: {CHECK_PLAN}")
         return 0
-    root = _resolve_root(payload, file_path)
+    root = _resolve_root(payload, canonical)
     try:
         completed = subprocess.run(
-            [sys.executable, str(CHECK_PLAN), "--root", str(root), str(file_path)],
+            [sys.executable, str(CHECK_PLAN), "--root", str(root), str(canonical)],
             capture_output=True,
             text=True,
             timeout=8,
@@ -97,6 +103,19 @@ def _is_plan_markdown(path: Path) -> bool:
         return False
     parts = path.parts
     return len(parts) >= 3 and parts[-3] == "docs" and parts[-2] == "plans"
+
+
+def _payload_cwd(payload: dict[str, Any]) -> Path | None:
+    cwd_value = payload.get("cwd")
+    if isinstance(cwd_value, str) and cwd_value.strip() and Path(cwd_value).is_dir():
+        return Path(cwd_value)
+    return None
+
+
+def _canonicalize(path: Path, cwd: Path | None) -> Path:
+    """Resolve symlinks, including when the final component does not exist yet."""
+    candidate = path if path.is_absolute() else (cwd or Path.cwd()) / path
+    return candidate.resolve(strict=False)
 
 
 def _resolve_root(payload: dict[str, Any], plan: Path) -> Path:
