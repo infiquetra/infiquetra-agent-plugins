@@ -87,6 +87,18 @@ _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _FLAG = re.compile(r"(?<![A-Za-z0-9_])(--[A-Za-z][A-Za-z0-9_-]*)(?![A-Za-z0-9_])")
 _TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _NAME_RUN = re.compile(r"[A-Za-z0-9_]+")
+#: Prose has no ctags symbols. Only these suffixes use the prose extractor (issue 261).
+_PROSE_SUFFIXES = frozenset({".md", ".rst", ".txt"})
+_PROSE_TOKEN = re.compile(r"[A-Za-z_](?:[A-Za-z0-9_]|-[A-Za-z0-9_])*")
+_PROSE_FILENAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)+")
+_DOUBLE_SPAN = re.compile(r"``([^`\n]+)``")
+_CODE_SPAN = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
+_LINK_TARGET = re.compile(r"\[[^\]\n]*\]\(([^)\s]+)")
+_LINK_DEF = re.compile(r"^\s*\[[^\]]+\]:\s*(\S+)", re.MULTILINE)
+_AUTOLINK = re.compile(r"<((?:https?://|mailto:)[^>\s]+)>")
+_HEADING_ANCHOR = re.compile(r"\{#([A-Za-z_][A-Za-z0-9_-]*)\}")
+_RST_ANCHOR = re.compile(r"^\.\.\s+_([A-Za-z_][A-Za-z0-9_-]*):", re.MULTILINE)
+_HTML_ANCHOR = re.compile(r"""\b(?:id|name)\s*=\s*["']([A-Za-z_][A-Za-z0-9_-]*)["']""")
 _UNIX_PATH = re.compile(r"(?<![A-Za-z0-9_])(/(?:[A-Za-z0-9._-]+)){2,}")
 _WINDOWS_PATH = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z]:\\[^\s\"']+)")
 _UNC_PATH = re.compile(r"(\\\\[^\s\\'\"]+\\[^\s\\'\"]+)")
@@ -153,8 +165,9 @@ _KEYWORDS_BY_SUFFIX: dict[str, frozenset[str]] = {
 #: the file's language: ``self`` is a receiver name in Go and a parameter in plenty of C code, and
 #: a removed line naming it is no more a removed name there than in Python.
 _COMMON_KEYWORDS = frozenset("self Self this cls super true false null nil None True False".split())
-#: A suffix with no keyword list (Markdown, YAML, text) drops the keywords of every list, since a
-#: word reserved in any of these languages is as likely to be noise there.
+#: A suffix with no keyword list (YAML, and anything else that is not prose) drops the keywords
+#: of every list, since a word reserved in any of these languages is as likely to be noise there.
+#: Markdown, reStructuredText, and text use ``_prose_names`` instead of this list (issue 261).
 _ALL_KEYWORDS = frozenset().union(*_KEYWORDS_BY_SUFFIX.values())
 
 
@@ -1246,12 +1259,27 @@ def machine_values(root: Path, base: str, user: str, host: str) -> dict[str, Any
     return {"hits": [], "where_to_look": items, "gaps": []}
 
 
+def _identifier_shaped(token: str) -> bool:
+    """A token a prose file can name: ``_``, a digit, an inner capital, or an internal hyphen.
+
+    ``the`` and ``skip`` match none of those. ``review-setup`` and ``check_plan.py`` do.
+    An all-caps word such as ``README`` is still prose.
+    """
+    if "_" in token or any(char.isdigit() for char in token):
+        return True
+    if re.search(r"[A-Za-z0-9]-[A-Za-z0-9]", token):
+        return True
+    return re.search(r"[a-z][A-Z]|[A-Z]{2,}[a-z]", token) is not None
+
+
 def _searchable(name: str) -> bool:
     if re.fullmatch(r"--[A-Za-z][A-Za-z0-9_-]*", name):
         return True
     if _IDENT.fullmatch(name):
         return True
-    return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name))
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name):
+        return True
+    return _PROSE_FILENAME.fullmatch(name) is not None and _identifier_shaped(name)
 
 
 def _remember(found: dict[str, bool], name: str, degraded: bool) -> None:
@@ -1369,6 +1397,63 @@ def _diff_lines(repo: Path, base: str) -> dict[str, tuple[list[str], list[str]]]
     return files
 
 
+def _prose_keep(token: str) -> bool:
+    """An identifier-shaped prose token long enough to search and not a language keyword."""
+    if len(token) < _MIN_NAME_LENGTH or not _identifier_shaped(token):
+        return False
+    if token in _ALL_KEYWORDS or token in _COMMON_KEYWORDS:
+        return False
+    return _searchable(token)
+
+
+def _mask_code_spans(text: str) -> tuple[set[str], str]:
+    """Inline code span bodies, and *text* with those spans blanked so they are not split."""
+    names: set[str] = set()
+
+    def take(match: re.Match[str]) -> str:
+        token = match.group(1).strip()
+        if token and " " not in token and "\t" not in token:
+            names.add(token)
+        return " " * len(match.group(0))
+
+    masked = _DOUBLE_SPAN.sub(take, text)
+    masked = _CODE_SPAN.sub(take, masked)
+    return names, masked
+
+
+def _target_names(target: str) -> set[str]:
+    """The fragment and the last path segment of one link target."""
+    target = target.strip().strip("<>")
+    if not target:
+        return set()
+    fragment = ""
+    if "#" in target:
+        target, fragment = target.split("#", 1)
+        fragment = fragment.split("?", 1)[0]
+    path = target.split("?", 1)[0].rstrip("/")
+    base = path.rsplit("/", 1)[-1] if path else ""
+    return {name for name in (fragment, base) if name}
+
+
+def _prose_candidates(text: str) -> set[str]:
+    """Code spans, link targets, heading anchors, and identifier-shaped tokens in *text*."""
+    spans, masked = _mask_code_spans(text)
+    names = set(spans)
+    names.update(_PROSE_TOKEN.findall(masked))
+    for pattern in (_LINK_TARGET, _LINK_DEF, _AUTOLINK):
+        for match in pattern.finditer(masked):
+            names.update(_target_names(match.group(1)))
+    for pattern in (_HEADING_ANCHOR, _RST_ANCHOR, _HTML_ANCHOR):
+        names.update(pattern.findall(text))
+    return {token for token in names if _prose_keep(token)}
+
+
+def _prose_names(removed: Sequence[str], added: Sequence[str]) -> list[str]:
+    """Removed prose names that do not remain on an added line."""
+    gone = _prose_candidates("\n".join(removed)) - _prose_candidates("\n".join(added))
+    return sorted(gone)
+
+
 def _text_names(removed: Sequence[str], added: Sequence[str], path: str) -> list[str]:
     """Tokens on removed lines and not on added ones, sorted, minus keywords and short tokens.
 
@@ -1376,7 +1461,13 @@ def _text_names(removed: Sequence[str], added: Sequence[str], path: str) -> list
     without the filter ``if`` and ``self`` made every remaining use in the repository a finding
     (issue 260). The keywords are the file's language's, or every language's for a suffix
     with none, plus the words in ``_COMMON_KEYWORDS``.
+
+    Prose suffixes (``.md``, ``.rst``, ``.txt``) never take that whole-word path. They keep
+    inline code spans, link targets, heading anchors, and identifier-shaped tokens, so a
+    removed ``the`` or ``skip`` is not a removed name (issue 261).
     """
+    if Path(path).suffix.lower() in _PROSE_SUFFIXES:
+        return _prose_names(removed, added)
     gone = set(_TOKEN.findall("\n".join(removed))) - set(_TOKEN.findall("\n".join(added)))
     keywords = _KEYWORDS_BY_SUFFIX.get(Path(path).suffix.lower(), _ALL_KEYWORDS) | _COMMON_KEYWORDS
     return sorted(
@@ -1505,6 +1596,10 @@ def _other_removed(
 ) -> None:
     sweep_pieces = _reviews_load('sweep_pieces')
 
+    if Path(path).suffix.lower() in _PROSE_SUFFIXES:
+        for name in _text_names(removed_lines, added_lines, path):
+            _remember(found, name, True)
+        return
     if language in sweep_pieces.CTAGS_LANGUAGES:
         base_names = _span_names(before, path, language)
         head_names = _span_names(after, path, language)
