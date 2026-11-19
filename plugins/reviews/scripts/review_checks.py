@@ -99,6 +99,14 @@ _AUTOLINK = re.compile(r"<((?:https?://|mailto:)[^>\s]+)>")
 _HEADING_ANCHOR = re.compile(r"\{#([A-Za-z_][A-Za-z0-9_-]*)\}")
 _RST_ANCHOR = re.compile(r"^\.\.\s+_([A-Za-z_][A-Za-z0-9_-]*):", re.MULTILINE)
 _HTML_ANCHOR = re.compile(r"""\b(?:id|name)\s*=\s*["']([A-Za-z_][A-Za-z0-9_-]*)["']""")
+_FENCE = re.compile(
+    r"^[ \t]{0,3}(```|~~~)[^\n]*\n(.*?)^[ \t]{0,3}\1[ \t]*$",
+    re.MULTILINE | re.DOTALL,
+)
+_CALL_NAME = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_EMPHASIS = re.compile(
+    r"(?<![A-Za-z0-9_])(?P<mark>\*{1,3}|_{1,3})(?P<word>[A-Za-z][A-Za-z0-9]*)(?P=mark)(?![A-Za-z0-9_])"
+)
 _UNIX_PATH = re.compile(r"(?<![A-Za-z0-9_])(/(?:[A-Za-z0-9._-]+)){2,}")
 _WINDOWS_PATH = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z]:\\[^\s\"']+)")
 _UNC_PATH = re.compile(r"(\\\\[^\s\\'\"]+\\[^\s\\'\"]+)")
@@ -1277,9 +1285,17 @@ def _searchable(name: str) -> bool:
         return True
     if _IDENT.fullmatch(name):
         return True
-    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name):
+    return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name))
+
+
+def _prose_searchable(name: str) -> bool:
+    """``_searchable`` plus a dotted filename, which prose code spans can name.
+
+    ``_searchable`` stays the code and JSON rule. A dotted JSON key is still ignored.
+    """
+    if _searchable(name):
         return True
-    return _PROSE_FILENAME.fullmatch(name) is not None and _identifier_shaped(name)
+    return _PROSE_FILENAME.fullmatch(name) is not None
 
 
 def _remember(found: dict[str, bool], name: str, degraded: bool) -> None:
@@ -1287,6 +1303,14 @@ def _remember(found: dict[str, bool], name: str, degraded: bool) -> None:
         return
     if name not in found or not degraded:
         found[name] = degraded if name not in found else False
+
+
+def _remember_prose(found: dict[str, bool], name: str) -> None:
+    """Remember a prose name. Dotted filenames stay here and out of ``_searchable``."""
+    if not _prose_searchable(name):
+        return
+    if name not in found:
+        found[name] = True
 
 
 def _python_defs(text: str) -> set[tuple[str, str, str]] | None:
@@ -1397,28 +1421,71 @@ def _diff_lines(repo: Path, base: str) -> dict[str, tuple[list[str], list[str]]]
     return files
 
 
-def _prose_keep(token: str) -> bool:
-    """An identifier-shaped prose token long enough to search and not a language keyword."""
-    if len(token) < _MIN_NAME_LENGTH or not _identifier_shaped(token):
+def _explicit_keep(token: str) -> bool:
+    """A code-span, link-target, or heading-anchor token, including a plain word such as ``publish``."""
+    if len(token) < _MIN_NAME_LENGTH:
         return False
     if token in _ALL_KEYWORDS or token in _COMMON_KEYWORDS:
         return False
-    return _searchable(token)
+    return _prose_searchable(token)
 
 
-def _mask_code_spans(text: str) -> tuple[set[str], str]:
-    """Inline code span bodies, and *text* with those spans blanked so they are not split."""
-    names: set[str] = set()
+def _prose_keep(token: str) -> bool:
+    """An identifier-shaped prose token. Ordinary words stay out; explicit targets use ``_explicit_keep``."""
+    return _identifier_shaped(token) and _explicit_keep(token)
 
-    def take(match: re.Match[str]) -> str:
-        token = match.group(1).strip()
-        if token and " " not in token and "\t" not in token:
-            names.add(token)
+
+def _code_symbols(text: str) -> set[str]:
+    """Identifiers in one code span or fenced block, without splitting a flag, filename, or hyphenated name."""
+    flags = set(_FLAG.findall(text))
+    blanked = _FLAG.sub(lambda match: " " * len(match.group(0)), text)
+    filenames = set(_PROSE_FILENAME.findall(blanked))
+    blanked = _PROSE_FILENAME.sub(lambda match: " " * len(match.group(0)), blanked)
+    hyphenated = [match for match in _PROSE_TOKEN.finditer(blanked) if "-" in match.group(0)]
+    for match in reversed(hyphenated):
+        blanked = (
+            blanked[: match.start()]
+            + (" " * (match.end() - match.start()))
+            + blanked[match.end() :]
+        )
+    names = set(flags)
+    names.update(filenames)
+    names.update(match.group(0) for match in hyphenated)
+    names.update(_TOKEN.findall(blanked))
+    names.update(_CALL_NAME.findall(blanked))
+    return names
+
+
+def _names_from_span(token: str) -> set[str]:
+    """Symbols in one inline span. A call keeps the callee, so ``check_plan()`` yields ``check_plan``."""
+    token = token.strip()
+    if not token:
+        return set()
+    if not re.search(r"\s", token):
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\([^)]*\)", token):
+            return set(_CALL_NAME.findall(token))
+        if _prose_searchable(token):
+            return {token}
+    names = _code_symbols(token)
+    if re.search(r"\s", token):
+        return {name for name in names if name.startswith("--") or _identifier_shaped(name)}
+    return names
+
+
+def _blank_code(text: str, found: set[str]) -> str:
+    """Fenced blocks and inline spans, recorded into *found* and blanked so prose does not re-read them."""
+
+    def take_fence(match: re.Match[str]) -> str:
+        found.update(_code_symbols(match.group(2)))
+        return "\n" * match.group(0).count("\n")
+
+    def take_span(match: re.Match[str]) -> str:
+        found.update(_names_from_span(match.group(1)))
         return " " * len(match.group(0))
 
-    masked = _DOUBLE_SPAN.sub(take, text)
-    masked = _CODE_SPAN.sub(take, masked)
-    return names, masked
+    masked = _FENCE.sub(take_fence, text)
+    masked = _DOUBLE_SPAN.sub(take_span, masked)
+    return _CODE_SPAN.sub(take_span, masked)
 
 
 def _target_names(target: str) -> set[str]:
@@ -1435,23 +1502,48 @@ def _target_names(target: str) -> set[str]:
     return {name for name in (fragment, base) if name}
 
 
+def _strip_emphasis(text: str) -> str:
+    """Bold and italic markers are not dunder names. ``__button__`` is the word ``button``."""
+    return _EMPHASIS.sub(lambda match: match.group("word"), text)
+
+
 def _prose_candidates(text: str) -> set[str]:
-    """Code spans, link targets, heading anchors, and identifier-shaped tokens in *text*."""
-    spans, masked = _mask_code_spans(text)
-    names = set(spans)
-    names.update(_PROSE_TOKEN.findall(masked))
+    """Code, link targets, heading anchors, and identifier-shaped tokens in *text*.
+
+    Plain words count only inside inline or fenced code and explicit link or anchor targets.
+    Emphasis wrappers and the surrounding prose do not.
+    """
+    explicit: set[str] = set()
+    masked = _blank_code(text, explicit)
     for pattern in (_LINK_TARGET, _LINK_DEF, _AUTOLINK):
         for match in pattern.finditer(masked):
-            names.update(_target_names(match.group(1)))
+            explicit.update(_target_names(match.group(1)))
     for pattern in (_HEADING_ANCHOR, _RST_ANCHOR, _HTML_ANCHOR):
-        names.update(pattern.findall(text))
-    return {token for token in names if _prose_keep(token)}
+        explicit.update(pattern.findall(masked))
+    shaped = {
+        token
+        for token in _PROSE_TOKEN.findall(_strip_emphasis(masked))
+        if _prose_keep(token)
+    }
+    return shaped | {token for token in explicit if _explicit_keep(token)}
+
+
+def _appears_in(name: str, text: str) -> bool:
+    """Whether *name* is still present, including inside backticks or as the body of a ``--`` flag."""
+    escaped = re.escape(name)
+    if name.startswith("--"):
+        pattern = rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_-])"
+    else:
+        pattern = rf"(?<![A-Za-z0-9_-])(?:--)?{escaped}(?![A-Za-z0-9_-])"
+    return re.search(pattern, text) is not None
 
 
 def _prose_names(removed: Sequence[str], added: Sequence[str]) -> list[str]:
-    """Removed prose names that do not remain on an added line."""
-    gone = _prose_candidates("\n".join(removed)) - _prose_candidates("\n".join(added))
-    return sorted(gone)
+    """Removed prose names that do not remain on an added line, with or without backticks."""
+    removed_text = "\n".join(removed)
+    added_text = "\n".join(added)
+    gone = _prose_candidates(removed_text) - _prose_candidates(added_text)
+    return sorted(name for name in gone if not _appears_in(name, added_text))
 
 
 def _text_names(removed: Sequence[str], added: Sequence[str], path: str) -> list[str]:
@@ -1598,7 +1690,7 @@ def _other_removed(
 
     if Path(path).suffix.lower() in _PROSE_SUFFIXES:
         for name in _text_names(removed_lines, added_lines, path):
-            _remember(found, name, True)
+            _remember_prose(found, name)
         return
     if language in sweep_pieces.CTAGS_LANGUAGES:
         base_names = _span_names(before, path, language)
