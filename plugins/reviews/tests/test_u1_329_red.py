@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import importlib.util
 import io
 import json
@@ -39,6 +40,8 @@ from typing import Any
 import pytest
 
 BASE_COMMIT = "5550acfbc3ffe1eaf2016c17b007c98e80fb46dc"
+FORMULA_SHA256 = "528540c6958cf628d5cdf3ea44dc7fff45c16862ad11412c56a945ceb7e4e839"
+SCHEMA_SHA256 = "a505807b505fbb65f98c58f36375256dd99b7afb2e7f3346bac9f79a9b90acd8"
 FORBIDDEN_IMPORTS = frozenset(
     {
         "run_record",
@@ -94,13 +97,16 @@ def _load_review_module(name: str) -> ModuleType:
     scripts_dir = _reviews_dir() / "scripts"
     script_path = scripts_dir / f"{name}.py"
     assert script_path.is_file(), f"missing script: {script_path}"
-    if str(scripts_dir) not in sys.path:
-        sys.path.insert(0, str(scripts_dir))
-    spec = importlib.util.spec_from_file_location(name, script_path)
+    key = f"infiquetra_reviews.{name}"
+    spec = importlib.util.spec_from_file_location(key, script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+    sys.modules[key] = module
     spec.loader.exec_module(module)
+    loaded = sys.modules.get(name)
+    loaded_file = getattr(loaded, "__file__", None) if loaded is not None else None
+    if loaded_file is not None:
+        assert Path(loaded_file).resolve() != script_path.resolve()
     return module
 
 
@@ -124,6 +130,19 @@ def test_d2_review_formula_and_schema_byte_identical_to_5550acf() -> None:
     assert schema_path.is_file(), f"missing {schema_path}"
     assert formula_test_path.is_file(), f"missing {formula_test_path}"
 
+    formula_bytes = formula_path.read_bytes()
+    schema_bytes = schema_path.read_bytes()
+    assert hashlib.sha256(formula_bytes).hexdigest() == FORMULA_SHA256
+    assert hashlib.sha256(schema_bytes).hexdigest() == SCHEMA_SHA256
+
+    present = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "-e", f"{BASE_COMMIT}^{{commit}}"],
+        capture_output=True,
+        check=False,
+    )
+    if present.returncode != 0:
+        return
+
     expected_formula = subprocess.run(
         ["git", "-C", str(repo), "show", f"{BASE_COMMIT}:plugins/saga/scripts/review_formula.py"],
         capture_output=True,
@@ -141,9 +160,9 @@ def test_d2_review_formula_and_schema_byte_identical_to_5550acf() -> None:
         check=True,
     ).stdout
 
-    assert formula_path.read_bytes() == expected_formula
-    assert schema_path.read_bytes() == expected_schema
-    parsed_schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    assert formula_bytes == expected_formula
+    assert schema_bytes == expected_schema
+    parsed_schema = json.loads(schema_bytes.decode("utf-8"))
     expected_parsed = json.loads(expected_schema.decode("utf-8"))
     assert parsed_schema.get("$id") == expected_parsed.get("$id")
 

@@ -41,13 +41,22 @@ raise SystemExit(1)
 
 
 def _load(name: str) -> ModuleType:
-    if str(SCRIPTS) not in sys.path:
-        sys.path.insert(0, str(SCRIPTS))
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+    """Load a reviews sibling under a private module name.
+
+    The bare name stays free for Saga's copy of the same file. A combined pytest
+    process imports both trees, and registering this copy as ``sys.modules[name]``
+    makes Saga call a module that is missing ``record_run``.
+    """
+    key = f"infiquetra_reviews.{name}"
+    spec = importlib.util.spec_from_file_location(key, SCRIPTS / f"{name}.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+    sys.modules[key] = module
     spec.loader.exec_module(module)
+    loaded = sys.modules.get(name)
+    loaded_file = getattr(loaded, "__file__", None) if loaded is not None else None
+    if loaded_file is not None:
+        assert Path(loaded_file).resolve() != (SCRIPTS / f"{name}.py").resolve()
     return module
 
 
@@ -500,8 +509,6 @@ def _rust_only(tmp: Path) -> tuple[Path, str, str]:
 
 
 def _python_and_cdk_adapters() -> list[Any]:
-    # Other test files load their own review_tools; the adapters must raise this one's ToolGap.
-    sys.modules["review_tools"] = T
     python_adapters = _load("review_adapters_python")
     infrastructure = _load("review_adapters_infrastructure")
     return [*python_adapters.ADAPTERS, *infrastructure.ADAPTERS]

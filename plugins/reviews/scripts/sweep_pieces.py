@@ -9,6 +9,26 @@ come from Universal Ctags, or from the 20-line window when that parser is absent
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import ast
 import json
 import re
@@ -18,8 +38,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-import review_diff
-import review_tools
+review_diff = _reviews_load('review_diff')
+review_tools = _reviews_load('review_tools')
 
 SWEEP_COMPONENTS = (
     "plugins/fleet-core/scripts/fleet_commons/jev_sweep.py",
@@ -173,13 +193,8 @@ def calibration_path_lists() -> list[list[str]] | None:
 
 
 def _bundled_limits() -> tuple[int, int]:
-    """The two line counts, read from saga's bundle only when a caller omits them."""
-    import sys
-
-    scripts = Path(__file__).resolve().parent
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    import bundled_fleet
+    """The two line counts, read from the bundled sweep module when a caller omits them."""
+    bundled_fleet = _reviews_load('bundled_fleet')
 
     module = bundled_fleet.load("jev_sweep")
     return int(module.BLOCK_CONTEXT_LINES), int(module.SMALL_FILE_MAX_LINES)

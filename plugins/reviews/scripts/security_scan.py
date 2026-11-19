@@ -7,6 +7,26 @@ to an independent snapshot repository, never to the target or its linked worktre
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import argparse
 import json
 import os
@@ -19,8 +39,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-import review_formula
-import review_tools as tools
+review_formula = _reviews_load('review_formula')
+tools = _reviews_load('review_tools')
 
 SYNTHESIZED = frozenset({"cdk-nag", "checkov-cdk"})
 ADVISORY_ROWS = frozenset({"osv-scanner", "pip-audit", "npm-audit"})
@@ -114,24 +134,49 @@ def _snapshot(source: Path, commit: str, destination: Path) -> tuple[str, str, l
     return base.decode(), head.decode(), sorted(submodules)
 
 
-def _rule_home(home: Path, machine_home: Path) -> None:
-    """Stage only machine rule-cache inputs; new reports stay in this run's directory."""
-    saga = home / ".saga"
-    saga.mkdir(parents=True, mode=0o700)
-    record = machine_home / ".saga" / "machine.json"
+def _rule_caches(record: Path) -> dict[str, Any]:
     try:
-        loaded = json.loads(record.read_text())
-        caches = loaded.get("rule_caches", {}) if isinstance(loaded, dict) else {}
+        loaded = json.loads(record.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        caches = {}
-    (saga / "machine.json").write_text(json.dumps({"rule_caches": caches}))
-    source = machine_home / ".saga" / "semgrep-rules"
-    if source.is_dir():
-        target = saga / "semgrep-rules"
-        shutil.copytree(source, target, symlinks=True)
-        for path in [target, *target.rglob("*")]:
-            if not path.is_symlink():
-                path.chmod(path.stat().st_mode & 0o700)
+        return {}
+    caches = loaded.get("rule_caches", {}) if isinstance(loaded, dict) else {}
+    return caches if isinstance(caches, dict) else {}
+
+
+def _stage_tree(source: Path, target: Path) -> None:
+    shutil.copytree(source, target, symlinks=True)
+    for path in [target, *target.rglob("*")]:
+        if not path.is_symlink():
+            path.chmod(path.stat().st_mode & 0o700)
+
+
+def _rule_home(home: Path, machine_home: Path) -> None:
+    """Stage machine rule-cache inputs; new reports stay in this run's directory.
+
+    The reviews cache and its recorded digest are preferred. The legacy cache is
+    staged beside it and is not rewritten on the operator's machine.
+    """
+    reviews = Path(".config") / "infiquetra" / "reviews"
+    reviews_record = machine_home / reviews / "machine.json"
+    reviews_rules = machine_home / reviews / "semgrep-rules"
+    if reviews_record.is_file() or reviews_rules.is_dir():
+        staged = home / reviews
+        staged.mkdir(parents=True, mode=0o700)
+        (staged / "machine.json").write_text(
+            json.dumps({"rule_caches": _rule_caches(reviews_record)}) + "\n",
+            encoding="utf-8",
+        )
+        if reviews_rules.is_dir():
+            _stage_tree(reviews_rules, staged / "semgrep-rules")
+    legacy = home / ".saga"
+    legacy.mkdir(parents=True, mode=0o700)
+    (legacy / "machine.json").write_text(
+        json.dumps({"rule_caches": _rule_caches(machine_home / ".saga" / "machine.json")}) + "\n",
+        encoding="utf-8",
+    )
+    legacy_rules = machine_home / ".saga" / "semgrep-rules"
+    if legacy_rules.is_dir():
+        _stage_tree(legacy_rules, legacy / "semgrep-rules")
 
 
 def _secret_report(result: tools.ProcessResult) -> tools.ProcessResult:
@@ -160,7 +205,8 @@ class Observation:
 
     def invoke(self, context: tools.ScanContext) -> list[str]:
         if self.adapter.id == "pip-audit" and context.repository_scan:
-            from review_adapters_python import pip_audit_scan_inputs
+            _loaded_review_adapters_python = _reviews_load('review_adapters_python')
+            pip_audit_scan_inputs = _loaded_review_adapters_python.pip_audit_scan_inputs
             _accepted, unsupported = pip_audit_scan_inputs(context.root)
             self.unsupported.update(unsupported)
         argv = self.adapter.invoke(context)

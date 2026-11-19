@@ -11,14 +11,39 @@ path, so one rule on two resources stays two findings.
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import yaml
 
-import review_tools
-from review_tools import Adapter, Hit, ParseResult, ScanContext, ToolGap
+review_tools = _reviews_load('review_tools')
+_loaded_review_tools = _reviews_load('review_tools')
+Adapter = _loaded_review_tools.Adapter
+Hit = _loaded_review_tools.Hit
+ParseResult = _loaded_review_tools.ParseResult
+ScanContext = _loaded_review_tools.ScanContext
+ToolGap = _loaded_review_tools.ToolGap
 
 _OWNED = ("cdk-nag", "checkov-cdk", "checkov-cfn", "cfn-lint")
 _ROWS = {

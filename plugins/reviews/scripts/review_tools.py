@@ -9,6 +9,26 @@ pass and never a fail.
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import argparse
 import hashlib
 import json
@@ -31,13 +51,13 @@ from typing import Any, Iterable, Iterator, Literal
 
 import yaml
 
-import coverage_lines
-import review_diff
-import review_diagnostics
-import review_formula
-import review_node_projects
-import review_node_reports
-import review_records
+coverage_lines = _reviews_load('coverage_lines')
+review_diff = _reviews_load('review_diff')
+review_diagnostics = _reviews_load('review_diagnostics')
+review_formula = _reviews_load('review_formula')
+review_node_projects = _reviews_load('review_node_projects')
+review_node_reports = _reviews_load('review_node_reports')
+review_records = _reviews_load('review_records')
 
 SCHEMA = "review_records.v1"
 TOOL_LIST = Path(__file__).resolve().parent.parent / "references" / "review-tools.yaml"
@@ -443,17 +463,17 @@ def load_tool_list(path: Path | None = None) -> list[dict[str, Any]]:
 
 def default_adapters() -> list[Adapter]:
     """Every adapter. Imported here so loading the tool list starts nothing."""
-    import review_adapters_all_languages as every
-    import review_adapters_infrastructure as infrastructure
-    import review_adapters_markdown as markdown
-    import review_adapters_python as python_adapters
-    import review_adapters_shell as shell
-    import review_adapters_workflows as workflows
-    import review_adapters_typescript as typescript
-    import review_adapters_dart as dart
-    import review_adapters_rust as rust
-    import review_adapters_swift as swift
-    import review_checks
+    every = _reviews_load('review_adapters_all_languages')
+    infrastructure = _reviews_load('review_adapters_infrastructure')
+    markdown = _reviews_load('review_adapters_markdown')
+    python_adapters = _reviews_load('review_adapters_python')
+    shell = _reviews_load('review_adapters_shell')
+    workflows = _reviews_load('review_adapters_workflows')
+    typescript = _reviews_load('review_adapters_typescript')
+    dart = _reviews_load('review_adapters_dart')
+    rust = _reviews_load('review_adapters_rust')
+    swift = _reviews_load('review_adapters_swift')
+    review_checks = _reviews_load('review_checks')
 
     return [
         *every.ADAPTERS,
@@ -1224,8 +1244,8 @@ def _run(
             degraded.extend(_allow_comments(head_root, change))
             for adapter in adapters:
                 _link_env(adapter, repo, head_root, head_sha, head_sha)
-            import review_dependencies_node
-            import review_node_projects
+            review_dependencies_node = _reviews_load('review_dependencies_node')
+            review_node_projects = _reviews_load('review_node_projects')
             # Link each project's environment before tools run, including scripted checks.
             folders = review_node_projects.projects(head_root, (f.path for f in change.files))
             for project_folder in folders:
@@ -1606,7 +1626,7 @@ def _run_adapter(
     repository_scan: bool = False,
 ) -> list[Hit]:
     if project is None and "typescript" in adapter.languages:
-        import review_node_projects
+        review_node_projects = _reviews_load('review_node_projects')
         folders = review_node_projects.projects(head_root, (f.path for f in change.files))
         if folders and folders != ["."]:
             project_hits: list[Hit] = []
@@ -2042,7 +2062,7 @@ def _base_and_head(
                 modules = context.root / "node_modules"
                 target = base_root / context.project
                 if modules.is_symlink() and target.is_dir():
-                    import review_dependencies_node
+                    review_dependencies_node = _reviews_load('review_dependencies_node')
                     review_dependencies_node.link_into(target, modules.resolve())
                 base_hits, base_digest, base_problem, base_ran = _scan_root(
                     adapter, replace(context, repo=base_root, root=base_root / context.project, scan="base"),

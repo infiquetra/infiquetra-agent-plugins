@@ -26,6 +26,26 @@ writing on every run, and the SDK is read-only to the sandbox.
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import hashlib
 import json
 import os
@@ -37,7 +57,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import review_dependencies as deps
+deps = _reviews_load('review_dependencies')
 
 DIRECTORY = "dependencies/dart/pub-cache"
 TIMEOUT = 600

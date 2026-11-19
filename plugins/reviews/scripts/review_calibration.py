@@ -10,6 +10,26 @@ PyYAML loads only when a profile pin has to be compared with the root's tool lis
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import argparse
 import hashlib
 import json
@@ -19,7 +39,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-import review_formula
+review_formula = _reviews_load('review_formula')
 
 SCHEMA_NAME = "review_calibration.v1"
 CALIBRATION_RELATIVE = "plugins/reviews/references/review-calibration.json"
@@ -507,7 +527,7 @@ def _refuse_rules(tool: str, rules: object) -> None:
 
 def _load_tools(root: Path) -> list[dict[str, Any]]:
     """The root's tool list. Importing review_tools is what loads PyYAML."""
-    import review_tools  # noqa: PLC0415  (PyYAML only on the pin path)
+    review_tools = _reviews_load('review_tools')  # noqa: PLC0415  (PyYAML only on the pin path)
 
     try:
         return review_tools.load_tool_list(locate(root, TOOL_LIST_RELATIVE))

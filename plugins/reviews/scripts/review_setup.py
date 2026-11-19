@@ -3,6 +3,26 @@
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import argparse
 import json
 import os
@@ -66,8 +86,35 @@ def write_machine(home: Path, record: dict[str, Any]) -> Path:
     return path
 
 
+def platform_helper() -> str | None:
+    """The reproduction helper finish will accept: sandbox-exec or bwrap."""
+    if sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").is_file():
+        return "sandbox-exec"
+    if sys.platform == "linux" and shutil.which("bwrap"):
+        return "bwrap"
+    return None
+
+
+def sandbox_admission() -> dict[str, Any]:
+    """Whether reproduced findings can be re-run on this machine.
+
+    finish reads ``survey.sandbox.reproduction``. Omitting it downgrades every
+    reproduced finding. The helper's presence is the admission; this survey does
+    not launch a model probe.
+    """
+    helper = platform_helper()
+    if helper is None:
+        return {
+            "available": False,
+            "reproduction": "unavailable",
+            "reason": "helper-missing",
+            "helper": None,
+        }
+    return {"available": True, "reproduction": "available", "reason": None, "helper": helper}
+
+
 def _rule_caches(rows: list[dict[str, Any]], home: Path) -> dict[str, str]:
-    import review_tools
+    review_tools = _reviews_load('review_tools')
 
     caches: dict[str, str] = {}
     for row in rows:
@@ -88,7 +135,7 @@ def _rule_caches(rows: list[dict[str, Any]], home: Path) -> dict[str, str]:
 
 def survey(repo: Path, home: Path) -> dict[str, Any]:
     """Name each catalogue tool and whether its binary is on PATH. Nothing is installed."""
-    import review_tools
+    review_tools = _reviews_load('review_tools')
 
     rows = [row for row in review_tools.load_tool_list(None) if isinstance(row, dict)]
     tools = []
@@ -109,7 +156,7 @@ def survey(repo: Path, home: Path) -> dict[str, Any]:
         "schema": MACHINE_SCHEMA,
         "ran": True,
         "repo": str(Path(repo).resolve()),
-        "survey": {"tools": tools},
+        "survey": {"tools": tools, "sandbox": sandbox_admission()},
         "rule_caches": _rule_caches(rows, home),
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
@@ -117,7 +164,7 @@ def survey(repo: Path, home: Path) -> dict[str, Any]:
     return record
 
 
-def _print_table(record: dict[str, Any]) -> None:
+def _print_table(record: dict[str, Any], home: Path) -> None:
     tools = record.get("survey", {}).get("tools", [])
     print(f"{'id':<28} {'lens':<28} {'status':<12} version")
     for row in tools:
@@ -131,7 +178,9 @@ def _print_table(record: dict[str, Any]) -> None:
             print(f"  {pack} {digest}")
     else:
         print("rule caches: none")
-    print(f"machine record: {machine_path(Path.home())}")
+    sandbox = record.get("survey", {}).get("sandbox", {})
+    print(f"sandbox: {sandbox.get('reproduction', 'unavailable')}")
+    print(f"machine record: {machine_path(home)}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -142,7 +191,6 @@ def build_parser() -> argparse.ArgumentParser:
             "This command does not install a tool."
         ),
     )
-    parser.add_argument("--home", type=Path, help="Home directory for the machine record.")
     commands = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (
         ("survey", "Print the tool table and write the machine record."),
@@ -150,6 +198,11 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--repo", type=Path, required=True)
+        command.add_argument(
+            "--home",
+            type=Path,
+            help="Home directory for the machine record. May follow --repo.",
+        )
     return parser
 
 
@@ -161,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     record = survey(Path(args.repo), home)
     if args.command == "survey":
-        _print_table(record)
+        _print_table(record, home)
     else:
         print(machine_path(home))
     return 0

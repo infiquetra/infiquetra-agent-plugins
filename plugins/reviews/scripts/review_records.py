@@ -24,6 +24,26 @@ review run into the packet directory. This module does not write a lifecycle sto
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import argparse
 import copy
 import hashlib
@@ -34,9 +54,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import review_formula as formula  # noqa: E402  (after the sys.path shim, by design)
+formula = _reviews_load('review_formula')  # noqa: E402  (after the sys.path shim, by design)
 
 _USAGE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$")
 _STAFFING_ROLE = re.compile(r"^[a-z][a-z0-9-]*$")

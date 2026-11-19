@@ -11,8 +11,17 @@ The command computes C1 grades, finding identities, and the merge answer. The re
 
 ## Prepare
 
+The script is `scripts/review_command.py` at the package root, two directories above this skill. Run that file by its path. Do not resolve the script from the repository checkout you are editing: a standalone install is not that repository's working directory.
+
 ```bash
-python3 plugins/reviews/scripts/review_command.py prepare \
+# SKILL_DIR is the directory that contains this SKILL.md.
+# CLAUDE_PLUGIN_ROOT is the package root when the package is installed.
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  S="$CLAUDE_PLUGIN_ROOT/scripts/review_command.py"
+else
+  S="$SKILL_DIR/../../scripts/review_command.py"
+fi
+python3 "$S" prepare \
   --repo <checkout> --base <base-sha> --head <head-sha> \
   --profile <profile-json> --builder-record <builder-record-json> \
   --out .reviews/<name> --home <home>
@@ -24,12 +33,18 @@ Read `grades.json`, `degraded.json`, and `where-to-look.json`. A missing tool is
 
 ## Review
 
-One pass. In this session, answer every `where-to-look.json` item against the packet, or ask `plugins/agent-launcher` to run one headless `review` session on this packet.
+One pass. In this session, answer every `where-to-look.json` item against the packet, or ask the agent-launcher plugin to run one headless review session on this packet.
 
 Write the answer and the transport result as JSON, then finish:
 
 ```bash
-python3 plugins/reviews/scripts/review_command.py finish \
+# $S is scripts/review_command.py resolved above. Resolve it again in a new shell.
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  S="$CLAUDE_PLUGIN_ROOT/scripts/review_command.py"
+else
+  S="$SKILL_DIR/../../scripts/review_command.py"
+fi
+python3 "$S" finish \
   --packet .reviews/<name> --answer <answer-json> --result <result-json> \
   --home <home>
 ```

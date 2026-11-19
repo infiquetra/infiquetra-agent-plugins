@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -49,6 +50,47 @@ def test_scan_uses_a_disposable_snapshot_and_preserves_exit_codes(tmp_path: Path
     assert "rows" in summary
     text = (output / "summary.md").read_text(encoding="utf-8")
     assert "Deterministic" in text or "exit" in text.lower() or text.strip()
+
+
+def _load(name: str):
+    key = f"infiquetra_reviews.{name}"
+    path = ROOT / "plugins" / "reviews" / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(key, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[key] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_rule_home_stages_the_reviews_cache_ahead_of_the_legacy_cache(tmp_path: Path) -> None:
+    security_scan = _load("security_scan")
+    review_tools = _load("review_tools")
+    machine = tmp_path / "machine-home"
+    pack = "p/example"
+    reviews_digest = "ab" * 32
+    legacy_digest = "cd" * 32
+    reviews_cache = machine / ".config" / "infiquetra" / "reviews" / "semgrep-rules" / "p--example"
+    reviews_cache.mkdir(parents=True)
+    (reviews_cache / "rule.yaml").write_text("rules: []\n", encoding="utf-8")
+    reviews_record = machine / ".config" / "infiquetra" / "reviews" / "machine.json"
+    reviews_record.write_text(
+        json.dumps({"rule_caches": {pack: reviews_digest}}), encoding="utf-8"
+    )
+    legacy_cache = machine / ".saga" / "semgrep-rules" / "p--example"
+    legacy_cache.mkdir(parents=True)
+    (legacy_cache / "old.yaml").write_text("rules: []\n", encoding="utf-8")
+    (machine / ".saga" / "machine.json").write_text(
+        json.dumps({"rule_caches": {pack: legacy_digest}}), encoding="utf-8"
+    )
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    security_scan._rule_home(staged, machine)
+    assert review_tools.machine_rule_digest(staged, pack) == reviews_digest
+    resolved = review_tools.semgrep_cache(staged, pack)
+    assert (resolved / "rule.yaml").is_file()
+    assert not (resolved / "old.yaml").exists()
+    assert "reviews" in resolved.parts
 
 
 def test_security_review_skill_separates_scanner_results_from_reasoned_findings() -> None:

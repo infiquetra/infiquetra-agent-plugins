@@ -27,6 +27,31 @@ for reviews 0.1.0.
 **Revisit when.** Saga retirement removes the legacy fallback and the Saga semgrep exemption,
 or a grade-formula change is accepted against the pinned corpus schema.
 
+### Reviews modules stay off the bare names Saga imports
+
+**Decision.** Reviews scripts and tests load siblings as `infiquetra_reviews.<module>`
+through `plugins/reviews/scripts/reviews_loader.py`. They do not assign
+`sys.modules['review_records']` or put `plugins/reviews/scripts` on `sys.path`.
+Skill commands resolve `scripts/` from the skill directory or `CLAUDE_PLUGIN_ROOT`.
+`review-setup survey` accepts `--home` after `--repo` and records
+`survey.sandbox.reproduction` from the platform helper. `security_scan.py` stages
+the reviews Semgrep cache and digest ahead of the legacy cache. The formula and
+schema bytes stay the `5550acf` pin; the digest check stands when that commit is
+absent, and the byte compare still runs when `git cat-file` can see it.
+The fleet direct-write scan excludes the reviews copies of
+`write-skips-shared-update-path.yaml` and its Python target, the same pattern
+data Saga already excludes for its own copies.
+
+**Rationale.** One pytest process collects `plugins/reviews/tests` and
+`plugins/saga/tests`. A bare `review_records` import then bound Saga to the
+reviews module, which has no `record_run`. Checkout-relative script paths fail
+once the package is installed on its own.
+
+**Compatibility.** No fresh multi-client assessment is claimed. The grade formula
+and corpus schema are unchanged.
+
+**Revisit when.** Saga retirement deletes the overlapping module names.
+
 ---
 
 ## 2026-11-16

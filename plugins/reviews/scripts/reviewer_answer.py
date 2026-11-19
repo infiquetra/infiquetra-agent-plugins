@@ -32,6 +32,26 @@ The formula, the identity and the record validator are C1's (``review_formula.py
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import argparse
 import copy
 import hashlib
@@ -46,12 +66,10 @@ from pathlib import Path
 from typing import Any
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
-import reproduction_match  # noqa: E402  (after the sys.path shim, by design)
-import review_formula as formula  # noqa: E402
-import review_records as records  # noqa: E402
+reproduction_match = _reviews_load('reproduction_match')  # noqa: E402  (after the sys.path shim, by design)
+formula = _reviews_load('review_formula')  # noqa: E402
+records = _reviews_load('review_records')  # noqa: E402
 
 REFERENCES = _SCRIPTS_DIR.parent / "references"
 PROMPT_FILE = REFERENCES / "targeted-reviewer-prompt.md"
@@ -639,7 +657,7 @@ Asker = Callable[[Any, Mapping[str, Any]], Any]
 
 
 def _fleet(name: str) -> Any:
-    import bundled_fleet  # noqa: PLC0415  (loaded only when Jev is asked)
+    bundled_fleet = _reviews_load('bundled_fleet')  # noqa: PLC0415  (loaded only when Jev is asked)
 
     return bundled_fleet.load(name)
 

@@ -6,6 +6,26 @@ Importing this module reads the yaml and builds adapter objects. It does not run
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import json
 import re
 from collections.abc import Mapping
@@ -13,9 +33,15 @@ from pathlib import Path
 
 import yaml
 
-import review_formula
-import review_tools
-from review_tools import Adapter, Hit, ParseResult, RulePin, ScanContext, ToolGap
+review_formula = _reviews_load('review_formula')
+review_tools = _reviews_load('review_tools')
+_loaded_review_tools = _reviews_load('review_tools')
+Adapter = _loaded_review_tools.Adapter
+Hit = _loaded_review_tools.Hit
+ParseResult = _loaded_review_tools.ParseResult
+RulePin = _loaded_review_tools.RulePin
+ScanContext = _loaded_review_tools.ScanContext
+ToolGap = _loaded_review_tools.ToolGap
 
 _DART_MARKER_NAMES = frozenset({
     "pubspec.yaml", "pubspec.lock",

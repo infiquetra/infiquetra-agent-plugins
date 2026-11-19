@@ -34,6 +34,26 @@ Run as a script, this module is that watcher: ``review_dependencies.py --limit N
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import argparse
 import csv
 import hashlib
@@ -151,7 +171,7 @@ def fetch(runner: Process, repo: Path, head: str, packet: Path, export: Export, 
     if python is not None:
         record["python"] = python
     _add_node_entry(record, runner, repo, head, packet, export, base)
-    import review_dependencies_dart  # noqa: PLC0415 - imports this module
+    review_dependencies_dart = _reviews_load('review_dependencies_dart')  # noqa: PLC0415 - imports this module
 
     dart = review_dependencies_dart.entry(runner, repo, head, packet, export)
     if dart is not None:
@@ -163,11 +183,11 @@ def _add_node_entry(record: dict[str, Any], runner: Process, repo: Path, head: s
                     packet: Path, export: Export, base: str | None = None) -> None:
     """The ``node`` entry, from ``review_dependencies_node`` (imported here: it imports this
     module)."""
-    import review_dependencies_node  # noqa: PLC0415
+    review_dependencies_node = _reviews_load('review_dependencies_node')  # noqa: PLC0415
 
     changed = None
     if base is not None:
-        import review_diff
+        review_diff = _reviews_load('review_diff')
         changed = [item.path for item in review_diff.read(repo, base, head).files]
     node = review_dependencies_node.entry(runner, repo, head, packet, export, changed=changed)
     if node is not None:

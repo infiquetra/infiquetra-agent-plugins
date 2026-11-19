@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -13,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[3]
 PACKAGE = ROOT / "plugins" / "reviews"
 COMMAND = PACKAGE / "scripts" / "review_command.py"
 PIN = "5550acf"
+FORMULA_SHA256 = "528540c6958cf628d5cdf3ea44dc7fff45c16862ad11412c56a945ceb7e4e839"
+SCHEMA_SHA256 = "a505807b505fbb65f98c58f36375256dd99b7afb2e7f3346bac9f79a9b90acd8"
 FORBIDDEN = (
     "plugins/saga",
     "plugins/orchestrate",
@@ -146,20 +149,35 @@ def test_prepare_and_finish_without_saga_run_record(tmp_path: Path) -> None:
     assert run["schema"] == "review_records.v1"
     assert run["base"] == base
     assert run["head"] == head
-    scripts = str(PACKAGE / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
-    import review_records
+    import importlib.util
 
+    script = PACKAGE / "scripts" / "review_records.py"
+    spec = importlib.util.spec_from_file_location("infiquetra_reviews.review_records", script)
+    assert spec is not None and spec.loader is not None
+    review_records = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = review_records
+    spec.loader.exec_module(review_records)
     assert review_records.validate(run) == []
 
 
 def test_formula_and_schema_match_the_pinned_bytes() -> None:
-    for relative in ("scripts/review_formula.py", "references/review-records.schema.json"):
-        pinned = subprocess.check_output(
-            ["git", "show", f"{PIN}:plugins/saga/{relative}"], cwd=ROOT
-        )
-        assert (PACKAGE / relative).read_bytes() == pinned
+    expected = {
+        "scripts/review_formula.py": FORMULA_SHA256,
+        "references/review-records.schema.json": SCHEMA_SHA256,
+    }
+    present = subprocess.run(
+        ["git", "-C", str(ROOT), "cat-file", "-e", f"{PIN}^{{commit}}"],
+        capture_output=True,
+        check=False,
+    )
+    for relative, digest in expected.items():
+        actual = (PACKAGE / relative).read_bytes()
+        assert hashlib.sha256(actual).hexdigest() == digest
+        if present.returncode == 0:
+            pinned = subprocess.check_output(
+                ["git", "show", f"{PIN}:plugins/saga/{relative}"], cwd=ROOT
+            )
+            assert actual == pinned
 
 
 def test_no_orchestrate_or_secondary_external_reviewer_dependency() -> None:

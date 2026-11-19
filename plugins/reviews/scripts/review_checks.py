@@ -8,6 +8,26 @@ document and exits 0, including when the document's only content is a gap.
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import argparse
 import ast
 import json
@@ -26,20 +46,19 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import review_dependencies
-import review_diagnostics
-import review_diff
-import review_formula
-import review_node_projects
-import review_tools
-from review_tools import (
-    Adapter,
-    Hit,
-    ParseResult,
-    ScanContext,
-    language_for,
-    plugin_root,
-)
+review_dependencies = _reviews_load('review_dependencies')
+review_diagnostics = _reviews_load('review_diagnostics')
+review_diff = _reviews_load('review_diff')
+review_formula = _reviews_load('review_formula')
+review_node_projects = _reviews_load('review_node_projects')
+review_tools = _reviews_load('review_tools')
+_loaded_review_tools = _reviews_load('review_tools')
+Adapter = _loaded_review_tools.Adapter
+Hit = _loaded_review_tools.Hit
+ParseResult = _loaded_review_tools.ParseResult
+ScanContext = _loaded_review_tools.ScanContext
+language_for = _loaded_review_tools.language_for
+plugin_root = _loaded_review_tools.plugin_root
 
 VERSION = "1.0.0"
 COMMAND_TIMEOUT = 30
@@ -704,7 +723,7 @@ def _two_node_runs(root: Path, base: str, change: review_diff.Change, kind: str,
         if not _inside(old, base_root):
             return "no-test-list"
         old.mkdir(parents=True, exist_ok=True)
-        import review_dependencies_node
+        review_dependencies_node = _reviews_load('review_dependencies_node')
         modules = cwd / "node_modules"
         if modules.is_dir():
             review_dependencies_node.link_into(old, modules.resolve())
@@ -1484,7 +1503,7 @@ def _other_removed(
     removed_lines: Sequence[str],
     added_lines: Sequence[str],
 ) -> None:
-    import sweep_pieces
+    sweep_pieces = _reviews_load('sweep_pieces')
 
     if language in sweep_pieces.CTAGS_LANGUAGES:
         base_names = _span_names(before, path, language)
@@ -1498,7 +1517,7 @@ def _other_removed(
 
 
 def _span_names(text: str, path: str, language: str) -> set[str] | None:
-    import sweep_pieces
+    sweep_pieces = _reviews_load('sweep_pieces')
 
     if not text.strip():
         return set()
@@ -1715,7 +1734,7 @@ def _stage_node_test_settings(context: ScanContext) -> None:
     """
     if context.change is None:
         return
-    import review_adapters_typescript as typescript
+    typescript = _reviews_load('review_adapters_typescript')
     names = (*typescript._VITEST_CONFIGS, *typescript._JEST_CONFIGS,
              *typescript._BABEL_CONFIGS, ".swcrc", ".swcrc.json", "tsconfig.json")
     for folder in review_node_projects.projects(context.root, (f.path for f in context.change.files)):

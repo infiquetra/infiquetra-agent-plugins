@@ -11,6 +11,26 @@ the re-run has to fail with the recorded failure, on a tree of the change's head
 
 from __future__ import annotations
 
+
+def _reviews_load(name: str):
+    """Load a sibling without occupying the bare name Saga tests import."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    key = "infiquetra_reviews.reviews_loader"
+    loader = sys.modules.get(key)
+    if loader is None:
+        path = Path(__file__).resolve().parent / "reviews_loader.py"
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[key] = loader
+        spec.loader.exec_module(loader)
+    return loader.load(name)
+
+
 import argparse
 import copy
 import hashlib
@@ -31,20 +51,18 @@ from pathlib import Path
 from typing import Any
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
-import review_calibration  # noqa: E402
-import review_dependencies  # noqa: E402
-import review_dependencies_dart  # noqa: E402
-import review_dependencies_node  # noqa: E402
-import review_diff  # noqa: E402
-import review_formula  # noqa: E402
-import review_records  # noqa: E402
-import review_tools  # noqa: E402
-import reproduction_match  # noqa: E402
-import review_setup  # noqa: E402
-import reviewer_answer  # noqa: E402
+review_calibration = _reviews_load('review_calibration')  # noqa: E402
+review_dependencies = _reviews_load('review_dependencies')  # noqa: E402
+review_dependencies_dart = _reviews_load('review_dependencies_dart')  # noqa: E402
+review_dependencies_node = _reviews_load('review_dependencies_node')  # noqa: E402
+review_diff = _reviews_load('review_diff')  # noqa: E402
+review_formula = _reviews_load('review_formula')  # noqa: E402
+review_records = _reviews_load('review_records')  # noqa: E402
+review_tools = _reviews_load('review_tools')  # noqa: E402
+reproduction_match = _reviews_load('reproduction_match')  # noqa: E402
+review_setup = _reviews_load('review_setup')  # noqa: E402
+reviewer_answer = _reviews_load('reviewer_answer')  # noqa: E402
 
 RERUN_TIMEOUT = 120
 #: The file-creation mask every re-run child starts with, whatever mask this process has: the
@@ -584,7 +602,7 @@ def _sweep(
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     if args.bank is None:
         # The four approved shipped banks, merged, as the build-loop path merges them (issue 254).
-        import question_banks  # noqa: PLC0415
+        question_banks = _reviews_load('question_banks')  # noqa: PLC0415
 
         try:
             merged: list[Any] = []
@@ -605,7 +623,7 @@ def _sweep(
     rate = _jev_rate()
     if rate is None:
         return [], [_degraded("correctness", "none", "model-prices", "jev", "no-rate")]
-    import sweep_pieces  # noqa: PLC0415
+    sweep_pieces = _reviews_load('sweep_pieces')  # noqa: PLC0415
 
     try:
         cut = sweep_pieces.pieces(repo, base, head, bank, calibration=calibration)
@@ -621,7 +639,7 @@ def _sweep(
     cache.mkdir(parents=True, exist_ok=True)
     (cache / "log").mkdir(parents=True, exist_ok=True)
     try:
-        import bundled_fleet  # noqa: PLC0415
+        bundled_fleet = _reviews_load('bundled_fleet')  # noqa: PLC0415
 
         module = bundled_fleet.load("jev_sweep")
         result = module.sweep(
@@ -1493,7 +1511,7 @@ def _post_trace(
     owner-only queue under ``home`` and is sent by a later post.
     """
     try:
-        import review_trace  # noqa: PLC0415 - loaded late so a broken bundle cannot stop finish
+        review_trace = _reviews_load('review_trace')  # noqa: PLC0415 - loaded late so a broken bundle cannot stop finish
 
         summary = review_trace.post_review_run(
             run, results, repo=repo if repo.is_dir() else None, record=None, home=home,

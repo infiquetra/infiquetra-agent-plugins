@@ -11,9 +11,17 @@ Two sections, kept apart.
 
 Run the committed-tree scanner. It reads the selected commit through Git, builds a disposable snapshot, and leaves the target untouched.
 
+The script is `scripts/security_scan.py` at the package root, two directories above this skill. Run that file by its path. Do not resolve the script from the repository checkout you are editing: a standalone install is not that repository's working directory.
+
 ```bash
-python3 plugins/reviews/scripts/security_scan.py \
-  --repo <repository> --output <results-directory>
+# SKILL_DIR is the directory that contains this SKILL.md.
+# CLAUDE_PLUGIN_ROOT is the package root when the package is installed.
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  S="$CLAUDE_PLUGIN_ROOT/scripts/security_scan.py"
+else
+  S="$SKILL_DIR/../../scripts/security_scan.py"
+fi
+python3 "$S" --repo <repository> --output <results-directory>
 ```
 
 Exit `0` means every applicable row finished clean. Exit `1` means every applicable row finished and at least one finding was reported. Exit `2` means an applicable row was incomplete or degraded. Incomplete takes precedence over findings. Do not treat exit `2` as a clean audit.
