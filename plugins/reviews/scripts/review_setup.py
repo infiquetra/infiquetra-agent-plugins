@@ -128,8 +128,15 @@ def _rule_caches(rows: list[dict[str, Any]], home: Path) -> dict[str, str]:
             if not cache.is_dir():
                 continue
             digest = review_tools.digest_tree(cache)
-            if digest:
-                caches[pack] = digest
+            if not digest:
+                continue
+            # The catalogue row owns the digest. The pack key stays so older
+            # readers still find it. Nothing here fetches a pack or writes the
+            # custom rules directory.
+            row_id = str(row.get("id") or "")
+            if row_id:
+                caches[row_id] = digest
+            caches[pack] = digest
     return dict(sorted(caches.items()))
 
 

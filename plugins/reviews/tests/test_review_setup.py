@@ -54,6 +54,143 @@ def test_load_machine_prefers_reviews_config_and_falls_back(tmp_path: Path) -> N
     assert json.loads((legacy / "machine.json").read_text(encoding="utf-8"))["schema"] == "legacy"
 
 
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _init(repo: Path) -> None:
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "reviews@example.com"], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "reviews"], cwd=repo, check=True, capture_output=True
+    )
+
+
+def _custom_rule_bytes() -> dict[str, bytes]:
+    custom = PACKAGE / "references" / "semgrep"
+    return {
+        path.relative_to(custom).as_posix(): path.read_bytes()
+        for path in custom.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_setup_records_fetched_semgrep_pack_for_prepare_and_security_scan(tmp_path: Path) -> None:
+    before = _custom_rule_bytes()
+    home = tmp_path / "home"
+    cache = review_tools.semgrep_cache(home, "p/security-audit")
+    cache.mkdir(parents=True)
+    (cache / "rules.yml").write_text("rules: []\n", encoding="utf-8")
+    digest = review_tools.digest_tree(cache)
+    repo = tmp_path / "survey-repo"
+    repo.mkdir()
+    record = review_setup.survey(repo, home)
+    assert record["rule_caches"]["semgrep-security"] == digest
+    assert record["rule_caches"]["p/security-audit"] == digest
+    assert _custom_rule_bytes() == before
+    assert not any(path.is_dir() for path in (PACKAGE / "references" / "semgrep").rglob("p--security-audit"))
+
+    scanned = tmp_path / "repo"
+    _init(scanned)
+    (scanned / "src").mkdir()
+    (scanned / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    base = _git(scanned, "add", "-A")
+    _git(scanned, "commit", "-m", "base")
+    base = _git(scanned, "rev-parse", "HEAD")
+    (scanned / "src" / "app.py").write_text("two\n", encoding="utf-8")
+    _git(scanned, "add", "-A")
+    _git(scanned, "commit", "-m", "head")
+    head = _git(scanned, "rev-parse", "HEAD")
+    profile = tmp_path / "profile.json"
+    profile.write_text("{}\n", encoding="utf-8")
+    adapters = {item.id: item for item in review_tools.default_adapters()}
+
+    def runner(argv, *, cwd, env, timeout, shell):
+        del cwd, env, timeout, shell
+        if argv and argv[-1:] == ["--version"] or "--version" in argv:
+            return review_tools.ProcessResult(0, "1.179.0\n")
+        return review_tools.ProcessResult(0, "{}")
+
+    output = tmp_path / "prepare"
+    code = review_tools.run(
+        scanned, base, head, profile, output, home=home,
+        adapters=[adapters["semgrep-security"]], runner=runner, framework=False,
+    )
+    assert code == 0
+    sources = json.loads((output / "rule-sources.json").read_text(encoding="utf-8"))
+    assert sources["semgrep-security"]["source"] == "machine"
+    assert sources["semgrep-security"]["rules"][0]["sha256"] == digest
+    assert sources["semgrep-security"]["rules"][0]["pack"] == "p/security-audit"
+
+    saga_out = tmp_path / "saga"
+    code = review_tools.run(
+        scanned, base, head, profile, saga_out, home=home,
+        adapters=[adapters["semgrep-saga"]], runner=runner, framework=False,
+    )
+    assert code == 0
+    saga_sources = json.loads((saga_out / "rule-sources.json").read_text(encoding="utf-8"))
+    assert "semgrep-saga" not in saga_sources
+    assert _custom_rule_bytes() == before
+
+    security_scan = _load("security_scan")
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    security_scan._rule_home(staged, home)
+    assert review_tools.machine_rule_digest(staged, "semgrep-security") == digest
+    assert review_tools.semgrep_cache(staged, "p/security-audit").is_dir()
+
+
+def test_missing_semgrep_cache_stays_rule_cache_missing(tmp_path: Path, monkeypatch) -> None:
+    before = _custom_rule_bytes()
+    home = tmp_path / "empty-home"
+    home.mkdir()
+    (tmp_path / "empty-repo").mkdir()
+    record = review_setup.survey(tmp_path / "empty-repo", home)
+    assert "semgrep-security" not in record["rule_caches"]
+    assert "p/security-audit" not in record["rule_caches"]
+
+    scanned = tmp_path / "repo"
+    _init(scanned)
+    (scanned / "src").mkdir()
+    (scanned / "src" / "app.py").write_text("one\n", encoding="utf-8")
+    _git(scanned, "add", "-A")
+    _git(scanned, "commit", "-m", "base")
+    base = _git(scanned, "rev-parse", "HEAD")
+    (scanned / "src" / "app.py").write_text("two\n", encoding="utf-8")
+    _git(scanned, "add", "-A")
+    _git(scanned, "commit", "-m", "head")
+    head = _git(scanned, "rev-parse", "HEAD")
+    profile = tmp_path / "profile.json"
+    profile.write_text("{}\n", encoding="utf-8")
+    security = next(item for item in review_tools.default_adapters() if item.id == "semgrep-security")
+    output = tmp_path / "prepare"
+    code = review_tools.run(
+        scanned, base, head, profile, output, home=home,
+        adapters=[security], runner=lambda *args, **kwargs: review_tools.ProcessResult(0, "{}"),
+        framework=False,
+    )
+    assert code == 0
+    degraded = json.loads((output / "degraded.json").read_text(encoding="utf-8"))
+    assert any(item["reason"] == "rule-cache-missing" and item["tool"] == "semgrep" for item in degraded)
+    assert _custom_rule_bytes() == before
+
+    security_scan = _load("security_scan")
+    monkeypatch.setattr(security_scan.Path, "home", lambda: home)
+    scan_out = tmp_path / "scan-out"
+    exit_code = security_scan.main(["--repo", str(scanned), "--output", str(scan_out)])
+    assert exit_code == 2
+    summary = json.loads((scan_out / "summary.json").read_text(encoding="utf-8"))
+    row = next(item for item in summary["rows"] if item["id"] == "semgrep-security")
+    assert "rule-cache-missing" in row["reason"]
+    assert _custom_rule_bytes() == before
+    assert not review_tools.semgrep_cache(home, "p/security-audit").exists()
+
+
 def test_documented_survey_accepts_home_after_repo(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

@@ -2506,6 +2506,60 @@ def test_saga_rules_source_is_the_plugin_copy(
     assert Path(rendered_pinned[0]).parent == tmp_path / "home-2"
 
 
+def test_semgrep_security_pack_pin_preserves_custom_semgrep_row(tmp_path: Path) -> None:
+    """A p/security-audit pin reaches semgrep-security and leaves semgrep-saga alone."""
+    custom = REFERENCES / "semgrep"
+    before = {
+        path.relative_to(custom).as_posix(): path.read_bytes()
+        for path in custom.rglob("*")
+        if path.is_file()
+    }
+    home = tmp_path / "home"
+    digest = _semgrep_cache(home)
+    repo, base, head = _pair(tmp_path)
+    profile = _profile(tmp_path / "profile.json", {
+        "review_tools": {"pins": {"semgrep": {"version": "1.0.0", "rules": [
+            {"pack": "p/security-audit", "sha256": digest},
+        ]}}},
+    })
+    adapters = _load("review_adapters_all_languages")
+    security = next(item for item in adapters.ADAPTERS if item.id == "semgrep-security")
+    saga = next(item for item in adapters.ADAPTERS if item.id == "semgrep-saga")
+
+    def configs(runner: _Calls) -> list[str]:
+        found = []
+        for call in runner.calls:
+            if "--config" not in call["argv"]:
+                continue
+            found.append(call["argv"][call["argv"].index("--config") + 1])
+        return found
+
+    security_runner = _Calls(_ok("{}"))
+    code = _run(
+        repo, base, head, profile, tmp_path / "security", home,
+        adapters=[security], runner=security_runner,
+    )
+    assert code == 0, _reasons(tmp_path / "security")
+    cache = T.semgrep_cache(home, "p/security-audit")
+    assert configs(security_runner) == [str(cache)]
+
+    saga_runner = _Calls(_ok("{}"))
+    code = _run(
+        repo, base, head, profile, tmp_path / "saga", home,
+        adapters=[saga], runner=saga_runner,
+    )
+    assert code == 0, _reasons(tmp_path / "saga")
+    rendered = configs(saga_runner)
+    assert len(rendered) == 1
+    assert Path(rendered[0]).parent == home
+    assert rendered[0] != str(cache)
+    assert {
+        path.relative_to(custom).as_posix(): path.read_bytes()
+        for path in custom.rglob("*")
+        if path.is_file()
+    } == before
+
+
 def test_relative_rule_path_survives_until_the_scan(tmp_path: Path) -> None:
     """A base-profile rule directory still exists when the fake runner is called."""
     repo = tmp_path / "repo"

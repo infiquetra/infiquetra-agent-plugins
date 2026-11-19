@@ -2591,13 +2591,18 @@ def _pinned_version(adapter: Adapter, profile: Mapping[str, Any]) -> str:
 def _profile_rules(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePin, ...] | None:
     """The rules a profile pins for this adapter, or None when it pins none.
 
-    A pin under the adapter id wins over a pin under the tool name, so one row can pin its
-    own rules without replacing the rules of the other row that shares the binary.
+    A pin under the adapter id wins over a pin under the tool name. A tool-name
+    pin still reaches a row that shares the binary, except a pack pin must not
+    replace a row whose catalogue rules are a local directory. Recording
+    ``p/security-audit`` therefore leaves ``semgrep-saga`` on
+    ``references/semgrep``.
     """
     pins = profile.get("pins") or {}
     rules = _pin_rules_of(pins.get(adapter.id))
     if rules is None:
-        rules = _pin_rules_of(pins.get(adapter.tool))
+        tool_rules = _pin_rules_of(pins.get(adapter.tool))
+        if tool_rules is not None and _program_pin_reaches(adapter, tool_rules):
+            rules = tool_rules
     if rules is None:
         return None
     return tuple(
@@ -2651,7 +2656,12 @@ def _resolve_rules(
     source = "catalogue"
     resolved: list[RulePin] = []
     for rule in adapter.rules:
-        digest = machine_rule_digest(home, rule.pack) if rule.placeholder and rule.pack else ""
+        digest = ""
+        if rule.placeholder and rule.pack:
+            # The row id is the pin. A pack key remains for records written before that.
+            digest = (
+                machine_rule_digest(home, adapter.id) or machine_rule_digest(home, rule.pack)
+            )
         if digest:
             rule = replace(rule, sha256=digest, placeholder=False)
             source = "machine"
@@ -2661,6 +2671,18 @@ def _resolve_rules(
 
 def _pin_rules_of(pin: object) -> object:
     return pin.get("rules") if isinstance(pin, Mapping) else None
+
+
+def _custom_directory_row(adapter: Adapter) -> bool:
+    """True when every catalogue rule is a directory path and not a registry pack."""
+    return bool(adapter.rules) and all(rule.path and not rule.pack for rule in adapter.rules)
+
+
+def _program_pin_reaches(adapter: Adapter, rules: object) -> bool:
+    """A program-level pack pin does not replace a custom rule directory."""
+    if not isinstance(rules, list) or not _custom_directory_row(adapter):
+        return True
+    return any(isinstance(item, Mapping) and item.get("path") for item in rules)
 
 
 def _shared_update_names(review: object) -> tuple[str, ...] | None:
