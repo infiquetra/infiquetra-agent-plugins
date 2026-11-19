@@ -1,0 +1,11 @@
+{
+  "name": "plan",
+  "version": "0.1.0",
+  "description": "Auto-triggered planning guidelines, a plan-file checker, and an advisory hook when a file under docs/plans is written.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "hooks": "./com.infiquetra.claude/hooks/hooks.json",
+  "skills": "./skills/"
+}

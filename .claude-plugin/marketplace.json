@@ -248,6 +248,24 @@
       ]
     },
     {
+      "name": "plan",
+      "source": "./plugins/plan",
+      "version": "0.1.0",
+      "description": "Auto-triggered planning guidelines, a plan-file checker, and an advisory hook when a file under docs/plans is written.",
+      "author": {
+        "name": "Infiquetra",
+        "email": "hello@infiquetra.com"
+      },
+      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+      "license": "MIT",
+      "keywords": [
+        "plan",
+        "planning",
+        "implementation-plan",
+        "verification"
+      ]
+    },
+    {
       "name": "redis-channel",
       "source": "./plugins/redis-channel",
       "version": "0.5.4",

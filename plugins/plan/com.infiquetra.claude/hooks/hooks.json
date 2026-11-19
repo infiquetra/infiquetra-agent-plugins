@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/com.infiquetra.claude/hooks/validate_plan_write_hook.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

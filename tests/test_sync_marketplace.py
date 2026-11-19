@@ -419,7 +419,7 @@ class MuseApplicablePackageTests(MuseStagingCase):
             [package.name for package in sm.muse_applicable_packages(self.root)], ["alpha"]
         )
 
-    def test_the_committed_tree_has_exactly_the_sixteen_installable_packages(self) -> None:
+    def test_the_committed_tree_has_exactly_the_seventeen_installable_packages(self) -> None:
         self.assertEqual(
             [package.name for package in sm.muse_applicable_packages(ROOT)],
             [
@@ -434,6 +434,7 @@ class MuseApplicablePackageTests(MuseStagingCase):
                 "investigate",
                 "mission-control",
                 "orchestrate",
+                "plan",
                 "redis-channel",
                 "saga",
                 "strategy",

@@ -1,0 +1,15 @@
+{
+  "name": "plan",
+  "version": "0.1.0",
+  "description": "Claude client extension for the plan package: an advisory PostToolUse hook when a file under docs/plans is written.",
+  "author": {
+    "name": "Infiquetra",
+    "email": "hello@infiquetra.com"
+  },
+  "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
+  "keywords": [
+    "plan",
+    "docs-plans",
+    "advisory-hook"
+  ]
+}
