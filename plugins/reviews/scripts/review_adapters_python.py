@@ -78,6 +78,14 @@ _ROWS: dict[str, tuple[str, ...]] = {
 }
 _RANDOMLY_PACKAGE = "pytest-randomly==5.0.0"
 _SOCKET_PACKAGE = "pytest-socket==0.8.1"
+_PLUGIN_INSTALL_TIMEOUT = 60
+# Names the installer may see. Everything else in the ambient environment stays out,
+# including credentials and PYTHONPATH.
+_INSTALL_ENV = (
+    "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "HOME",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+    "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "XDG_CACHE_HOME",
+)
 
 
 def _plugin_version_argv(package: str, distribution: str) -> tuple[str, ...]:
@@ -1170,11 +1178,30 @@ def _parse_cosmic(text: str) -> ParseResult:
     return ParseResult(tuple(hits), gaps=gaps, gap_details=details)
 
 
-def _pytest_interpreter(parts: list[str]) -> str:
-    """The interpreter that will run pytest, after the #227 rewrite."""
-    if parts and Path(parts[0]).name.startswith("python"):
-        return parts[0]
-    return sys.executable
+def _plugin_install_env() -> dict[str, str]:
+    """The installer's environment: PATH and locale, never the ambient secret set."""
+    env = {name: os.environ[name] for name in _INSTALL_ENV if os.environ.get(name)}
+    env["UV_PYTHON_DOWNLOADS"] = "never"
+    env["UV_NO_PROGRESS"] = "1"
+    return env
+
+
+def _anchor_interpreter(context: ScanContext, parts: list[str]) -> list[str]:
+    """Resolve a scan-relative interpreter against the repository, not the caller cwd.
+
+    ``.venv/bin/python`` is relative to the tree under review. ``uv pip install
+    --python`` would otherwise open that path from whatever directory invoked
+    the adapter.
+    """
+    if not parts:
+        return parts
+    head = parts[0]
+    path = Path(head)
+    if path.is_absolute() or not path.name.startswith("python"):
+        return parts
+    if "/" not in head and "\\" not in head:
+        return parts
+    return [str((context.root / path).resolve()), *parts[1:]]
 
 
 def _install_pytest_plugin(context: ScanContext, package: str, interpreter: str) -> Path:
@@ -1185,17 +1212,26 @@ def _install_pytest_plugin(context: ScanContext, package: str, interpreter: str)
     ``No module named 'randomly'``. The scan folder is removed with the
     adapter's scratch directory, so one run cannot leave the plugin on the next.
     ``--no-deps`` keeps the project's own pytest; the plugin imports that one.
+    A missing ``uv``, a hung install, or a failed install is a gap, not a crash.
     """
     folder = review_tools.scan_folder(context, "pytest-plugin-" + package.split("==", 1)[0])
     target = folder / "site"
     target.mkdir()
-    result = subprocess.run(
-        [
-            "uv", "pip", "install", "--python", interpreter, "--target", str(target),
-            "--no-deps", package,
-        ],
-        capture_output=True, text=True, check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "uv", "pip", "install", "--python", interpreter, "--target", str(target),
+                "--no-deps", package,
+            ],
+            capture_output=True, text=True, check=False,
+            env=_plugin_install_env(),
+            timeout=_PLUGIN_INSTALL_TIMEOUT,
+            cwd=context.root,
+        )
+    except subprocess.TimeoutExpired:
+        raise ToolGap("timeout", "testing.flaky-order-or-network") from None
+    except OSError:
+        raise ToolGap("missing", "testing.flaky-order-or-network") from None
     if result.returncode != 0:
         raise ToolGap("missing", "testing.flaky-order-or-network")
     return target
@@ -1210,8 +1246,17 @@ def _pytest_argv(context: ScanContext, package: str, extra: list[str]) -> list[s
     if parts and parts[0].startswith("PYTHONPATH="):
         assigned = parts[0].split("=", 1)[1]
         parts = parts[1:]
-    parts = _resolve_python_head(parts)
-    target = _install_pytest_plugin(context, package, _pytest_interpreter(parts))
+    parts = _anchor_interpreter(context, _resolve_python_head(parts))
+    # Bare ``pytest`` is not on PATH in the setups where ``uv run --with`` used
+    # to supply both pytest and the plugin. An explicit interpreter keeps its
+    # own pytest and only borrows the plugin through PYTHONPATH.
+    if parts[:1] == ["pytest"]:
+        argv = ["uv", "run", "--with", package, *parts, *extra]
+        if not assigned:
+            return argv
+        return ["env", f"PYTHONPATH={assigned}", *argv]
+    interpreter = parts[0] if parts and Path(parts[0]).name.startswith("python") else sys.executable
+    target = _install_pytest_plugin(context, package, interpreter)
     pieces = [str(target)]
     if assigned:
         pieces.append(assigned)
@@ -1227,8 +1272,12 @@ def _invoke_randomly(context: ScanContext) -> list[str]:
 
 
 def _invoke_socket(context: ScanContext) -> list[str]:
+    # ``-p pytest_socket`` loads the module when autoload is off. ``-p no:socket``
+    # stops the entry point from registering that same module a second time when
+    # autoload is on (the entry point name is ``socket``, not the module name).
     return _pytest_argv(
-        context, _SOCKET_PACKAGE, ["-p", "no:randomly", "--disable-socket"]
+        context, _SOCKET_PACKAGE,
+        ["-p", "no:randomly", "-p", "no:socket", "-p", "pytest_socket", "--disable-socket"],
     )
 
 
