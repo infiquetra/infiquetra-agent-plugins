@@ -597,30 +597,39 @@ def differing_tool(
             if isinstance(pin, Mapping) and _pin_differs(row, {"version": pin.get("version")}):
                 return str(tool)
             continue
-        if isinstance(pin, Mapping) and _pin_differs(row, pin):
-            if _pack_pin_skips_custom_path(row, pin):
-                if _pin_differs(row, {"version": pin.get("version")}):
-                    return str(tool)
-                continue
+        if isinstance(pin, Mapping) and _legacy_pin_differs(row, pin):
             return str(tool)
     return None
 
 
-def _pack_pin_skips_custom_path(row: Mapping[str, Any], pin: Mapping[str, Any]) -> bool:
-    """A program-level pack pin is not a difference for a custom rule directory.
+def _legacy_rules_for_row(row: Mapping[str, Any], rules: list[object]) -> list[object]:
+    """Same partition the runner applies to a program-level rules list."""
+    catalogue = [item for item in (row.get("rules") or []) if isinstance(item, Mapping)]
+    packs = {item.get("pack") for item in catalogue if item.get("pack")}
+    directory = bool(catalogue) and all(
+        item.get("path") and not item.get("pack") for item in catalogue
+    )
+    if directory:
+        return [item for item in rules if isinstance(item, Mapping) and item.get("path")]
+    if packs:
+        return [
+            item for item in rules
+            if isinstance(item, Mapping)
+            and item.get("pack") in packs
+            and not item.get("path")
+        ]
+    return [item for item in rules if isinstance(item, Mapping)]
 
-    The runner leaves that directory in place, so the lens must not drop to
-    report-only because ``p/security-audit`` was recorded for another row.
-    """
+
+def _legacy_pin_differs(row: Mapping[str, Any], pin: Mapping[str, Any]) -> bool:
+    """A program pin differs only in the entries this row would actually run."""
+    compared: dict[str, Any] = {"version": pin.get("version")}
     rules = pin.get("rules")
-    catalogue = row.get("rules") or []
-    if not isinstance(rules, list) or not rules or not isinstance(catalogue, list) or not catalogue:
-        return False
-    if not all(
-        isinstance(item, Mapping) and item.get("path") and not item.get("pack") for item in catalogue
-    ):
-        return False
-    return all(isinstance(item, Mapping) and item.get("pack") and not item.get("path") for item in rules)
+    if isinstance(rules, list):
+        selected = _legacy_rules_for_row(row, rules)
+        if selected:
+            compared["rules"] = selected
+    return _pin_differs(row, compared)
 
 
 def pinned_tool(root: Path, lens: str, profile_path: Path) -> str | None:

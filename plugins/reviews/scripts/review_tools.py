@@ -2592,17 +2592,18 @@ def _profile_rules(adapter: Adapter, profile: Mapping[str, Any]) -> tuple[RulePi
     """The rules a profile pins for this adapter, or None when it pins none.
 
     A pin under the adapter id wins over a pin under the tool name. A tool-name
-    pin still reaches a row that shares the binary, except a pack pin must not
-    replace a row whose catalogue rules are a local directory. Recording
-    ``p/security-audit`` therefore leaves ``semgrep-saga`` on
-    ``references/semgrep``.
+    list is split by the row: path entries stay with a custom directory, and a
+    pack entry stays only with the row whose catalogue names that pack. A
+    path-only program pin therefore cannot replace the recorded
+    ``semgrep-security`` pack, and a missing pack cache cannot suppress the
+    custom ``semgrep-saga`` scan.
     """
     pins = profile.get("pins") or {}
     rules = _pin_rules_of(pins.get(adapter.id))
     if rules is None:
         tool_rules = _pin_rules_of(pins.get(adapter.tool))
-        if tool_rules is not None and _program_pin_reaches(adapter, tool_rules):
-            rules = tool_rules
+        if isinstance(tool_rules, list):
+            rules = _legacy_rules_for_adapter(adapter, tool_rules)
     if rules is None:
         return None
     return tuple(
@@ -2678,11 +2679,27 @@ def _custom_directory_row(adapter: Adapter) -> bool:
     return bool(adapter.rules) and all(rule.path and not rule.pack for rule in adapter.rules)
 
 
-def _program_pin_reaches(adapter: Adapter, rules: object) -> bool:
-    """A program-level pack pin does not replace a custom rule directory."""
-    if not isinstance(rules, list) or not _custom_directory_row(adapter):
-        return True
-    return any(isinstance(item, Mapping) and item.get("path") for item in rules)
+def _legacy_rules_for_adapter(adapter: Adapter, rules: list[object]) -> list[object] | None:
+    """The program-level entries that belong to this row, or None when none do.
+
+    A mixed ``semgrep.rules`` list is not applied whole. Path entries belong to
+    a custom directory row. Pack entries belong to the row that already names
+    that pack. A row with no matching entry keeps its catalogue rule, including
+    a pack digest recorded by review-setup.
+    """
+    catalogue_packs = {rule.pack for rule in adapter.rules if rule.pack}
+    if _custom_directory_row(adapter):
+        selected = [item for item in rules if isinstance(item, Mapping) and item.get("path")]
+    elif catalogue_packs:
+        selected = [
+            item for item in rules
+            if isinstance(item, Mapping)
+            and item.get("pack") in catalogue_packs
+            and not item.get("path")
+        ]
+    else:
+        selected = [item for item in rules if isinstance(item, Mapping)]
+    return selected or None
 
 
 def _shared_update_names(review: object) -> tuple[str, ...] | None:

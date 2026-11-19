@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -80,7 +82,61 @@ def _custom_rule_bytes() -> dict[str, bytes]:
     }
 
 
-def test_setup_records_fetched_semgrep_pack_for_prepare_and_security_scan(tmp_path: Path) -> None:
+def _scanner_stubs(directory: Path) -> Path:
+    """Fake scanners on PATH. The shebang is this interpreter, so PATH can omit Python."""
+    directory.mkdir()
+    script = directory / "scanner-stub.py"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "log = Path(__file__).resolve().parent / 'invocations.log'\n"
+        "name = Path(sys.argv[0]).name\n"
+        "with log.open('a', encoding='utf-8') as handle:\n"
+        "    handle.write(json.dumps({'name': name, 'argv': sys.argv[1:]}) + '\\n')\n"
+        "versions = {\n"
+        "    'semgrep': '1.179.0', 'bandit': '1.9.4', 'pip-audit': '2.10.1',\n"
+        "    'gitleaks': '8.24.0', 'osv-scanner': '1.7.0',\n"
+        "}\n"
+        "if '--version' in sys.argv[1:]:\n"
+        "    print(versions.get(name, '1.0.0'))\n"
+        "    raise SystemExit(0)\n"
+        "payloads = {\n"
+        "    'semgrep': '{\"results\":[]}', 'bandit': '{\"results\":[]}',\n"
+        "    'gitleaks': '[]', 'osv-scanner': '{\"results\":[]}',\n"
+        "    'pip-audit': '{\"dependencies\":[]}',\n"
+        "}\n"
+        "print(payloads.get(name, '{}'))\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    for name in ("semgrep", "gitleaks", "osv-scanner", "bandit", "pip-audit"):
+        (directory / name).symlink_to(script)
+    git = shutil.which("git")
+    assert git is not None
+    (directory / "git").symlink_to(git)
+    return script
+
+
+def _semgrep_configs(log: Path) -> list[str]:
+    if not log.is_file():
+        return []
+    found = []
+    for line in log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        item = json.loads(line)
+        argv = item.get("argv") or []
+        if item.get("name") == "semgrep" and "--config" in argv:
+            found.append(argv[argv.index("--config") + 1])
+    return found
+
+
+def test_setup_records_fetched_semgrep_pack_for_prepare_and_security_scan(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
     before = _custom_rule_bytes()
     home = tmp_path / "home"
     cache = review_tools.semgrep_cache(home, "p/security-audit")
@@ -93,13 +149,15 @@ def test_setup_records_fetched_semgrep_pack_for_prepare_and_security_scan(tmp_pa
     assert record["rule_caches"]["semgrep-security"] == digest
     assert record["rule_caches"]["p/security-audit"] == digest
     assert _custom_rule_bytes() == before
-    assert not any(path.is_dir() for path in (PACKAGE / "references" / "semgrep").rglob("p--security-audit"))
+    assert not any(
+        path.is_dir() for path in (PACKAGE / "references" / "semgrep").rglob("p--security-audit")
+    )
 
     scanned = tmp_path / "repo"
     _init(scanned)
     (scanned / "src").mkdir()
     (scanned / "src" / "app.py").write_text("one\n", encoding="utf-8")
-    base = _git(scanned, "add", "-A")
+    _git(scanned, "add", "-A")
     _git(scanned, "commit", "-m", "base")
     base = _git(scanned, "rev-parse", "HEAD")
     (scanned / "src" / "app.py").write_text("two\n", encoding="utf-8")
@@ -107,42 +165,72 @@ def test_setup_records_fetched_semgrep_pack_for_prepare_and_security_scan(tmp_pa
     _git(scanned, "commit", "-m", "head")
     head = _git(scanned, "rev-parse", "HEAD")
     profile = tmp_path / "profile.json"
-    profile.write_text("{}\n", encoding="utf-8")
-    adapters = {item.id: item for item in review_tools.default_adapters()}
+    profile.write_text('{"schema": "repository_profile.v1"}\n', encoding="utf-8")
+    builder = tmp_path / "builder.json"
+    builder.write_text(json.dumps({
+        "kind": "builder_record",
+        "schema": "review_records.v1",
+        "unit": "R1",
+        "acceptance_criteria": [
+            {"id": "AC-1", "text": "The changed line is reviewed.", "checks": ["line"]},
+        ],
+        "declarations": [],
+        "reasons": [],
+    }), encoding="utf-8")
+    stub = _scanner_stubs(tmp_path / "bin")
+    monkeypatch.setenv("PATH", str(stub.parent))
 
-    def runner(argv, *, cwd, env, timeout, shell):
-        del cwd, env, timeout, shell
-        if argv and argv[-1:] == ["--version"] or "--version" in argv:
-            return review_tools.ProcessResult(0, "1.179.0\n")
-        return review_tools.ProcessResult(0, "{}")
-
-    output = tmp_path / "prepare"
-    code = review_tools.run(
-        scanned, base, head, profile, output, home=home,
-        adapters=[adapters["semgrep-security"]], runner=runner, framework=False,
-    )
-    assert code == 0
-    sources = json.loads((output / "rule-sources.json").read_text(encoding="utf-8"))
+    packet = tmp_path / "prepare"
+    code = review_command.main([
+        "prepare",
+        "--repo", str(scanned),
+        "--base", base,
+        "--head", head,
+        "--profile", str(profile),
+        "--builder-record", str(builder),
+        "--out", str(packet),
+        "--home", str(home),
+    ])
+    captured = capsys.readouterr()
+    assert code == 0, captured.err
+    sources = json.loads((packet / "rule-sources.json").read_text(encoding="utf-8"))
     assert sources["semgrep-security"]["source"] == "machine"
     assert sources["semgrep-security"]["rules"][0]["sha256"] == digest
     assert sources["semgrep-security"]["rules"][0]["pack"] == "p/security-audit"
-
-    saga_out = tmp_path / "saga"
-    code = review_tools.run(
-        scanned, base, head, profile, saga_out, home=home,
-        adapters=[adapters["semgrep-saga"]], runner=runner, framework=False,
-    )
-    assert code == 0
-    saga_sources = json.loads((saga_out / "rule-sources.json").read_text(encoding="utf-8"))
-    assert "semgrep-saga" not in saga_sources
+    assert str(cache) in _semgrep_configs(stub.parent / "invocations.log")
     assert _custom_rule_bytes() == before
 
     security_scan = _load("security_scan")
-    staged = tmp_path / "staged"
-    staged.mkdir()
-    security_scan._rule_home(staged, home)
-    assert review_tools.machine_rule_digest(staged, "semgrep-security") == digest
-    assert review_tools.semgrep_cache(staged, "p/security-audit").is_dir()
+    monkeypatch.setattr(security_scan.Path, "home", lambda: home)
+    (stub.parent / "invocations.log").write_text("", encoding="utf-8")
+    scan_out = tmp_path / "scan-out"
+    exit_code = security_scan.main(["--repo", str(scanned), "--output", str(scan_out)])
+    captured = capsys.readouterr()
+    summary_path = scan_out / "summary.json"
+    detail = summary_path.read_text(encoding="utf-8") if summary_path.is_file() else captured.err
+    assert exit_code == 0, detail
+    summary = json.loads(detail)
+    row = next(item for item in summary["rows"] if item["id"] == "semgrep-security")
+    assert row["status"] == "ran", detail
+    staged = review_tools.semgrep_cache(scan_out / ".cache", "p/security-audit")
+    assert str(staged) in _semgrep_configs(stub.parent / "invocations.log")
+    assert review_tools.machine_rule_digest(scan_out / ".cache", "semgrep-security") == digest
+    assert _custom_rule_bytes() == before
+
+    empty = tmp_path / "empty-home"
+    empty.mkdir()
+    (tmp_path / "empty-repo").mkdir()
+    review_setup.survey(tmp_path / "empty-repo", empty)
+    monkeypatch.setattr(security_scan.Path, "home", lambda: empty)
+    absent = tmp_path / "absent-scan"
+    exit_code = security_scan.main(["--repo", str(scanned), "--output", str(absent)])
+    absent_summary = json.loads((absent / "summary.json").read_text(encoding="utf-8"))
+    assert exit_code == 2
+    assert absent_summary["exit_code"] == 2
+    absent_row = next(item for item in absent_summary["rows"] if item["id"] == "semgrep-security")
+    assert "rule-cache-missing" in absent_row["reason"]
+    assert _custom_rule_bytes() == before
+    assert not review_tools.semgrep_cache(empty, "p/security-audit").exists()
 
 
 def test_missing_semgrep_cache_stays_rule_cache_missing(tmp_path: Path, monkeypatch) -> None:
