@@ -17,6 +17,7 @@
       "TYPESAFE_"
     ],
     "package_scripts": [
+      "builder_record.py",
       "lifecycle_review.py",
       "review_command.py",
       "review_setup.py",
@@ -29,6 +30,7 @@
       "write"
     ],
     "entrypoints": [
+      "scripts/builder_record.py",
       "scripts/lifecycle_review.py",
       "scripts/review_command.py",
       "scripts/review_setup.py",
@@ -45,9 +47,9 @@
   "provenance": {
     "notes": [
       "Authored in this repository as the standalone reviews package. There is no upstream pin and no custody table.",
-      "The four skills name review_command.py, security_scan.py, lifecycle_review.py, and review_setup.py. Those four scripts answer --help.",
+      "The four skills name review_command.py, security_scan.py, lifecycle_review.py, and review_setup.py. Those four scripts answer --help. builder_record.py check judges one builder-record file and also answers --help. write merges onto an issue file under --store-root.",
       "SAGA_LANGFUSE_ is the prefix of the bundled trace client's environment names. GH_, GITHUB_, and TYPESAFE_ are stripped the same way as other review tooling that can post or call a model.",
-      "prepare and finish write a packet directory. survey and write write the machine record under the reviews config directory."
+      "prepare and finish write a packet directory. survey and review_setup.py write the machine record under the reviews config directory. builder_record.py write updates an issue file under --store-root."
     ]
   }
 }

@@ -1,25 +1,5 @@
 # Queued work - infiquetra-agent-plugins
 
-## 2026-11-19 catalog cutover follow-up
-
-### Move the saga review corpus and builder record into reviews
-
-**Priority.** P2. Left by the #332 catalog cutover.
-
-**What it is.** The saga-review-corpus pin stays at its pre-U6 location until
-it is migrated to `plugins/reviews`. `builder_record.py` has no reviews home.
-The implementer role prompts carry the `builder_record` handoff field and no longer
-name the deleted command.
-
-**Why deferred.** #332 removes the saga package. Inventing a new reviews
-entrypoint for the corpus pin or the builder record in the same cutover would
-change review behavior that the formula and schema pins forbid.
-
-**Revisit when.** The next reviews change that needs the corpus pin or a
-builder-record writer.
-
-**Refs.** [Decision](DECISIONS.md#retire-the-saga-family-catalog).
-
 ## 2026-10-26 reviewer temp folder follow-up
 
 ### Give the Claude reviewer's non-Python tools a writable TMPDIR

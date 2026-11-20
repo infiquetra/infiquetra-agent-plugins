@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "reviews",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Standalone review package: code review on a git range, a committed-tree security review, SDLC document rubrics, and review-tool setup. Packets stay in the review directory. Grades use the shared review formula.",
   "author": {
     "name": "Infiquetra",

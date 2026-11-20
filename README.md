@@ -93,7 +93,7 @@ The record of the work, in the order a new reader should take it:
 | [`plugins/investigate/`](plugins/investigate/README.md) | `0.1.0` | Finds the root cause of a bug or failure before any fix | Claude, Codex, Muse, 1 skill |
 | [`plugins/mission-control/`](plugins/mission-control/README.md) | `2.21.7` | SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema… | Claude, Codex, Muse, 8 skills |
 | [`plugins/plan/`](plugins/plan/README.md) | `0.1.0` | Lightweight planning package: guidelines for breaking work into verifiable units | Claude, Codex, Muse, 1 skill |
-| [`plugins/reviews/`](plugins/reviews/README.md) | `0.1.0` | Standalone code review, security review, document rubrics, and review-tool setup | Claude, Codex, Muse, 4 skills |
+| [`plugins/reviews/`](plugins/reviews/README.md) | `0.2.0` | Standalone code review, security review, document rubrics, and review-tool setup | Claude, Codex, Muse, 4 skills |
 | [`plugins/strategy/`](plugins/strategy/README.md) | `0.1.0` | Maintains the repository root STRATEGY.md | Claude, Codex, Muse, 1 skill |
 | [`plugins/unifi/`](plugins/unifi/README.md) | `2.0.7` | Portable UniFi Network and Protect package: two Agent Skills with their bundled Python… | Claude, Codex, Muse, 2 skills |
 

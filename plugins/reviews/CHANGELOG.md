@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.0] - 2026-11-20
+
+### Added
+
+- `scripts/builder_record.py` judges one builder-record file and merges a write onto an issue file under `--store-root`.
+
 ## [0.1.0] - 2026-11-19
 
 ### Added
