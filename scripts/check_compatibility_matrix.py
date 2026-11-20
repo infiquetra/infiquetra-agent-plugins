@@ -160,7 +160,6 @@ ASSESSMENT_CLIENT_NAMES = {
     "claude": "Claude Code",
     "codex": "OpenAI Codex",
     "cursor": "Cursor Agent",
-    "qwen": "Qwen",
     "grok": "Grok",
     "opencode": "OpenCode",
     "muse": "Muse",

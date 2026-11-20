@@ -2342,7 +2342,9 @@ class ClientAssessmentInventoryTest(unittest.TestCase):
     def test_current_inventory_includes_muse_as_a_marketplace_client(self) -> None:
         self.assertEqual(ccm.check_client_assessment(), [])
         self.assertIn("muse", ccm.EXPECTED_ASSESSMENT_CLIENTS)
-        self.assertEqual(len(ccm.EXPECTED_ASSESSMENT_CLIENTS), 9)
+        self.assertNotIn("qwen", ccm.EXPECTED_ASSESSMENT_CLIENTS)
+        self.assertNotIn("gemini", ccm.EXPECTED_ASSESSMENT_CLIENTS)
+        self.assertEqual(len(ccm.EXPECTED_ASSESSMENT_CLIENTS), 8)
         muse = next(row for row in self.document["clients"] if row["id"] == "muse")
         self.assertEqual(muse["placement"], "plugin-marketplace")
         self.assertIs(muse["skill_scoped"], False)

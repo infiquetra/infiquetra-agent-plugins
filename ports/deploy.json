@@ -1,8 +1,13 @@
 {
-  "schema_version": "4",
+  "schema_version": "5",
   "package": "deploy",
   "package_root": "plugins/deploy",
   "package_manifest": "plugin.json",
+  "installation": {
+    "tiers": [
+      "full"
+    ]
+  },
   "assessment": {
     "credential_prefixes": [
       "GH_",

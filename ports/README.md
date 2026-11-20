@@ -25,10 +25,18 @@ that is still perfectly true.
 
 ```jsonc
 {
-  "schema_version": "4",              // refused rather than read with assumed defaults
+  "schema_version": "5",              // refused rather than read with assumed defaults
   "package": "unifi",                 // must equal the file name
   "package_root": "plugins/unifi",    // must be plugins/<package>
   "package_manifest": "plugin.json",  // optional; this is the default
+
+  // Optional. Schema version 5. Absent means no tier is declared, which the
+  // installer treats as outside the lean default. `full` is required when the
+  // object is present. `lean` marks the focused seat (reviews, plan,
+  // investigate). Which harness is which tier is schemas/harness-installation.json.
+  "installation": {
+    "tiers": ["full", "lean"]
+  },
 
   // `source` and `custody` are optional *together* (schema version 4). Both
   // present: the package is derived from an upstream pin. Both absent: the
@@ -95,6 +103,14 @@ package failure — charging a descriptor typo to the package.
 
 Each must be stated. A package for which one is genuinely empty names it in
 `declared_none` — a decision a reader can see, and one a typo cannot produce.
+
+## Installation tiers (schema version 5)
+
+`installation.tiers` names which harness tiers install the package. The object
+is optional. When it is present, `full` is required, and `lean` is added only
+for the focused seat. The harness map, including which clients are retired, is
+`schemas/harness-installation.json`. OpenCode and Hermes are full-tier clients
+in that map. A descriptor that omits `installation` declares no tier.
 
 ## Derived and authored packages (schema version 4)
 

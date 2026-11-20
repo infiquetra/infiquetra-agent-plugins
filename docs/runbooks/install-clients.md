@@ -1,6 +1,6 @@
 # Runbook: place this catalog on each harness
 
-**Version 1.2.0** · Adopted 2026-09-22
+**Version 1.3.0** · Adopted 2026-09-22
 
 Amendments:
 
@@ -8,6 +8,8 @@ Amendments:
   continuing past failures under `--client all`.
 - 1.2.0, 2026-10-14: Muse marketplace staging, source-proven migration and strict
   JSON verification, including the issue #237 code-review repairs.
+- 1.3.0, 2026-11-19: harness installation tiers, retired Qwen and Gemini CLI
+  targets, and provenance-gated `--prune-retired` (issue #334).
 
 
 This is the operator checklist for
@@ -46,9 +48,10 @@ python3 scripts/install_client.py --client all --uninstall-legacy
 The process exits 1 when any applicable package is absent. For clients other
 than Muse, an installation from elsewhere is reported without failing solely
 for its source. A package a client cannot install is `not-applicable`, which
-does not fail the run. Skill clients (OpenCode, Gemini CLI, Hermes) report
+does not fail the run. Skill clients (OpenCode, Hermes) report
 `not-applicable (no skills)` for packages without skill units; every client
-reports `not-applicable (library)` for `fleet-core`.
+reports `not-applicable (library)` for `fleet-core`. A lean harness reports a
+package outside its default set as `not-applicable (tier)`, which also exits 0.
 
 Muse's check also fails for a source or registration outside the requested
 staging directory, a disabled or invalid plugin, diagnostics, an unavailable
@@ -61,7 +64,7 @@ and refreshes selected bundles so source changes reach the installed cache. Befo
 command, the script reads back that client's own state the same way `--check`
 does. A package already `installed-from-catalog` is skipped with a message
 naming that; nothing is re-run, so a client whose install command refuses a
-duplicate (Claude Code, Qwen, Grok, Agy, Cursor) does not fail on a re-run
+duplicate (Claude Code, Grok, Agy, Cursor) does not fail on a re-run
 after a partial install, and a symlink or copy client leaves an
 already-correct placement alone. A package `installed-from-elsewhere` is also
 skipped, naming the other source, and is not replaced in the same run; the
@@ -82,6 +85,45 @@ source record is left in place. These three repositories are never removed:
 `infiquetra-antigravity-plugins`. For clients other than Muse it is a standalone removal run: pair it with
 a plain `--execute` afterward to place the package fresh from this catalog
 once the old placement is gone.
+
+## Installation tiers
+
+`schemas/harness-installation.json` names each harness. A port descriptor's
+`installation.tiers` (schema version 5) says which tiers install that package.
+The full tier is Claude Code, Codex, OpenCode, Agy, and Hermes, and it installs
+every active package. OpenCode and Hermes stay on the full tier. The lean tier
+is Cursor Agent, Muse, and Grok. A lean run installs `reviews`, `plan`, and
+`investigate` unless `--package <name>` or `--profile full` is passed.
+
+`--check` on a lean harness reports every other active package as
+`not-applicable (tier)`. That line does not fail the run.
+
+## Retired client targets
+
+`--client qwen` and `--client gemini` are rejected. Qwen was retired on
+2026-10-17 in favor of claude-qwen. Gemini CLI has been unassessed since
+2026-10-04, when Agy replaced it. Agy still reads `~/.gemini`; that path is
+Agy, not a Gemini CLI target. Historical compatibility matrices keep the
+roster they were recorded with, including Qwen from 2026-10-04 and Gemini CLI
+on earlier records.
+
+## Prune retired placements
+
+`--prune-retired` removes placements of the eight retired packages (`saga`,
+`orchestrate`, `agy`, `codex`, `house-style`, `hermes-profile-evolution`,
+`voice`, `redis-channel`) and the fifteen former `plugins/saga/skills/`
+symlinks. A placement is removed only when its recorded source is this catalog
+or `infiquetra/infiquetra-claude-plugins`, or when a symlink target resolves
+into this checkout's retired tree, including a dangling link. Sidecar entries
+in `~/.config/opencode/.infiquetra-plugins.json` and
+`~/.hermes/.infiquetra-skills.json` follow the same rule. Foreign and
+unsourced entries stay. The default is a dry-run. Pass `--execute` to unlink.
+Do not combine it with `--check` or `--uninstall-legacy`.
+
+```bash
+python3 scripts/install_client.py --client all --prune-retired
+python3 scripts/install_client.py --client all --prune-retired --execute
+```
 
 `--binary <client>=<path>` replaces the executable on `PATH`. A path that is the
 same file as that launcher is refused. Pointing a wrapper at itself is how the
@@ -191,6 +233,14 @@ The add is skipped when
 `~/.cursor/plugins/marketplaces/github.com/infiquetra/infiquetra-agent-plugins/`
 already contains a `.claude-plugin/marketplace.json`.
 
+`cursor-agent` registers the whole GitHub repository as one marketplace. There
+is no per-package Cursor install flag. The lean tier changes which packages
+`--check` requires and does not split that registration. `--check` prints
+`cursor marketplace whole-repository` before the per-package lines. A package
+outside the lean default is `not-applicable (tier)` even when the cached
+marketplace lists it. `--profile full` drops that tier exclusion and still
+issues only the one marketplace registration.
+
 `--check` reads that cache, and the same path for
 `infiquetra-claude-plugins`. A package named in this repository's cached
 marketplace file is from the catalog. A package named only in the old cache is
@@ -198,22 +248,6 @@ elsewhere. Cursor's marketplace command accepts a git URL and not a local
 directory; that is the distribution limit the matrices recorded, and this
 repository is on GitHub, so the limit is not a reason to call the client
 unsupported.
-
-## Qwen
-
-```text
-qwen extensions install <package directory>
-```
-
-Standard input is `y`. With no answer the installer lists skills and exits
-without installing, which is the quirk the assessment records.
-
-Afterwards the script sets `source` to that package directory and `type` to
-`local` in `~/.qwen/extensions/<name>/.qwen-extension-install.json`, and leaves
-every other key the client wrote. `--check` reads that `source`.
-
-`--uninstall-legacy` runs `qwen extensions uninstall <name>` when `source` is
-the old repository. A directory with no install file is refused.
 
 ## Grok
 
@@ -248,34 +282,15 @@ the manifest's `target` is the skill unit in this checkout.
 `--uninstall-legacy` unlinks a manifest entry whose `target` is the old
 repository, and does not delete the target. An unsourced directory is refused.
 
-## Gemini CLI
-
-```text
-gemini skills link <skill directory>
-```
-
-Standard input is `y`. Closed stdin hangs this command instead of declining,
-which is why the assessment supplied the confirmation and a deadline. The
-script does the same. Gemini CLI has not been an assessed client since
-2026-10-04, when Agy replaced it; the placement stays for a machine that still
-has the binary, and the assessed clients are listed in
-[the port runbook](portable-plugin-port.md#client-assessment). It then records the skill in
-`~/.gemini/.infiquetra-skills.json`.
-
-`--check` reads `~/.gemini/skills/<skill>`. A symlink must resolve to the skill
-unit. A copy counts as this catalog only when the manifest names that unit.
-
-`--uninstall-legacy` runs `gemini skills uninstall <name>` and then removes the
-destination when the manifest says the old repository. An unsourced directory
-is refused.
-
 ## Muse
 
 The Muse **projection** is a generated directory of copied packages with their
 manifests transformed into the Claude-compatible shapes Muse can load. It
 excludes competing root and Codex manifests and unsupported Claude declarations.
-The source packages remain unchanged. An unrestricted run selects all 12
-packages returned by `muse_applicable_packages`.
+The source packages remain unchanged. A full-tier run selects every package
+`muse_applicable_packages` returns. A lean run selects `reviews`, `plan`, and
+`investigate`, and does not sweep the other installed plugins. `--package` and
+`--profile full` restore the wider selection.
 
 Planning invokes no Muse command and performs no staging. Execution stages at
 `<catalog>/build/muse-marketplace` (or `--staging-dir`) and registers it as

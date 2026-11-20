@@ -2,6 +2,41 @@
 
 ## 2026-11-19
 
+### Tier harness installs and prune retired placements
+
+**Decision.** [Issue #334](https://github.com/infiquetra/infiquetra-agent-plugins/issues/334)
+declares installation tiers in `schemas/harness-installation.json` and in each
+port descriptor's `installation.tiers` (schema version 5). The full tier is
+Claude Code, Agy, Codex, OpenCode, and Hermes, and it installs all 11 active
+packages. OpenCode and Hermes stay on that tier. The lean tier is Cursor Agent,
+Muse, and Grok, and it installs `reviews`, `plan`, and `investigate` unless
+`--package <name>` or `--profile full` is passed. `--check` reports a
+tier-excluded package as `not-applicable (tier)` and exits 0 when that package
+is absent. Cursor Agent registers the whole GitHub repository as one
+marketplace; there is no per-package Cursor install flag, and the lean tier
+changes only what `--check` requires. `--client qwen` and `--client gemini`
+are rejected. Qwen was retired on 2026-10-17 in favor of claude-qwen. Gemini
+CLI has been unassessed since 2026-10-04, when Agy replaced it. Agy still uses
+`~/.gemini`; that path is Agy. `--prune-retired` removes the eight retired
+packages and the fifteen former `plugins/saga/skills/` symlinks, including a
+dangling symlink whose target resolves into this checkout, only when the
+recorded source is this catalog or `infiquetra/infiquetra-claude-plugins`.
+Foreign and unsourced entries stay. The default is a dry-run. The historical
+compatibility-matrix roster is unchanged, so records from 2026-10-04 still
+include Qwen and earlier records still include Gemini CLI. The required GitHub
+branch-protection check names stay `vendor-selection`, `validate`,
+`plugin-tests`, and `claude-mods`. Cycle 32 of the mutation proof re-grades
+the new port, inventory, and assessment-roster guards.
+
+**Rationale.** A lean seat was installing every package the catalog still
+ships, and retired Qwen and Gemini CLI targets were still accepted as if they
+were current harnesses. Provenance has to gate cleanup, because the same skill
+names now live on the standalone packages and other marketplaces share the
+home directory.
+
+**Revisit when.** A lean harness gains a per-package install flag, or a retired
+package comes back into the installable catalog.
+
 ### Retire the saga-family catalog
 
 **Decision.** [Issue #332](https://github.com/infiquetra/infiquetra-agent-plugins/issues/332)

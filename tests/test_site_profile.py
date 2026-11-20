@@ -1101,7 +1101,13 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 31. Cycle 30 remains the proof of the bytes
+        The document is cycle 32. Cycle 31 remains the proof of the bytes
+        before issue #334 added installation tiers, dropped Qwen from the
+        current assessment inventory, and removed the Qwen assessment plan.
+        Cycle 32 re-grades those guards (ten mutations, ten killed) and carries
+        the other two digests.
+
+        Cycle 31's account follows. Cycle 30 remains the proof of the bytes
         before issue #332 removed ``plugins/saga`` from the Semgrep rule-test
         exemption and stopped requiring a port descriptor for a superseded
         matrix of a retired package. Cycle 31 re-grades those two guards (six
@@ -1188,7 +1194,7 @@ class MutationProofBindingTest(unittest.TestCase):
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-11-19-cycle31-mutation-proof-catalog-cutover.txt"
+            "2026-11-19-cycle32-mutation-proof-harness-tiers.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:

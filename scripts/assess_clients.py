@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the nine-client compatibility assessment as a script instead of a method.
+"""Run the eight-client compatibility assessment as a script instead of a method.
 
 The UniFi pilot ran this assessment nine times. Every run was driven by hand
 from a written method, and each one re-learned the same quirks the hard way: an
@@ -242,16 +242,17 @@ CURSOR_LOAD_PROBE = (
 
 
 def _client_plans() -> tuple[ClientPlan, ...]:
-    """The nine plans, one per canonical client.
+    """The eight plans, one per current assessment client.
 
     Gemini CLI's plan was removed on 2026-10-04 because Agy replaced it on the
     operator's machine; records made before then still carry its row.
 
     Every quirk recorded here was learned across nine assessment runs and is
     carried so the next port does not re-learn it. The membership of this tuple
-    is asserted against `check_compatibility_matrix.CANONICAL_CLIENTS` rather
-    than restated, so a client added to the roster fails here until it has a
-    plan.
+    is asserted against `check_compatibility_matrix.EXPECTED_ASSESSMENT_CLIENTS`
+    rather than restated, so a client added to the current inventory fails here
+    until it has a plan. Qwen remains on the historical matrix roster
+    (`CANONICAL_CLIENTS`) and is not assessed.
     """
     return (
         ClientPlan(
@@ -336,27 +337,6 @@ def _client_plans() -> tuple[ClientPlan, ...]:
                         "-p", "--output-format", "text", CURSOR_LOAD_PROBE,
                     ),
                 ),
-                StageSpec("invocation", from_package=True),
-            ),
-        ),
-        ClientPlan(
-            "Qwen",
-            binary="qwen",
-            invocation_root=f"{CLIENT_HOME}/.qwen/extensions/{PLUGIN_NAME}",
-            quirk=(
-                "The installer asks for confirmation on standard input; with no answer it "
-                "lists the skills and exits without installing. It copies rather than links, "
-                "and adds one bookkeeping file of its own to the extension directory."
-            ),
-            stages=(
-                StageSpec(
-                    "placement",
-                    ("qwen", "extensions", "install", PACKAGE),
-                    stdin="y\n",
-                    writes_client_state=True,
-                ),
-                StageSpec("discovery", ("qwen", "extensions", "list")),
-                StageSpec("load", ("qwen", "extensions", "list")),
                 StageSpec("invocation", from_package=True),
             ),
         ),
@@ -1941,7 +1921,7 @@ def parse_real_binaries(values: list[str]) -> dict[str, str]:
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the nine-client compatibility assessment for a portable package."
+        description="Run the eight-client compatibility assessment for a portable package."
     )
     parser.add_argument("--package", required=True, help="the package to assess")
     parser.add_argument(

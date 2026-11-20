@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/infiquetra/infiquetra-agent-plugins/main/schemas/harness-installation.schema.json",
+  "title": "Harness installation tiers",
+  "description": "Which harnesses install the full active catalog and which default to the lean seat. Package membership in a tier is declared on each ports/<package>.json installation.tiers list. OpenCode and Hermes stay on the full tier.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tiers", "retired_clients"],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "tiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full", "lean"],
+      "properties": {
+        "full": {
+          "$ref": "#/$defs/tier"
+        },
+        "lean": {
+          "$ref": "#/$defs/tier"
+        }
+      }
+    },
+    "retired_clients": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clients"],
+      "properties": {
+        "clients": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

@@ -118,11 +118,15 @@ class FakeClientFixture(unittest.TestCase):
 class RosterTest(unittest.TestCase):
     """The roster is derived from the validator, never restated."""
 
-    def test_every_canonical_client_has_a_plan(self) -> None:
+    def test_every_current_assessment_client_has_a_plan(self) -> None:
+        """The live roster is eight clients. Qwen stays on the historical matrix roster."""
         self.assertEqual(
             sorted(plan.name for plan in harness.CLIENT_PLANS),
-            sorted(ccm.CANONICAL_CLIENTS),
+            sorted(name for name in ccm.CANONICAL_CLIENTS if name != "Qwen"),
         )
+        self.assertEqual(sorted(harness.PLAN_CLIENTS), sorted(ccm.EXPECTED_ASSESSMENT_CLIENTS))
+        self.assertIn("Qwen", ccm.CANONICAL_CLIENTS)
+        self.assertNotIn("qwen", ccm.EXPECTED_ASSESSMENT_CLIENTS)
 
     def test_every_plan_covers_all_four_stages(self) -> None:
         for plan in harness.CLIENT_PLANS:
@@ -156,7 +160,6 @@ class RosterTest(unittest.TestCase):
             "Cursor Agent": "authenticated",
             "Grok": "GROK_AUTO_TRUST_REAL_BIN",
             "Agy": "AGY_AUTO_TRUST_REAL_BIN",
-            "Qwen": "standard input",
             "Muse": "marketplace",
             "Hermes": "isolated",
             "OpenAI Codex": "actionable",
@@ -173,15 +176,12 @@ class RosterTest(unittest.TestCase):
             with self.subTest(client=name):
                 self.assertIn(variable, harness.plan_for(name).environment)
 
-    def test_the_prompting_clients_supply_a_confirmation(self) -> None:
-        """With no answer Qwen's installer lists and exits without installing."""
-        self.assertEqual(harness.plan_for("Qwen").stage("placement").stdin, "y\n")
-
-    def test_gemini_cli_is_no_longer_assessed(self) -> None:
-        """Agy replaced Gemini CLI on 2026-10-04, so the harness plans nine clients."""
+    def test_qwen_and_gemini_cli_are_not_assessed(self) -> None:
+        """Qwen CLI was retired on 2026-10-17 and Gemini CLI on 2026-10-04."""
         names = [plan.name for plan in harness.CLIENT_PLANS]
         self.assertNotIn("Gemini CLI", names)
-        self.assertEqual(len(names), 9)
+        self.assertNotIn("Qwen", names)
+        self.assertEqual(len(names), 8)
 
     def test_muse_is_a_plugin_marketplace_client(self) -> None:
         plan = harness.plan_for("Muse")
@@ -1303,7 +1303,7 @@ class HomePolicyTest(unittest.TestCase):
     """Live client configuration is never written to."""
 
     def test_a_state_writing_stage_may_not_run_in_the_operators_home(self) -> None:
-        plan = harness.plan_for("Qwen")
+        plan = harness.plan_for("Grok")
         with self.assertRaises(harness.AssessmentError) as caught:
             harness.refuse_unsafe_home(plan, plan.stage("placement"), harness.REAL_HOME)
         self.assertIn("scratch home or not at all", str(caught.exception))
@@ -1570,7 +1570,7 @@ class EntrypointPathTest(unittest.TestCase):
     def test_package_scoped_plan_with_package_root_entrypoints_resolves_unchanged(self) -> None:
         """Package-scoped clients resolve package-root entrypoints without blocking."""
         mc_config = port_config.load("mission-control", ROOT)
-        for name in ("Claude Code", "Cursor Agent", "Qwen", "Grok", "Muse", "Agy"):
+        for name in ("Claude Code", "Cursor Agent", "Grok", "Muse", "Agy"):
             plan = harness.plan_for(name)
             spec = plan.stage("invocation")
             with self.subTest(client=name):
@@ -1591,7 +1591,7 @@ class EntrypointPathTest(unittest.TestCase):
                 section = plan_text.split(f"## {name}")[1].split("## ")[0]
                 self.assertIn("invocation  blocked in advance:", section)
                 self.assertIn("scripts/sdlc_manager.py", section)
-        for name in ("Claude Code", "Cursor Agent", "Qwen", "Grok", "Muse", "Agy"):
+        for name in ("Claude Code", "Cursor Agent", "Grok", "Muse", "Agy"):
             with self.subTest(package_scoped_client=name):
                 section = plan_text.split(f"## {name}")[1].split("## ")[0]
                 self.assertIn("invocation  <python>", section)
@@ -1799,11 +1799,11 @@ class RecordTest(unittest.TestCase):
         self.assertEqual(record["package"]["file_count"], file_count)
         self.assertEqual(record["package"]["tree_sha256"], tree)
 
-    def test_the_record_covers_exactly_the_ten_clients_with_four_stages_each(self) -> None:
+    def test_the_record_covers_exactly_the_current_clients_with_four_stages_each(self) -> None:
         record = self.plan_only_record()
-        self.assertEqual(
-            {client["name"] for client in record["clients"]}, set(ccm.CANONICAL_CLIENTS)
-        )
+        names = {client["name"] for client in record["clients"]}
+        self.assertEqual(names, set(ccm.CANONICAL_CLIENTS) - {"Qwen"})
+        self.assertNotIn("Qwen", names)
         for client in record["clients"]:
             with self.subTest(client=client["name"]):
                 self.assertEqual(set(client["stages"]), set(ccm.STAGES))
@@ -1974,8 +1974,13 @@ class CommandLineTest(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0)
         self.assertIn("Nothing below has run", completed.stdout)
+        self.assertIn("Clients: 8", completed.stdout)
         for name in ccm.CANONICAL_CLIENTS:
-            self.assertIn(name, completed.stdout)
+            if name == "Qwen":
+                self.assertNotIn(name, completed.stdout)
+            else:
+                self.assertIn(name, completed.stdout)
+        self.assertNotIn("Gemini CLI", completed.stdout)
 
     def test_an_unported_package_is_refused(self) -> None:
         completed = subprocess.run(

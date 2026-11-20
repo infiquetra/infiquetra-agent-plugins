@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "tiers": {
+    "full": {
+      "clients": ["claude", "agy", "codex", "opencode", "hermes"]
+    },
+    "lean": {
+      "clients": ["cursor", "muse", "grok"]
+    }
+  },
+  "retired_clients": {
+    "qwen": "qwen is a retired client target (retired 2026-10-17 in favor of claude-qwen)",
+    "gemini": "gemini is a retired client target (retired when agy replaced Gemini CLI on 2026-10-04)"
+  }
+}

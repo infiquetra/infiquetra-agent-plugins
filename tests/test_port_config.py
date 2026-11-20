@@ -936,5 +936,87 @@ class CommittedDescriptorTest(unittest.TestCase):
                 self.assertIn(script, shipped)
 
 
+class InstallationTierTest(unittest.TestCase):
+    """Schema 5 tiers and the harness map. A package cannot leave the full tier."""
+
+    def test_installation_is_optional_and_full_is_required_when_present(self) -> None:
+        self.assertEqual(parse(minimal()).installation_tiers, ())
+        document = minimal()
+        document["installation"] = {"tiers": ["lean"]}
+        with self.assertRaises(port_config.PortConfigError) as caught:
+            parse(document)
+        self.assertIn("full", str(caught.exception))
+
+    def test_an_unknown_installation_tier_is_refused(self) -> None:
+        document = minimal()
+        document["installation"] = {"tiers": ["full", "wide"]}
+        with self.assertRaises(port_config.PortConfigError) as caught:
+            parse(document)
+        self.assertIn("wide", str(caught.exception))
+
+    def test_a_client_in_both_harness_tiers_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / port_config.HARNESS_INSTALLATION_FILE
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1",
+                        "tiers": {
+                            "full": {"clients": ["claude"]},
+                            "lean": {"clients": ["claude"]},
+                        },
+                        "retired_clients": {"qwen": "qwen is a retired client target"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(port_config.PortConfigError) as caught:
+                port_config.load_harness_installation(root)
+            self.assertIn("both tiers", str(caught.exception))
+
+    def test_a_retired_client_message_must_say_retired(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / port_config.HARNESS_INSTALLATION_FILE
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1",
+                        "tiers": {
+                            "full": {"clients": ["claude"]},
+                            "lean": {"clients": ["cursor"]},
+                        },
+                        "retired_clients": {"qwen": "removed"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(port_config.PortConfigError) as caught:
+                port_config.load_harness_installation(root)
+            self.assertIn("retired", str(caught.exception))
+
+    def test_a_missing_descriptor_is_not_tier_filtered(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIsNone(
+                port_config.package_installation_tiers(Path(directory), "voice")
+            )
+
+    def test_shipped_reviews_is_lean_and_strategy_stays_full(self) -> None:
+        reviews = port_config.load("reviews", ROOT)
+        strategy = port_config.load("strategy", ROOT)
+        self.assertEqual(reviews.installation_tiers, ("full", "lean"))
+        self.assertEqual(strategy.installation_tiers, ("full",))
+        harness = port_config.load_harness_installation(ROOT)
+        self.assertEqual(
+            harness["tiers"]["full"]["clients"],
+            ["claude", "agy", "codex", "opencode", "hermes"],
+        )
+        self.assertIn("cursor", harness["tiers"]["lean"]["clients"])
+        self.assertNotIn("qwen", [name for body in harness["tiers"].values() for name in body["clients"]])
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
