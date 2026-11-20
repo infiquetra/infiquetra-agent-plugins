@@ -1,11 +1,7 @@
-fakeredis
-# mcp 2.x removed mcp.server.fastmcp, which the redis-channel server imports.
-mcp>=1,<2
 pydantic
 pytest
 pyyaml
 jsonschema
-redis
 requests
 semgrep==1.179.0
 urllib3

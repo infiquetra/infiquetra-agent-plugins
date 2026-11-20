@@ -377,6 +377,22 @@ STATUS_NOTICE = "notice"
 DOCUMENT_STATUSES = (STATUS_CURRENT, STATUS_SUPERSEDED, STATUS_NOTICE)
 SUPERSESSION_DIRECTIVES = (SUPERSEDED_BY_DIRECTIVE, SUPERSEDED_REASON_DIRECTIVE)
 
+# Packages the #332 catalog cutover removed, ports included. A superseded
+# matrix of one of these stays historical evidence. A current matrix that
+# names a package this repository does not port still fails closed.
+RETIRED_CATALOG_PACKAGES = frozenset(
+    {
+        "saga",
+        "orchestrate",
+        "agy",
+        "codex",
+        "house-style",
+        "hermes-profile-evolution",
+        "voice",
+        "redis-channel",
+    }
+)
+
 
 class MatrixError(Exception):
     """The document could not be read far enough to validate it."""
@@ -1186,6 +1202,29 @@ def check_public_evidence_rules(
     return problems
 
 
+def _resolution_problems_for_document(
+    text: str,
+    record: dict[str, Any],
+    resolution_problems: list[str],
+) -> list[str]:
+    """Keep a missing-port failure, except on a superseded retired-package matrix.
+
+    A current matrix that names a package this repository does not port fails
+    closed. A superseded matrix of a package the catalog cutover removed has
+    already withdrawn its live binding. Coverage and redaction still apply.
+    """
+    if not resolution_problems:
+        return resolution_problems
+    package = record.get("package")
+    name = package.get("name") if isinstance(package, dict) else None
+    status = read_directives(text).get(STATUS_DIRECTIVE, STATUS_CURRENT)
+    if status == STATUS_SUPERSEDED and name in RETIRED_CATALOG_PACKAGES:
+        return [
+            problem for problem in resolution_problems if "no port descriptor" not in problem
+        ]
+    return resolution_problems
+
+
 def check_matrix(
     document: Path,
     config: PortConfig | None = None,
@@ -1225,7 +1264,9 @@ def check_matrix(
     problems = validate_against_schema(record, schema, schema)
     if config is None:
         config, resolution_problems = resolve_config(record, root)
-        problems.extend(resolution_problems)
+        problems.extend(
+            _resolution_problems_for_document(text, record, resolution_problems)
+        )
     problems.extend(check_record_version(record))
     problems.extend(check_coverage(record))
     problems.extend(check_safety_rules(record, config))

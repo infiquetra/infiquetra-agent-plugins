@@ -9,7 +9,7 @@ source: infiquetra-sdlc@1d2e33e docs/roles/run-roles.md, docs/process/run-contra
 
 # Planner
 
-Report in the house style: `plugins/house-style/references/subagent-presentation-preamble.md`
+Report in the house style: `plugins/agent-launcher/roles/references/subagent-presentation-preamble.md`
 in the `infiquetra-claude-plugins` repository. If you cannot reach that file, say so once and
 report plainly anyway; the style is a courtesy to your reader, not a precondition for the work.
 
@@ -148,7 +148,7 @@ Repetition on its own never interrupts the operator. An `out-of-scope` classific
 the issue's recorded intent does.
 
 `finding_history` carries each finding with its classification, and findings are written in
-saga's finding record (`plugins/saga/references/review-records.schema.json`), with `duplicate-of`
+saga's finding record (`plugins/reviews/references/review-records.schema.json`), with `duplicate-of`
 and `withdrawn` surviving as merge states rather than deletions.
 
 Batches group by a demonstrated shared underlying cause. Failures from functional testing group by

@@ -3,8 +3,8 @@
 # source-version: 0.34.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/intent_envelope.py
-# source-sha256: 3ba2484a9556f929971c9735ef24c4b56131335e5d2ac71d578c270811a0bff1
-# output-sha256: 3ba2484a9556f929971c9735ef24c4b56131335e5d2ac71d578c270811a0bff1
+# source-sha256: 7252a8914858b1b29bab417c8df1bf77bc84127de3e759980b22435a6140fe3b
+# output-sha256: 7252a8914858b1b29bab417c8df1bf77bc84127de3e759980b22435a6140fe3b
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """Canonical fleet IntentEnvelope — the one committed run-start posture schema (#380).
@@ -22,7 +22,7 @@ mechanism, DECISIONS ``{#fleet-commons-mechanism-463}``) because the envelope ha
 consumers in three plugins — saga (``/outcome`` start, ``OutcomeSpec.intent``,
 ``ExecutionSpec.intent``), team-execution (Step B1 posture check), and
 mission-control (issue-capture validation). saga re-exports this module through
-``plugins/saga/scripts/intent_envelope.py`` (the issue's proposed path), exactly as
+the former intent_envelope module (the issue's proposed path), exactly as
 ``execution_spec.py`` re-exports ``tier_palette``.
 
 Vocabulary discipline: the schema is CLOSED at each ``SCHEMA_VERSION`` — an unknown

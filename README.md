@@ -40,10 +40,10 @@ What every package looks like now:
   paths-only rule.
 - **Muse installs plugin bundles through a staged marketplace** at
   `build/muse-marketplace/` (`scripts/sync_marketplace.py`). The installer
-  selects the 12 applicable packages, projects their Claude-compatible manifests,
+  selects the 11 applicable packages, projects their Claude-compatible manifests,
   and installs via `muse plugins`, registered under the compatibility name
-  `infiquetra-claude-plugins` but built from this repository. `fleet-core` and
-  `house-style` are excluded.
+  `infiquetra-claude-plugins` but built from this repository. `fleet-core` is
+  excluded.
   See [the Muse install workflow](docs/runbooks/install-clients.md#muse).
 - **Fleet Core is a library, bundled at build time** into each consumer's
   `_bundled/` directory (`scripts/bundle_fleet_module.py`); it is not
@@ -85,20 +85,17 @@ The record of the work, in the order a new reader should take it:
 | Package | Version | Description | Installable surfaces |
 |---|---|---|---|
 | [`plugins/agent-launcher/`](plugins/agent-launcher/README.md) | `3.0.0` | Headless sandboxed review, the SDLC roles library, and the herdr-app plus hc session workflow | Claude, Codex, Muse, 1 skill |
-| [`plugins/agy/`](plugins/agy/README.md) | `0.6.6` | Antigravity-backed coder reviewer bridge agents that run in a disposable clone and… | Claude, Codex, Muse, 1 skill |
-| [`plugins/codex/`](plugins/codex/README.md) | `0.1.9` | Portable Codex delegation wrapper | Claude, Codex, Muse, 1 skill |
-| [`plugins/deploy/`](plugins/deploy/README.md) | `0.2.3` | Tag-promotion deployment operations for Infiquetra repositories | Claude, Codex, Muse, 1 skill |
+| [`plugins/brainstorm/`](plugins/brainstorm/README.md) | `0.1.0` | Pressure-tests one chosen idea into a right-sized requirements document | Claude, Codex, Muse, 1 skill |
+| [`plugins/deploy/`](plugins/deploy/README.md) | `0.2.4` | Tag-promotion deployment operations for Infiquetra repositories | Claude, Codex, Muse, 1 skill |
 | [`plugins/fleet-core/`](plugins/fleet-core/README.md) | `0.34.0` | Authored Fleet Core library: staffing (work shape, role, and lens to model and… | Codex |
-| [`plugins/hermes-profile-evolution/`](plugins/hermes-profile-evolution/README.md) | `0.1.5` | Portable request adapter for target-sovereign Hermes profile evolution | Claude, Codex, Muse, 1 skill |
-| [`plugins/home-lab-ops/`](plugins/home-lab-ops/README.md) | `1.2.2` | Proxmox VE cluster operations, Ansible pre-flight validation, Ceph management,… | Claude, Codex, Muse, 6 skills |
-| [`plugins/house-style/`](plugins/house-style/README.md) | `0.1.1` | Claude-only package | Claude, Codex |
+| [`plugins/home-lab-ops/`](plugins/home-lab-ops/README.md) | `1.2.3` | Proxmox VE cluster operations, Ansible pre-flight validation, Ceph management,… | Claude, Codex, Muse, 6 skills |
+| [`plugins/ideate/`](plugins/ideate/README.md) | `0.1.0` | Generates and critically evaluates grounded product, architecture, and workflow ideas | Claude, Codex, Muse, 1 skill |
+| [`plugins/investigate/`](plugins/investigate/README.md) | `0.1.0` | Finds the root cause of a bug or failure before any fix | Claude, Codex, Muse, 1 skill |
 | [`plugins/mission-control/`](plugins/mission-control/README.md) | `2.21.6` | SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema… | Claude, Codex, Muse, 8 skills |
-| [`plugins/orchestrate/`](plugins/orchestrate/README.md) | `7.0.0` | Run one piece of work across several herdr agent sessions, one git worktree per unit | Claude, Codex, Muse, 1 skill |
-| [`plugins/redis-channel/`](plugins/redis-channel/README.md) | `0.5.3` | Portable Redis Streams bridge | Claude, Codex, Muse, 1 skill |
+| [`plugins/plan/`](plugins/plan/README.md) | `0.1.0` | Lightweight planning package: guidelines for breaking work into verifiable units | Claude, Codex, Muse, 1 skill |
 | [`plugins/reviews/`](plugins/reviews/README.md) | `0.1.0` | Standalone code review, security review, document rubrics, and review-tool setup | Claude, Codex, Muse, 4 skills |
-| [`plugins/saga/`](plugins/saga/README.md) | `2.0.1` | Infiquetra lifecycle plugin: one automatic run per issue — admission, plan, plan… | Claude, Codex, Muse, 14 skills |
+| [`plugins/strategy/`](plugins/strategy/README.md) | `0.1.0` | Maintains the repository root STRATEGY.md | Claude, Codex, Muse, 1 skill |
 | [`plugins/unifi/`](plugins/unifi/README.md) | `2.0.7` | Portable UniFi Network and Protect package: two Agent Skills with their bundled Python… | Claude, Codex, Muse, 2 skills |
-| [`plugins/voice/`](plugins/voice/README.md) | `0.4.0` | Portable voice package: a spoken conversational loop for one explicitly bound,… | Claude, Codex, Muse, 1 skill |
 
 ### Portable Fleet Core scope
 
@@ -197,7 +194,7 @@ root, plugin, and CLI jobs have five-, twenty-, and ten-minute deadlines respect
 Four dependency-backed repository checks live in the provisioned plugin lane:
 [the two independent template audits](plugins/mission-control/tests/test_template_sync_audit.py),
 [documented command execution](plugins/mission-control/tests/test_readme_commands.py),
-and [the staged Saga version check](plugins/saga/tests/test_staged_saga_version.py).
+and the plugin suites under `plugins/*/tests/`.
 Their assertion bodies and original fixture/absence conditions are retained.
 The remaining root tests import with the standard library alone; plugin tests use
 real installed dependencies, including PyYAML. Template audits use the canonical

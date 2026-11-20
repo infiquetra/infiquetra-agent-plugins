@@ -14,7 +14,7 @@ mechanism, DECISIONS ``{#fleet-commons-mechanism-463}``) because the envelope ha
 consumers in three plugins — saga (``/outcome`` start, ``OutcomeSpec.intent``,
 ``ExecutionSpec.intent``), team-execution (Step B1 posture check), and
 mission-control (issue-capture validation). saga re-exports this module through
-``plugins/saga/scripts/intent_envelope.py`` (the issue's proposed path), exactly as
+the former intent_envelope module (the issue's proposed path), exactly as
 ``execution_spec.py`` re-exports ``tier_palette``.
 
 Vocabulary discipline: the schema is CLOSED at each ``SCHEMA_VERSION`` — an unknown

@@ -11,7 +11,7 @@ describes 0.1.5 and is superseded because the version moved.
 
 No client assessment has been run for 0.1.6. This notice is not an assessment
 and does not carry any stage result forward. The changes since 0.1.5 are listed
-in [its changelog](../../plugins/hermes-profile-evolution/CHANGELOG.md). The
+in `../../plugins/hermes-profile-evolution/CHANGELOG.md`. The
 compatibility matrix is not a release gate; the next assessment of this package
 replaces this notice as the end of the supersession chain.
 

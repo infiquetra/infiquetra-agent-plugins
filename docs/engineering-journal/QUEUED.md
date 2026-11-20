@@ -1,5 +1,24 @@
 # Queued work - infiquetra-agent-plugins
 
+## 2026-11-19 catalog cutover follow-up
+
+### Move the saga review corpus and builder record into reviews
+
+**Priority.** P2. Left by the #332 catalog cutover.
+
+**What it is.** The saga-review-corpus pin stays at its pre-U6 location until
+it is migrated to `plugins/reviews`. `builder_record.py` has no reviews home.
+The implementer role prompts still name the old command.
+
+**Why deferred.** #332 removes the saga package. Inventing a new reviews
+entrypoint for the corpus pin or the builder record in the same cutover would
+change review behavior that the formula and schema pins forbid.
+
+**Revisit when.** The next reviews change that needs the corpus pin or a
+builder-record writer.
+
+**Refs.** [Decision](DECISIONS.md#retire-the-saga-family-catalog).
+
 ## 2026-10-26 reviewer temp folder follow-up
 
 ### Give the Claude reviewer's non-Python tools a writable TMPDIR
@@ -80,14 +99,9 @@ Studio reads back as installed from this repository) has completed.
   repository-level tests skip with "authored here, no provenance manifest";
   delete them or move them onto a synthetic derived fixture so the skip count
   returns to environment-dependent cases only.
-- **Scrub captured fixture transcripts** in `plugins/agy/tests/fixtures/` and
-  `plugins/saga/tests/fixtures/` of this machine's paths, with inert
-  replacements that keep the tests' assertions true.
 - **Fixture-rooted plugin resolution in tests.** Give Fleet Core's
   `plugin_resolution` an explicit fixture root for tests so sibling imports
   stop depending on each other at CI.
-- **`hermes-profile-evolution` retirement.** Carried as an adapter-only
-  package; the operator flagged it as a retirement candidate.
 - **Archive `infiquetra-claude-plugins`** on GitHub after cutover, and update
   the home-lab repository's `scripts/vendor_blueprint_rubrics.sh` default and
   the `hermes_orchestrator` watched-repo list, which still name it.
@@ -101,10 +115,6 @@ Studio reads back as installed from this repository) has completed.
 - **OpenCode still places saga's skills from infiquetra-opencode-plugins.**
   `~/.config/opencode/skills/*` link to that repository's saga skills. Same
   decision as above, for OpenCode.
-- **hermes-profile-evolution: keep or retire.** Carried as a Claude-only
-  package (one command and one hook) tied to the Team Mimir Hermes system; the
-  operator has not yet said whether it survives the retirement of the old
-  repository.
 - **Archive infiquetra-claude-plugins on GitHub.** Every harness reads back
   from this repository (closure paragraph in DECISIONS.md, entry "The
   custody-move run: decisions taken while it ran"); the archive is an outward

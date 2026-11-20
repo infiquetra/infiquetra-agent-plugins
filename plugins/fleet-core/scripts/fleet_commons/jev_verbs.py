@@ -247,7 +247,7 @@ VERBS: dict[str, Verb] = {
             'the change and the catalogue, as {"change": {"files": [...], "summary": "..."}, '
             '"strategies": {"<id>": "<what selects it>"}}'
         ),
-        # One yes/no question per catalogue row in plugins/saga/references/qa-catalogue.yaml.
+        # One yes/no question per catalogue row in the former qa-catalogue.
         # The KEYS are the contract: a test asserts this set equals the catalogue's strategy
         # identifiers in BOTH directions, so a row added to one and not the other fails rather
         # than silently going unasked.  The strategy DESCRIPTIONS stay in the catalogue and are

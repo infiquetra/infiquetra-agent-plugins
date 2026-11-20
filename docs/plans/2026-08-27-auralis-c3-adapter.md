@@ -110,10 +110,10 @@ discipline (KTD9).
   `origin/main` after `git fetch` at preflight.
 - The voice package is the proven first thin adapter: its Stop hook detaches and speaks
   only for the one bound session
-  ([`stop_hook.py:64`](../../plugins/voice/com.infiquetra.claude/hooks/stop_hook.py)), the
+  (`../../plugins/voice/com.infiquetra.claude/hooks/stop_hook.py`), the
   binding store is atomic machine-local JSON
-  ([`binding.py:110`](../../plugins/voice/scripts/binding.py)), and settings are a closed
-  stated set ([`settings.py:81`](../../plugins/voice/scripts/settings.py)).
+  (`../../plugins/voice/scripts/binding.py`), and settings are a closed
+  stated set (`../../plugins/voice/scripts/settings.py`).
 - The Claude packaging layout is pinned by the 2026-08-25 decision "Claude installs the
   package root" in [`DECISIONS.md`](../engineering-journal/DECISIONS.md) and enforced both
   ways by `tests/test_claude_plugin_packaging.py`, including four-site version agreement
@@ -130,7 +130,7 @@ discipline (KTD9).
 - Markdown-recognition precedent for the R121 gate already exists in the package: the
   speak path's cleanup pass defines exact regex classes for fences, headings, emphasis,
   links, inline code, lists, blockquotes, horizontal rules, and table pipes
-  ([`text_cleanup.py:27`](../../plugins/voice/scripts/text_cleanup.py)). Its own module
+  (`../../plugins/voice/scripts/text_cleanup.py`). Its own module
   docstring bounds it as a small line-and-regex cleanup whose fidelity beyond the tested
   classes is not a goal — so it *seeds* the gate's overlapping detector classes but does
   not bound them: the gate owns a complete rejected-syntax contract of its own (KTD1,
@@ -569,7 +569,7 @@ contract fixes the location and an env override would just be a second way to br
 discovery. The two environment values the contract's §5 identity rule mandates
 (`HERDR_PANE_ID`, `HERDR_BIN_PATH`) are **read through `settings.py`, the package's sole
 environment reader**: its closed `SETTING_NAMES` tuple
-([`settings.py:81`](../../plugins/voice/scripts/settings.py)) is extended from eight to
+(`../../plugins/voice/scripts/settings.py`) is extended from eight to
 ten stated names, both with no default (absent or empty → the module's named refusal,
 which `adapter_identity.py` reports as "register and submit nothing" per §5). The set
 stays closed and secret-free; no module outside `settings.py` reads the environment.
@@ -817,7 +817,7 @@ submissions, dispositions, outcome marking).
 **Design notes.** `rendering_gate.py` owns the **complete R121 rejected-syntax
 contract** — a closed, enumerated class list documented in the module as the boundary's
 authority (KTD1). The paired-marker and line-anchor recognizers of
-[`text_cleanup.py`](../../plugins/voice/scripts/text_cleanup.py) seed the overlapping
+`../../plugins/voice/scripts/text_cleanup.py` seed the overlapping
 classes, but the cleanup pass's documented scope does not bound the gate: the gate adds
 the Markdown forms the cleanup pass never needed.
 
@@ -919,7 +919,7 @@ with dispositions and reasons, tool-use observations, and the settled outcome
 entrypoint — the KTD11 flock transaction with the timeout table's 500 ms acquisition
 budget — and the module exposes no other write path**. CLI: `voice policy show` and
 `voice policy brief-next-turn` verbs on the existing parser in
-[`voice_cli.py:156`](../../plugins/voice/scripts/voice_cli.py).
+`../../plugins/voice/scripts/voice_cli.py`.
 
 **Test scenarios** (`plugins/voice/tests/test_rendering_gate.py`,
 `plugins/voice/tests/test_voice_policy.py`, `plugins/voice/tests/test_turn_record.py`):

@@ -36,9 +36,9 @@ REPO = Path(__file__).resolve().parents[3]
 LAUNCHER = (
     REPO / "plugins" / "agent-launcher" / "skills" / "agent-launcher" / "scripts" / "launcher.py"
 )
-SAGA_PROMPT = REPO / "plugins" / "saga" / "references" / "targeted-reviewer-prompt.md"
-SAGA_SCHEMA = REPO / "plugins" / "saga" / "references" / "targeted-reviewer-answer.schema.json"
-SAGA_FIXTURES = REPO / "plugins" / "saga" / "tests" / "fixtures" / "reviewer_answer"
+SAGA_PROMPT = REPO / "plugins" / "reviews" / "references" / "targeted-reviewer-prompt.md"
+SAGA_SCHEMA = REPO / "plugins" / "reviews" / "references" / "targeted-reviewer-answer.schema.json"
+SAGA_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "reviewer_answer"
 
 #: Fixed inert sources, deliberately unsorted on the way in.
 BASE_SOURCES: list[tuple[str, bytes | None]] = [

@@ -1035,6 +1035,53 @@ class PackageResolutionTest(unittest.TestCase):
         self.assertTrue(any("no port descriptor" in problem for problem in problems))
         self.assertTrue(any("no concrete reason" in problem for problem in problems))
 
+    def test_a_superseded_matrix_of_a_retired_package_does_not_require_its_port(self) -> None:
+        path = ROOT / "docs" / "evidence" / "2026-09-22-saga-compatibility-matrix.md"
+        problems = ccm.check_matrix(path)
+        self.assertEqual(problems, [])
+
+    def test_a_current_matrix_naming_a_retired_package_is_still_refused(self) -> None:
+        record = valid_record(
+            package={
+                "name": "saga",
+                "version": "2.0.0",
+                "file_count": FAKE_FILE_COUNT,
+                "tree_sha256": FAKE_TREE_SHA256,
+            }
+        )
+        document = write_document(record)
+        try:
+            problems = ccm.check_matrix(document)
+        finally:
+            document.unlink()
+        self.assertTrue(any("no port descriptor" in problem for problem in problems))
+
+    def test_a_superseded_matrix_naming_an_unknown_package_is_still_refused(self) -> None:
+        record = valid_record(
+            package={
+                "name": "not-a-package",
+                "version": "2.0.0",
+                "file_count": FAKE_FILE_COUNT,
+                "tree_sha256": FAKE_TREE_SHA256,
+            }
+        )
+        preamble = (
+            "<!-- matrix-status: superseded -->\n"
+            "<!-- superseded-by: successor.md -->\n"
+            "<!-- superseded-reason: the package left the catalog -->\n"
+            "# Matrix\n\n"
+        )
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, True)
+        (directory / "successor.md").write_text(
+            "<!-- matrix-status: notice -->\n\n# Notice\n",
+            encoding="utf-8",
+        )
+        document = directory / "old.md"
+        document.write_text(as_document(record, preamble), encoding="utf-8")
+        problems = ccm.check_matrix(document)
+        self.assertTrue(any("no port descriptor" in problem for problem in problems), problems)
+
     def test_there_is_no_flag_that_rewrites_the_record(self) -> None:
         # A one-keystroke refresh would let a stale matrix pass by editing the
         # evidence to match the tree, which is the failure being repaired.
@@ -1481,14 +1528,11 @@ class CurrentMatrixReportTest(unittest.TestCase):
         self.assertIn("unifi: current matrix: yes", lines)
 
     def test_a_package_with_no_current_matrix_reports_none(self) -> None:
-        # house-style has no compatibility document at all. It declares no
-        # executable entrypoint, so `scripts/assess_clients.py` refuses the
-        # package rather than recording an assessment of nothing, and it stays
-        # the standing example of a package that reports none. This case named
-        # mission-control until the 2026-09-22 ten-client run gave that package
-        # a matrix.
+        # reviews has no compatibility document yet. It is the standing example
+        # of a package that reports none after the catalog cutover removed
+        # house-style, which previously filled this role.
         lines = ccm.current_matrix_report(ROOT)
-        self.assertIn("house-style: current matrix: none", lines)
+        self.assertIn("reviews: current matrix: none", lines)
 
     def test_every_ported_package_gets_exactly_one_line(self) -> None:
         lines = ccm.current_matrix_report(ROOT)
@@ -1546,10 +1590,8 @@ class CLIWiringTest(unittest.TestCase):
             ccm.main([])
         printed = output.getvalue()
         self.assertIn("Current matrix by package:", printed)
-        # house-style is the standing "none" case: it declares no executable
-        # entrypoint, so the harness refuses the package and it can have no
-        # matrix. unifi filled this role until the 2026-09-22 run gave it one.
-        self.assertIn("house-style: current matrix: none", printed)
+        # reviews is the standing "none" case after house-style left the catalog.
+        self.assertIn("reviews: current matrix: none", printed)
         self.assertIn("unifi: current matrix: yes", printed)
 
 

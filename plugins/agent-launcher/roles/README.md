@@ -128,7 +128,7 @@ orchestrator.
 | Investigator | `investigator` | `investigator.md` |
 
 The Targeted Reviewer is a thin wrapper. Its instructions are saga's
-`plugins/saga/references/targeted-reviewer-prompt.md`, which `launcher.py review` sends after the
+`plugins/reviews/references/targeted-reviewer-prompt.md`, which `launcher.py review` sends after the
 wrapper's text, and it is started headless by that launch, never as a roster pane. Its answer goes
 to saga's review command, so it sends no lifecycle contract of its own. And like the Issue Reviewer
 it varies the shared `**Where these come from.**` paragraph, because it has no dispatch and must not
@@ -139,7 +139,7 @@ Each role is one whole prompt; `index.json` publishes its identifier and output 
 ## How a prompt reports
 
 Every prompt points at the house style rather than repeating it:
-`plugins/house-style/references/subagent-presentation-preamble.md`, the single canonical copy in
+`plugins/agent-launcher/roles/references/subagent-presentation-preamble.md`, the single canonical copy in
 this repository. The prompts that were migrated into this directory each opened with a
 byte-identical forty-line copy of that text, one per agent prompt, which is the drift this
 library exists to undo.

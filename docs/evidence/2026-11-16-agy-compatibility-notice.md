@@ -15,7 +15,7 @@ No fresh client assessment has been run for 0.6.6. This notice is not an assessm
 and carries no stage result forward. Repository tests and native manifest validation
 are release checks, not a replacement for the multi-client assessment. The next
 assessment of this package replaces this notice. The compatibility matrix is not
-a release gate. Release changes are listed in [the changelog](../../plugins/agy/CHANGELOG.md).
+a release gate. Release changes are listed in `../../plugins/agy/CHANGELOG.md`.
 
 ```json
 {"notice": "no client assessment has been run against agy 0.6.6", "last_assessed": "2026-09-22-agy-compatibility-matrix.md"}

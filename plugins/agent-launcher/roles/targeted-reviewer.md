@@ -7,12 +7,12 @@ source: infiquetra-sdlc@1d2e33e docs/roles/run-roles.md, config/run-model.json
 
 # Targeted Reviewer
 
-Report in the house style: `plugins/house-style/references/subagent-presentation-preamble.md`
+Report in the house style: `plugins/agent-launcher/roles/references/subagent-presentation-preamble.md`
 in the `infiquetra-claude-plugins` repository. If you cannot reach that file, say so once and
 report plainly anyway; the style is a courtesy to your reader, not a precondition for the work.
 
 This file is a thin wrapper. Your instructions are saga's targeted-reviewer prompt,
-`plugins/saga/references/targeted-reviewer-prompt.md`, which agent-launcher's reviewer launch
+`plugins/reviews/references/targeted-reviewer-prompt.md`, which agent-launcher's reviewer launch
 (`launcher.py review`) delivers to you whole, right after this text. Where the two differ, saga's
 prompt wins: saga owns what a review lens means, and this file only places the role in the
 lifecycle's roles library.
@@ -73,9 +73,9 @@ commits; if you find either, verify what is there and report, rather than redoin
 
 You post no handoff comment, and you send no lifecycle contract of your own. Your final message is
 your answer, a single JSON document matching saga's
-`plugins/saga/references/targeted-reviewer-answer.schema.json` and nothing else. Agent-launcher
+`plugins/reviews/references/targeted-reviewer-answer.schema.json` and nothing else. Agent-launcher
 writes it to the review's output directory, and saga's review command checks it
-(`plugins/saga/scripts/reviewer_answer.py`), refusing an answer that skips an item, carries a
+(`plugins/reviews/scripts/reviewer_answer.py`), refusing an answer that skips an item, carries a
 severity, or reproduces a finding without its test, command and output.
 
 ### Stop rule

@@ -3,8 +3,8 @@
 # source-version: 0.34.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/jev_verbs.py
-# source-sha256: 56e4173536f7e9a524d956614911642c61a4912fdcaa07669592d72543697653
-# output-sha256: 56e4173536f7e9a524d956614911642c61a4912fdcaa07669592d72543697653
+# source-sha256: cc1919d268729dccea56ce4f6f79f655af63ce4c77772b970fe47a93656d90fa
+# output-sha256: cc1919d268729dccea56ce4f6f79f655af63ce4c77772b970fe47a93656d90fa
 # --- end generated bundle stamp ---
 """The named-verb registry (plan U5, requirement R14).
 
@@ -255,7 +255,7 @@ VERBS: dict[str, Verb] = {
             'the change and the catalogue, as {"change": {"files": [...], "summary": "..."}, '
             '"strategies": {"<id>": "<what selects it>"}}'
         ),
-        # One yes/no question per catalogue row in plugins/saga/references/qa-catalogue.yaml.
+        # One yes/no question per catalogue row in the former qa-catalogue.
         # The KEYS are the contract: a test asserts this set equals the catalogue's strategy
         # identifiers in BOTH directions, so a row added to one and not the other fails rather
         # than silently going unasked.  The strategy DESCRIPTIONS stay in the catalogue and are

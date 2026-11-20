@@ -16,7 +16,7 @@ notice as the end of the supersession chain.
 
 On 2026-10-14 the package moved to 1.3.3 in the release that bumps twelve
 packages (infiquetra-agent-plugins issue 234). The changes since 1.3.2 are
-listed in [its changelog](../../plugins/saga/CHANGELOG.md).
+listed in `../../plugins/saga/CHANGELOG.md`.
 
 ```json
 {"notice": "no client assessment has been run against saga 1.3.1, 1.3.2 or 1.3.3", "last_assessed": "2026-10-04-saga-compatibility-matrix.md"}

@@ -20,16 +20,21 @@ from typing import Any
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPTS = REPO_ROOT / "plugins" / "saga" / "scripts"
+SCRIPTS = REPO_ROOT / "plugins" / "reviews" / "scripts"
 
 
 def _load(name: str) -> ModuleType:
-    if str(SCRIPTS) not in sys.path:
-        sys.path.insert(0, str(SCRIPTS))
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+    """Load the reviews copy under a private module name.
+
+    The formula file is byte-identical to the retired saga copy. Registering it
+    as the bare module name would collide with any other tree loaded in the
+    same pytest process.
+    """
+    key = f"infiquetra_reviews.{name}"
+    spec = importlib.util.spec_from_file_location(key, SCRIPTS / f"{name}.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+    sys.modules[key] = module
     spec.loader.exec_module(module)
     return module
 

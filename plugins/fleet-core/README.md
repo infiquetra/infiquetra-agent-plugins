@@ -31,14 +31,8 @@ declares it.
 | `staffing.py` | Resolves a work shape, role, or review lens to a model and an effort. Reads `staffing.json`. |
 | `tier_palette.py` | The closed model and effort vocabulary, derived at import from `staffing.json`. |
 | `tier_resolver.py` | Maps a work shape to a model and an effort, including the one-rung cheaper fallback. |
-| `render_tier_table.py` | Renders the tier table from `staffing.json`. |
-| `effort_rider.py` | How a resolved effort is honored on each spawn path. |
 | `intent_envelope.py` | The one run-start posture schema: run mode, ceremony gates, spend envelope. |
 | `retry_backoff.py` | Shared 429 retry, backoff, and circuit breaker. |
-| `audit_store.py` | Machine-local delegation audit store. |
-| `bridge_receipt.py` | Proof-of-execution receipt shared by engine bridges. |
-| `output_attestation.py` | Hash-bound proof for bridge-produced output. |
-| `merge_guard.py` | Refuses a merge that would revert a newer comparison branch. |
 | `plugin_resolution.py` | Finds a sibling plugin root. It is not the retired discovery shim. |
 | `typesafe_client.py` | Client for the TypeSafe System One endpoint. Standard library transport, with an optional vendor SDK. |
 | `langfuse_client.py` | Client for saga's Langfuse project. Standard library only; redacts every payload, refuses private code over plain HTTP, and cannot delete. |

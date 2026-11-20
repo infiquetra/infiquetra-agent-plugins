@@ -2,6 +2,13 @@
 
 ## 2026-11-19
 
+### SHIPPED - Retire hermes-profile-evolution with the saga-family catalog
+
+**Resolution.** Shipped in #332. The package, its port descriptor, and the
+queued keep-or-retire question left with the catalog cutover. The same cutover
+deleted the agy and saga fixture trees, so the queued scrub of those
+transcripts is superseded.
+
 ### SHIPPED - Claude's reviewer does not screen AGENTS.md for '@' imports
 
 **Resolution.** Shipped in #277. `REVIEWER_INSTRUCTION_NAMES` in

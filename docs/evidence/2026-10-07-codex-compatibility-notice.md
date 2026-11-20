@@ -16,7 +16,7 @@ notice as the end of the supersession chain.
 
 On 2026-10-14 the package moved to 0.1.8 in the release that bumps twelve
 packages (infiquetra-agent-plugins issue 234). The changes since 0.1.7 are
-listed in [its changelog](../../plugins/codex/CHANGELOG.md).
+listed in `../../plugins/codex/CHANGELOG.md`.
 
 ```json
 {"notice": "no client assessment has been run against codex 0.1.6, 0.1.7 or 0.1.8", "last_assessed": "2026-09-22-codex-compatibility-matrix.md"}

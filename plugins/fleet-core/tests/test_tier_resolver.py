@@ -277,10 +277,7 @@ def test_cli_resolve_unknown_work_shape_errors(capsys: pytest.CaptureFixture[str
 # Claude-only refusal, and the tier table's render-sync guard.
 # ---------------------------------------------------------------------------
 
-from fleet_commons import render_tier_table, staffing  # noqa: E402
-
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-PLAN_SKILL = REPO_ROOT / "plugins" / "saga" / "skills" / "plan" / "SKILL.md"
+from fleet_commons import staffing  # noqa: E402
 
 
 @pytest.fixture
@@ -552,21 +549,3 @@ def test_staffing_cli_short_forms(
 ) -> None:
     assert staffing.main(argv) == 0
     assert capsys.readouterr().out.strip() == expected
-
-
-def _skill_tier_block() -> str:
-    text = PLAN_SKILL.read_text(encoding="utf-8")
-    begin = text.index(render_tier_table.TIER_TABLE_BEGIN)
-    end = text.index(render_tier_table.TIER_TABLE_END) + len(render_tier_table.TIER_TABLE_END)
-    return text[begin:end]
-
-
-def test_skill_registry_sync() -> None:
-    """The generated tier table in /plan's skill is byte-identical to the renderer's output."""
-    assert _skill_tier_block() == render_tier_table.render_block()
-
-
-def test_skill_registry_sync_catches_seeded_divergence() -> None:
-    policy = json.loads(json.dumps(tier_resolver.load_policy()))
-    policy["implementation"]["default_model"] = "opus"
-    assert render_tier_table.render_block(policy) != _skill_tier_block()

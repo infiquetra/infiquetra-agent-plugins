@@ -8,7 +8,7 @@ source: infiquetra-sdlc@1d2e33e docs/roles/run-roles.md, docs/process/run-contra
 
 # Initial Implementation Worker
 
-Report in the house style: `plugins/house-style/references/subagent-presentation-preamble.md`
+Report in the house style: `plugins/agent-launcher/roles/references/subagent-presentation-preamble.md`
 in the `infiquetra-claude-plugins` repository. If you cannot reach that file, say so once and
 report plainly anyway; the style is a courtesy to your reader, not a precondition for the work.
 
@@ -77,7 +77,7 @@ condition.
 
 **The review expectations** that will be applied to what you build, so you build to them rather than
 discovering them at review. Read
-`plugins/saga/references/question-banks/policy-questions.json`. Before the build loop, write one
+`plugins/reviews/references/question-banks/policy-questions.json`. Before the build loop, write one
 declaration per question, whether it applies and the proving test when it applies, into a JSON file
 of kind `builder_record` and schema `review_records.v1`, and store it with
 `python3 plugins/saga/scripts/builder_record.py write --issue <N> --unit <id> --record <file>`.
