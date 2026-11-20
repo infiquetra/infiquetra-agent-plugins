@@ -1,5 +1,39 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-20
+
+### A staged rollout has to name every harness it is allowed to touch
+
+**Evidence.** `scripts/install_client.py --client grok,opencode,muse` and the
+repeated form `--client grok --client opencode` select those harnesses in
+order and leave Claude, Codex, Agy, Hermes, Qwen, and Gemini unread.
+`--client claude,codex,agy,hermes,qwen,gemini --prune-retired` removes the
+retired Qwen and Gemini placements and the four Phase 2 harnesses, and the
+Phase 1 trees stay byte-for-byte as they were. `--client qwen` and
+`--client claude,qwen` still exit 2 unless `--prune-retired` is present.
+`--client agy --agy-account company --prune-retired` unlinks catalog-owned
+plugins and skill links under `<company-root>/gemini` and leaves
+`~/.gemini` in place. `--client all --prune-retired` still covers the eight
+active harnesses plus Qwen and Gemini.
+
+**Mechanism.** `--client` is repeatable. Each value splits on commas, blanks
+are rejected, and `all` combined with another name is rejected. A list longer
+than one harness uses the same continue-on-error and per-client applicability
+path as `all`, so a lean seat and a full seat in one command each keep their
+own tier. Muse still refuses an explicit package it cannot install when it is
+the only client, and reports that package as not-applicable when other
+harnesses are selected too. Retired client names enter the prune plan only.
+`all` appends `qwen` and `gemini` to that plan; an explicit list prunes a
+retired target only when the list names it. Company Agy prune passes the
+resolved company Gemini directory into the Agy prune plan, including that
+directory's skill tree.
+
+**Generalizable rule.** Scope a multi-host rollout by the harness names on
+the command, and treat a retired target as a prune operand that is allowed
+only on the prune command. A wildcard that means "everyone" has to stay
+explicit, because a list of the currently active names is a different set
+once retired targets exist.
+
 ## 2026-11-19
 
 ### An installed skill has to run with the working directory outside the catalog

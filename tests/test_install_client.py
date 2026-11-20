@@ -2553,3 +2553,506 @@ class HarnessTierTest(InstallFixture):
         self.assertNotIn(
             f"marketplace remove {muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS}", out
         )
+
+
+class StagedRolloutTest(InstallFixture):
+    """Multi-client selection and scoped prune, always under the fixture home."""
+
+    def _parse_error(self, *argv: str) -> str:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            installer.parse_args(list(argv))
+        self.assertEqual(raised.exception.code, 2)
+        return stderr.getvalue()
+
+    def _reject(self, *argv: str) -> str:
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+            installer.main(["--catalog", str(self.catalog), *argv])
+        self.assertEqual(raised.exception.code, 2)
+        return stderr.getvalue()
+
+    def _tree(self, root: Path) -> tuple[tuple[str, str], ...]:
+        if not root.exists():
+            return ()
+        rows: list[tuple[str, str]] = []
+        for path in sorted(root.rglob("*")):
+            rel = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                rows.append((rel, "symlink:" + os.readlink(path)))
+            elif path.is_file():
+                rows.append((rel, "file:" + path.read_text(encoding="utf-8")))
+        return tuple(rows)
+
+    def _plant_retired_skill(self, skills: Path, manifest: Path, schema: str) -> Path:
+        skills.mkdir(parents=True, exist_ok=True)
+        link = skills / "work"
+        target = self.catalog / "plugins" / "saga" / "skills" / "work"
+        link.symlink_to(target)
+        write_json(
+            manifest,
+            {
+                "schema": schema,
+                "links": [{"target": str(target), "link": str(link)}],
+            },
+        )
+        return link
+
+    def _plant_qwen(self) -> Path:
+        directory = self.home / ".qwen" / "extensions" / "voice"
+        directory.mkdir(parents=True)
+        (directory / "keep").write_text("owned\n", encoding="utf-8")
+        write_json(
+            directory / ".qwen-extension-install.json",
+            {"source": str(self.catalog.resolve())},
+        )
+        return directory
+
+    def _plant_gemini_skill(self) -> Path:
+        return self._plant_retired_skill(
+            self.home / ".gemini" / "skills",
+            self.home / ".gemini" / ".infiquetra-skills.json",
+            installer.GEMINI_SCHEMA,
+        )
+
+    def _seed_grok_catalog(self, *names: str) -> None:
+        write_json(
+            self.home / ".grok/installed-plugins/registry.json",
+            {
+                "version": 1,
+                "repos": {
+                    "catalog": {
+                        "kind": {"source_path": str(self.catalog.resolve())},
+                        "plugins": {name: {} for name in names},
+                    }
+                },
+            },
+        )
+
+    def _seed_claude_catalog(self) -> None:
+        write_json(
+            self.home / ".claude/plugins/known_marketplaces.json",
+            {
+                "infiquetra-agent-plugins": {
+                    "source": {"source": "directory", "path": str(self.catalog.resolve())}
+                }
+            },
+        )
+        write_json(
+            self.home / ".claude/plugins/installed_plugins.json",
+            {
+                "version": 2,
+                "plugins": {
+                    "unifi@infiquetra-agent-plugins": [{"scope": "user"}],
+                    "voice@infiquetra-agent-plugins": [{"scope": "user"}],
+                },
+            },
+        )
+        write_json(
+            self.home / ".claude/settings.json",
+            {
+                "enabledPlugins": {
+                    "unifi@infiquetra-agent-plugins": True,
+                    "voice@infiquetra-agent-plugins": True,
+                }
+            },
+        )
+
+    def _seed_codex_catalog(self) -> None:
+        catalog = str(self.catalog.resolve())
+        path = self.home / ".codex" / "config.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(
+                [
+                    "[marketplaces.infiquetra-agent-plugins]",
+                    'source_type = "local"',
+                    f'source = "{catalog}"',
+                    "",
+                    '[plugins."voice@infiquetra-agent-plugins"]',
+                    "enabled = true",
+                    "",
+                    '[plugins."unifi@infiquetra-agent-plugins"]',
+                    "enabled = true",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    def _link_catalog_skill(self, skills: Path, package: str, skill: str) -> Path:
+        skills.mkdir(parents=True, exist_ok=True)
+        dest = skills / skill
+        target = (self.catalog / "plugins" / package / "skills" / skill).resolve()
+        dest.symlink_to(target)
+        return dest
+
+    def _muse_row(self, name: str) -> dict:
+        alias = muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS
+        source = (self.catalog / "build/muse-marketplace/plugins" / name).resolve()
+        return {
+            "record": {
+                "id": name,
+                "enabled": True,
+                "source": {
+                    "marketplace": alias,
+                    "path": str(source),
+                    "provenance": "marketplace-user-added",
+                },
+            },
+            "valid": True,
+            "diagnostics": [],
+        }
+
+    def test_client_selection_parses_lists_and_rejects_invalid_input(self) -> None:
+        args = installer.parse_args(
+            ["--client", "grok,opencode", "--client", "muse", "--client", "grok", "--dry-run"]
+        )
+        self.assertEqual(args.clients, ("grok", "opencode", "muse"))
+        self.assertFalse(args.client_all)
+        spaced = installer.parse_args(["--client", " grok , opencode ", "--dry-run"])
+        self.assertEqual(spaced.clients, ("grok", "opencode"))
+        repeated_all = installer.parse_args(["--client", "all", "--client", "all", "--dry-run"])
+        self.assertTrue(repeated_all.client_all)
+        self.assertEqual(repeated_all.clients, installer.CLIENTS)
+        self.assertIn("all", self._parse_error("--client", "all,grok"))
+        self.assertIn("all", self._parse_error("--client", "grok", "--client", "all"))
+        self.assertIn("empty", self._parse_error("--client", ""))
+        self.assertIn("empty", self._parse_error("--client", "grok,"))
+        self.assertIn("empty", self._parse_error("--client", "grok, ,muse"))
+        self.assertIn("nope", self._parse_error("--client", "grok,nope"))
+        pruned = installer.parse_args(
+            ["--client", "qwen,gemini", "--prune-retired", "--dry-run"]
+        )
+        self.assertEqual(pruned.clients, ("qwen", "gemini"))
+
+    def test_retired_names_still_fail_without_prune_retired(self) -> None:
+        for argv in (
+            ("--client", "qwen", "--dry-run"),
+            ("--client", "gemini", "--check"),
+            ("--client", "claude,qwen", "--dry-run"),
+            ("--client", "claude,qwen", "--check"),
+            ("--client", "qwen", "--client", "gemini", "--dry-run"),
+        ):
+            with self.subTest(argv=argv):
+                message = self._reject(*argv)
+                self.assertIn("retired", message)
+
+    def test_multi_client_reports_inapplicable_muse_packages_and_continues(self) -> None:
+        self._package("house-style", [])
+        write_json(
+            self.catalog / "plugins/house-style/.claude-plugin/plugin.json",
+            {"name": "house-style", "outputStyles": "./styles"},
+        )
+        code, out, err = self.invoke(
+            "--client", "grok,muse", "--package", "house-style", "--dry-run"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("muse house-style not-applicable", out)
+        self.assertIn("grok", out)
+        self.assertNotIn("not installable in Muse", err)
+        code, _out, err = self.invoke("--client", "muse", "--package", "house-style", "--dry-run")
+        self.assertEqual(code, 2)
+        self.assertIn("not installable in Muse", err)
+
+        write_executable(
+            self.bin,
+            "grok",
+            '{\n'
+            '  printf "CMD"\n'
+            '  printf " %s" "$0" "$@"\n'
+            '  printf "\\nEND\\n"\n'
+            '} >> "$ARGV_LOG"\n'
+            "exit 7\n",
+        )
+        code, out, err = self.invoke(
+            "--client", "grok,opencode", "--package", "voice", "--execute"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("grok", err)
+        voice = self.home / ".config/opencode/skills/voice"
+        self.assertTrue(voice.is_symlink(), out)
+        self.assertEqual(
+            voice.resolve(), (self.catalog / "plugins/voice/skills/voice").resolve()
+        )
+
+    def test_multi_client_check_reads_each_named_client(self) -> None:
+        self._seed_grok_catalog("voice", "unifi")
+        write_json(
+            self.home
+            / ".cursor/plugins/marketplaces/github.com/infiquetra/infiquetra-agent-plugins/checkout/.claude-plugin/marketplace.json",
+            {"plugins": [{"name": "voice"}, {"name": "unifi"}]},
+        )
+        code, out, err = self.invoke("--client", "grok,cursor", "--check")
+        self.assertEqual(code, 0, err + out)
+        self.assertIn("grok voice installed-from-catalog", out)
+        self.assertIn("grok unifi installed-from-catalog", out)
+        self.assertIn("cursor voice installed-from-catalog", out)
+        self.assertIn("whole-repository", out)
+        self.assertNotIn("claude voice", out)
+        self.assertLess(out.index("grok voice"), out.index("whole-repository"))
+
+    def test_phase1_subset_touches_only_grok_opencode_and_muse(self) -> None:
+        self._seed_grok_catalog("voice", "unifi", "saga")
+        opencode_retired = self._plant_retired_skill(
+            self.home / ".config" / "opencode" / "skills",
+            self.home / ".config" / "opencode" / ".infiquetra-plugins.json",
+            installer.OPENCODE_SCHEMA,
+        )
+        staging = self.catalog / "build" / "muse-marketplace"
+        (staging / "plugins" / "saga").mkdir(parents=True)
+        (staging / "plugins" / "reviews").mkdir(parents=True)
+        (staging / "plugins" / "reviews" / "keep").write_text("keep\n", encoding="utf-8")
+        _write_owned_muse_staging(staging, self.catalog, ["saga", "reviews"])
+        self.muse_state(
+            [self._muse_row("voice"), self._muse_row("unifi")],
+            available=["voice", "unifi"],
+        )
+        agy_voice = self.home / ".gemini/config/plugins/voice"
+        agy_voice.mkdir(parents=True)
+        (agy_voice / "keep").write_text("personal-agy\n", encoding="utf-8")
+        write_json(
+            self.home / ".gemini/config/plugins/.infiquetra-install.json",
+            {
+                "schema": installer.AGY_SCHEMA,
+                "packages": {
+                    "voice": {"source": str((self.catalog / "plugins/voice").resolve())}
+                },
+            },
+        )
+        gemini_link = self._plant_gemini_skill()
+        hermes_link = self._plant_retired_skill(
+            self.home / ".hermes" / "skills",
+            self.home / ".hermes" / ".infiquetra-skills.json",
+            installer.HERMES_SCHEMA,
+        )
+        qwen = self._plant_qwen()
+        (self.home / ".claude").mkdir()
+        (self.home / ".claude" / "keep").write_text("claude\n", encoding="utf-8")
+        self._seed_codex_catalog()
+        untouched = [
+            self.home / ".claude",
+            self.home / ".codex",
+            self.home / ".gemini",
+            self.home / ".hermes",
+            self.home / ".qwen",
+        ]
+        before = {str(root): self._tree(root) for root in untouched}
+
+        code, out, err = self.invoke(
+            "--client", "grok,opencode,muse", "--prune-retired", "--execute"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertFalse(opencode_retired.exists())
+        self.assertFalse((staging / "plugins" / "saga").exists())
+        self.assertEqual((staging / "plugins" / "reviews" / "keep").read_text(), "keep\n")
+        self.assertIn("plugin uninstall saga", out)
+        for root in untouched:
+            self.assertEqual(self._tree(root), before[str(root)], str(root))
+        self.assertTrue(agy_voice.is_dir())
+        self.assertTrue(gemini_link.is_symlink())
+        self.assertTrue(hermes_link.is_symlink())
+        self.assertTrue(qwen.is_dir())
+
+        code, out, err = self.invoke("--client", "grok,opencode,muse", "--execute")
+        self.assertEqual(code, 0, err)
+        voice = self.home / ".config/opencode/skills/voice"
+        self.assertTrue(voice.is_symlink())
+        self.assertEqual(
+            voice.resolve(), (self.catalog / "plugins/voice/skills/voice").resolve()
+        )
+        for root in untouched:
+            self.assertEqual(self._tree(root), before[str(root)], str(root))
+
+        code, out, err = self.invoke("--client", "grok,opencode,muse", "--check")
+        self.assertEqual(code, 0, err + out)
+        self.assertIn("grok voice installed-from-catalog", out)
+        self.assertIn("opencode voice installed-from-catalog", out)
+        self.assertIn("opencode unifi installed-from-catalog", out)
+        self.assertIn("muse voice installed-from-catalog", out)
+        self.assertIn("muse unifi installed-from-catalog", out)
+        self.assertNotIn("claude voice", out)
+        self.assertNotIn("codex voice", out)
+        for root in untouched:
+            self.assertEqual(self._tree(root), before[str(root)], str(root))
+        log = self.logged()
+        for name in ("claude", "codex", "agy", "hermes", "cursor"):
+            self.assertNotIn(str(self.bin / name), log, name)
+
+    def test_phase2_prunes_retired_targets_and_leaves_phase1(self) -> None:
+        self._seed_grok_catalog("voice", "unifi", "saga")
+        opencode_retired = self._plant_retired_skill(
+            self.home / ".config" / "opencode" / "skills",
+            self.home / ".config" / "opencode" / ".infiquetra-plugins.json",
+            installer.OPENCODE_SCHEMA,
+        )
+        (self.home / ".config" / "opencode" / "skills" / "keep.txt").write_text(
+            "phase1\n", encoding="utf-8"
+        )
+        staging = self.catalog / "build" / "muse-marketplace"
+        (staging / "plugins" / "saga").mkdir(parents=True)
+        (staging / "plugins" / "saga" / "keep").write_text("phase1\n", encoding="utf-8")
+        _write_owned_muse_staging(staging, self.catalog, ["saga"])
+        (self.home / ".config" / "muse" / "keep").mkdir(parents=True)
+        (self.home / ".config" / "muse" / "keep" / "note").write_text("phase1\n", encoding="utf-8")
+        qwen = self._plant_qwen()
+        (self.home / ".qwen" / "keep.txt").write_text("stay\n", encoding="utf-8")
+        gemini_link = self._plant_gemini_skill()
+        (self.home / ".gemini" / "keep.txt").write_text("stay\n", encoding="utf-8")
+        self._seed_claude_catalog()
+        self._seed_codex_catalog()
+        plugins = self.home / ".gemini/config/plugins"
+        (plugins / "unifi").mkdir(parents=True)
+        write_json(
+            plugins / ".infiquetra-install.json",
+            {
+                "schema": installer.AGY_SCHEMA,
+                "packages": {
+                    "unifi": {"source": str((self.catalog / "plugins/unifi").resolve())}
+                },
+            },
+        )
+        hermes_skills = self.home / ".hermes" / "skills"
+        self._link_catalog_skill(hermes_skills, "unifi", "unifi-network")
+        self._link_catalog_skill(hermes_skills, "unifi", "unifi-protect")
+        write_executable(
+            self.bin,
+            "agy",
+            '{\n'
+            '  printf "CMD"\n'
+            '  printf " %s" "$0" "$@"\n'
+            '  printf "\\nEND\\n"\n'
+            '} >> "$ARGV_LOG"\n'
+            'if [ "$1" = "plugin" ] && [ "$2" = "install" ]; then\n'
+            '  mkdir -p "$HOME/.gemini/config/plugins/$(basename "$3")"\n'
+            "fi\n"
+            "exit 0\n",
+        )
+        phase1 = [
+            self.home / ".grok",
+            self.home / ".config" / "opencode",
+            self.home / ".config" / "muse",
+            staging,
+        ]
+        before = {str(root): self._tree(root) for root in phase1}
+
+        code, out, err = self.invoke(
+            "--client",
+            "claude,codex,agy,hermes,qwen,gemini",
+            "--prune-retired",
+            "--execute",
+        )
+        self.assertEqual(code, 0, err)
+        self.assertFalse(qwen.exists(), out)
+        self.assertFalse(gemini_link.exists(), out)
+        self.assertEqual((self.home / ".qwen" / "keep.txt").read_text(), "stay\n")
+        self.assertEqual((self.home / ".gemini" / "keep.txt").read_text(), "stay\n")
+        self.assertTrue(opencode_retired.is_symlink())
+        self.assertTrue((staging / "plugins" / "saga" / "keep").is_file())
+        for root in phase1:
+            self.assertEqual(self._tree(root), before[str(root)], str(root))
+
+        code, out, err = self.invoke("--client", "claude,codex,agy,hermes", "--execute")
+        self.assertEqual(code, 0, err)
+        for root in phase1:
+            self.assertEqual(self._tree(root), before[str(root)], str(root))
+        hermes_voice = hermes_skills / "voice"
+        self.assertTrue(hermes_voice.is_symlink())
+
+        code, out, err = self.invoke("--client", "claude,codex,agy,hermes", "--check")
+        self.assertEqual(code, 0, err + out)
+        for client in ("claude", "codex", "agy", "hermes"):
+            self.assertIn(f"{client} unifi installed-from-catalog", out)
+            self.assertIn(f"{client} voice installed-from-catalog", out)
+        self.assertNotIn("grok voice", out)
+        self.assertNotIn("opencode voice", out)
+        self.assertNotIn("muse voice", out)
+        for root in phase1:
+            self.assertEqual(self._tree(root), before[str(root)], str(root))
+        log = self.logged()
+        for name in ("grok", "opencode", "muse"):
+            self.assertNotIn(str(self.bin / name), log, name)
+
+    def test_all_prune_still_removes_qwen_and_gemini(self) -> None:
+        qwen = self._plant_qwen()
+        gemini_link = self._plant_gemini_skill()
+        code, _out, err = self.invoke("--client", "all", "--prune-retired", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertFalse(qwen.exists())
+        self.assertFalse(gemini_link.exists())
+
+    def test_company_agy_prune_targets_the_company_dir_only(self) -> None:
+        company = self.base / "company"
+        personal_voice = self.home / ".gemini/config/plugins/voice"
+        personal_voice.mkdir(parents=True)
+        (personal_voice / "keep").write_text("personal\n", encoding="utf-8")
+        write_json(
+            self.home / ".gemini/config/plugins/.infiquetra-install.json",
+            {
+                "schema": installer.AGY_SCHEMA,
+                "packages": {
+                    "voice": {"source": str((self.catalog / "plugins/voice").resolve())}
+                },
+            },
+        )
+        personal_skill = self._plant_gemini_skill()
+        company_voice = company / "gemini/config/plugins/voice"
+        company_voice.mkdir(parents=True)
+        (company_voice / "owned").write_text("company\n", encoding="utf-8")
+        write_json(
+            company / "gemini/config/plugins/.infiquetra-install.json",
+            {
+                "schema": installer.AGY_SCHEMA,
+                "packages": {
+                    "voice": {"source": str((self.catalog / "plugins/voice").resolve())}
+                },
+            },
+        )
+        company_skill = self._plant_retired_skill(
+            company / "gemini/skills",
+            company / "gemini/.infiquetra-skills.json",
+            installer.GEMINI_SCHEMA,
+        )
+        code, out, err = self.invoke(
+            "--client",
+            "agy",
+            "--agy-account",
+            "company",
+            "--agy-company-home",
+            str(company),
+            "--prune-retired",
+            "--dry-run",
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn(str(company_voice), out)
+        self.assertIn(str(company_skill), out)
+        self.assertNotIn(str(personal_voice), out)
+        self.assertNotIn(str(personal_skill), out)
+        self.assertTrue(company_voice.is_dir())
+        self.assertTrue(personal_voice.is_dir())
+
+        code, out, err = self.invoke(
+            "--client",
+            "agy",
+            "--agy-account",
+            "company",
+            "--agy-company-home",
+            str(company),
+            "--prune-retired",
+            "--execute",
+        )
+        self.assertEqual(code, 0, err)
+        self.assertFalse(company_voice.exists(), out)
+        self.assertFalse(company_skill.exists(), out)
+        self.assertEqual((personal_voice / "keep").read_text(), "personal\n")
+        self.assertTrue(personal_skill.is_symlink())
+        company_manifest = json.loads(
+            (company / "gemini/config/plugins/.infiquetra-install.json").read_text(encoding="utf-8")
+        )
+        self.assertNotIn("voice", company_manifest["packages"])
+        personal_manifest = json.loads(
+            (self.home / ".gemini/config/plugins/.infiquetra-install.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn("voice", personal_manifest["packages"])
