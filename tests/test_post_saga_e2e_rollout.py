@@ -12,11 +12,13 @@ import hashlib
 import json
 import os
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import textwrap
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -33,6 +35,22 @@ BASE_COMMIT = "5550acfbc3ffe1eaf2016c17b007c98e80fb46dc"
 FORMULA_SHA256 = "528540c6958cf628d5cdf3ea44dc7fff45c16862ad11412c56a945ceb7e4e839"
 SCHEMA_SHA256 = "a505807b505fbb65f98c58f36375256dd99b7afb2e7f3346bac9f79a9b90acd8"
 LEAN_PACKAGES = ("reviews", "plan", "investigate")
+EXPECTED_FULL_PACKAGES = frozenset(
+    {
+        "reviews",
+        "plan",
+        "strategy",
+        "ideate",
+        "brainstorm",
+        "investigate",
+        "mission-control",
+        "deploy",
+        "home-lab-ops",
+        "unifi",
+        "agent-launcher",
+    }
+)
+EXPECTED_LEAN_PACKAGES = frozenset(LEAN_PACKAGES)
 FULL_CLIENTS = ("claude", "agy", "codex", "opencode", "hermes")
 LEAN_CLIENTS = ("cursor", "muse", "grok")
 RETIRED_MODULES = frozenset(
@@ -54,6 +72,7 @@ SHIM_SOURCE = r'''
 import json
 import os
 import shlex
+import shutil
 import sys
 from pathlib import Path
 
@@ -124,18 +143,25 @@ def claude_enable(plugin_id: str, present: bool) -> None:
     plugins = installed.setdefault("plugins", {})
     settings = read_json(claude_settings(), {})
     enabled = settings.setdefault("enabledPlugins", {})
+    name = plugin_id.split("@", 1)[0]
+    cache = home() / ".claude" / "plugins" / "cache" / MARKET / name
     if present:
         plugins[plugin_id] = [{"version": "0.0.0"}]
         enabled[plugin_id] = True
-        name = plugin_id.split("@", 1)[0]
         target = catalog() / "plugins" / name
-        cache = home() / ".claude" / "plugins" / "cache" / MARKET / name
-        if target.is_dir() and not cache.exists() and not cache.is_symlink():
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            os.symlink(target, cache)
+        if target.is_dir():
+            if cache.is_symlink():
+                cache.unlink()
+            if not cache.exists():
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(target, cache, symlinks=False)
     else:
         plugins.pop(plugin_id, None)
         enabled.pop(plugin_id, None)
+        if cache.is_symlink():
+            cache.unlink()
+        elif cache.is_dir():
+            shutil.rmtree(cache)
     write_json(claude_installed(), installed)
     write_json(claude_settings(), settings)
 
@@ -451,9 +477,16 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
         cls.bin = cls.base / "bin"
         cls.bin.mkdir()
         cls.shim_log = cls.base / "shim.log"
+        cls.empty_gitconfig = cls.base / "empty-gitconfig"
+        cls.empty_gitconfig.write_text("", encoding="utf-8")
         cls.repo = REPO.resolve()
-        cls._park_staging()
-        packages = installer.discover_packages(cls.repo)
+        cls.host_git = shutil.which("git")
+        if cls.host_git is None:
+            raise RuntimeError("git executable is required for E2E rollout tests")
+        cls.catalog = cls.base / "catalog"
+        cls._copy_catalog()
+        cls._staging = cls.catalog / sync_marketplace.MUSE_STAGING_DEFAULT
+        packages = installer.discover_packages(cls.catalog)
         cls.active = [package.name for package in packages if not installer.is_library_package(package)]
         cls.library = [package.name for package in packages if installer.is_library_package(package)]
         cls._install_shims()
@@ -464,53 +497,59 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
         cls.check = cls._invoke(env, "--client", "all", "--check")
 
     @classmethod
-    def _park_staging(cls) -> None:
-        staging = cls.repo / sync_marketplace.MUSE_STAGING_DEFAULT
-        backup = cls.base / "muse-staging-backup"
-        cls._staging = staging
-        cls._staging_existed = staging.exists()
-        if staging.exists():
-            staging.rename(backup)
-
-        def restore() -> None:
-            if staging.exists():
-                import shutil
-
-                shutil.rmtree(staging)
-            if backup.exists():
-                staging.parent.mkdir(parents=True, exist_ok=True)
-                backup.rename(staging)
-
-        cls.addClassCleanup(restore)
+    def _copy_catalog(cls) -> None:
+        cls.catalog.mkdir(parents=True, exist_ok=True)
+        ignore = shutil.ignore_patterns("__pycache__", ".pytest_cache", ".git", "build")
+        for directory in (".agents", ".claude-plugin", "plugins", "ports", "schemas", "scripts"):
+            source = cls.repo / directory
+            if source.is_dir():
+                shutil.copytree(source, cls.catalog / directory, symlinks=True, ignore=ignore)
+        for path in [cls.catalog, *cls.catalog.rglob("*")]:
+            if not path.is_symlink():
+                path.chmod(path.stat().st_mode & ~0o022)
 
     @classmethod
     def _install_shims(cls) -> None:
         shim = cls.bin / "harness-shim"
-        shim.write_text("#!/usr/bin/env python3\n" + SHIM_SOURCE, encoding="utf-8")
+        shim.write_text(f"#!{sys.executable}\n" + SHIM_SOURCE, encoding="utf-8")
         shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         for name in set(installer.CLIENT_BINARIES.values()):
             link = cls.bin / name
             link.symlink_to(shim)
+        (cls.bin / "python3").symlink_to(sys.executable)
+        (cls.bin / "git").symlink_to(cls.host_git)
+
+    @classmethod
+    def _git_env(cls, env: dict[str, str] | None = None) -> dict[str, str]:
+        updated = dict(os.environ if env is None else env)
+        updated["GIT_CONFIG_GLOBAL"] = str(cls.empty_gitconfig)
+        updated["GIT_CONFIG_SYSTEM"] = os.devnull
+        updated["GIT_CONFIG_NOSYSTEM"] = "1"
+        updated["GIT_CONFIG_COUNT"] = "1"
+        updated["GIT_CONFIG_KEY_0"] = "core.hooksPath"
+        updated["GIT_CONFIG_VALUE_0"] = os.devnull
+        updated["GIT_OPTIONAL_LOCKS"] = "0"
+        return updated
 
     @classmethod
     def _installer_env(cls) -> dict[str, str]:
-        env = os.environ.copy()
+        env = cls._git_env()
         env["HOME"] = str(cls.home)
-        env["CATALOG"] = str(cls.repo)
+        env["CATALOG"] = str(cls.catalog)
         env["SHIM_LOG"] = str(cls.shim_log)
         env["XDG_CONFIG_HOME"] = str(cls.home / ".config")
         env["XDG_DATA_HOME"] = str(cls.home / ".local" / "share")
         env["XDG_CACHE_HOME"] = str(cls.home / ".cache")
         env["XDG_STATE_HOME"] = str(cls.home / ".local" / "state")
-        env["PATH"] = os.pathsep.join([str(cls.bin), env.get("PATH", "")])
+        env["PATH"] = str(cls.bin)
         env.pop("AGY_COMPANY_HOME", None)
         return env
 
     @classmethod
     def _invoke(cls, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, str(cls.repo / "scripts" / "install_client.py"), "--catalog", str(cls.repo), *args],
-            cwd=cls.repo,
+            [sys.executable, str(cls.catalog / "scripts" / "install_client.py"), "--catalog", str(cls.catalog), *args],
+            cwd=cls.catalog,
             env=env,
             capture_output=True,
             text=True,
@@ -520,7 +559,7 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
 
     @classmethod
     def _seed_legacy_home(cls) -> None:
-        catalog = cls.repo
+        catalog = cls.catalog
         retired = installer.RETIRED_PACKAGES
         skills = installer.SAGA_SKILL_NAMES
         cls.foreign_skill = cls.base / "foreign-skill"
@@ -704,14 +743,21 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
         self.assertEqual(len(installer.RETIRED_PACKAGES), 8)
         self.assertEqual(len(installer.SAGA_SKILL_NAMES), 15)
         self.assertEqual(self.library, ["fleet-core"])
-        self.assertEqual(len(self.active), 11)
+        self.assertEqual(set(self.active), EXPECTED_FULL_PACKAGES)
+        self.assertEqual(set(LEAN_PACKAGES), EXPECTED_LEAN_PACKAGES)
         self.assertEqual(self.prune.returncode, 0, self._failure_text(self.prune))
         self.assertEqual(self.install.returncode, 0, self._failure_text(self.install))
         self.assertEqual(self.check.returncode, 0, self._failure_text(self.check))
 
         live_skills = {
             path.name
-            for path in self.repo.glob("plugins/*/skills/*")
+            for path in self.catalog.glob("plugins/*/skills/*")
+            if path.is_dir() and (path / "SKILL.md").is_file()
+        }
+        expected_full_skills = {
+            path.name
+            for package in EXPECTED_FULL_PACKAGES
+            for path in (self.catalog / "plugins" / package / "skills").glob("*")
             if path.is_dir() and (path / "SKILL.md").is_file()
         }
         for root in (
@@ -750,24 +796,82 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
             self.assertTrue(foreign.is_symlink(), str(foreign))
             self.assertEqual(foreign.resolve(), self.foreign_skill.resolve())
 
+        market = installer.marketplace_name(self.catalog)
+        # Full-tier: Claude (installed_plugins.json, settings.json, standalone cache dir)
         installed = json.loads(
             (self.home / ".claude" / "plugins" / "installed_plugins.json").read_text(encoding="utf-8")
         )
-        market = installer.marketplace_name(self.repo)
+        claude_settings = json.loads((self.home / ".claude" / "settings.json").read_text(encoding="utf-8"))
         for name in installer.RETIRED_PACKAGES:
             self.assertNotIn(f"{name}@{market}", installed["plugins"])
         self.assertIn("my-notes@foreign-market", installed["plugins"])
-        codex = (self.home / ".codex" / "config.toml").read_text(encoding="utf-8")
+        self.assertIn("my-notes@foreign-market", claude_settings["enabledPlugins"])
+        self.assertEqual(
+            {key.split("@", 1)[0] for key in installed["plugins"] if key.endswith(f"@{market}")},
+            EXPECTED_FULL_PACKAGES,
+        )
+        self.assertEqual(
+            {
+                key.split("@", 1)[0]
+                for key, val in claude_settings["enabledPlugins"].items()
+                if key.endswith(f"@{market}") and val is True
+            },
+            EXPECTED_FULL_PACKAGES,
+        )
+        claude_cache = self.home / ".claude" / "plugins" / "cache" / market
+        self.assertEqual({p.name for p in claude_cache.iterdir()}, EXPECTED_FULL_PACKAGES)
+        for p in claude_cache.iterdir():
+            self.assertFalse(p.is_symlink(), f"{p} must be a copied cache, not a symlink")
+
+        # Full-tier: Agy (disk dirs + manifest)
+        agy_root = self.home / ".gemini" / "config" / "plugins"
+        agy_manifest = json.loads((agy_root / ".infiquetra-install.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            {p.name for p in agy_root.iterdir()} - {"foreign-plugin", "unsourced-plugin", ".infiquetra-install.json"},
+            EXPECTED_FULL_PACKAGES | {"fleet-core"},
+        )
+        self.assertEqual(set(agy_manifest["packages"]) - {"foreign-plugin"}, EXPECTED_FULL_PACKAGES | {"fleet-core"})
+
+        # Full-tier: Codex (config.toml)
+        codex_text = (self.home / ".codex" / "config.toml").read_text(encoding="utf-8")
         for name in installer.RETIRED_PACKAGES:
-            self.assertNotIn(f'[plugins."{name}@{market}"]', codex)
-        self.assertIn('[plugins."my-notes@foreign"]', codex)
+            self.assertNotIn(f'[plugins."{name}@{market}"]', codex_text)
+        codex_doc = tomllib.loads(codex_text)
+        self.assertIn("my-notes@foreign", codex_doc["plugins"])
+        self.assertEqual(
+            {
+                key.split("@", 1)[0]
+                for key, body in codex_doc["plugins"].items()
+                if key.endswith(f"@{market}") and body.get("enabled") is True
+            },
+            EXPECTED_FULL_PACKAGES | {"fleet-core"},
+        )
+
+        # Full-tier: OpenCode & Hermes (skills directories + manifests)
+        for root, manifest_name in (
+            (self.home / ".config" / "opencode", ".infiquetra-plugins.json"),
+            (self.home / ".hermes", ".infiquetra-skills.json"),
+        ):
+            skills_dir = root / "skills"
+            self.assertEqual({p.name for p in skills_dir.iterdir()} - {"foreign-notes", "kept-skill"}, expected_full_skills)
+            manifest = json.loads((root / manifest_name).read_text(encoding="utf-8"))
+            self.assertEqual(
+                {Path(item["link"]).name for item in manifest["links"]} - {"foreign-notes"},
+                expected_full_skills,
+            )
+
+        # Lean-tier: Grok (registry.json must hold ONLY reviews, plan, investigate)
         grok = json.loads(
             (self.home / ".grok" / "installed-plugins" / "registry.json").read_text(encoding="utf-8")
         )
         owned_plugins = grok["repos"]["owned"]["plugins"]
         for name in installer.RETIRED_PACKAGES:
             self.assertNotIn(name, owned_plugins)
-        self.assertIn("my-notes", grok["repos"]["foreign"]["plugins"])
+        self.assertEqual(set(owned_plugins), EXPECTED_LEAN_PACKAGES)
+        self.assertEqual(set(grok["repos"]), {"owned", "foreign"})
+        self.assertEqual(set(grok["repos"]["foreign"]["plugins"]), {"my-notes"})
+
+        # Lean-tier: Muse (staging, marketplace.json, marker, installed state, and clean skills tree)
         muse_markets = json.loads(
             (self.home / ".local" / "share" / "muse" / "plugins" / "marketplaces.json").read_text(
                 encoding="utf-8"
@@ -775,6 +879,47 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
         )["marketplaces"]
         self.assertNotIn("old-claude", muse_markets)
         self.assertIn("foreign-mkt", muse_markets)
+        muse_installed = json.loads(
+            (self.home / ".local" / "share" / "muse" / "e2e-installed.json").read_text(encoding="utf-8")
+        )["installed"]
+        self.assertEqual(set(muse_installed), EXPECTED_LEAN_PACKAGES)
+        self.assertEqual(len(muse_installed), len(EXPECTED_LEAN_PACKAGES))
+        self.assertEqual({p.name for p in (self._staging / "plugins").iterdir()} - {"foreign-bundle"}, EXPECTED_LEAN_PACKAGES)
+        muse_staged_manifest = json.loads(
+            (self._staging / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual({entry["name"] for entry in muse_staged_manifest["plugins"]}, EXPECTED_LEAN_PACKAGES)
+        muse_marker = json.loads((self._staging / ".infiquetra-muse-staging").read_text(encoding="utf-8"))
+        self.assertEqual(set(muse_marker["packages"]), EXPECTED_LEAN_PACKAGES)
+        self.assertEqual(
+            {p.name for p in (self.home / ".config" / "muse" / "skills").iterdir()},
+            {"foreign-notes", "kept-skill"},
+        )
+        muse_skills_manifest = json.loads(
+            (self.home / ".config" / "muse" / ".infiquetra-skills.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual({Path(item["link"]).name for item in muse_skills_manifest["links"]}, {"foreign-notes"})
+
+        # Lean-tier: Cursor (marketplace manifest registered, no per-package extra installs)
+        cursor_manifest = (
+            self.home
+            / ".cursor"
+            / "plugins"
+            / "marketplaces"
+            / "github.com"
+            / "infiquetra"
+            / "infiquetra-agent-plugins"
+            / ".claude-plugin"
+            / "marketplace.json"
+        )
+        self.assertTrue(cursor_manifest.is_file())
+        shim_calls = [shlex.split(line) for line in self.shim_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+        grok_installs = {Path(argv[3]).name for argv in shim_calls if Path(argv[0]).name == "grok" and argv[1:3] == ["plugin", "install"]}
+        muse_installs = {argv[3].split("@", 1)[0] for argv in shim_calls if Path(argv[0]).name == "muse" and argv[1:3] == ["plugins", "install"]}
+        cursor_calls = [argv[1:] for argv in shim_calls if Path(argv[0]).name == "cursor-agent"]
+        self.assertEqual(grok_installs, EXPECTED_LEAN_PACKAGES)
+        self.assertEqual(muse_installs, EXPECTED_LEAN_PACKAGES)
+        self.assertEqual(cursor_calls, [["plugin", "marketplace", "add", installer.CATALOG_GIT_URL]])
 
         lines = set(self.check.stdout.splitlines())
         self.assertTrue(any(line.startswith("cursor marketplace whole-repository") for line in lines))
@@ -790,12 +935,74 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
                     self.assertIn(f"{client} {name} not-applicable (tier)", lines)
             self.assertIn(f"{client} fleet-core not-applicable (library)", lines)
 
+    @classmethod
+    def _install_scanner_stubs(cls, directory: Path) -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        script = directory / "scanner-stub.py"
+        script.write_text(
+            f"#!{sys.executable}\n"
+            "import json\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "log = Path(__file__).resolve().parent / 'invocations.log'\n"
+            "name = Path(sys.argv[0]).name\n"
+            "with log.open('a', encoding='utf-8') as handle:\n"
+            "    handle.write(json.dumps({'name': name, 'argv': sys.argv[1:]}) + '\\n')\n"
+            "versions = {\n"
+            "    'semgrep': '1.179.0',\n"
+            "    'bandit': '1.9.4',\n"
+            "    'pip-audit': '2.10.1',\n"
+            "    'gitleaks': '8.24.0',\n"
+            "    'osv-scanner': '1.7.0',\n"
+            "}\n"
+            "if '--version' in sys.argv[1:]:\n"
+            "    print(versions.get(name, '1.0.0'))\n"
+            "    raise SystemExit(0)\n"
+            "payloads = {\n"
+            "    'semgrep': '{\"results\":[]}',\n"
+            "    'bandit': '{\"results\":[]}',\n"
+            "    'gitleaks': '[]',\n"
+            "    'osv-scanner': '{\"results\":[]}',\n"
+            "    'pip-audit': '{\"dependencies\":[]}',\n"
+            "}\n"
+            "print(payloads.get(name, '{}'))\n"
+            "raise SystemExit(0)\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        for name in ("semgrep", "gitleaks", "osv-scanner", "bandit", "pip-audit"):
+            link = directory / name
+            if not link.exists():
+                link.symlink_to(script)
+        for name, target in (("git", cls.host_git), ("python3", sys.executable)):
+            link = directory / name
+            if not link.exists():
+                link.symlink_to(target)
+        return directory / "invocations.log"
+
     def test_installed_reviews_and_plan_execute_standalone_from_opencode_hermes_and_claude_layouts(
         self,
     ) -> None:
         self.assertEqual(self.install.returncode, 0, self._failure_text(self.install))
         target = self.base / "target-repo"
         self._git_repo(target)
+        scan_bin = self.base / "scan-bin"
+        invocations_log = self._install_scanner_stubs(scan_bin)
+
+        pack_cache = self.home / ".config" / "infiquetra" / "reviews" / "semgrep-rules" / "p--security-audit"
+        pack_cache.mkdir(parents=True, exist_ok=True)
+        rules_file = pack_cache / "rules.yml"
+        rules_file.write_text("rules: []\n", encoding="utf-8")
+        hasher = hashlib.sha256()
+        hasher.update(b"rules.yml\0")
+        hasher.update(rules_file.read_bytes())
+        hasher.update(b"\0")
+        pack_digest = hasher.hexdigest()
+        _write_json(
+            self.home / ".config" / "infiquetra" / "reviews" / "machine.json",
+            {"rule_caches": {"semgrep-security": pack_digest, "p/security-audit": pack_digest}},
+        )
+
         audit = self.base / "audit"
         audit.mkdir()
         (audit / "sitecustomize.py").write_text(
@@ -825,20 +1032,18 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
             encoding="utf-8",
         )
         audit_log = self.base / "imports.log"
-        env = os.environ.copy()
+        env = self._git_env()
         env["HOME"] = str(self.home)
         env["XDG_CONFIG_HOME"] = str(self.home / ".config")
         env["XDG_DATA_HOME"] = str(self.home / ".local" / "share")
         env["XDG_CACHE_HOME"] = str(self.home / ".cache")
         env["XDG_STATE_HOME"] = str(self.home / ".local" / "state")
+        env["PATH"] = str(scan_bin)
         env["PYTHONPATH"] = str(audit)
         env["IMPORT_AUDIT_LOG"] = str(audit_log)
-        env["GIT_CONFIG_GLOBAL"] = str(self.base / "empty-gitconfig")
-        env["GIT_CONFIG_NOSYSTEM"] = "1"
         env["SEMGREP_ENABLE_VERSION_CHECK"] = "0"
         for name in ("TYPESAFE_API_KEY", "TYPESAFE_TRANSPORT", "AGY_COMPANY_HOME"):
             env.pop(name, None)
-        (self.base / "empty-gitconfig").write_text("", encoding="utf-8")
 
         profile = self.base / "profile.json"
         profile.write_text(json.dumps({"schema": "repository_profile.v1"}) + "\n", encoding="utf-8")
@@ -867,6 +1072,7 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
         doc.parent.mkdir(parents=True, exist_ok=True)
         doc.write_text("A local reader for one committed file.\n", encoding="utf-8")
         base, head = self._revisions(target)
+        claude_cache = self.home / ".claude" / "plugins" / "cache" / installer.marketplace_name(self.catalog)
 
         for layout, roots in self._layouts().items():
             with self.subTest(layout=layout):
@@ -878,6 +1084,14 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
                 for script in (reviews / "review_command.py", reviews / "security_scan.py", reviews / "lifecycle_review.py", plan_script, hook, ideate, brainstorm):
                     self.assertTrue(script.is_file(), script)
                     self.assertTrue(str(script).startswith(str(self.home)), script)
+                    if layout == "claude":
+                        resolved = script.resolve()
+                        self.assertTrue(str(resolved).startswith(str(self.home.resolve())), resolved)
+                        self.assertFalse(str(resolved).startswith(str(self.repo.resolve())), resolved)
+                        self.assertFalse(str(resolved).startswith(str(self.catalog.resolve())), resolved)
+                if layout == "claude":
+                    for pkg in ("reviews", "plan", "ideate", "brainstorm"):
+                        self.assertFalse((claude_cache / pkg).is_symlink(), pkg)
 
                 audit_log.write_text("", encoding="utf-8")
                 packet = self.base / f"packet-{layout}"
@@ -905,6 +1119,7 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
                 self.assertTrue((packet / "grades.json").is_file())
                 self.assertNotIn("Traceback", prepared.stderr)
 
+                invocations_log.write_text("", encoding="utf-8")
                 scan_out = self.base / f"scan-{layout}"
                 scanned = self._python(
                     env,
@@ -919,9 +1134,29 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
                 summary_path = scan_out / "summary.json"
                 self.assertTrue(summary_path.is_file(), scanned.stderr)
                 summary = json.loads(summary_path.read_text(encoding="utf-8"))
-                self.assertEqual(scanned.returncode, summary["exit_code"], scanned.stderr)
-                self.assertTrue(summary["rows"])
-                self.assertIn("Repository security scan", (scan_out / "summary.md").read_text(encoding="utf-8"))
+                self.assertEqual(scanned.returncode, 0, scanned.stdout + "\n" + scanned.stderr)
+                self.assertEqual(summary["exit_code"], 0, summary)
+                self.assertEqual(summary["unscanned_submodules"], [])
+                degraded_rows = [row for row in summary["rows"] if row["status"] == "degraded"]
+                self.assertEqual(degraded_rows, [], summary)
+                ran_rows = {row["id"]: row for row in summary["rows"] if row["status"] == "ran"}
+                self.assertTrue({"semgrep-security", "semgrep-saga", "gitleaks", "bandit"} <= set(ran_rows), summary)
+                self.assertEqual(ran_rows["semgrep-security"]["version"], "1.179.0")
+                self.assertEqual(ran_rows["semgrep-saga"]["version"], "1.179.0")
+                self.assertEqual(ran_rows["gitleaks"]["version"], "8.24.0")
+                self.assertEqual(ran_rows["bandit"]["version"], "1.9.4")
+                for row_id in ("semgrep-security", "semgrep-saga", "gitleaks", "bandit"):
+                    self.assertEqual(ran_rows[row_id]["counts"], {"blocks": 0, "fix-later": 0, "note": 0})
+                summary_md = (scan_out / "summary.md").read_text(encoding="utf-8")
+                self.assertIn("Repository security scan", summary_md)
+                self.assertIn("Exit status: 0", summary_md)
+                self.assertIn("No findings reported", summary_md)
+                invoked_tools = {
+                    json.loads(line)["name"]
+                    for line in invocations_log.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                }
+                self.assertTrue({"semgrep", "gitleaks", "bandit"} <= invoked_tools, invoked_tools)
 
                 rubrics = self._python(
                     env,
@@ -978,6 +1213,7 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
             completed = subprocess.run(
                 [sys.executable, str(self.repo / "scripts" / script), "--check"],
                 cwd=self.repo,
+                env=self._git_env(),
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -1049,24 +1285,35 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
 
     def _git_repo(self, repo: Path) -> None:
         repo.mkdir()
-        git = ["git", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"]
-        subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
-        subprocess.run([*git, "config", "user.email", "review@example.com"], cwd=repo, check=True, capture_output=True)
-        subprocess.run([*git, "config", "user.name", "review"], cwd=repo, check=True, capture_output=True)
+        git_env = self._git_env()
+        git = [
+            self.host_git,
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "init.defaultBranch=main",
+        ]
+        subprocess.run([*git, "init", "-b", "main"], cwd=repo, env=git_env, check=True, capture_output=True)
+        subprocess.run([*git, "config", "user.email", "review@example.com"], cwd=repo, env=git_env, check=True, capture_output=True)
+        subprocess.run([*git, "config", "user.name", "review"], cwd=repo, env=git_env, check=True, capture_output=True)
         (repo / "src").mkdir()
         (repo / "src" / "app.py").write_text("def changed():\n    return 1\n", encoding="utf-8")
-        subprocess.run([*git, "add", "-A"], cwd=repo, check=True, capture_output=True)
-        subprocess.run([*git, "commit", "-m", "base"], cwd=repo, check=True, capture_output=True)
+        subprocess.run([*git, "add", "-A"], cwd=repo, env=git_env, check=True, capture_output=True)
+        subprocess.run([*git, "commit", "-m", "base"], cwd=repo, env=git_env, check=True, capture_output=True)
         (repo / "src" / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
-        subprocess.run([*git, "add", "-A"], cwd=repo, check=True, capture_output=True)
-        subprocess.run([*git, "commit", "-m", "head"], cwd=repo, check=True, capture_output=True)
+        subprocess.run([*git, "add", "-A"], cwd=repo, env=git_env, check=True, capture_output=True)
+        subprocess.run([*git, "commit", "-m", "head"], cwd=repo, env=git_env, check=True, capture_output=True)
 
     def _revisions(self, repo: Path) -> tuple[str, str]:
+        git_env = self._git_env()
+        git = [self.host_git, "-c", f"core.hooksPath={os.devnull}"]
         head = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+            [*git, "rev-parse", "HEAD"], cwd=repo, env=git_env, check=True, capture_output=True, text=True
         ).stdout.strip()
         base = subprocess.run(
-            ["git", "rev-parse", "HEAD~1"], cwd=repo, check=True, capture_output=True, text=True
+            [*git, "rev-parse", "HEAD~1"], cwd=repo, env=git_env, check=True, capture_output=True, text=True
         ).stdout.strip()
         return base, head
 
@@ -1150,22 +1397,33 @@ class PostSagaE2ERolloutTest(unittest.TestCase):
         schema_bytes = schema.read_bytes()
         self.assertEqual(hashlib.sha256(formula_bytes).hexdigest(), FORMULA_SHA256)
         self.assertEqual(hashlib.sha256(schema_bytes).hexdigest(), SCHEMA_SHA256)
+
+        git_env = self._git_env()
+        git = [self.host_git, "-c", f"core.hooksPath={os.devnull}", "-C", str(self.repo)]
+        has_commit = (
+            subprocess.run(
+                [*git, "cat-file", "-e", f"{BASE_COMMIT}^{{commit}}"],
+                env=git_env,
+                capture_output=True,
+                check=False,
+            ).returncode
+            == 0
+        )
+        if not has_commit:
+            return
+
         expected_formula = self.base / "d2-review_formula.py"
         expected_schema = self.base / "d2-review-records.schema.json"
         expected_formula.write_bytes(
             subprocess.check_output(
-                ["git", "-C", str(self.repo), "show", f"{BASE_COMMIT}:plugins/saga/scripts/review_formula.py"]
+                [*git, "show", f"{BASE_COMMIT}:plugins/saga/scripts/review_formula.py"],
+                env=git_env,
             )
         )
         expected_schema.write_bytes(
             subprocess.check_output(
-                [
-                    "git",
-                    "-C",
-                    str(self.repo),
-                    "show",
-                    f"{BASE_COMMIT}:plugins/saga/references/review-records.schema.json",
-                ]
+                [*git, "show", f"{BASE_COMMIT}:plugins/saga/references/review-records.schema.json"],
+                env=git_env,
             )
         )
         formula_cmp = subprocess.run(["cmp", str(formula), str(expected_formula)], capture_output=True, check=False)
