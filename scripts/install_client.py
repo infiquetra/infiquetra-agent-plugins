@@ -187,6 +187,7 @@ class Action:
     schema: str = ""
     fatal: bool = False
     retry: Callable[[tuple[str, ...], str, str], tuple[str, ...] | None] | None = None
+    containment: str = ""
 
 
 @dataclass(frozen=True)
@@ -973,6 +974,8 @@ def format_action(action: Action) -> str:
         return f"{action.client}: refuse: {action.message}"
     if action.kind == "note":
         return f"{action.client}: note: {action.message}"
+    if action.kind == "fail":
+        return f"{action.client}: error: {action.message}"
     if action.kind == "none":
         return f"{action.client}: no legacy placement"
     return f"{action.client}: {action.kind}: {action.message}"
@@ -2889,9 +2892,83 @@ def perform_muse_removals(action: Action) -> None:
                 )
 
 
+def ensure_company_contained(
+    root: Path, path: Path, *, allow_leaf_symlink: bool = False
+) -> None:
+    """Reject a company path that is a symlink or resolves outside ``root``.
+
+    Every existing component from the company Gemini root through ``path`` has
+    to be a real directory or file. A symlinked ``config``, ``plugins``,
+    ``skills``, or manifest would make a later read, write, or unlink follow
+    into the personal Agy tree. The leaf may be a symlink only when the caller
+    is about to unlink that leaf itself and not follow it.
+    """
+    if root.is_symlink():
+        raise InstallError(f"{root} is a symlink; refusing company prune")
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise InstallError(f"{path} is outside {root}; refusing company prune") from exc
+    root_real = root.resolve()
+    current = root
+    parts = relative.parts
+    for index, part in enumerate(parts):
+        current = current / part
+        leaf = index == len(parts) - 1
+        if current.is_symlink():
+            if allow_leaf_symlink and leaf:
+                return
+            raise InstallError(
+                f"{current} is a symlink; refusing company prune that would "
+                f"follow it out of {root}"
+            )
+        if not current.exists():
+            continue
+        resolved = current.resolve()
+        if resolved != root_real and root_real not in resolved.parents:
+            raise InstallError(
+                f"{current} resolves to {resolved}, outside {root}; "
+                "refusing company prune"
+            )
+
+
+def _company_path_error(
+    root: Path, path: Path, *, allow_leaf_symlink: bool = False
+) -> str | None:
+    try:
+        ensure_company_contained(root, path, allow_leaf_symlink=allow_leaf_symlink)
+    except InstallError as exc:
+        return str(exc)
+    return None
+
+
+def _stamp_containment(actions: list[Action], root: Path) -> list[Action]:
+    text = str(root)
+    for action in actions:
+        action.containment = text
+    return actions
+
+
+def _enforce_action_containment(action: Action) -> None:
+    if not action.containment:
+        return
+    root = Path(action.containment)
+    if action.target:
+        ensure_company_contained(root, Path(action.target))
+    if action.path:
+        ensure_company_contained(
+            root,
+            Path(action.path),
+            allow_leaf_symlink=action.kind == "remove",
+        )
+
+
 def perform(action: Action) -> None:
+    _enforce_action_containment(action)
     if action.kind == "not-applicable":
         return
+    if action.kind == "fail":
+        raise InstallError(action.message, code=1)
     if action.kind == "stage-muse":
         try:
             sync_marketplace.stage_muse_marketplace(
@@ -3200,20 +3277,9 @@ def plan_prune_grok(
     return actions
 
 
-def plan_prune_agy(
-    catalog: Path, home: Path, company_gemini_dir: Path | None = None
+def _agy_plugin_removal_actions(
+    catalog: Path, plugins_root: Path, manifest_path: Path, document: dict
 ) -> list[Action]:
-    """Prune Agy plugins, and company skill links when a company dir is selected.
-
-    Personal ``~/.gemini`` is used only when no company directory is passed, so
-    a company account cannot unlink the personal tree.
-    """
-    plugins_root = agy_gemini_dir(home, company_gemini_dir) / "config" / "plugins"
-    manifest_path = plugins_root / ".infiquetra-install.json"
-    try:
-        document = agy_manifest(manifest_path) if manifest_path.is_file() else {"packages": {}}
-    except InstallError as exc:
-        return [Action("note", "agy", message=str(exc))]
     recorded = document.get("packages") if isinstance(document.get("packages"), dict) else {}
     actions: list[Action] = []
     for name in RETIRED_PACKAGES:
@@ -3226,9 +3292,82 @@ def plan_prune_agy(
             actions.append(Action("remove", "agy", path=str(directory), target=str(plugins_root)))
         if name in recorded:
             actions.append(Action("drop-agy", "agy", path=str(manifest_path), message=name))
-    if company_gemini_dir is not None:
-        skills, manifest, schema = agy_company_skill_destinations(company_gemini_dir)
-        actions.extend(plan_prune_skill_tree("agy", skills, manifest, schema, catalog))
+    return actions
+
+
+def _company_plugins_blocked(
+    company_root: Path, plugins_root: Path, manifest_path: Path
+) -> str | None:
+    """The first symlink or escape on the company plugin tree, if there is one."""
+    for probed in (company_root / "config", plugins_root, manifest_path):
+        message = _company_path_error(company_root, probed)
+        if message:
+            return message
+    return None
+
+
+def _company_skills_blocked(
+    company_root: Path, skills_root: Path, manifest_path: Path
+) -> str | None:
+    """The first symlink or escape on the company skill tree, if there is one."""
+    for probed in (skills_root, manifest_path):
+        message = _company_path_error(company_root, probed)
+        if message:
+            return message
+    return None
+
+
+def plan_prune_agy(
+    catalog: Path, home: Path, company_gemini_dir: Path | None = None
+) -> list[Action]:
+    """Prune Agy plugins, and company skill links when a company dir is selected.
+
+    Personal ``~/.gemini`` is used only when no company directory is passed.
+    A company run checks every descendant directory and manifest under the
+    company Gemini root before reading or unlinking it. A symlinked ``config``,
+    ``plugins``, ``skills``, or manifest is refused instead of being followed
+    into the personal tree. Invalid plugin JSON is reported and does not skip
+    the company skill prune.
+    """
+    plugins_root = agy_gemini_dir(home, company_gemini_dir) / "config" / "plugins"
+    manifest_path = plugins_root / ".infiquetra-install.json"
+    if company_gemini_dir is None:
+        try:
+            document = agy_manifest(manifest_path) if manifest_path.is_file() else {"packages": {}}
+        except InstallError as exc:
+            return [Action("note", "agy", message=str(exc))]
+        return _agy_plugin_removal_actions(catalog, plugins_root, manifest_path, document)
+
+    actions: list[Action] = []
+    failures: list[str] = []
+    plugin_error = _company_plugins_blocked(company_gemini_dir, plugins_root, manifest_path)
+    if plugin_error:
+        failures.append(plugin_error)
+    else:
+        try:
+            document = agy_manifest(manifest_path) if manifest_path.is_file() else {"packages": {}}
+        except InstallError as exc:
+            failures.append(str(exc))
+            document = None
+        if document is not None:
+            actions.extend(
+                _stamp_containment(
+                    _agy_plugin_removal_actions(catalog, plugins_root, manifest_path, document),
+                    company_gemini_dir,
+                )
+            )
+    skills, skill_manifest, schema = agy_company_skill_destinations(company_gemini_dir)
+    skill_error = _company_skills_blocked(company_gemini_dir, skills, skill_manifest)
+    if skill_error:
+        failures.append(skill_error)
+    else:
+        actions.extend(
+            _stamp_containment(
+                plan_prune_skill_tree("agy", skills, skill_manifest, schema, catalog),
+                company_gemini_dir,
+            )
+        )
+    actions.extend(Action("fail", "agy", message=message) for message in failures)
     return actions
 
 
@@ -3380,36 +3519,6 @@ def plan_prune_client(
     raise InstallError(f"unknown client {client}")  # pragma: no cover
 
 
-def plan_prune_retired(
-    clients: tuple[str, ...],
-    catalog: Path,
-    home: Path,
-    overrides: dict[str, str],
-    *,
-    required: bool,
-    company_gemini_dir: Path | None = None,
-) -> list[Action]:
-    """Prune exactly ``clients``.
-
-    ``all`` is expanded by the caller to the eight active harnesses plus
-    ``qwen`` and ``gemini``. An explicit list that names those retired targets
-    prunes them; a list that omits them leaves them in place.
-    """
-    actions: list[Action] = []
-    for client in clients:
-        actions.extend(
-            plan_prune_client(
-                client,
-                catalog,
-                home,
-                overrides,
-                required=required,
-                company_gemini_dir=company_gemini_dir,
-            )
-        )
-    return [action for action in actions if action.kind != "note" or action.message]
-
-
 def _run_prune(
     clients: tuple[str, ...],
     catalog: Path,
@@ -3420,29 +3529,55 @@ def _run_prune(
     continue_on_error: bool,
     company_gemini_dir: Path | None = None,
 ) -> int:
-    actions = plan_prune_retired(
-        clients,
-        catalog,
-        home,
-        overrides,
-        required=required,
-        company_gemini_dir=company_gemini_dir,
-    )
-    if not actions:
-        print("prune-retired: nothing to remove")
-        return 0
+    """Prune each selected client on its own.
+
+    Planning one client resolves that client's CLI. A missing binary raises
+    before any of that client's actions exist. Catching the error per client
+    lets the remaining clients still prune. ``all`` has already been expanded
+    to the eight active harnesses plus ``qwen`` and ``gemini``. One named
+    harness still stops at the first failure. A recorded ``fail`` action is
+    reported and does not discard actions already planned for that client.
+    """
     failures: list[str] = []
-    for action in actions:
-        print(format_action(action))
-        if not required:
-            continue
+    printed = False
+    for client in clients:
         try:
-            perform(action)
+            actions = [
+                action
+                for action in plan_prune_client(
+                    client,
+                    catalog,
+                    home,
+                    overrides,
+                    required=required,
+                    company_gemini_dir=company_gemini_dir,
+                )
+                if action.kind != "note" or action.message
+            ]
         except (InstallError, muse_cli.MuseCLIError) as exc:
-            failures.append(f"{action.client}: {exc}")
+            failures.append(f"{client}: plan: {exc}")
             if not continue_on_error:
                 _print_failures(failures)
                 return exc.code if isinstance(exc, InstallError) else 1
+            continue
+        for action in actions:
+            printed = True
+            print(format_action(action))
+            if action.kind == "fail":
+                failures.append(f"{action.client}: {action.message}")
+                continue
+            if not required:
+                continue
+            try:
+                perform(action)
+            except (InstallError, muse_cli.MuseCLIError) as exc:
+                failures.append(f"{action.client}: {exc}")
+                if not continue_on_error:
+                    _print_failures(failures)
+                    return exc.code if isinstance(exc, InstallError) else 1
+    if not printed and not failures:
+        print("prune-retired: nothing to remove")
+        return 0
     if failures:
         _print_failures(failures)
         return 1
