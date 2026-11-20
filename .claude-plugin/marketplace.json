@@ -168,7 +168,7 @@
     {
       "name": "reviews",
       "source": "./plugins/reviews",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Standalone code review, security review, document review, and review-tool setup. Skills are the command surface.",
       "author": {
         "name": "Infiquetra",

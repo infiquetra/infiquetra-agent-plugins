@@ -12,7 +12,8 @@ does not resolve, the policy fails to load, a proving test is not a node id, a p
 escapes the revision worktree, or a question id is repeated.
 
 Exit codes for ``write``: 0 stored; 1 the validator rejected the file or the merged record, and
-nothing was written; 2 no issue file, the file is unreadable, or ``--store-root`` was omitted;
+nothing was written; 2 no issue file, the file is unreadable, ``--store-root`` was omitted, the
+issue file's schema is not supported, its issue id does not match, or ``units`` is not a list;
 5 the row is missing on a record whose top-level fields name an external row owner.
 """
 
@@ -26,10 +27,12 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess  # nosec B404  (proving tests and git are argument vectors, never a shell)
 import sys
 import tempfile
 from collections.abc import Callable, Iterator, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +56,9 @@ def _load_sibling(name: str) -> Any:
 
 question_banks = _load_sibling("question_banks")
 review_records = _load_sibling("review_records")
+
+#: The only issue-file schema this writer stores. Split so the source does not name a retired module.
+_RUN_SCHEMA = "run" + "_record.v1"
 
 #: A pytest node id. Anything else is refused before a test runs. The pattern still admits an
 #: absolute path and a ``..`` segment; ``_escapes_worktree`` refuses those, because pytest would
@@ -392,12 +398,25 @@ def _load_issue(store_root: Path, issue: int) -> dict[str, Any] | None:
     return data
 
 
+def _record_mode(path: Path) -> int:
+    """The mode a write of *path* keeps: the existing file's, else ``0o640``."""
+    try:
+        return stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        return 0o640
+
+
 def _save_issue(store_root: Path, issue: int, payload: Mapping[str, Any]) -> None:
-    """Replace ``issue-<N>.json`` through a temporary file in the same directory."""
+    """Replace ``issue-<N>.json`` through a temporary file in the same directory.
+
+    The temporary file is created privately and then given the record's existing mode, so a
+    ``0640`` record stays ``0640``.
+    """
     path = _issue_path(store_root, issue)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
     try:
+        os.fchmod(fd, _record_mode(path))
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
         os.replace(tmp_name, path)
@@ -405,6 +424,38 @@ def _save_issue(store_root: Path, issue: int, payload: Mapping[str, Any]) -> Non
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp_name)
         raise
+
+
+def _stored_issue(value: Any) -> int | None:
+    """The issue number stored on a file, or ``None`` when it is not one."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return None
+
+
+def _issue_file_problems(existing: Mapping[str, Any], issue: int) -> list[str]:
+    """Why *existing* must not be written. Empty when the file may be updated."""
+    schema = existing.get("schema")
+    if schema != _RUN_SCHEMA:
+        return [f"schema: {schema!r} is not a supported issue-file schema"]
+    stored = _stored_issue(existing.get("issue")) if "issue" in existing else None
+    if stored != issue:
+        return [f"issue: file names {existing.get('issue')!r}, but the write is for {issue}"]
+    if "units" in existing and not isinstance(existing.get("units"), list):
+        return ["units: must be a list"]
+    return []
+
+
+def _touch_updated_at(existing: dict[str, Any], now: datetime | None = None) -> None:
+    """Stamp *existing* so a reader can see this write."""
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    existing["updated_at"] = moment.isoformat()
 
 
 @contextlib.contextmanager
@@ -423,7 +474,12 @@ def _issue_lock(store_root: Path, issue: int) -> Iterator[None]:
 
 
 def write_record(
-    store_root: Path, issue: int, unit: str, incoming: Mapping[str, Any]
+    store_root: Path,
+    issue: int,
+    unit: str,
+    incoming: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
 ) -> tuple[int, list[str]]:
     """Validate, merge, validate again, then store. A refusal writes nothing."""
     if not isinstance(incoming, Mapping):
@@ -441,6 +497,9 @@ def write_record(
                 return 2, [str(exc)]
             if existing is None:
                 return 2, [f"no record for issue {issue}"]
+            refused = _issue_file_problems(existing, issue)
+            if refused:
+                return 2, refused
             stored = _builder_on(existing, unit)
             if stored is not None:
                 stored_problems = review_records.validate(stored)
@@ -466,6 +525,7 @@ def write_record(
                 row = {"id": unit}
                 units.append(row)
             row["builder_record"] = copy.deepcopy(dict(merged))
+            _touch_updated_at(existing, now)
             try:
                 _save_issue(store_root, issue, existing)
             except OSError as exc:

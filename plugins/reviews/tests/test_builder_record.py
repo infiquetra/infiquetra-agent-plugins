@@ -10,8 +10,12 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
+import unittest
+from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -263,13 +267,17 @@ def test_declaration_check_refuses_a_proving_test_outside_the_worktree(
     assert ran == []
 
 
-def _store(tmp_path: Path) -> Path:
+def _store(tmp_path: Path, **over: Any) -> Path:
     root = tmp_path / "runs"
     root.mkdir()
-    (root / "issue-162.json").write_text(
-        json.dumps({"issue": 162, "units": [{"id": "U1"}]}),
-        encoding="utf-8",
-    )
+    payload: dict[str, Any] = {
+        "schema": builder_record._RUN_SCHEMA,
+        "issue": 162,
+        "updated_at": "1999-01-01T00:00:00+00:00",
+        "units": [{"id": "U1"}],
+    }
+    payload.update(over)
+    (root / "issue-162.json").write_text(json.dumps(payload), encoding="utf-8")
     return root
 
 
@@ -400,6 +408,102 @@ def test_a_repair_write_keeps_earlier_declarations_and_reasons(tmp_path: Path) -
     assert by_question[second_id]["applies"] is False
     kinds = {item["kind"] for item in stored["reasons"]}
     assert kinds == {"coverage-gap", "unaffected"}
+
+
+def _write_issue(store: Path, record: Path) -> int:
+    return builder_record.main(
+        [
+            "write",
+            "--issue",
+            "162",
+            "--unit",
+            "U1",
+            "--record",
+            str(record),
+            "--store-root",
+            str(store),
+        ]
+    )
+
+
+class WriteIssueFileTests(unittest.TestCase):
+    """Regressions for a write that must refuse a bad issue file and keep its mode."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self._tmp.name)
+        self.record = _write_record(self.tmp_path / "record.json", _record())
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_write_rejects_an_unsupported_schema(self) -> None:
+        for name, payload in (
+            ("other", {"schema": "other.v1", "issue": 162, "units": [{"id": "U1"}]}),
+            ("missing", {"issue": 162, "units": [{"id": "U1"}]}),
+        ):
+            with self.subTest(name=name):
+                store = self.tmp_path / name
+                store.mkdir()
+                path = store / "issue-162.json"
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                before = path.read_bytes()
+                self.assertEqual(_write_issue(store, self.record), 2)
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_write_rejects_a_mismatched_issue_id(self) -> None:
+        store = self.tmp_path / "runs"
+        store.mkdir()
+        path = store / "issue-162.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": builder_record._RUN_SCHEMA,
+                    "issue": 99,
+                    "units": [{"id": "U1", "kept": True}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        before = path.read_bytes()
+        self.assertEqual(_write_issue(store, self.record), 2)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["issue"], 99)
+
+    def test_write_rejects_units_that_are_not_a_list(self) -> None:
+        store = self.tmp_path / "runs"
+        store.mkdir()
+        path = store / "issue-162.json"
+        original = {
+            "schema": builder_record._RUN_SCHEMA,
+            "issue": 162,
+            "units": {"id": "U1", "kept": True},
+        }
+        path.write_text(json.dumps(original), encoding="utf-8")
+        before = path.read_bytes()
+        self.assertEqual(_write_issue(store, self.record), 2)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["units"], original["units"])
+
+    def test_write_keeps_the_record_mode_and_refreshes_updated_at(self) -> None:
+        store = _store(
+            self.tmp_path,
+            units=[{"id": "U1", "note": "keep"}, {"id": "U2", "note": "other"}],
+        )
+        path = store / "issue-162.json"
+        path.chmod(0o640)
+        self.assertEqual(_write_issue(store, self.record), 0)
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o640)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertNotEqual(payload["updated_at"], "1999-01-01T00:00:00+00:00")
+        self.assertGreater(
+            datetime.fromisoformat(payload["updated_at"]),
+            datetime.fromisoformat("1999-01-01T00:00:00+00:00"),
+        )
+        by_id = {row["id"]: row for row in payload["units"]}
+        self.assertEqual(by_id["U1"]["note"], "keep")
+        self.assertIn("builder_record", by_id["U1"])
+        self.assertEqual(by_id["U2"], {"id": "U2", "note": "other"})
 
 
 def test_write_needs_a_store_and_refuses_a_missing_owned_row(tmp_path: Path) -> None:
