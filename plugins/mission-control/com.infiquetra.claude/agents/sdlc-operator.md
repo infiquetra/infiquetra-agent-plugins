@@ -233,14 +233,15 @@ python3 "$SCRIPT" issue create-prepared docs/sdlc-issue-drafts/<draft>.md
 Prepared drafts are durable markdown files with JSON sidecars under `docs/sdlc-issue-drafts/`.
 `issue prepare --from` accepts local paths, GitHub issue/PR URLs, branch refs, and natural search
 hints such as "from the brainstorm" or "handoff the plan". Prepared drafts include
-`handoff_maturity` and source metadata so the receiving team can execute without
-`saga`. `issue create-prepared` re-runs readiness, renders every side effect before
+`handoff_maturity` and source metadata so the receiving team can execute from the
+prepared draft. `issue create-prepared` re-runs readiness, renders every side effect before
 mutation, repairs missing labels/templates after confirmation, opens a mapping PR for unmapped
 repos, and starts new cards with a `Status` defaulting to the declared `Stage`'s entry option
 (readiness accepts any Status configured for that Stage, or `Blocked`). If team,
 project, or source artifact is ambiguous, ask the operator; do not guess or bypass this path with
-direct `gh issue create`. Suggest `/plan <issue>` or `/work <issue>` only as optional
-`saga` follow-up commands; do not suggest `/loop` for team recipients.
+direct `gh issue create`. Suggest `/plan <issue>` for `idea-ready` or
+`requirements-ready`, and `continue <published source>` for `plan-ready` or
+`resume-ready`. Do not suggest `/loop` for team recipients.
 
 For batch issue creation from a blueprint, prefer the manual lifecycle below over the
 interactive flow:

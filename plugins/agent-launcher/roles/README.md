@@ -138,9 +138,8 @@ Each role is one whole prompt; `index.json` publishes its identifier and output 
 
 ## How a prompt reports
 
-Every prompt points at the house style rather than repeating it:
-`plugins/agent-launcher/roles/references/subagent-presentation-preamble.md`, the single canonical copy in
-this repository. The prompts that were migrated into this directory each opened with a
+Every prompt points at the presentation preamble rather than repeating it:
+`references/subagent-presentation-preamble.md`, the single canonical copy beside the prompts. The prompts that were migrated into this directory each opened with a
 byte-identical forty-line copy of that text, one per agent prompt, which is the drift this
 library exists to undo.
 

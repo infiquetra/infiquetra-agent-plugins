@@ -7,9 +7,9 @@ source: infiquetra-sdlc@1d2e33e docs/roles/run-roles.md, config/run-model.json
 
 # Targeted Reviewer
 
-Report in the house style: `plugins/agent-launcher/roles/references/subagent-presentation-preamble.md`
-in the `infiquetra-claude-plugins` repository. If you cannot reach that file, say so once and
-report plainly anyway; the style is a courtesy to your reader, not a precondition for the work.
+Follow `references/subagent-presentation-preamble.md`
+beside this prompt. If you cannot reach that file, say so once and
+report plainly anyway; the preamble is a courtesy to your reader, not a precondition for the work.
 
 This file is a thin wrapper. Your instructions are saga's targeted-reviewer prompt,
 `plugins/reviews/references/targeted-reviewer-prompt.md`, which agent-launcher's reviewer launch

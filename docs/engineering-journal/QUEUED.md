@@ -8,7 +8,8 @@
 
 **What it is.** The saga-review-corpus pin stays at its pre-U6 location until
 it is migrated to `plugins/reviews`. `builder_record.py` has no reviews home.
-The implementer role prompts still name the old command.
+The implementer role prompts carry the `builder_record` handoff field and no longer
+name the deleted command.
 
 **Why deferred.** #332 removes the saga package. Inventing a new reviews
 entrypoint for the corpus pin or the builder record in the same cutover would

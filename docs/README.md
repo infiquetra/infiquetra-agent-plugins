@@ -75,7 +75,9 @@
   Agent Launcher subsequently moved to 2.0.1 for the macOS reviewer temp-root and
   Claude `AGENTS.md` screen, then to 3.0.0 when the package kept only the headless
   reviewer, the roles library, and the herdr-app plus hc workflow. Its 2026-11-16
-  notice covers those moves without claiming a client assessment.
+  notice covers those moves without claiming a client assessment. The #332 catalog
+  cutover publishes agent-launcher 3.0.1, deploy 0.2.5, and mission-control 2.21.7.
+  Those patches publish the cutover payload and do not claim a fresh client assessment.
 - [Agent Launcher nine-client compatibility matrix, superseded 2026-10-14](evidence/2026-10-04-agent-launcher-compatibility-matrix.md)
   records what every installed coding-agent client did with the portable
   agent-launcher package across four stages with fingerprint-bound

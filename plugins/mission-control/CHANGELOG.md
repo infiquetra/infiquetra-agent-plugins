@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.21.7] - 2026-11-19
+
+### Changed
+
+- Readiness assessment lives in `scripts/handoff_envelope.py`. Issue guidance no longer cites a saga contract or routes `plan-ready` and `resume-ready` through `/work`.
+
 ## [2.21.6] - 2026-11-16
 
 ### Changed

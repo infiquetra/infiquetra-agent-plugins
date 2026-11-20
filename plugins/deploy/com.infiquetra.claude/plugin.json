@@ -1,6 +1,6 @@
 {
   "name": "deploy",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "tag-promotion deployment operations for Infiquetra repositories.",
   "author": {
     "name": "Infiquetra",
