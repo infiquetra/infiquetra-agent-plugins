@@ -1,6 +1,6 @@
 # Runbook: place this catalog on each harness
 
-**Version 1.3.1** · Adopted 2026-09-22
+**Version 1.4.0** · Adopted 2026-09-22
 
 Amendments:
 
@@ -12,6 +12,8 @@ Amendments:
   targets, and provenance-gated `--prune-retired` (issue #334).
 - 1.3.1, 2026-11-19: closeout upgrade order after retired-placement pruning
   (issue #336).
+- 1.4.0, 2026-11-20: reusable multi-client selection and scoped retired pruning
+  for staged rollouts.
 
 
 This is the operator checklist for
@@ -28,8 +30,13 @@ compatibility matrices
 [agent-launcher, superseded 2026-10-14](../evidence/2026-10-04-agent-launcher-compatibility-matrix.md)).
 The script does not invent a second way to put a package where a client looks.
 
-`--client` is required. The catalog root is the checkout that contains the script;
-`--catalog` overrides it. Packages default to every `plugins/<name>/` that has a `plugin.json`.
+`--client` is required. Pass one harness, `all`, or several names. A comma-separated
+list (`--client grok,opencode,muse`) and repeated flags
+(`--client grok --client opencode --client muse`) combine, keep the order given,
+and drop a repeated name. `all` cannot be combined with an explicit name, and a
+blank item (`--client grok,` or `--client ""`) is rejected. The catalog root is
+the checkout that contains the script; `--catalog` overrides it. Packages default
+to every `plugins/<name>/` that has a `plugin.json`.
 Nothing is installed, linked, or deleted unless `--execute` is passed. The
 default, and `--dry-run`, print every command and file operation.
 
@@ -73,12 +80,14 @@ skipped, naming the other source, and is not replaced in the same run; the
 message says to run `--uninstall-legacy --execute` first when that source is
 the old `infiquetra-claude-plugins` repository or marketplace.
 
-`--client all` does not stop at the first client or package that fails to
-plan or place. Every failure is recorded and printed at the end, execution
-continues with the next package and client, and the process exits 1 with a
-summary if anything failed. A single named `--client` keeps the original
-fail-fast behavior: a planning error such as a missing marketplace file
-stops that run immediately with the error's own exit code.
+`--client all`, and any explicit list of more than one harness, does not stop
+at the first client or package that fails to plan or place. Every failure is
+recorded and printed at the end, execution continues with the next package and
+client, and the process exits 1 with a summary if anything failed. A single
+named `--client` keeps the original fail-fast behavior: a planning error such
+as a missing marketplace file stops that run immediately with the error's own
+exit code. Each harness in a list still uses its own tier, so a lean seat in
+the same run as a full seat skips packages outside that lean default.
 
 `--uninstall-legacy` removes a placement only when the client's own record says
 the bytes came from `infiquetra/infiquetra-claude-plugins`. A directory with no
@@ -102,7 +111,9 @@ is Cursor Agent, Muse, and Grok. A lean run installs `reviews`, `plan`, and
 
 ## Retired client targets
 
-`--client qwen` and `--client gemini` are rejected. Qwen was retired on
+`--client qwen` and `--client gemini` are cleanup targets. They are accepted
+only together with `--prune-retired`. Install, check, and dry-run reject both
+names. Qwen was retired on
 2026-10-17 in favor of claude-qwen. Gemini CLI has been unassessed since
 2026-10-04, when Agy replaced it. Agy still reads `~/.gemini`; that path is
 Agy, not a Gemini CLI target. Historical compatibility matrices keep the
@@ -125,6 +136,65 @@ in `~/.config/opencode/.infiquetra-plugins.json` and
 `~/.hermes/.infiquetra-skills.json` follow the same rule. Foreign and
 unsourced entries stay. The default is a dry-run. Pass `--execute` to unlink.
 Do not combine it with `--check` or `--uninstall-legacy`.
+
+An explicit `--client` list prunes only the harnesses named in that list.
+`qwen` and `gemini` are accepted in the list when `--prune-retired` is set, and
+they are rejected in every other mode, including `--dry-run` and `--check`.
+`--client all --prune-retired` still prunes the eight active harnesses plus
+Qwen and Gemini CLI. `--agy-account company` applies only when `agy` is the
+sole client. With `--prune-retired`, that account cleans the company Gemini
+directory (`<company-root>/gemini`) and leaves the personal `~/.gemini` tree
+in place. Company install `--execute` stays refused, because that path would
+invoke the vendor binary against the personal account. Company prune
+`--execute` edits the company directory directly.
+
+## Staged multi-client rollout
+
+Roll a subset of harnesses out, then the rest, without a later phase rewriting
+the earlier one. Phase 1 is the lean Grok and Muse seats plus the full
+OpenCode seat. Muse is lean, with Grok and Cursor, and OpenCode stays on the
+full tier with Claude, Codex, Agy, and Hermes. Phase 2 is those four full
+seats, including removal of the retired Qwen and Gemini CLI placements, which
+`--prune-retired` allows, and a separate company Agy prune.
+
+Phase 1 prints the plan, prunes only those three harnesses, places them, and
+reads them back:
+
+```bash
+python3 scripts/install_client.py --client grok,opencode,muse --prune-retired --dry-run
+python3 scripts/install_client.py --client grok,opencode,muse --prune-retired --execute
+python3 scripts/install_client.py --client grok,opencode,muse --execute
+python3 scripts/install_client.py --client grok,opencode,muse --check
+```
+
+The same three names can be split across flags:
+
+```bash
+python3 scripts/install_client.py --client grok,opencode --client muse --check
+```
+
+Phase 2 prunes Claude, Codex, Agy, Hermes, Qwen, and Gemini, then places and
+checks the four active harnesses. Grok, OpenCode, and Muse are absent from
+both commands, so their placements stay as Phase 1 left them.
+
+```bash
+python3 scripts/install_client.py --client claude,codex,agy,hermes,qwen,gemini --prune-retired --dry-run
+python3 scripts/install_client.py --client claude,codex,agy,hermes,qwen,gemini --prune-retired --execute
+python3 scripts/install_client.py --client claude,codex,agy,hermes --execute
+python3 scripts/install_client.py --client claude,codex,agy,hermes --check
+```
+
+Company Agy is its own pair of commands. Point `--agy-company-home` at the
+company root whose `gemini` directory should be cleaned:
+
+```bash
+python3 scripts/install_client.py --client agy --agy-account company --agy-company-home <company-root> --prune-retired --dry-run
+python3 scripts/install_client.py --client agy --agy-account company --agy-company-home <company-root> --prune-retired --execute
+```
+
+`--check` on a multi-client list reads every named harness, including the
+Cursor whole-repository line when `cursor` is one of the names, and exits 0
+when each named harness satisfies its tier.
 
 ## Closeout upgrade
 

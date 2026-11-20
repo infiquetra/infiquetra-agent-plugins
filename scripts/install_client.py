@@ -15,6 +15,14 @@ it prints the cleanup unless ``--execute`` is passed, and it unlinks only
 placements whose provenance resolves to this catalog or to
 ``infiquetra/infiquetra-claude-plugins``.
 
+``--client`` accepts one harness, ``all``, or several names, either as a
+comma-separated list or as repeated flags. Names stay in the order given and
+repeated names are dropped. ``all`` cannot be combined with explicit names.
+More than one harness continues past a failure the way ``all`` does, and each
+harness keeps its own tier. Qwen and Gemini are accepted only with
+``--prune-retired``, and an explicit list cleans only the names it carries.
+``all`` still cleans every active harness plus both retired targets.
+
 Muse is a full plugin-marketplace client: a deterministic projection under
 ``build/muse-marketplace`` excludes competing manifests. Its optional legacy
 migration removes source-proven standalone skill copies and selected legacy
@@ -179,6 +187,7 @@ class Action:
     schema: str = ""
     fatal: bool = False
     retry: Callable[[tuple[str, ...], str, str], tuple[str, ...] | None] | None = None
+    containment: str = ""
 
 
 @dataclass(frozen=True)
@@ -234,8 +243,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--client",
+        action="append",
         required=True,
-        help="Harness name, or all eight. qwen and gemini are retired targets",
+        help=(
+            "Harness name, a comma-separated list, or all eight. Repeatable. "
+            "qwen and gemini are retired targets and are accepted only with "
+            "--prune-retired"
+        ),
     )
     parser.add_argument(
         "--profile",
@@ -317,20 +331,23 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help=(
             "Unlink catalog-owned placements of the retired packages and the former "
-            "saga skill symlinks. Foreign and unsourced entries are left in place. "
-            "The default prints the plan; --execute performs it"
+            "saga skill symlinks. An explicit --client list cleans only those "
+            "harnesses; qwen and gemini may be named in that list. all still cleans "
+            "every active harness plus qwen and gemini. Foreign and unsourced "
+            "entries are left in place. The default prints the plan; --execute performs it"
         ),
     )
     args = parser.parse_args(argv)
     installation = port_config.load_harness_installation(default_catalog())
-    retired = installation["retired_clients"]
-    if args.client in retired:
-        parser.error(retired[args.client])
-    if args.client not in CLIENT_CHOICES:
-        parser.error(
-            f"invalid choice: {args.client!r} (choose from {', '.join(CLIENT_CHOICES)})"
-        )
-    if args.client in ("muse", "all") and args.scope != "user":
+    clients, client_all = resolve_client_selection(
+        args.client,
+        retired=installation["retired_clients"],
+        prune_retired=args.prune_retired,
+        parser=parser,
+    )
+    args.clients = clients
+    args.client_all = client_all
+    if (client_all or "muse" in clients) and args.scope != "user":
         parser.error(
             "Muse marketplace installation supports only user scope; project scope is refused"
         )
@@ -349,9 +366,52 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         pass
     if args.agy_company_home is not None and args.agy_account != "company":
         parser.error("--agy-company-home requires --agy-account company")
-    if args.agy_account == "company" and args.client != "agy":
+    if args.agy_account == "company" and clients != ("agy",):
         parser.error("--agy-account company is only supported with --client agy")
     return args
+
+
+def resolve_client_selection(
+    raw_values: list[str],
+    *,
+    retired: dict[str, str],
+    prune_retired: bool,
+    parser: argparse.ArgumentParser,
+) -> tuple[tuple[str, ...], bool]:
+    """Ordered harness names and whether the selection is the ``all`` wildcard.
+
+    Commas and repeated ``--client`` flags combine. Empty items are rejected.
+    ``all`` is the eight active harnesses and cannot sit beside an explicit name.
+    Retired names stay rejected unless this run is ``--prune-retired``.
+    """
+    tokens: list[str] = []
+    for raw in raw_values:
+        parts = raw.split(",")
+        if raw.strip() == "" or any(part.strip() == "" for part in parts):
+            parser.error(
+                "invalid --client: empty name (a comma-separated list cannot have a blank item)"
+            )
+        for part in parts:
+            name = part.strip()
+            if name not in tokens:
+                tokens.append(name)
+    if "all" in tokens and tokens != ["all"]:
+        parser.error("--client all cannot be combined with explicit client names")
+    if tokens == ["all"]:
+        return CLIENTS, True
+    resolved: list[str] = []
+    for name in tokens:
+        if name in retired:
+            if not prune_retired:
+                parser.error(retired[name])
+            resolved.append(name)
+            continue
+        if name not in CLIENTS:
+            parser.error(
+                f"invalid choice: {name!r} (choose from {', '.join(CLIENT_CHOICES)})"
+            )
+        resolved.append(name)
+    return tuple(resolved), False
 
 
 def selected_clients(name: str) -> tuple[str, ...]:
@@ -914,6 +974,8 @@ def format_action(action: Action) -> str:
         return f"{action.client}: refuse: {action.message}"
     if action.kind == "note":
         return f"{action.client}: note: {action.message}"
+    if action.kind == "fail":
+        return f"{action.client}: error: {action.message}"
     if action.kind == "none":
         return f"{action.client}: no legacy placement"
     return f"{action.client}: {action.kind}: {action.message}"
@@ -2830,9 +2892,83 @@ def perform_muse_removals(action: Action) -> None:
                 )
 
 
+def ensure_company_contained(
+    root: Path, path: Path, *, allow_leaf_symlink: bool = False
+) -> None:
+    """Reject a company path that is a symlink or resolves outside ``root``.
+
+    Every existing component from the company Gemini root through ``path`` has
+    to be a real directory or file. A symlinked ``config``, ``plugins``,
+    ``skills``, or manifest would make a later read, write, or unlink follow
+    into the personal Agy tree. The leaf may be a symlink only when the caller
+    is about to unlink that leaf itself and not follow it.
+    """
+    if root.is_symlink():
+        raise InstallError(f"{root} is a symlink; refusing company prune")
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise InstallError(f"{path} is outside {root}; refusing company prune") from exc
+    root_real = root.resolve()
+    current = root
+    parts = relative.parts
+    for index, part in enumerate(parts):
+        current = current / part
+        leaf = index == len(parts) - 1
+        if current.is_symlink():
+            if allow_leaf_symlink and leaf:
+                return
+            raise InstallError(
+                f"{current} is a symlink; refusing company prune that would "
+                f"follow it out of {root}"
+            )
+        if not current.exists():
+            continue
+        resolved = current.resolve()
+        if resolved != root_real and root_real not in resolved.parents:
+            raise InstallError(
+                f"{current} resolves to {resolved}, outside {root}; "
+                "refusing company prune"
+            )
+
+
+def _company_path_error(
+    root: Path, path: Path, *, allow_leaf_symlink: bool = False
+) -> str | None:
+    try:
+        ensure_company_contained(root, path, allow_leaf_symlink=allow_leaf_symlink)
+    except InstallError as exc:
+        return str(exc)
+    return None
+
+
+def _stamp_containment(actions: list[Action], root: Path) -> list[Action]:
+    text = str(root)
+    for action in actions:
+        action.containment = text
+    return actions
+
+
+def _enforce_action_containment(action: Action) -> None:
+    if not action.containment:
+        return
+    root = Path(action.containment)
+    if action.target:
+        ensure_company_contained(root, Path(action.target))
+    if action.path:
+        ensure_company_contained(
+            root,
+            Path(action.path),
+            allow_leaf_symlink=action.kind == "remove",
+        )
+
+
 def perform(action: Action) -> None:
+    _enforce_action_containment(action)
     if action.kind == "not-applicable":
         return
+    if action.kind == "fail":
+        raise InstallError(action.message, code=1)
     if action.kind == "stage-muse":
         try:
             sync_marketplace.stage_muse_marketplace(
@@ -3141,13 +3277,9 @@ def plan_prune_grok(
     return actions
 
 
-def plan_prune_agy(catalog: Path, home: Path) -> list[Action]:
-    plugins_root = home / ".gemini" / "config" / "plugins"
-    manifest_path = plugins_root / ".infiquetra-install.json"
-    try:
-        document = agy_manifest(manifest_path) if manifest_path.is_file() else {"packages": {}}
-    except InstallError as exc:
-        return [Action("note", "agy", message=str(exc))]
+def _agy_plugin_removal_actions(
+    catalog: Path, plugins_root: Path, manifest_path: Path, document: dict
+) -> list[Action]:
     recorded = document.get("packages") if isinstance(document.get("packages"), dict) else {}
     actions: list[Action] = []
     for name in RETIRED_PACKAGES:
@@ -3160,6 +3292,82 @@ def plan_prune_agy(catalog: Path, home: Path) -> list[Action]:
             actions.append(Action("remove", "agy", path=str(directory), target=str(plugins_root)))
         if name in recorded:
             actions.append(Action("drop-agy", "agy", path=str(manifest_path), message=name))
+    return actions
+
+
+def _company_plugins_blocked(
+    company_root: Path, plugins_root: Path, manifest_path: Path
+) -> str | None:
+    """The first symlink or escape on the company plugin tree, if there is one."""
+    for probed in (company_root / "config", plugins_root, manifest_path):
+        message = _company_path_error(company_root, probed)
+        if message:
+            return message
+    return None
+
+
+def _company_skills_blocked(
+    company_root: Path, skills_root: Path, manifest_path: Path
+) -> str | None:
+    """The first symlink or escape on the company skill tree, if there is one."""
+    for probed in (skills_root, manifest_path):
+        message = _company_path_error(company_root, probed)
+        if message:
+            return message
+    return None
+
+
+def plan_prune_agy(
+    catalog: Path, home: Path, company_gemini_dir: Path | None = None
+) -> list[Action]:
+    """Prune Agy plugins, and company skill links when a company dir is selected.
+
+    Personal ``~/.gemini`` is used only when no company directory is passed.
+    A company run checks every descendant directory and manifest under the
+    company Gemini root before reading or unlinking it. A symlinked ``config``,
+    ``plugins``, ``skills``, or manifest is refused instead of being followed
+    into the personal tree. Invalid plugin JSON is reported and does not skip
+    the company skill prune.
+    """
+    plugins_root = agy_gemini_dir(home, company_gemini_dir) / "config" / "plugins"
+    manifest_path = plugins_root / ".infiquetra-install.json"
+    if company_gemini_dir is None:
+        try:
+            document = agy_manifest(manifest_path) if manifest_path.is_file() else {"packages": {}}
+        except InstallError as exc:
+            return [Action("note", "agy", message=str(exc))]
+        return _agy_plugin_removal_actions(catalog, plugins_root, manifest_path, document)
+
+    actions: list[Action] = []
+    failures: list[str] = []
+    plugin_error = _company_plugins_blocked(company_gemini_dir, plugins_root, manifest_path)
+    if plugin_error:
+        failures.append(plugin_error)
+    else:
+        try:
+            document = agy_manifest(manifest_path) if manifest_path.is_file() else {"packages": {}}
+        except InstallError as exc:
+            failures.append(str(exc))
+            document = None
+        if document is not None:
+            actions.extend(
+                _stamp_containment(
+                    _agy_plugin_removal_actions(catalog, plugins_root, manifest_path, document),
+                    company_gemini_dir,
+                )
+            )
+    skills, skill_manifest, schema = agy_company_skill_destinations(company_gemini_dir)
+    skill_error = _company_skills_blocked(company_gemini_dir, skills, skill_manifest)
+    if skill_error:
+        failures.append(skill_error)
+    else:
+        actions.extend(
+            _stamp_containment(
+                plan_prune_skill_tree("agy", skills, skill_manifest, schema, catalog),
+                company_gemini_dir,
+            )
+        )
+    actions.extend(Action("fail", "agy", message=message) for message in failures)
     return actions
 
 
@@ -3255,6 +3463,17 @@ def plan_prune_qwen_extensions(catalog: Path, home: Path) -> list[Action]:
     return actions
 
 
+def plan_prune_gemini(catalog: Path, home: Path) -> list[Action]:
+    """Retired Gemini CLI skill links under the personal ``~/.gemini`` tree."""
+    return plan_prune_skill_tree(
+        "gemini",
+        home / ".gemini" / "skills",
+        home / ".gemini" / ".infiquetra-skills.json",
+        GEMINI_SCHEMA,
+        catalog,
+    )
+
+
 def plan_prune_client(
     client: str,
     catalog: Path,
@@ -3262,6 +3481,7 @@ def plan_prune_client(
     overrides: dict[str, str],
     *,
     required: bool,
+    company_gemini_dir: Path | None = None,
 ) -> list[Action]:
     if client == "claude":
         return plan_prune_claude(catalog, home, overrides, required=required)
@@ -3284,7 +3504,7 @@ def plan_prune_client(
         skills, manifest, schema = skill_destinations("hermes", home)
         return plan_prune_skill_tree("hermes", skills, manifest, schema, catalog)
     if client == "agy":
-        return plan_prune_agy(catalog, home)
+        return plan_prune_agy(catalog, home, company_gemini_dir=company_gemini_dir)
     if client == "muse":
         skills, manifest, schema = skill_destinations("muse", home)
         return (
@@ -3292,34 +3512,11 @@ def plan_prune_client(
             + plan_prune_muse_installations(catalog, home, overrides, required=required)
             + plan_prune_skill_tree("muse", skills, manifest, schema, catalog)
         )
+    if client == "qwen":
+        return plan_prune_qwen_extensions(catalog, home)
+    if client == "gemini":
+        return plan_prune_gemini(catalog, home)
     raise InstallError(f"unknown client {client}")  # pragma: no cover
-
-
-def plan_prune_retired(
-    clients: tuple[str, ...],
-    catalog: Path,
-    home: Path,
-    overrides: dict[str, str],
-    *,
-    required: bool,
-) -> list[Action]:
-    actions: list[Action] = []
-    for client in clients:
-        actions.extend(
-            plan_prune_client(client, catalog, home, overrides, required=required)
-        )
-    if set(clients) == set(CLIENTS):
-        actions.extend(plan_prune_qwen_extensions(catalog, home))
-        actions.extend(
-            plan_prune_skill_tree(
-                "gemini",
-                home / ".gemini" / "skills",
-                home / ".gemini" / ".infiquetra-skills.json",
-                GEMINI_SCHEMA,
-                catalog,
-            )
-        )
-    return [action for action in actions if action.kind != "note" or action.message]
 
 
 def _run_prune(
@@ -3330,23 +3527,57 @@ def _run_prune(
     *,
     required: bool,
     continue_on_error: bool,
+    company_gemini_dir: Path | None = None,
 ) -> int:
-    actions = plan_prune_retired(clients, catalog, home, overrides, required=required)
-    if not actions:
-        print("prune-retired: nothing to remove")
-        return 0
+    """Prune each selected client on its own.
+
+    Planning one client resolves that client's CLI. A missing binary raises
+    before any of that client's actions exist. Catching the error per client
+    lets the remaining clients still prune. ``all`` has already been expanded
+    to the eight active harnesses plus ``qwen`` and ``gemini``. One named
+    harness still stops at the first failure. A recorded ``fail`` action is
+    reported and does not discard actions already planned for that client.
+    """
     failures: list[str] = []
-    for action in actions:
-        print(format_action(action))
-        if not required:
-            continue
+    printed = False
+    for client in clients:
         try:
-            perform(action)
+            actions = [
+                action
+                for action in plan_prune_client(
+                    client,
+                    catalog,
+                    home,
+                    overrides,
+                    required=required,
+                    company_gemini_dir=company_gemini_dir,
+                )
+                if action.kind != "note" or action.message
+            ]
         except (InstallError, muse_cli.MuseCLIError) as exc:
-            failures.append(f"{action.client}: {exc}")
+            failures.append(f"{client}: plan: {exc}")
             if not continue_on_error:
                 _print_failures(failures)
                 return exc.code if isinstance(exc, InstallError) else 1
+            continue
+        for action in actions:
+            printed = True
+            print(format_action(action))
+            if action.kind == "fail":
+                failures.append(f"{action.client}: {action.message}")
+                continue
+            if not required:
+                continue
+            try:
+                perform(action)
+            except (InstallError, muse_cli.MuseCLIError) as exc:
+                failures.append(f"{action.client}: {exc}")
+                if not continue_on_error:
+                    _print_failures(failures)
+                    return exc.code if isinstance(exc, InstallError) else 1
+    if not printed and not failures:
+        print("prune-retired: nothing to remove")
+        return 0
     if failures:
         _print_failures(failures)
         return 1
@@ -3365,7 +3596,11 @@ def run(argv: list[str] | None = None) -> int:
     if not catalog.is_dir():
         raise InstallError(f"--catalog {catalog} is not a directory")
     packages = select_packages(catalog, args.package)
-    clients = selected_clients(args.client)
+    clients = args.clients
+    is_all = args.client_all
+    # One named harness fails fast. all, and any explicit list of more than
+    # one harness, records each failure and continues.
+    multi = is_all or len(clients) > 1
     company_gemini_dir: Path | None = None
     if getattr(args, "agy_account", "personal") == "company":
         raw_company = getattr(args, "agy_company_home", None) or os.environ.get(
@@ -3375,7 +3610,9 @@ def run(argv: list[str] | None = None) -> int:
             raise InstallError(
                 "--agy-account company requires --agy-company-home or AGY_COMPANY_HOME"
             )
-        if args.execute:
+        # Prune edits the company Gemini directory directly. Install would
+        # invoke the vendor binary, which follows the personal account.
+        if args.execute and not args.prune_retired:
             raise InstallError(
                 "company Agy --execute is not supported: the vendor binary would run "
                 "against the personal account; use --dry-run or --check for company"
@@ -3386,18 +3623,27 @@ def run(argv: list[str] | None = None) -> int:
         args.scope,
         bool(args.package),
         args.uninstall_legacy,
-        allow_inapplicable=args.client == "all",
+        allow_inapplicable=multi,
         agy_gemini_dir=company_gemini_dir,
         profile=args.profile or "tier",
     )
     overrides = parse_binaries(args.binary)
     home = Path.home()
     required = bool(args.execute) and not args.check
-    is_all = args.client == "all"
     if args.prune_retired:
+        prune_clients = (*clients, "qwen", "gemini") if is_all else clients
         return _run_prune(
-            clients, catalog, home, overrides, required=bool(args.execute), continue_on_error=is_all
+            prune_clients,
+            catalog,
+            home,
+            overrides,
+            required=bool(args.execute),
+            continue_on_error=multi,
+            company_gemini_dir=company_gemini_dir,
         )
+    # An explicit package Muse cannot install is refused only when Muse is the
+    # sole client. A multi-client run reports that package as not-applicable
+    # for Muse and still places it for the harnesses that can take it.
     if clients == ("muse",):
         muse_packages(catalog, packages, filtered=options.filtered)
     if any(client in SKILL_CLIENTS for client in clients) or company_gemini_dir is not None:
@@ -3406,7 +3652,7 @@ def run(argv: list[str] | None = None) -> int:
     if args.check:
         lines: list[str] = []
         failed = False
-        if not is_all:
+        if not multi:
             for client in clients:
                 if client == "cursor":
                     lines.append(cursor_check_line())
@@ -3415,7 +3661,7 @@ def run(argv: list[str] | None = None) -> int:
                 failed = failed or result.failed
             print("\n".join(lines))
             return 1 if failed else 0
-        # --client all: one client's unreadable state does not hide every
+        # Several harnesses: one client's unreadable state does not hide every
         # other client's readback, and is reported alongside it.
         failures: list[str] = []
         for client in clients:
@@ -3433,7 +3679,7 @@ def run(argv: list[str] | None = None) -> int:
             return 1
         return 1 if failed else 0
 
-    if not is_all:
+    if not multi:
         actions: list[Action] = []
         for client in clients:
             actions.extend(
@@ -3447,7 +3693,7 @@ def run(argv: list[str] | None = None) -> int:
                 perform(action)
         return 0
 
-    # --client all: a failure planning or performing one client's placement,
+    # Several harnesses: a failure planning or performing one client's placement,
     # or one package within it, is recorded and does not stop the rest of
     # that client's packages or the clients that follow.
     failures = []
