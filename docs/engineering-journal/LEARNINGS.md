@@ -2,6 +2,39 @@
 
 ## 2026-11-19
 
+### An installed skill has to run with the working directory outside the catalog
+
+**Evidence.** Issue #336 seeds a legacy home under a temporary directory, prunes
+the eight retired packages and the fifteen former `plugins/saga/skills/`
+symlinks, then installs and checks all eight harnesses. From the OpenCode and
+Hermes skill symlinks, and from the Claude cache entries those installs
+created, `review_command.py prepare`, `security_scan.py`, `lifecycle_review.py
+rubrics list-cores`, `check_plan.py`, `validate_plan_write_hook.py`, and both
+`shaping_judgments.py` copies run with the working directory set to a second
+temporary git repository. The import audit for those processes records no
+`saga` or `orchestrate` module. `check_plan.py` exits 0 with `--root` and with
+the repository as the working directory. The plan hook prints advisory context
+for `docs/plans/*.md` and stays silent for other writes. Readiness judgments
+return the advisory envelope, which means `_bundled/` loaded beside the
+installed script. No standalone execution defect turned up in `plugins/reviews`,
+`plugins/plan`, `plugins/ideate`, `plugins/brainstorm`, or
+`scripts/install_client.py`.
+
+**Mechanism.** OpenCode and Hermes install a skill directory, not the package
+root. The reviews scripts and the plan hook sit beside that skill, so the
+installed path reaches them by walking through the symlink (`skill/../../scripts`
+and `skill/../../com.infiquetra.claude`). Claude's cache entry is the package
+root, and the same files are addressed from there. `bundled_fleet.load` and the
+plan hook both resolve `Path(__file__)` before they look for `_bundled/` or
+`check_plan.py`, so the working directory can be the target repository. Muse
+staging still refuses a marker that is group-writable, so the closeout run sets
+umask 022 before it writes the synthetic home.
+
+**Generalizable rule.** Prove a post-install skill by invoking the path the
+harness actually stored, with the working directory outside the catalog. A
+passing unit test whose working directory is the checkout does not show that
+the installed symlink can find its bundle.
+
 ### A combined scanner closeout has to be offline and order-independent
 
 **Evidence.** Issue #335 runs one git fixture through two offline `prepare`s and

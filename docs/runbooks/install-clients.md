@@ -1,6 +1,6 @@
 # Runbook: place this catalog on each harness
 
-**Version 1.3.0** · Adopted 2026-09-22
+**Version 1.3.1** · Adopted 2026-09-22
 
 Amendments:
 
@@ -10,6 +10,8 @@ Amendments:
   JSON verification, including the issue #237 code-review repairs.
 - 1.3.0, 2026-11-19: harness installation tiers, retired Qwen and Gemini CLI
   targets, and provenance-gated `--prune-retired` (issue #334).
+- 1.3.1, 2026-11-19: closeout upgrade order after retired-placement pruning
+  (issue #336).
 
 
 This is the operator checklist for
@@ -124,9 +126,22 @@ in `~/.config/opencode/.infiquetra-plugins.json` and
 unsourced entries stay. The default is a dry-run. Pass `--execute` to unlink.
 Do not combine it with `--check` or `--uninstall-legacy`.
 
+## Closeout upgrade
+
+A workstation that still has pre-3.0 placements moves to this catalog in four
+separate runs. The first prints the prune plan and changes nothing. The second
+unlinks catalog-owned retired placements, including the former
+`plugins/saga/skills/` symlinks. The third places the current catalog: every
+active package on a full harness, and `reviews`, `plan`, and `investigate` on
+a lean harness. The fourth reads every harness back and exits 0 when every
+applicable package is present. `--prune-retired` does not install, and a plain
+`--execute` does not prune, so the steps stay in this order.
+
 ```bash
-python3 scripts/install_client.py --client all --prune-retired
+python3 scripts/install_client.py --client all --prune-retired --dry-run
 python3 scripts/install_client.py --client all --prune-retired --execute
+python3 scripts/install_client.py --client all --execute
+python3 scripts/install_client.py --client all --check
 ```
 
 `--binary <client>=<path>` replaces the executable on `PATH`. A path that is the
