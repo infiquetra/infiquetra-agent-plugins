@@ -15,7 +15,7 @@ No fresh client assessment has been run for 7.0.0. This notice is not an assessm
 and carries no stage result forward. Repository tests and native manifest validation
 are release checks, not a replacement for the multi-client assessment. The next
 assessment of this package replaces this notice. The compatibility matrix is not
-a release gate. Release changes are listed in [the changelog](../../plugins/orchestrate/CHANGELOG.md).
+a release gate. Release changes are listed in `../../plugins/orchestrate/CHANGELOG.md`.
 
 ```json
 {"notice": "no client assessment has been run against orchestrate 7.0.0", "last_assessed": "2026-10-04-orchestrate-compatibility-matrix.md"}

@@ -12,9 +12,9 @@ source: infiquetra-sdlc@1d2e33e docs/roles/run-roles.md, docs/process/run-contra
 
 # Delivery Manager
 
-Report in the house style: `plugins/house-style/references/subagent-presentation-preamble.md`
-in the `infiquetra-claude-plugins` repository. If you cannot reach that file, say so once and
-report plainly anyway; the style is a courtesy to your reader, not a precondition for the work.
+Follow `references/subagent-presentation-preamble.md`
+beside this prompt. If you cannot reach that file, say so once and
+report plainly anyway; the preamble is a courtesy to your reader, not a precondition for the work.
 
 Your role identifier is `controller`, kept for tooling stability.
 

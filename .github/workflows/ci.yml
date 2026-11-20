@@ -254,13 +254,10 @@ jobs:
             claude plugin test "$plugin"
             visited="$visited ${plugin#plugins/}"
           done
-          echo "validated and tested:$visited"
-          for required in saga orchestrate; do
-            case " $visited " in
-              *" $required "*) ;;
-              *) echo "plugins/$required ships no mod that was validated and tested" >&2; exit 1 ;;
-            esac
-          done
+          echo "validated and tested:${visited:- none}"
+          # Saga and orchestrate were the only packages that shipped a hooks
+          # module. Both left in #332. The loop above still validates every
+          # surviving package that names one. An empty visit is success.
 
       # Static assertions run once in the stdlib root gate. This explicit
       # entrypoint requires the installed matrix build and validates every manifest.

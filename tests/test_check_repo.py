@@ -1567,13 +1567,12 @@ class ClaudeModuleSourceTests(unittest.TestCase):
             self.findings("plugins/example/scripts/tool.py", "plugins/example/README.md"), []
         )
 
-    def test_a_semgrep_rule_test_target_beside_its_rule_is_accepted(self) -> None:
-        self.assertEqual(
+    def test_a_retired_saga_semgrep_directory_is_not_accepted(self) -> None:
+        self.assertTrue(
             self.findings(
                 "plugins/saga/references/semgrep/example.yaml",
                 "plugins/saga/references/semgrep/example.ts",
-            ),
-            [],
+            )
         )
 
     def test_a_reviews_semgrep_rule_test_target_beside_its_rule_is_accepted(self) -> None:
@@ -1587,7 +1586,7 @@ class ClaudeModuleSourceTests(unittest.TestCase):
         self.assertTrue(self.findings("plugins/reviews/references/semgrep/stray.ts"))
 
     def test_an_unpaired_typescript_file_in_the_rules_directory_is_refused(self) -> None:
-        self.assertTrue(self.findings("plugins/saga/references/semgrep/stray.ts"))
+        self.assertTrue(self.findings("plugins/reviews/references/semgrep/stray.ts"))
 
     def test_the_repository_itself_keeps_its_mods_in_the_adapters(self) -> None:
         self.assertEqual(check_repo.check_claude_module_sources(ROOT), [])
@@ -1685,9 +1684,9 @@ class ContinuousIntegrationTests(unittest.TestCase):
 
 
 class ReviewCalibrationTests(unittest.TestCase):
-    """The repository check calls saga's one calibration implementation (issue 149)."""
+    """The repository check calls reviews' calibration implementation (issue 149)."""
 
-    FORMULA = "plugins/saga/scripts/review_formula.py"
+    FORMULA = "plugins/reviews/scripts/review_formula.py"
 
     def setUp(self) -> None:
         def refuse(*_args: object, **_kwargs: object) -> None:
@@ -1697,7 +1696,7 @@ class ReviewCalibrationTests(unittest.TestCase):
         self.enterContext(mock.patch("socket.create_connection", refuse))
 
     def module(self):
-        scripts = str(ROOT / "plugins" / "saga" / "scripts")
+        scripts = str(ROOT / "plugins" / "reviews" / "scripts")
         if scripts not in sys.path:
             sys.path.insert(0, scripts)
         import review_calibration
@@ -1712,7 +1711,7 @@ class ReviewCalibrationTests(unittest.TestCase):
 
     def write_no_run(self, root: Path) -> Path:
         self.copy_components(root)
-        target = root / "plugins/saga/references/review-calibration.json"
+        target = root / "plugins/reviews/references/review-calibration.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / target.relative_to(root), target)
         return target
@@ -1721,7 +1720,7 @@ class ReviewCalibrationTests(unittest.TestCase):
         module = self.module()
         self.copy_components(root)
         data = json.loads(
-            (ROOT / "plugins/saga/references/review-calibration.json").read_text(encoding="utf-8")
+            (ROOT / "plugins/reviews/references/review-calibration.json").read_text(encoding="utf-8")
         )
         data["corpus_run"] = "recorded"
         data["fingerprint"] = {
@@ -1740,7 +1739,7 @@ class ReviewCalibrationTests(unittest.TestCase):
             row["drift"] = "as-recorded"
             row["overall"] = dict(overall)
             row["languages"] = {}
-        target = root / "plugins/saga/references/review-calibration.json"
+        target = root / "plugins/reviews/references/review-calibration.json"
         target.write_text(json.dumps(data), encoding="utf-8")
 
     def component_messages(self, problems: list[str]) -> list[str]:

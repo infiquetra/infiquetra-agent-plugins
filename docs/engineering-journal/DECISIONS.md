@@ -2,6 +2,33 @@
 
 ## 2026-11-19
 
+### Retire the saga-family catalog
+
+**Decision.** [Issue #332](https://github.com/infiquetra/infiquetra-agent-plugins/issues/332)
+removes `saga`, `orchestrate`, `agy`, `codex`, `house-style`,
+`hermes-profile-evolution`, `voice`, and `redis-channel`, their port descriptors,
+and the root `.saga-profile.json`. The house-style presentation preamble now
+lives at `plugins/agent-launcher/roles/references/subagent-presentation-preamble.md`.
+Mission-control owns document-maturity assessment in
+`plugins/mission-control/scripts/handoff_envelope.py` and no longer resolves a
+saga plugin. Deploy no longer documents a saga handoff. Fleet Core drops
+`bridge_receipt.py`, `output_attestation.py`, `audit_store.py`, `merge_guard.py`,
+`effort_rider.py`, and `render_tier_table.py`. Semgrep rule-test targets are
+accepted only under `plugins/reviews/references/semgrep`. The reviews copies of
+`review_formula.py` and `review-records.schema.json` stay byte-identical to
+`5550acf`. Superseded compatibility matrices for the retired packages stay in
+`docs/evidence` and do not require a port descriptor. A current matrix that
+names an unported package still fails. Muse's excluded-package list is
+`fleet-core` alone.
+
+**Rationale.** Wave 1 extracted the surfaces that still have a job. Leaving the
+retired packages in the installable catalog kept every harness validating code
+the operator no longer runs, and left mission-control unable to prepare an issue
+unless saga was installed beside it.
+
+**Revisit when.** A retired behavior needs a new home. The saga review-corpus
+pin and `builder_record.py` are queued until they have one under `plugins/reviews`.
+
 ### Slim agent-launcher to the reviewer, the roles library, and hc
 
 **Decision.** Agent Launcher 3.0.0 deletes the old interactive launch surface:
@@ -603,8 +630,8 @@ timing dependence. Mutation adapters using base-head comparison are refused unti
 that path supports the budget. Revisit when a single prepare-wide wall-clock budget
 is introduced, or evidence supports changing the mutation allowance.
 
-**Refs.** [Runner](../../plugins/saga/scripts/review_tools.py),
-[runner tests](../../plugins/saga/tests/test_review_tools.py).
+**Refs.** `../../plugins/saga/scripts/review_tools.py`,
+`../../plugins/saga/tests/test_review_tools.py`.
 
 ### Canonicalize Gitleaks finding order and bound the whole scan
 
@@ -625,9 +652,9 @@ histories or under heavier load. Revisit the deadline when new measurements just
 a different limit. The separate mutation-budget decision above isolates mutation
 time from this scanner.
 
-**Refs.** [Adapter](../../plugins/saga/scripts/review_adapters_all_languages.py),
-[tool catalogue](../../plugins/saga/references/review-tools.yaml),
-[adapter tests](../../plugins/saga/tests/test_review_adapters_all_languages.py).
+**Refs.** `../../plugins/saga/scripts/review_adapters_all_languages.py`,
+`../../plugins/saga/references/review-tools.yaml`,
+`../../plugins/saga/tests/test_review_adapters_all_languages.py`.
 
 ### Bound whole Semgrep scans instead of individual rules
 
@@ -649,9 +676,9 @@ guarantee for all rules, repositories, or machines. Revisit the deadline if a
 measured scan exceeds 60 seconds or the mutation deadline becomes independent.
 Revisit the worker count when the workload or execution environment changes materially.
 
-**Refs.** [Semgrep adapter](../../plugins/saga/scripts/review_adapters_all_languages.py),
-[tool catalogue](../../plugins/saga/references/review-tools.yaml),
-[adapter tests](../../plugins/saga/tests/test_review_adapters_all_languages.py).
+**Refs.** `../../plugins/saga/scripts/review_adapters_all_languages.py`,
+`../../plugins/saga/references/review-tools.yaml`,
+`../../plugins/saga/tests/test_review_adapters_all_languages.py`.
 
 ### Give static packaging and installed validation separate test owners
 
@@ -739,7 +766,7 @@ change and complete exact-source qualification.
 **Refs.** [Ownership controls](../../tests/test_dependency_test_ownership.py),
 [template audits](../../plugins/mission-control/tests/test_template_sync_audit.py),
 [README execution](../../plugins/mission-control/tests/test_readme_commands.py),
-[staged Saga](../../plugins/saga/tests/test_staged_saga_version.py).
+`../../plugins/saga/tests/test_staged_saga_version.py`.
 
 ## 2026-10-29
 
@@ -3497,8 +3524,8 @@ to validate it against.
 output-style capability, at which point a portable core for the style becomes
 worth designing against two real consumers instead of one.
 
-**Refs.** [`plugins/house-style/README.md`](../../plugins/house-style/README.md),
-[`plugins/house-style/plugin.json`](../../plugins/house-style/plugin.json).
+**Refs.** `../../plugins/house-style/README.md`,
+`../../plugins/house-style/plugin.json`.
 
 ## 2026-08-30
 

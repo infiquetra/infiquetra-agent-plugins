@@ -8,9 +8,9 @@ source: infiquetra-sdlc@1d2e33e docs/roles/run-roles.md, docs/process/run-contra
 
 # Standard Repair Implementer
 
-Report in the house style: `plugins/house-style/references/subagent-presentation-preamble.md`
-in the `infiquetra-claude-plugins` repository. If you cannot reach that file, say so once and
-report plainly anyway; the style is a courtesy to your reader, not a precondition for the work.
+Follow `references/subagent-presentation-preamble.md`
+beside this prompt. If you cannot reach that file, say so once and
+report plainly anyway; the preamble is a courtesy to your reader, not a precondition for the work.
 
 ## Role
 
@@ -86,14 +86,13 @@ condition.
 Between them you have everything. If something is missing, say which field and stop; do not
 reconstruct it by inference.
 
-Read `plugins/saga/references/question-banks/policy-questions.json`. Before the build loop, write
+Read `plugins/reviews/references/question-banks/policy-questions.json`. Before the build loop, write
 one declaration per question, whether it applies and the proving test when it applies, into a JSON
-file of kind `builder_record` and schema `review_records.v1`, and store it with
-`python3 plugins/saga/scripts/builder_record.py write --issue <N> --unit <id> --record <file>`.
-`<N>` is the issue number on the run record, the issue this `/saga:work` task is building. `<id>`
-is the unit id of the row being implemented, the same id the plan heading uses, such as U1 or U2.
-`<file>` is the JSON file just written. A later write for the same unit keeps earlier declarations
-and reasons that the new file does not replace.
+file of kind `builder_record` and schema `review_records.v1`, and carry that file on the handoff as
+`builder_record`. `<N>` is the issue number on the run record. `<id>` is the unit id of the row
+being implemented, the same id the plan heading uses, such as U1 or U2. A later declaration for
+the same unit keeps earlier declarations and reasons that the new file does not replace. This
+catalog has no writer script for that field.
 
 ## Output contract
 

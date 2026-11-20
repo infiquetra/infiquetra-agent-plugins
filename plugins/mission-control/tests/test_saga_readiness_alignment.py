@@ -20,7 +20,7 @@ import sdlc_manager  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 VENDORED_SCHEMA = PLUGIN_ROOT / "config" / "sdlc-schema.json"
-SAGA_OWNER_PATH = PLUGIN_ROOT.parent / "saga" / "scripts" / "handoff_envelope.py"
+SAGA_OWNER_PATH = PLUGIN_ROOT / "scripts" / "handoff_envelope.py"
 
 HANDOFF_MATURITIES = (
     "idea-ready",
@@ -83,11 +83,10 @@ def isolate_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
 
 def _load_saga_owner() -> ModuleType:
     if not SAGA_OWNER_PATH.is_file():
-        pytest.skip(
-            "saga's handoff_envelope.py is not in this catalog yet "
-            f"({SAGA_OWNER_PATH}); these tests run when that plugin is present"
+        raise AssertionError(
+            f"mission-control handoff_envelope.py is missing ({SAGA_OWNER_PATH})"
         )
-    spec = importlib.util.spec_from_file_location("saga_handoff_owner", SAGA_OWNER_PATH)
+    spec = importlib.util.spec_from_file_location("mission_control_handoff_owner", SAGA_OWNER_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -109,7 +108,7 @@ def _assess_declared():
 
 
 def _has_live_route(text: str) -> bool:
-    return "/plan" in text or "/work" in text
+    return "/plan" in text or text.startswith("continue ")
 
 
 def _write(root: Path, rel: str, text: str) -> Path:
@@ -398,12 +397,12 @@ def test_t942_07_missing_saga_is_a_dependency_diagnostic(
     _brainstorm_pending(tmp_path)
     # The script loads its bundled module by path under a unique name, so the
     # patch has to land on that very module object, not on a bare-name import.
-    plugin_resolution = sdlc_manager._load_bundled("plugin_resolution")
+    def _missing_owner() -> ModuleType:
+        raise RuntimeError(
+            "Saga readiness owner dependency problem: handoff_envelope.py is missing"
+        )
 
-    def _missing_saga(*_args: object, **_kwargs: object) -> tuple[Path, int]:
-        raise FileNotFoundError("saga plugin not installed")
-
-    monkeypatch.setattr(plugin_resolution, "resolve_plugin_root", _missing_saga)
+    monkeypatch.setattr(sdlc_manager, "_load_saga_readiness_owner", _missing_owner)
     draft_dir = tmp_path / "out"
     draft_dir.mkdir()
     with pytest.raises(RuntimeError, match="[Ss]aga|dependenc"):

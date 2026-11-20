@@ -46,8 +46,7 @@
       "marketplace": "infiquetra-claude-plugins",
       "staging_directory": "<catalog>/build/muse-marketplace",
       "excluded_packages": [
-        "fleet-core",
-        "house-style"
+        "fleet-core"
       ],
       "verification": {
         "installed": "muse plugins list --json",

@@ -396,8 +396,9 @@ class WorkflowPreservationControls(unittest.TestCase):
         self.assertNotIn("pip install", root)
         self.assertIn("pytest plugins/*/tests -q --import-mode=importlib", plugin)
         self.assertIn("['2.1.286', '2.1.289', '2.1.296']", vendor)
-        for command in ("npm install", 'claude --version || node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs"', 'grep -Fx', "claude plugin validate --strict", "claude plugin test", "for required in saga orchestrate", "python3 tests/installed_claude_validation.py --expected-version"):
+        for command in ("npm install", 'claude --version || node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs"', 'grep -Fx', "claude plugin validate --strict", "claude plugin test", "validated and tested:", "python3 tests/installed_claude_validation.py --expected-version"):
             self.assertIn(command, vendor)
+        self.assertNotIn("for required in saga orchestrate", vendor)
         self.assertNotIn("continue-on-error", text)
         self.assertNotIn("cache-hit", text)
 
@@ -433,7 +434,8 @@ class WorkflowPreservationControls(unittest.TestCase):
 
     def test_requirements_keep_intent_and_every_direct_requirement_is_constrained(self):
         requirements = (ROOT / "requirements-plugin-tests.txt").read_text(encoding="utf-8")
-        self.assertIn("mcp>=1,<2", requirements)
+        self.assertNotIn("mcp", requirements)
+        self.assertNotIn("redis", requirements)
         self.assertIn("semgrep==1.179.0", requirements)
         normalized = lambda name: re.sub(r"[-_.]+", "-", name).lower()
         pins = {}
@@ -446,7 +448,8 @@ class WorkflowPreservationControls(unittest.TestCase):
             if line and not line.startswith("#"):
                 self.assertIn(normalized(re.split(r"[<>=]", line)[0]), pins)
         self.assertEqual(pins["semgrep"], "1.179.0")
-        self.assertEqual(pins["mcp"].split(".")[0], "1")
+        self.assertNotIn("mcp", pins)
+        self.assertNotIn("redis", pins)
 
 
 if __name__ == "__main__":

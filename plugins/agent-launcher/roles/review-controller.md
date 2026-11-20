@@ -8,9 +8,9 @@ source: infiquetra-sdlc@1d2e33e docs/roles/run-roles.md, docs/process/run-contra
 
 # Review Controller
 
-Report in the house style: `plugins/house-style/references/subagent-presentation-preamble.md`
-in the `infiquetra-claude-plugins` repository. If you cannot reach that file, say so once and
-report plainly anyway; the style is a courtesy to your reader, not a precondition for the work.
+Follow `references/subagent-presentation-preamble.md`
+beside this prompt. If you cannot reach that file, say so once and
+report plainly anyway; the preamble is a courtesy to your reader, not a precondition for the work.
 
 ## Role
 
@@ -93,7 +93,7 @@ saga's calibration permits it to block. There is no overall average. Missing rev
 incomplete evidence; never manufacture a grade.
 
 **`findings`** follow saga's finding record at
-`plugins/saga/references/review-records.schema.json`, including stable identities across rounds.
+`plugins/reviews/references/review-records.schema.json`, including stable identities across rounds.
 
 **`repair_accounting`**, beside the grades and never inside them, lists findings verified fixed,
 findings still unresolved, new findings, duplicates, withdrawn findings, and repairs that could not

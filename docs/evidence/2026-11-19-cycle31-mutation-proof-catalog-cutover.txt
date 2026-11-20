@@ -1,0 +1,74 @@
+# Cycle-31 mutation proof - catalog cutover guards
+# Cycle 30 is the preceding proof:
+# [Cycle 30](2026-11-19-cycle30-mutation-proof-reviews-semgrep-directory.txt).
+# Cycle 31 re-grades two guards changed by issue #332.
+# scripts/check_repo.py accepts a Semgrep rule-test target only under
+# plugins/reviews. scripts/check_compatibility_matrix.py does not require a
+# port descriptor for a superseded matrix of a retired package, and still
+# requires one for a current matrix and for any other unported name.
+# The other three graded files are unchanged and their cycle-30 digests are carried.
+# Older guards inside the two changed files were not re-mutated.
+#
+# Runner: one unique exact replacement per mutation, then the pristine file is restored.
+# PYTHONDONTWRITEBYTECODE=1. A kill requires an actual test failure. The binding test
+# is not part of this command. Scratch fixtures only.
+#
+Test command: python3 -m unittest tests.test_check_repo.ClaudeModuleSourceTests.test_a_retired_saga_semgrep_directory_is_not_accepted tests.test_check_repo.ClaudeModuleSourceTests.test_a_reviews_semgrep_rule_test_target_beside_its_rule_is_accepted tests.test_check_repo.ClaudeModuleSourceTests.test_an_unpaired_typescript_file_in_the_rules_directory_is_refused tests.test_check_compatibility_matrix.PackageResolutionTest.test_a_superseded_matrix_of_a_retired_package_does_not_require_its_port tests.test_check_compatibility_matrix.PackageResolutionTest.test_a_current_matrix_naming_a_retired_package_is_still_refused tests.test_check_compatibility_matrix.PackageResolutionTest.test_a_superseded_matrix_naming_an_unknown_package_is_still_refused
+Baseline: 6 tests, OK
+
+## 6 mutations
+
+## MUTATION 1: The reviews Semgrep directory is no longer accepted
+File: scripts/check_repo.py
+Replace: '    ("plugins", "reviews", "references", "semgrep"),\n'
+With: ''
+Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_reviews_semgrep_rule_test_target_beside_its_rule_is_accepted
+FAILED (failures=1)
+
+## MUTATION 2: The retired saga Semgrep directory is accepted again
+File: scripts/check_repo.py
+Replace: '    ("plugins", "reviews", "references", "semgrep"),\n'
+With: '    ("plugins", "reviews", "references", "semgrep"),\n    ("plugins", "saga", "references", "semgrep"),\n'
+Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_retired_saga_semgrep_directory_is_not_accepted
+FAILED (failures=1)
+
+## MUTATION 3: Directory membership comparison becomes equality
+File: scripts/check_repo.py
+Replace: 'if tuple(parts[:4]) in SEMGREP_RULE_TEST_DIRECTORY and ('
+With: 'if tuple(parts[:4]) == SEMGREP_RULE_TEST_DIRECTORY and ('
+Killed by: tests.test_check_repo.ClaudeModuleSourceTests.test_a_reviews_semgrep_rule_test_target_beside_its_rule_is_accepted
+FAILED (failures=1)
+
+## MUTATION 4: A superseded retired-package matrix requires its port again
+File: scripts/check_compatibility_matrix.py
+Replace: '    if status == STATUS_SUPERSEDED and name in RETIRED_CATALOG_PACKAGES:\n        return [\n            problem for problem in resolution_problems if "no port descriptor" not in problem\n        ]\n'
+With: ''
+Killed by: tests.test_check_compatibility_matrix.PackageResolutionTest.test_a_superseded_matrix_of_a_retired_package_does_not_require_its_port
+FAILED (failures=1)
+
+## MUTATION 5: The missing-port exemption applies to current matrices
+File: scripts/check_compatibility_matrix.py
+Replace: 'if status == STATUS_SUPERSEDED and name in RETIRED_CATALOG_PACKAGES:'
+With: 'if status == STATUS_CURRENT and name in RETIRED_CATALOG_PACKAGES:'
+Killed by: tests.test_check_compatibility_matrix.PackageResolutionTest.test_a_superseded_matrix_of_a_retired_package_does_not_require_its_port
+Killed by: tests.test_check_compatibility_matrix.PackageResolutionTest.test_a_current_matrix_naming_a_retired_package_is_still_refused
+FAILED (failures=2)
+
+## MUTATION 6: Every superseded matrix is exempt from a missing port
+File: scripts/check_compatibility_matrix.py
+Replace: 'if status == STATUS_SUPERSEDED and name in RETIRED_CATALOG_PACKAGES:'
+With: 'if status == STATUS_SUPERSEDED:'
+Killed by: tests.test_check_compatibility_matrix.PackageResolutionTest.test_a_superseded_matrix_naming_an_unknown_package_is_still_refused
+FAILED (failures=1)
+
+Restored baseline: 6 tests, OK
+Mutations: 6; killed: 6; survivors: 0
+
+## RESTORED
+scripts/check_repo.py sha256: 9722fca738f59ef224e8cd7bd92e03d3851bca62405aacc6d34f0723af6e9b1d
+scripts/check_compatibility_matrix.py sha256: aa0ec468977f7ce04337e73bbdb2ad64d623dd9c45e91257dee8d1ad41155663
+# Carried unchanged from Cycle 30, not re-graded:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+scripts/port_config.py sha256: 56216b7c8018b361d611356e21bc2383cb7d71ebf478f28436fee3c5c8e46b17
+scripts/assess_clients.py sha256: 12d9b904a107be04e4be2a331e59f80fa91447cee52d773a59de6389d5ac20c6
+byte-identical to pristine: YES

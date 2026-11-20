@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.1] - 2026-11-19
+
+### Changed
+
+- Role prompts follow `references/subagent-presentation-preamble.md` beside the prompt. They no longer send the reader to another repository for that preamble.
+- The implementer prompts carry the `builder_record` handoff field and no longer call a writer script.
+- The roles library stays pinned to SDLC `1d2e33e`.
+
 ## [3.0.0] - 2026-11-19
 
 ### Changed

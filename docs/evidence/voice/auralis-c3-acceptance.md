@@ -72,7 +72,7 @@ The byte-identical snapshot is committed in this repository at
 
 ### U6 — Spoken Tool Approval Forwarding and Fail-Closed Validation: **PASS**
 
-The `PreToolUse` hook forwarding and validation behavior is proved by the dedicated test suite in [`plugins/voice/tests/test_pre_tool_use_hook.py`](../../../plugins/voice/tests/test_pre_tool_use_hook.py):
+The `PreToolUse` hook forwarding and validation behavior is proved by the dedicated test suite in `../../../plugins/voice/tests/test_pre_tool_use_hook.py`:
 - **Exact-match allow path:**
   - `PreToolUseApprovalHookTests::test_allow_path_on_exact_match` proves that when Core returns `decision: "allow"`, matching `tool_use_id`, and a canonical snapshot with `classification.result == "voice_approvable"`, the hook emits `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}` and exits 0.
 - **Fail-closed deferral paths (all emit empty stdout and exit 0):**

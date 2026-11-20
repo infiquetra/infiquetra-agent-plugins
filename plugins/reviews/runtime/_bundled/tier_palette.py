@@ -3,13 +3,13 @@
 # source-version: 0.34.0
 # source-commit: authored
 # source-path: scripts/fleet_commons/tier_palette.py
-# source-sha256: 783df5751618858f3cd73e989d4f6b0dd35a9324b256ad538a3ed1cf455af363
-# output-sha256: 783df5751618858f3cd73e989d4f6b0dd35a9324b256ad538a3ed1cf455af363
+# source-sha256: 998640c5484cc59ea218ad12c107768c3063dc6aca4313e4269ab85d8a92f3e3
+# output-sha256: 998640c5484cc59ea218ad12c107768c3063dc6aca4313e4269ab85d8a92f3e3
 # --- end generated bundle stamp ---
 #!/usr/bin/env python3
 """Canonical fleet tier palette — the model/effort vocabulary shared across plugins.
 
-Moved verbatim from ``plugins/saga/scripts/execution_spec.py`` (fleet-commons first
+Moved verbatim from the former execution_spec module (fleet-commons first
 mover, issue #463 / DECISIONS ``{#fleet-commons-mechanism-463}``), then made
 registry-backed in #370: the ordered ``MODELS`` / ``EFFORTS`` tuples are **derived at
 import** from the explicit ``rank`` / ``rung`` indices in ``staffing.json`` rather than

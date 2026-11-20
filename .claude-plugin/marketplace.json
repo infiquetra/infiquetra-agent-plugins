@@ -12,7 +12,7 @@
     {
       "name": "agent-launcher",
       "source": "./plugins/agent-launcher",
-      "version": "3.0.0",
+      "version": "3.0.1",
       "description": "Headless sandboxed review, the SDLC roles library, and the herdr-app plus hc session workflow.",
       "author": {
         "name": "Infiquetra",
@@ -26,25 +26,6 @@
         "herdr",
         "launch",
         "sessions"
-      ]
-    },
-    {
-      "name": "agy",
-      "source": "./plugins/agy",
-      "version": "0.6.6",
-      "description": "Antigravity-backed coder reviewer bridge agents that run in a disposable clone and return a patch, with guarded evidence bundles, output-attested receipts, and clone-scoped verification.",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
-      "license": "MIT",
-      "keywords": [
-        "agy",
-        "antigravity",
-        "delegation",
-        "teammate",
-        "evidence"
       ]
     },
     {
@@ -65,28 +46,9 @@
       ]
     },
     {
-      "name": "codex",
-      "source": "./plugins/codex",
-      "version": "0.1.9",
-      "description": "Guarded synchronous Codex delegation for Claude Code. The delegate command and the coder and reviewer agents all route through the portable wrapper.",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
-      "license": "MIT",
-      "keywords": [
-        "codex",
-        "openai",
-        "delegation",
-        "teammate",
-        "evidence"
-      ]
-    },
-    {
       "name": "deploy",
       "source": "./plugins/deploy",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "description": "tag-promotion deployment operations for Infiquetra repositories.",
       "author": {
         "name": "Infiquetra",
@@ -101,24 +63,6 @@
         "hotfix",
         "release-notes",
         "infiquetra"
-      ]
-    },
-    {
-      "name": "hermes-profile-evolution",
-      "source": "./plugins/hermes-profile-evolution",
-      "version": "0.1.6",
-      "description": "Claude Code request surface for target-sovereign Hermes profile evolution.",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
-      "license": "MIT",
-      "keywords": [
-        "hermes",
-        "profiles",
-        "sovereignty",
-        "governance"
       ]
     },
     {
@@ -143,26 +87,6 @@
         "prometheus",
         "vault",
         "team-scaffold"
-      ]
-    },
-    {
-      "name": "house-style",
-      "source": "./plugins/house-style",
-      "version": "0.1.2",
-      "description": "Output style enforcing Infiquetra's house presentation rules for Claude Code turns and subagent relays.",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
-      "license": "MIT",
-      "keywords": [
-        "output-style",
-        "house-style",
-        "presentation",
-        "formatting",
-        "subagent-relay",
-        "infiquetra"
       ]
     },
     {
@@ -202,7 +126,7 @@
     {
       "name": "mission-control",
       "source": "./plugins/mission-control",
-      "version": "2.21.6",
+      "version": "2.21.7",
       "description": "SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema sync, board schemas, labels, project fields, metrics, and card validation.",
       "author": {
         "name": "Infiquetra",
@@ -224,30 +148,6 @@
       ]
     },
     {
-      "name": "orchestrate",
-      "source": "./plugins/orchestrate",
-      "version": "7.0.0",
-      "description": "Run one piece of work across several herdr agent sessions, one git worktree per unit.",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
-      "license": "MIT",
-      "keywords": [
-        "orchestration",
-        "register",
-        "herdr",
-        "multi-vendor",
-        "dispatch",
-        "state-model",
-        "events",
-        "verification",
-        "consensus",
-        "review"
-      ]
-    },
-    {
       "name": "plan",
       "source": "./plugins/plan",
       "version": "0.1.0",
@@ -263,27 +163,6 @@
         "planning",
         "implementation-plan",
         "verification"
-      ]
-    },
-    {
-      "name": "redis-channel",
-      "source": "./plugins/redis-channel",
-      "version": "0.5.4",
-      "description": "Claude Code channel that bridges sessions to external systems over Redis Streams. Router-agnostic: pair with any router implementation that speaks the protocol.",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
-      "license": "MIT",
-      "keywords": [
-        "claude-code-channel",
-        "mcp",
-        "redis",
-        "redis-streams",
-        "router-agnostic",
-        "voice",
-        "hands-free"
       ]
     },
     {
@@ -303,30 +182,6 @@
         "doc-review",
         "review-setup",
         "sdlc"
-      ]
-    },
-    {
-      "name": "saga",
-      "source": "./plugins/saga",
-      "version": "2.0.1",
-      "description": "Infiquetra lifecycle plugin: one automatic run per issue — admission, plan, plan review, a build loop, a lensed code review, merge, release and retro capture.",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
-      "license": "MIT",
-      "keywords": [
-        "lifecycle",
-        "sdlc-workflow",
-        "strategy",
-        "ideation",
-        "brainstorm",
-        "plan",
-        "doc-review",
-        "code-review",
-        "qa",
-        "retro"
       ]
     },
     {
@@ -368,28 +223,6 @@
         "firewall",
         "vlan"
       ]
-    },
-    {
-      "name": "voice",
-      "source": "./plugins/voice",
-      "version": "0.4.1",
-      "description": "A spoken conversational loop and Auralis bridge adapter for one explicitly bound, Herdr-managed Claude Code session: the bound session receives voice context, submits authored spoken renderings, and speaks completed responses.",
-      "author": {
-        "name": "Infiquetra",
-        "email": "hello@infiquetra.com"
-      },
-      "repository": "https://github.com/infiquetra/infiquetra-agent-plugins",
-      "license": "MIT",
-      "keywords": [
-        "voice",
-        "speech",
-        "text-to-speech",
-        "speech-to-text",
-        "herdr",
-        "conversational-loop",
-        "accessibility"
-      ],
-      "category": "development"
     }
   ]
 }

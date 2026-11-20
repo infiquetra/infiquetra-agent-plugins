@@ -10,10 +10,11 @@ still absent on purpose.
 | Item | Why it stays out |
 |---|---|
 | `scripts/fleet_commons_shim.py` | Its resolution ladder discovers a Claude Code plugin install (environment override, marketplace walk-up, the installed-plugins registry, and a cache-sibling scan). This catalog does not ship that discovery. A consumer declares the modules it needs, and `scripts/bundle_fleet_module.py` copies them into the consumer at build time. A module that needs a sibling loads `<this directory>/<name>.py`, so the same file works in `plugins/fleet-core/scripts/fleet_commons/` and in a generated `_bundled/` copy. |
+| `bridge_receipt.py`, `output_attestation.py`, `audit_store.py`, `merge_guard.py`, `effort_rider.py`, `render_tier_table.py` | Removed in the #332 catalog cutover. Their only consumers were the retired agy, codex, orchestrate, and saga packages. |
 
-Nothing else from the Fleet Core tree at `acc99fe7` is absent. The Python
-modules, the data files that revision carries, `scripts/jev.py`, and
-`references/` were imported. Names from the older slice inventory that this
+The other Python
+modules from that import, the data files that revision carries, `scripts/jev.py`, and
+`references/` stay. Names from the older slice inventory that this
 commit does not contain (`concurrency_policy.py`, `delegation_audit.py`,
 `delegation_state.py`, `liveness_engine.py`, `tier_policy.json`) are not
 deferred. They are not in the imported revision.

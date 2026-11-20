@@ -17,7 +17,7 @@ No fresh client assessment has been run for 2.0.1. This notice is not an assessm
 and carries no stage result forward. Repository tests and native manifest validation
 are release checks, not a replacement for the multi-client assessment. The next
 assessment of this package replaces this notice. The compatibility matrix is not
-a release gate. Release changes are listed in [the changelog](../../plugins/saga/CHANGELOG.md).
+a release gate. Release changes are listed in `../../plugins/saga/CHANGELOG.md`.
 
 ```json
 {"notice": "no client assessment has been run against saga 2.0.1", "last_assessed": "2026-10-04-saga-compatibility-matrix.md"}

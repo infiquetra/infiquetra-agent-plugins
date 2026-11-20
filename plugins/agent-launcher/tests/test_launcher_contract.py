@@ -49,10 +49,10 @@ def _contract_launcher() -> ModuleType:
 # copy, and `reviewer-probe` checks the sandbox live. Nothing here starts a real session: the
 # session is a fake binary on PATH or an injected callable.
 
-SAGA_PROMPT = REPO / "plugins" / "saga" / "references" / "targeted-reviewer-prompt.md"
-SAGA_SCHEMA = REPO / "plugins" / "saga" / "references" / "targeted-reviewer-answer.schema.json"
-SAGA_ANSWER_CLI = REPO / "plugins" / "saga" / "scripts" / "reviewer_answer.py"
-SAGA_FIXTURES = REPO / "plugins" / "saga" / "tests" / "fixtures" / "reviewer_answer"
+SAGA_PROMPT = REPO / "plugins" / "reviews" / "references" / "targeted-reviewer-prompt.md"
+SAGA_SCHEMA = REPO / "plugins" / "reviews" / "references" / "targeted-reviewer-answer.schema.json"
+SAGA_ANSWER_CLI = REPO / "plugins" / "reviews" / "scripts" / "reviewer_answer.py"
+SAGA_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "reviewer_answer"
 ANSWER = json.loads((SAGA_FIXTURES / "answer.json").read_text(encoding="utf-8"))
 
 

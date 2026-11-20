@@ -107,7 +107,7 @@ MODULE_SUFFIXES = check_repo.ENGINE_MODULE_SUFFIXES
 
 #: The packages that must ship a hooks module, so the module rules below cannot
 #: pass by finding none.
-MODULE_PACKAGES = ("orchestrate", "saga")
+MODULE_PACKAGES: tuple[str, ...] = ()
 
 #: The minimum Claude Code build that loads these plugins' mods. The single
 #: authority, as ``tests/test_python_floor.py`` is for Python: the continuous
@@ -624,13 +624,13 @@ class ModuleDeclarationTests(unittest.TestCase):
 
     def test_the_mod_bearing_packages_declare_a_module(self) -> None:
         found = self.module_packages()
+        self.assertEqual(set(found), set(MODULE_PACKAGES))
         for name in MODULE_PACKAGES:
             with self.subTest(package=name):
                 self.assertIn(name, found, f"plugins/{name} names no hooks module")
 
     def test_every_hooks_file_that_names_a_module_carries_a_hooks_object(self) -> None:
         found = self.module_packages()
-        self.assertTrue(found, "no package names a hooks module, so this rule checks nothing")
         for name, (hooks, _modules) in found.items():
             with self.subTest(package=name):
                 self.assertIsInstance(
@@ -690,10 +690,10 @@ class TypesContractTests(unittest.TestCase):
         # The reverse direction: a contract the manifest does not name is never
         # checked by `claude plugin validate`, so it can drift silently.
         contracts = sorted(PLUGINS.glob(f"*/{TYPES_CONTRACT_RELATIVE.as_posix()}"))
-        self.assertIn(
-            PLUGINS / "saga" / TYPES_CONTRACT_RELATIVE,
+        self.assertEqual(
             contracts,
-            "saga's state contract is missing, so this rule would pass with nothing to check",
+            [],
+            "a types contract returned with the catalog; declare it from the Claude manifest",
         )
         for contract in contracts:
             package = contract.parents[2]

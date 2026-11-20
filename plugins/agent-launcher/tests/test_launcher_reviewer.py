@@ -28,8 +28,8 @@ LAUNCHER = (
 )
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "reviewer-probe"
 LEARNINGS = REPO / "docs" / "engineering-journal" / "LEARNINGS.md"
-SAGA_PROMPT = REPO / "plugins" / "saga" / "references" / "targeted-reviewer-prompt.md"
-SAGA_SCHEMA = REPO / "plugins" / "saga" / "references" / "targeted-reviewer-answer.schema.json"
+SAGA_PROMPT = REPO / "plugins" / "reviews" / "references" / "targeted-reviewer-prompt.md"
+SAGA_SCHEMA = REPO / "plugins" / "reviews" / "references" / "targeted-reviewer-answer.schema.json"
 CLAUDE_ANSWER = json.dumps({"result": json.dumps({"findings": []}), "is_error": False})
 MACH_O = b"\xcf\xfa\xed\xfe"
 

@@ -10,7 +10,7 @@ is superseded because the version moved.
 
 No client assessment has been run for 6.1.1. This notice is not an assessment
 and does not carry any stage result forward. The changes since 6.1.0 are listed
-in [its changelog](../../plugins/orchestrate/CHANGELOG.md). The compatibility
+in `../../plugins/orchestrate/CHANGELOG.md`. The compatibility
 matrix is not a release gate; the next assessment of this package replaces this
 notice as the end of the supersession chain.
 

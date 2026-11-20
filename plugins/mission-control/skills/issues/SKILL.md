@@ -219,7 +219,7 @@ note saying why there are no suggestions; a prepare never fails because a sugges
 ### Ship-policy intent envelope on the issue (#380)
 
 When the operator's autonomy answers for the eventual run are already known at capture time,
-record them ONCE, on the issue, as a schema-validated block — so `/outcome start` reads them and
+record them ONCE, on the issue, as a schema-validated block — so a later run reads them and
 never re-interrogates the operator (ask-once). Render the block and embed it in the draft body:
 
 ```bash
@@ -229,23 +229,21 @@ python3 sdlc_manager.py issue intent-envelope \
 
 This emits a `### Intent envelope` heading plus a fenced `intent-envelope` JSON block validated
 against the fleet's closed envelope schema (canonical:
-`plugins/fleet-core/scripts/fleet_commons/intent_envelope.py`; contract:
-`plugins/saga/references/intent-envelope.md`). Answer values are typed against the single fleet
-interview — off-vocabulary values fail loudly at render. Prepared-issue readiness treats a
-present-but-invalid envelope block as a BLOCKING gap (fail closed at capture); an absent block
-stays fine — the envelope is optional, and `/outcome start` falls back to its run-start
-interview. Do not author the envelope as prose or invent a second posture question — the fleet
-drift-guard test fails on one.
+`plugins/fleet-core/scripts/fleet_commons/intent_envelope.py`). Answer values are typed against
+the single fleet interview — off-vocabulary values fail loudly at render. Prepared-issue
+readiness treats a present-but-invalid envelope block as a BLOCKING gap (fail closed at capture);
+an absent block stays fine — the envelope is optional. Do not author the envelope as prose or
+invent a second posture question — the fleet drift-guard test fails on one.
 
 Prepared handoff drafts include `handoff_maturity` in the sidecar and a body section with the
-suggested next action. Readiness vocabulary and assessment are owned by the saga plugin's
-handoff envelope (`#942`) — mission-control delegates to it and keeps no local vocabulary.
-Maturity values are:
+suggested next action. Readiness vocabulary and assessment live in
+`plugins/mission-control/scripts/handoff_envelope.py` (`assess_source`, `assess_declared`,
+`READINESS_CONTRACT_MAJOR`). Maturity values are:
 
 - `idea-ready` -> the owner suggests `/plan <published source>`.
 - `requirements-ready` -> the owner suggests `/plan <published source>`.
-- `plan-ready` -> the owner suggests `/work <published source>`.
-- `resume-ready` -> the owner suggests `/work <published source>`.
+- `plan-ready` -> the owner suggests `continue <published source>`.
+- `resume-ready` -> the owner suggests `continue <published source>`.
 - `deferred-context` -> creatable with clarification text; the owner never attaches a live command.
 - `pending-confirmation` -> creatable, proposed-only; the owner never attaches a live command until an operator confirms.
 
@@ -273,8 +271,9 @@ Natural-language routing rules:
 - If team or project is ambiguous, ask. Do not guess.
 - Do not bypass prepared readiness checks with ad hoc `gh issue create` when the prompt asks to
   create from source text.
-- Do not suggest `/loop` to a team recipient. Use `/plan <issue>` or `/work <issue>` only when the
-  recipient has `saga`.
+- Do not suggest `/loop` to a team recipient. Suggest `/plan <published source>` for
+  `idea-ready` or `requirements-ready`. For `plan-ready` or `resume-ready`, the next action is
+  `continue <published source>`.
 
 Safe starting statuses (the declared Stage drives them):
 

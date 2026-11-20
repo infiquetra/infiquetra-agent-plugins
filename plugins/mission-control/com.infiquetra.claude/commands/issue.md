@@ -29,7 +29,7 @@ issue command.
 4. Infers handoff maturity from source location unless `--maturity` is provided.
 5. Uses `issue prepare` for non-mutating prepared drafts.
 6. Uses `issue create-prepared` for confirmed GitHub mutation from a prepared draft.
-7. Keeps `/loop` out of recipient guidance; handoff issues may suggest `/plan <issue>` or `/work <issue>`.
+7. Keeps `/loop` out of recipient guidance. Handoff issues may suggest `/plan <issue>` for `idea-ready` or `requirements-ready`, and `continue <published source>` for `plan-ready` or `resume-ready`.
 8. Lets mission-control compile the prepared issue body from the vendored issue contract; do not copy
    SDLC issue template sections into Saga or handoff prompts.
 
@@ -71,7 +71,7 @@ When the user invokes `/issue`:
 5. If the user gives `--maturity`, pass it through to `issue prepare --maturity`.
 6. If creating from an existing prepared draft, run `issue create-prepared`; show the mutation plan and require confirmation unless the user explicitly requested the confirmed mutation.
 7. If target team or project is ambiguous, ask. Do not guess between the active teams (Asgard and CAMPPS).
-8. Ensure the prepared issue is self-contained for a recipient without `saga`.
-9. If the recipient does have `saga`, suggest `/plan <issue>` for `idea-ready` or `requirements-ready`, and `/work <issue>` for `plan-ready` or `resume-ready`.
+8. Ensure the prepared issue is self-contained for the receiving team.
+9. Suggest `/plan <issue>` for `idea-ready` or `requirements-ready`, and `continue <published source>` for `plan-ready` or `resume-ready`.
 10. Do not hand-write actionable issue template bodies in this command; route source text through
     `issue prepare` so the vendored Hermes contract supplies required sections and readiness checks.

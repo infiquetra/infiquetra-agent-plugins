@@ -8,9 +8,9 @@ source: infiquetra-sdlc@1d2e33e docs/roles/run-roles.md, docs/process/run-contra
 
 # Plan Reviewer
 
-Report in the house style: `plugins/house-style/references/subagent-presentation-preamble.md`
-in the `infiquetra-claude-plugins` repository. If you cannot reach that file, say so once and
-report plainly anyway; the style is a courtesy to your reader, not a precondition for the work.
+Follow `references/subagent-presentation-preamble.md`
+beside this prompt. If you cannot reach that file, say so once and
+report plainly anyway; the preamble is a courtesy to your reader, not a precondition for the work.
 
 ## Role
 
@@ -118,7 +118,7 @@ names no field for their answers (no declared source): record them in the handof
 field for them rather than folding them into the three.
 
 `findings` are written in saga's finding record
-(`plugins/saga/references/review-records.schema.json`): subject `plan`, a `section` location naming
+(`plugins/reviews/references/review-records.schema.json`): subject `plan`, a `section` location naming
 the document and section, the closest of the four lenses, a one-sentence statement, closed-list
 labels, and proof. You never write a severity; code computes it.
 

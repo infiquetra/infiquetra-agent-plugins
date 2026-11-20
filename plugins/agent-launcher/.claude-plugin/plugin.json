@@ -1,6 +1,6 @@
 {
   "name": "agent-launcher",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Headless sandboxed review, the SDLC roles library, and the herdr-app plus hc session workflow.",
   "author": {
     "name": "Infiquetra",

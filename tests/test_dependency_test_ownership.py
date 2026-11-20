@@ -22,9 +22,6 @@ MOVED_CASES = (
     ("tests/test_mission_control_readme.py", "PortableReadmeTests",
      "test_every_fenced_bash_command_is_runnable_from_the_repository_root",
      "plugins/mission-control/tests/test_readme_commands.py", "ProvisionedReadmeTests"),
-    ("tests/test_sync_marketplace.py", "StageMusePluginTests",
-     "test_a_staged_saga_still_reports_the_saga_version",
-     "plugins/saga/tests/test_staged_saga_version.py", "ProvisionedStageMusePluginTests"),
 )
 
 

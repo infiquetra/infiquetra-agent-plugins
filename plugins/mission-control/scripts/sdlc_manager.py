@@ -4871,9 +4871,9 @@ def _markdown_title(text: str, fallback: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Saga readiness owner (#942): readiness vocabulary and assessment are owned
-# by the saga plugin's handoff_envelope module; this consumer resolves, gates,
-# and delegates — it never infers maturity locally.
+# Readiness owner (#942): vocabulary and assessment live in this package's
+# handoff_envelope module. This consumer loads that sibling, gates it, and
+# delegates — it never infers maturity locally.
 # ---------------------------------------------------------------------------
 
 #: Contract major this consumer requires of the readiness owner.
@@ -4891,43 +4891,35 @@ _SAGA_READINESS_VOCABULARY = (
     "pending-confirmation",
 )
 
-_SAGA_OWNER_MARKER = "scripts/handoff_envelope.py"
+_READINESS_OWNER_NAME = "handoff_envelope.py"
 
 
 def _load_saga_readiness_owner() -> Any:
-    """Resolve and load the Saga handoff_envelope module (the readiness owner).
+    """Load this package's handoff_envelope module (the readiness owner).
 
-    Saga is a dependency, not an optional extra: a missing plugin, a missing
-    import, or an unresolvable root surfaces as ONE actionable dependency
-    error — the caller never falls back to local inference (#942).
+    A missing sibling is one dependency error. The caller never falls back to
+    local inference (#942).
     """
-    try:
-        plugin_resolution = _load_bundled("plugin_resolution")
-    except ImportError as e:
+    owner_path = Path(__file__).resolve().parent / _READINESS_OWNER_NAME
+    if not owner_path.is_file():
         raise RuntimeError(
-            "Saga readiness owner dependency problem: the bundled plugin_resolution "
-            f"module could not be imported ({e}). Fix: regenerate the Fleet Core "
-            "bundle with scripts/bundle_fleet_module.py."
-        ) from e
-    try:
-        saga_root, _rung = plugin_resolution.resolve_plugin_root(
-            "saga",
-            markers=(_SAGA_OWNER_MARKER,),
-            env_var="SAGA_ROOT",
+            "Saga readiness owner dependency problem: "
+            f"{_READINESS_OWNER_NAME} is not beside sdlc_manager.py."
         )
-        owner_path = saga_root / _SAGA_OWNER_MARKER
-        spec = importlib.util.spec_from_file_location("saga_handoff_envelope", owner_path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"Saga readiness owner module is unloadable: {owner_path}")
+    spec = importlib.util.spec_from_file_location(
+        "mission_control_handoff_envelope", owner_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Saga readiness owner module is unloadable: {owner_path}")
+    try:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        return module
-    except (RuntimeError, OSError, ImportError) as e:
+    except (OSError, ImportError, SyntaxError) as e:
         raise RuntimeError(
-            "Saga readiness owner dependency problem: the saga plugin could not be "
-            f"resolved ({e}). Fix: install the saga plugin beside mission-control, "
-            f"or point SAGA_ROOT at a checkout containing {_SAGA_OWNER_MARKER}."
+            "Saga readiness owner dependency problem: "
+            f"{_READINESS_OWNER_NAME} could not be loaded ({e})."
         ) from e
+    return module
 
 
 def _saga_readiness_owner() -> Any:

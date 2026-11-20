@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.5] - 2026-11-19
+
+### Changed
+
+- Publish the catalog cutover payload. The skill and command no longer describe a saga handoff.
+
 ## [0.2.4] - 2026-10-14
 
 ### Changed

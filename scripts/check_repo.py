@@ -314,7 +314,6 @@ CLAUDE_ADAPTER_DIRECTORY_NAME = "com.infiquetra.claude"
 # A TypeScript or JavaScript file here is accepted only when its stem names a
 # rule file in the same directory; anything unpaired is still refused.
 SEMGREP_RULE_TEST_DIRECTORY = (
-    ("plugins", "saga", "references", "semgrep"),
     ("plugins", "reviews", "references", "semgrep"),
 )
 
@@ -1363,11 +1362,11 @@ def check_codex_packaging_manifest(root: Path) -> list[str]:
 def check_review_calibration(root: Path) -> list[str]:
     """The calibration file's format, and its fingerprint once a corpus run is recorded.
 
-    The import is local, matching the generated-artifact checks above: the saga
+    The import is local, matching the generated-artifact checks above: the reviews
     module stays out of this file's module scope, and this file stays on the
     standard library. PyYAML is not imported here.
     """
-    scripts_dir = str(Path(__file__).resolve().parents[1] / "plugins" / "saga" / "scripts")
+    scripts_dir = str(Path(__file__).resolve().parents[1] / "plugins" / "reviews" / "scripts")
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
     import review_calibration  # noqa: PLC0415  (local by design)

@@ -85,5 +85,5 @@ Core bundle, no skill, no provenance manifest.
 - Upstream pin `acc99fe71e25ad8a898eace7033051a7f1c3079e`
 - <https://code.claude.com/docs/en/plugins-reference>
 - <https://code.claude.com/docs/en/output-styles>
-- [`plugins/house-style/README.md`](../../../plugins/house-style/README.md)
-- [`plugins/house-style/tests/test_house_style_contract.py`](../../../plugins/house-style/tests/test_house_style_contract.py)
+- `../../../plugins/house-style/README.md`
+- `../../../plugins/house-style/tests/test_house_style_contract.py`

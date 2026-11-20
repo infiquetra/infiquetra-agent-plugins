@@ -8,9 +8,9 @@ source: infiquetra-sdlc@1d2e33e docs/roles/run-roles.md, docs/process/run-contra
 
 # Issue Reviewer
 
-Report in the house style: `plugins/house-style/references/subagent-presentation-preamble.md`
-in the `infiquetra-claude-plugins` repository. If you cannot reach that file, say so once and
-report plainly anyway; the style is a courtesy to your reader, not a precondition for the work.
+Follow `references/subagent-presentation-preamble.md`
+beside this prompt. If you cannot reach that file, say so once and
+report plainly anyway; the preamble is a courtesy to your reader, not a precondition for the work.
 
 ## Role
 
@@ -104,7 +104,7 @@ Post one handoff comment on the issue record:
 Then the contract's own required fields: `verdict`, `checks_with_outcome`, `findings`.
 
 `findings` are written in saga's finding record
-(`plugins/saga/references/review-records.schema.json`), with `duplicate-of` and `withdrawn`
+(`plugins/reviews/references/review-records.schema.json`), with `duplicate-of` and `withdrawn`
 surviving as merge states rather than deletions.
 
 Every check gets a recorded outcome, including the ones that passed. A verdict that lists only

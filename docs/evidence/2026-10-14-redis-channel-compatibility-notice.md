@@ -10,7 +10,7 @@ and is superseded because the version moved.
 
 No client assessment has been run for 0.5.4. This notice is not an assessment
 and does not carry any stage result forward. The changes since 0.5.3 are listed
-in [its changelog](../../plugins/redis-channel/CHANGELOG.md). The compatibility
+in `../../plugins/redis-channel/CHANGELOG.md`. The compatibility
 matrix is not a release gate; the next assessment of this package replaces this
 notice as the end of the supersession chain.
 

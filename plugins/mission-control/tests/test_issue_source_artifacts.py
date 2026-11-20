@@ -114,8 +114,8 @@ def test_missing_source_reports_searched_locations(tmp_path) -> None:
         sdlc_manager.resolve_source_artifact("from the brainstorm", tmp_path)
 
 
-# --- Saga-owned readiness delegation (#942) ---------------------------------
-# The consumer no longer infers maturity from the folder; the saga plugin's
+# --- Readiness delegation (#942) ---------------------------------------------
+# The consumer no longer infers maturity from the folder; this package's
 # handoff_envelope owner assesses every source. These tests pin the consumer's
 # handling of the owner's verdicts.
 
@@ -131,7 +131,7 @@ def test_declared_maturity_overrides_folder(tmp_path) -> None:
 
     assert artifact.inferred_maturity == "plan-ready"
     assert artifact.readiness_next_action is not None
-    assert artifact.readiness_next_action.startswith("/work ")
+    assert artifact.readiness_next_action.startswith("continue ")
 
 
 def test_pending_confirmation_is_carried_without_a_live_route(tmp_path) -> None:

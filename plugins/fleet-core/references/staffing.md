@@ -287,159 +287,42 @@ this repository checks that field yet: the `tests/test_agent_tier_lint.py` and
 `scripts/lint_agent_tiers.py` an earlier version of this page named are not here, so an
 out-of-vocabulary value is caught only by review and by the harness's own warning.
 
-## Effort: honoring, one seam and four spawn kinds
+## Effort honoring
 
-`fleet_commons.effort_rider.inject_effort(prompt, effort, spawn_kind)` is the single seam that
-decides *how* a resolved effort is honored. It understands four `spawn_kind` values:
+`effort_rider.py` left with the saga-family catalog (issue #332). Fleet-core no longer injects an
+effort rider into a prompt, reconciles a reported effort after a run, or renders a tier table.
+`staffing.resolve_shape` and `tier_resolver.resolve` are the resolvers that remain. A Claude agent
+file may still carry `effort:` frontmatter, and its value must be one of `EFFORTS`.
 
-| `spawn_kind` | Mechanism | Real knob? |
-|---|---|---|
-| `workflow` | Pass-through — effort already rides in `agent(prompt, {effort})` | Yes |
-| `external-engine` | Pass-through — effort already passed as `effort=resolution.effort` | Yes |
-| `claude-agent-type` | Pass-through — the subagent is dispatched as a registered agent type whose definition carries the role's model and effort | Yes |
-| `agent` | An `EFFORT_RIDER[effort]` directive prepended to the prompt | No — a labeled proxy |
+## What stays in this package
 
-**The registered-type route (`claude-agent-type`).** Claude Code's Agent tool takes a model per
-call but no effort. A plugin can, though, register an agent type whose definition carries both. In
-Claude Code, saga's mod registers one type per role of the active run, named `saga:<role>`
-(`saga:worker`, `saga:planner`, `saga:plan-reviewer`, `saga:functional-tester`,
-`saga:release-worker`). Each type carries the role's roles-library prompt and the model and effort
-the run is staffed at. Saga's `scripts/role_agent_types.py` decides what to register, and asks
-this resolver (`resolve_role`) for every role's tier. It hands the resolver what the run record
-holds for the role, an operator's answer or a recorded Jev raise, and applies no order of its own,
-so the tier precedence stays written once, here. `/work`
-dispatches a build unit as `saga:worker` when the type's tier is the unit's resolved tier, and
-passes no `model` parameter, because the Agent call's model overrides the type's for that call.
-Nothing is registered in a session with no active saga run. The lens reviewer and the merging
-worker have no type: the first's prompt is sliced per lens, and the second has no prompt.
-
-**The rider stays the fallback.** The `agent` branch still serves every Agent-tool spawn that names
-no registered type: a harness without the mod, a role with no type, or a unit whose resolved tier
-differs from its role's type. Other vendors' sessions are launched with real effort flags by the
-roster and the launcher and are not on this seam. Calling `inject_effort()` with an unknown effort
-or spawn kind raises rather than silently doing nothing.
-
-**A second route: a static agent file.** Claude Code 2.1.289 honors `effort:` in a plugin agent
-file too. Its loader reads the field into the agent's definition and warns on a value outside the
-vocabulary. It ignores `permissionMode`, `hooks` and `mcpServers` in a plugin agent file. This was
-read from the build's loader, not observed on a live request. A static file suits an agent whose
-tier is fixed, such as `agy-coder` (`sonnet/high`). Saga does not use it for run roles: a file
-cannot carry a per-run resolved tier, and it would hold a copy of the roles-library prompt that
-can drift from the library.
-
-Effort collapse for a vendor that cannot represent `max` is an **explicit table in the data**, not a
-silent clamp (`{#effort-collapse-max}`). Do not read another program's configuration files to guess
-what it will do.
-
-**Chaperone workers are outside the cascade.** A worker dispatched with intent `offload` or
-`second-opinion` takes an intent-driven default — `sonnet/high` and `opus/high` respectively,
-carried as `work_shapes` rows — and that is not a value to resolve or override. The cascade's three
-layers do not apply to it.
-
-## Effort: reconciliation after a run
-
-`fleet_commons.effort_rider.reconcile_effort(resolved_effort, spawn_kind, manifest_effort=...,
-spawn_prompt=...)` compares what a teammate was resolved to against what the run recorded for it. A
-mismatch returns a named `tiering-drift[<spawn_kind>]` line; a match returns `None` and emits
-nothing.
-
-The comparison is honest per path, which is the whole point. On a real-knob path (`workflow`,
-`external-engine`, `claude-agent-type`) pass `manifest_effort`: the manifest's value is what was
-actually handed to the call, so a mismatch names both efforts. On the `agent` path pass `spawn_prompt` instead —
-reconciliation can only confirm that the rider text for the resolved effort reached the constructed
-prompt, so a mismatch names the compared quantity as `rider-text` and never as reasoning spend,
-because that seam cannot observe reasoning spend at all.
-
-On the registered-type route the check also runs live. Saga's mod watches every request a
-`saga:<role>` subagent makes and compares the model and effort actually sent with the type's
-resolved tier. A mismatch shows a toast and writes one
-`tiering-drift[claude-agent-type]: saga:<role> resolved <model>/<effort>, request sent ...` line
-into the transcript, once per subagent. The model never reads that line. The mod never rewrites
-the request: it reports, and the run's policy stays in the scripts.
-
-## Review lenses and the qualification ledger
-
-A lens's qualification is read from the software-development-lifecycle repository's
-`config/executor-verifications.json`, through the same checkout ladder mission-control uses: an
-explicit path, then `INFIQUETRA_SDLC_PATH`, then `~/workspace/infiquetra/infiquetra-sdlc`.
-
-The resolution order is deliberately **not** a fall-through: an explicit path, or an
-`INFIQUETRA_SDLC_PATH`, that does not name a directory returns "no checkout" rather than quietly
-trying the next rung. A caller that names a wrong path gets the documented-policy outcome, never
-the operator's real checkout.
-
-There are three outcomes, not two. `qualified` requires all of it: an entry matching the lens, that
-exact vendor, model and effort, the current lens-catalogue version, and every fixture passed. `lens-unverified` means the catalogue could not be read, so the lens
-*name* was never checked — treat the name as untrusted rather than as a policy answer, because a
-misspelling reaches you this way. Everything else is the catalogue's documented-policy outcome with
-its reason named — an unscorable lens, an empty ledger, a partial
-fixture pass, an entry against an older catalogue version, an unreadable ledger, and an absent
-checkout. **Absence is data, not an exception**: the shipped ledger is empty on purpose, so raising
-would fail every lens resolution on day one.
-
-## Execution classes (the portable subset shared with Codex)
-
-`staffing.json` also carries `schema_version`, `scalar_efforts`, `execution_classes` and
-`root_orchestration_profiles`. Those keys are the subset shared with the Codex plugin repository,
-whose own copy stays at its `schema_version` 2 while this file is at 3 — the subset is shared by
-content, not by version number, and neither repository reads the other's file. They are
-**additive**. Do not rename `models` / `efforts` to `lineage_models` / `lineage_efforts`, and do not
-port those lineage tables as the live router.
-
-`resolve_for_runtime(work_shape, runtime)` keys on an execution-class name (`review-max`,
-`review-high`, `test-medium`, `scan-low`, `monitor-low`, `work-high`, `work-medium`) and returns a
-runtime-owned `{model, effort, fallbacks, workspace_boundary, effort_application}`.
-`adapt_runtime_argv` maps that pair to the vendor command line's real flags for the six supported
-runtimes. `SCALAR_EFFORTS` derives from `scalar_efforts` the same way `EFFORTS` derives from
-`efforts`; it includes `max` and not Codex `ultra`.
-
-## What you do NOT touch
-
-- The `/plan` tier table is **rendered** from the registry by `render_tier_table.py`, and the
-  team-execution worker table is **validated** against it. A hand-edit that drifts fails
-  `plugins/fleet-core/tests/test_tier_resolver.py::test_skill_registry_sync` and the tier-token
-  guards in `plugins/fleet-core/tests/test_tier_vocab_single_source.py`. Change the registry, not the tables.
-- `effort_ceiling` for engine-owned chaperone-dispatch workers — those stay pinned to their
-  chaperone tiers and are excluded from the per-teammate ceiling halt.
-- The capability ratings are **copied** from `plugins/saga/references/engine-registry.yaml`, and a
-  parity test holds the two together while both exist. Nothing propagates automatically: edit the
-  registry and the test goes red until someone re-copies. Issue 1030 deletes the registry and that
-  test with it, at which point these ratings become the only copy and their `last_validated` dates
-  have nothing left to check them against.
+`capability_ratings` live only in `staffing.json`. The engine registry that used to copy them left
+with the saga package. `tier_palette.py` and `tier_resolver.py` read the same staffing file for
+vocabulary and work-shape resolution. Grow the vocabulary in `staffing.json`, never in a second
+table. The tier-token guards in
+`plugins/fleet-core/tests/test_tier_vocab_single_source.py` still fail a second vocabulary source.
 
 ## Wiring a new consumer
 
 Load the module through the build-time bundle, never by file path — a path import works in a
 checkout and breaks under the installed-plugin layout, where fleet-core lives in a versioned cache
-directory. `scripts/bundle_fleet_module.py` writes each consumer's `scripts/_bundled/` directory
-at build time, and each consuming plugin carries a small `bundled_fleet.py` loader
-(`plugins/saga/scripts/bundled_fleet.py` is the worked example) that puts that directory on
-`sys.path` and imports the named module from it:
+directory. `scripts/bundle_fleet_module.py` writes each consumer's bundle at build time, and each
+consuming plugin carries a small `bundled_fleet.py` loader. Reviews keeps its copy at
+`plugins/reviews/scripts/bundled_fleet.py`, which loads a module from
+`plugins/reviews/runtime/_bundled`:
 
 ```python
-import sys
-from pathlib import Path
-
-# bundled_fleet.py is a per-plugin file, not an installed package: put your plugin's own
-# scripts/ directory on the path first, the way every real consumer does. See
-# plugins/saga/scripts/shaping_judgments.py for the worked example.
-_SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
-
-import bundled_fleet  # noqa: E402  (after the sys.path insert, by design)
+import bundled_fleet
 
 staffing = bundled_fleet.load("staffing")
 decision = staffing.resolve_shape("judgment")
 ```
 
-Consuming this module means depending on the fleet-core version that introduced it. Say so in your
-plugin's changelog and fail with a message naming both versions if the module is absent;
-`plugins/saga/scripts/bundled_fleet.py` and its callers (for example
-`plugins/saga/scripts/reviewer_answer.py`, which treats an unreachable staffing module as "resolve it
-here instead" rather than an error) are the worked examples. This machine carries two installed
-plugin roots and a release has updated one and not the other before, so a consumer that assumes
-the newer fleet-core is present will fail in one root and not the other.
+Consuming this module means depending on the fleet-core version that introduced it. Say so in the
+plugin changelog, and fail with a message naming both versions if the module is absent. This
+machine carries two installed plugin roots, and a release has updated one and not the other
+before, so a consumer that assumes the newer fleet-core is present will fail in one root and not
+the other.
 
 ## Where to look
 
@@ -447,7 +330,8 @@ the newer fleet-core is present will fail in one root and not the other.
 - The resolver: `plugins/fleet-core/scripts/fleet_commons/staffing.py`
 - Vocabulary and ladder operations: `plugins/fleet-core/scripts/fleet_commons/tier_palette.py`
 - Work-shape and runtime resolution: `plugins/fleet-core/scripts/fleet_commons/tier_resolver.py`
-- The honoring seam: `plugins/fleet-core/scripts/fleet_commons/effort_rider.py`
-- The per-plugin bundle loader: `plugins/saga/scripts/bundled_fleet.py`
-- Guards: `tests/test_staffing.py`, `tests/test_tier_vocab_single_source.py`,
-  `tests/test_tier_resolver.py`, `tests/test_agent_tier_lint.py`
+- A consumer loader: `plugins/reviews/scripts/bundled_fleet.py`
+- The bundle writer: `scripts/bundle_fleet_module.py`
+- Guards: `plugins/fleet-core/tests/test_tier_vocab_single_source.py`,
+  `plugins/fleet-core/tests/test_tier_resolver.py`,
+  `plugins/fleet-core/tests/test_staffing_suggest.py`

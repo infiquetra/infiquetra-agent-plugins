@@ -16,7 +16,7 @@ notice as the end of the supersession chain.
 
 On 2026-10-14 the package moved to 0.6.5 in the release that bumps twelve
 packages (infiquetra-agent-plugins issue 234). The changes since 0.6.4 are
-listed in [its changelog](../../plugins/agy/CHANGELOG.md).
+listed in `../../plugins/agy/CHANGELOG.md`.
 
 ```json
 {"notice": "no client assessment has been run against agy 0.6.3, 0.6.4 or 0.6.5", "last_assessed": "2026-09-22-agy-compatibility-matrix.md"}

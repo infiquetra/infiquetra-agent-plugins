@@ -1517,12 +1517,12 @@ class MuseMarketplaceTest(InstallFixture):
         self.assertNotIn("--scope", log)
         self.assertFalse((self.home / ".config/muse/skills").exists())
 
-    def test_unrestricted_real_catalog_has_eighteen_applicable_packages(self) -> None:
+    def test_unrestricted_real_catalog_has_eleven_applicable_packages(self) -> None:
         packages = installer.muse_packages(ROOT, installer.discover_packages(ROOT), filtered=False)
-        self.assertEqual(len(packages), 18)
+        self.assertEqual(len(packages), 11)
         self.assertNotIn("fleet-core", [p.name for p in packages])
-        self.assertNotIn("house-style", [p.name for p in packages])
-        self.assertIn("orchestrate", [p.name for p in packages])
+        self.assertIn("reviews", [p.name for p in packages])
+        self.assertIn("agent-launcher", [p.name for p in packages])
         self.assertIn("muse", installer.CLIENT_CHOICES)
         self.assertIn("muse", installer.selected_clients("all"))
         self.assertNotIn("muse", installer.SKILL_CLIENTS)

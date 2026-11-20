@@ -17,7 +17,6 @@ colorama==0.4.6
 cryptography==50.0.2
 exceptiongroup==1.2.2
 face==26.0.1
-fakeredis==2.40.0
 glom==25.12.0
 googleapis-common-protos==1.76.0
 h11==0.16.0
@@ -30,7 +29,6 @@ iniconfig==2.3.1
 jsonschema-specifications==2025.9.1
 jsonschema==4.25.1
 markdown-it-py==4.2.0
-mcp==1.29.0
 mdurl==0.1.2
 opentelemetry-api==1.37.0
 opentelemetry-exporter-otlp-proto-common==1.37.0
@@ -56,7 +54,6 @@ pytest==9.2.0
 python-dotenv==1.2.4
 python-multipart==0.0.32
 pyyaml==6.0.3
-redis==8.1.0
 referencing==0.37.0
 requests==2.34.2
 rich==15.0.0

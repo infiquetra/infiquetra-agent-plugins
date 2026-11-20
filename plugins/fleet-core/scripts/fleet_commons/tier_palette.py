@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Canonical fleet tier palette — the model/effort vocabulary shared across plugins.
 
-Moved verbatim from ``plugins/saga/scripts/execution_spec.py`` (fleet-commons first
+Moved verbatim from the former execution_spec module (fleet-commons first
 mover, issue #463 / DECISIONS ``{#fleet-commons-mechanism-463}``), then made
 registry-backed in #370: the ordered ``MODELS`` / ``EFFORTS`` tuples are **derived at
 import** from the explicit ``rank`` / ``rung`` indices in ``staffing.json`` rather than
