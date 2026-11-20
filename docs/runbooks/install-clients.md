@@ -111,7 +111,9 @@ is Cursor Agent, Muse, and Grok. A lean run installs `reviews`, `plan`, and
 
 ## Retired client targets
 
-`--client qwen` and `--client gemini` are rejected. Qwen was retired on
+`--client qwen` and `--client gemini` are cleanup targets. They are accepted
+only together with `--prune-retired`. Install, check, and dry-run reject both
+names. Qwen was retired on
 2026-10-17 in favor of claude-qwen. Gemini CLI has been unassessed since
 2026-10-04, when Agy replaced it. Agy still reads `~/.gemini`; that path is
 Agy, not a Gemini CLI target. Historical compatibility matrices keep the
@@ -149,9 +151,11 @@ invoke the vendor binary against the personal account. Company prune
 ## Staged multi-client rollout
 
 Roll a subset of harnesses out, then the rest, without a later phase rewriting
-the earlier one. Phase 1 is the lean Grok seat plus the full OpenCode and Muse
-seats. Phase 2 is Claude, Codex, Agy, and Hermes, including removal of the
-retired Qwen and Gemini CLI placements and a separate company Agy prune.
+the earlier one. Phase 1 is the lean Grok and Muse seats plus the full
+OpenCode seat. Muse is lean, with Grok and Cursor, and OpenCode stays on the
+full tier with Claude, Codex, Agy, and Hermes. Phase 2 is those four full
+seats, including removal of the retired Qwen and Gemini CLI placements, which
+`--prune-retired` allows, and a separate company Agy prune.
 
 Phase 1 prints the plan, prunes only those three harnesses, places them, and
 reads them back:

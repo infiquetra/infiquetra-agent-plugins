@@ -2629,7 +2629,8 @@ class StagedRolloutTest(InstallFixture):
             },
         )
 
-    def _seed_claude_catalog(self) -> None:
+    def _seed_claude_catalog(self, *names: str) -> None:
+        selected = names or ("unifi", "voice")
         write_json(
             self.home / ".claude/plugins/known_marketplaces.json",
             {
@@ -2643,8 +2644,7 @@ class StagedRolloutTest(InstallFixture):
             {
                 "version": 2,
                 "plugins": {
-                    "unifi@infiquetra-agent-plugins": [{"scope": "user"}],
-                    "voice@infiquetra-agent-plugins": [{"scope": "user"}],
+                    f"{name}@infiquetra-agent-plugins": [{"scope": "user"}] for name in selected
                 },
             },
         )
@@ -2652,33 +2652,34 @@ class StagedRolloutTest(InstallFixture):
             self.home / ".claude/settings.json",
             {
                 "enabledPlugins": {
-                    "unifi@infiquetra-agent-plugins": True,
-                    "voice@infiquetra-agent-plugins": True,
+                    f"{name}@infiquetra-agent-plugins": True for name in selected
                 }
             },
         )
 
-    def _seed_codex_catalog(self) -> None:
+    def _seed_codex_catalog(self, *names: str) -> None:
+        selected = names or ("voice", "unifi")
         catalog = str(self.catalog.resolve())
         path = self.home / ".codex" / "config.toml"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            "\n".join(
-                [
-                    "[marketplaces.infiquetra-agent-plugins]",
-                    'source_type = "local"',
-                    f'source = "{catalog}"',
-                    "",
-                    '[plugins."voice@infiquetra-agent-plugins"]',
-                    "enabled = true",
-                    "",
-                    '[plugins."unifi@infiquetra-agent-plugins"]',
-                    "enabled = true",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
+        lines = [
+            "[marketplaces.infiquetra-agent-plugins]",
+            'source_type = "local"',
+            f'source = "{catalog}"',
+            "",
+        ]
+        for name in selected:
+            lines.extend(
+                [f'[plugins."{name}@infiquetra-agent-plugins"]', "enabled = true", ""]
+            )
+        path.write_text("\n".join(lines), encoding="utf-8")
+
+    def _hide_cli(self, name: str) -> None:
+        """Drop one stub and ignore every binary outside the fixture."""
+        binary = self.bin / name
+        if binary.is_symlink() or binary.exists():
+            binary.unlink()
+        os.environ["PATH"] = str(self.bin)
 
     def _link_catalog_skill(self, skills: Path, package: str, skill: str) -> Path:
         skills.mkdir(parents=True, exist_ok=True)
@@ -2846,7 +2847,9 @@ class StagedRolloutTest(InstallFixture):
         self.assertFalse(opencode_retired.exists())
         self.assertFalse((staging / "plugins" / "saga").exists())
         self.assertEqual((staging / "plugins" / "reviews" / "keep").read_text(), "keep\n")
-        self.assertIn("plugin uninstall saga", out)
+        self.assertIn(self.command("grok", "plugin", "uninstall", "saga", "--confirm"), out)
+        self.assertIn(self.command("grok", "plugin", "uninstall", "voice", "--confirm"), out)
+        self.assertIn(f"muse: remove: {staging / 'plugins' / 'saga'}", out)
         for root in untouched:
             self.assertEqual(self._tree(root), before[str(root)], str(root))
         self.assertTrue(agy_voice.is_dir())
@@ -2854,8 +2857,23 @@ class StagedRolloutTest(InstallFixture):
         self.assertTrue(hermes_link.is_symlink())
         self.assertTrue(qwen.is_dir())
 
+        self._seed_grok_catalog("unifi")
         code, out, err = self.invoke("--client", "grok,opencode,muse", "--execute")
         self.assertEqual(code, 0, err)
+        alias = muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS
+        self.assertIn(
+            self.command(
+                "grok",
+                "plugin",
+                "install",
+                str((self.catalog / "plugins" / "voice").resolve()),
+                "--trust",
+            ),
+            out,
+        )
+        self.assertIn(self.command("muse", "plugins", "marketplace", "update", alias), out)
+        self.assertIn(self.command("muse", "plugins", "install", f"voice@{alias}"), out)
+        self.assertIn(self.command("muse", "plugins", "install", f"unifi@{alias}"), out)
         voice = self.home / ".config/opencode/skills/voice"
         self.assertTrue(voice.is_symlink())
         self.assertEqual(
@@ -2864,6 +2882,7 @@ class StagedRolloutTest(InstallFixture):
         for root in untouched:
             self.assertEqual(self._tree(root), before[str(root)], str(root))
 
+        self._seed_grok_catalog("voice", "unifi")
         code, out, err = self.invoke("--client", "grok,opencode,muse", "--check")
         self.assertEqual(code, 0, err + out)
         self.assertIn("grok voice installed-from-catalog", out)
@@ -2899,8 +2918,8 @@ class StagedRolloutTest(InstallFixture):
         (self.home / ".qwen" / "keep.txt").write_text("stay\n", encoding="utf-8")
         gemini_link = self._plant_gemini_skill()
         (self.home / ".gemini" / "keep.txt").write_text("stay\n", encoding="utf-8")
-        self._seed_claude_catalog()
-        self._seed_codex_catalog()
+        self._seed_claude_catalog("saga")
+        self._seed_codex_catalog("saga")
         plugins = self.home / ".gemini/config/plugins"
         (plugins / "unifi").mkdir(parents=True)
         write_json(
@@ -2935,6 +2954,9 @@ class StagedRolloutTest(InstallFixture):
             staging,
         ]
         before = {str(root): self._tree(root) for root in phase1}
+        self.assertTrue(gemini_link.is_symlink())
+        self.assertTrue(os.path.lexists(gemini_link))
+        self.assertFalse(gemini_link.exists())
 
         code, out, err = self.invoke(
             "--client",
@@ -2943,8 +2965,17 @@ class StagedRolloutTest(InstallFixture):
             "--execute",
         )
         self.assertEqual(code, 0, err)
+        self.assertIn(
+            self.command("claude", "plugin", "uninstall", "saga@infiquetra-agent-plugins"),
+            out,
+        )
+        self.assertIn(
+            self.command("codex", "plugin", "remove", "saga@infiquetra-agent-plugins"),
+            out,
+        )
         self.assertFalse(qwen.exists(), out)
-        self.assertFalse(gemini_link.exists(), out)
+        self.assertFalse(gemini_link.is_symlink(), out)
+        self.assertFalse(os.path.lexists(gemini_link), out)
         self.assertEqual((self.home / ".qwen" / "keep.txt").read_text(), "stay\n")
         self.assertEqual((self.home / ".gemini" / "keep.txt").read_text(), "stay\n")
         self.assertTrue(opencode_retired.is_symlink())
@@ -2954,11 +2985,29 @@ class StagedRolloutTest(InstallFixture):
 
         code, out, err = self.invoke("--client", "claude,codex,agy,hermes", "--execute")
         self.assertEqual(code, 0, err)
+        self.assertIn(
+            self.command("claude", "plugin", "install", "voice@infiquetra-agent-plugins"),
+            out,
+        )
+        self.assertIn(
+            self.command("claude", "plugin", "install", "unifi@infiquetra-agent-plugins"),
+            out,
+        )
+        self.assertIn(
+            self.command("codex", "plugin", "add", "voice@infiquetra-agent-plugins"),
+            out,
+        )
+        self.assertIn(
+            self.command("codex", "plugin", "add", "unifi@infiquetra-agent-plugins"),
+            out,
+        )
         for root in phase1:
             self.assertEqual(self._tree(root), before[str(root)], str(root))
         hermes_voice = hermes_skills / "voice"
         self.assertTrue(hermes_voice.is_symlink())
 
+        self._seed_claude_catalog()
+        self._seed_codex_catalog()
         code, out, err = self.invoke("--client", "claude,codex,agy,hermes", "--check")
         self.assertEqual(code, 0, err + out)
         for client in ("claude", "codex", "agy", "hermes"):
@@ -2976,10 +3025,14 @@ class StagedRolloutTest(InstallFixture):
     def test_all_prune_still_removes_qwen_and_gemini(self) -> None:
         qwen = self._plant_qwen()
         gemini_link = self._plant_gemini_skill()
+        self.assertTrue(gemini_link.is_symlink())
+        self.assertTrue(os.path.lexists(gemini_link))
+        self.assertFalse(gemini_link.exists())
         code, _out, err = self.invoke("--client", "all", "--prune-retired", "--execute")
         self.assertEqual(code, 0, err)
         self.assertFalse(qwen.exists())
-        self.assertFalse(gemini_link.exists())
+        self.assertFalse(gemini_link.is_symlink())
+        self.assertFalse(os.path.lexists(gemini_link))
 
     def test_company_agy_prune_targets_the_company_dir_only(self) -> None:
         company = self.base / "company"
@@ -3056,3 +3109,148 @@ class StagedRolloutTest(InstallFixture):
             )
         )
         self.assertIn("voice", personal_manifest["packages"])
+
+    def test_phase1_prune_continues_when_grok_cli_is_missing(self) -> None:
+        self._hide_cli("grok")
+        self._seed_grok_catalog("saga")
+        link = self._plant_retired_skill(
+            self.home / ".config" / "opencode" / "skills",
+            self.home / ".config" / "opencode" / ".infiquetra-plugins.json",
+            installer.OPENCODE_SCHEMA,
+        )
+        self.assertTrue(link.is_symlink())
+        code, out, err = self.invoke(
+            "--client", "grok,opencode", "--prune-retired", "--execute"
+        )
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("grok", err)
+        self.assertIn("not on PATH", err)
+        self.assertIn("opencode: remove:", out)
+        self.assertFalse(link.is_symlink())
+        self.assertFalse(os.path.lexists(link))
+
+    def test_phase2_prune_continues_when_claude_cli_is_missing(self) -> None:
+        self._hide_cli("claude")
+        self._seed_claude_catalog("saga")
+        qwen = self._plant_qwen()
+        gemini_link = self._plant_gemini_skill()
+        self.assertTrue(gemini_link.is_symlink())
+        self.assertTrue(os.path.lexists(gemini_link))
+        self.assertFalse(gemini_link.exists())
+        code, out, err = self.invoke(
+            "--client", "claude,qwen,gemini", "--prune-retired", "--execute"
+        )
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("claude", err)
+        self.assertIn("not on PATH", err)
+        self.assertFalse(qwen.exists(), out)
+        self.assertFalse(gemini_link.is_symlink(), out)
+        self.assertFalse(os.path.lexists(gemini_link), out)
+
+    def _company_argv(self, company: Path, *extra: str) -> tuple[str, ...]:
+        return (
+            "--client",
+            "agy",
+            "--agy-account",
+            "company",
+            "--agy-company-home",
+            str(company),
+            "--prune-retired",
+            *extra,
+        )
+
+    def test_company_prune_rejects_symlinked_descendants_into_personal_agy(self) -> None:
+        company = self.base / "company"
+        personal_plugins = self.home / ".gemini/config/plugins"
+        personal_voice = personal_plugins / "voice"
+        personal_voice.mkdir(parents=True)
+        (personal_voice / "keep").write_text("personal\n", encoding="utf-8")
+        personal_manifest = personal_plugins / ".infiquetra-install.json"
+        write_json(
+            personal_manifest,
+            {
+                "schema": installer.AGY_SCHEMA,
+                "packages": {
+                    "voice": {"source": str((self.catalog / "plugins/voice").resolve())}
+                },
+            },
+        )
+        personal_manifest_text = personal_manifest.read_text(encoding="utf-8")
+        personal_skill = self._plant_gemini_skill()
+        personal_target = os.readlink(personal_skill)
+        gemini = company / "gemini"
+        (gemini / "config").mkdir(parents=True)
+        (gemini / "config" / "plugins").symlink_to(personal_plugins)
+        (gemini / "skills").symlink_to(self.home / ".gemini" / "skills")
+
+        code, out, err = self.invoke(*self._company_argv(company, "--execute"))
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("symlink", out + err)
+        self.assertEqual((personal_voice / "keep").read_text(encoding="utf-8"), "personal\n")
+        self.assertEqual(personal_manifest.read_text(encoding="utf-8"), personal_manifest_text)
+        self.assertTrue(personal_skill.is_symlink())
+        self.assertEqual(os.readlink(personal_skill), personal_target)
+        self.assertTrue((gemini / "config" / "plugins").is_symlink())
+        self.assertTrue((gemini / "skills").is_symlink())
+
+    def test_company_prune_rejects_a_symlinked_manifest(self) -> None:
+        company = self.base / "company"
+        personal_plugins = self.home / ".gemini/config/plugins"
+        personal_voice = personal_plugins / "voice"
+        personal_voice.mkdir(parents=True)
+        (personal_voice / "keep").write_text("personal\n", encoding="utf-8")
+        personal_manifest = personal_plugins / ".infiquetra-install.json"
+        write_json(
+            personal_manifest,
+            {
+                "schema": installer.AGY_SCHEMA,
+                "packages": {
+                    "voice": {"source": str((self.catalog / "plugins/voice").resolve())}
+                },
+            },
+        )
+        personal_manifest_text = personal_manifest.read_text(encoding="utf-8")
+        personal_skill = self._plant_gemini_skill()
+        plugins = company / "gemini/config/plugins"
+        plugins.mkdir(parents=True)
+        (plugins / ".infiquetra-install.json").symlink_to(personal_manifest)
+        company_skill = self._plant_retired_skill(
+            company / "gemini/skills",
+            company / "gemini/.infiquetra-skills.json",
+            installer.GEMINI_SCHEMA,
+        )
+        self.assertTrue(company_skill.is_symlink())
+
+        code, out, err = self.invoke(*self._company_argv(company, "--execute"))
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("symlink", out + err)
+        self.assertEqual(personal_manifest.read_text(encoding="utf-8"), personal_manifest_text)
+        self.assertEqual((personal_voice / "keep").read_text(encoding="utf-8"), "personal\n")
+        self.assertTrue(personal_skill.is_symlink())
+        self.assertFalse(company_skill.is_symlink())
+        self.assertFalse(os.path.lexists(company_skill))
+
+    def test_invalid_company_plugin_json_still_prunes_owned_skills(self) -> None:
+        company = self.base / "company"
+        personal = self.home / ".gemini/config/plugins/keep"
+        personal.mkdir(parents=True)
+        (personal / "keep").write_text("personal\n", encoding="utf-8")
+        manifest = company / "gemini/config/plugins/.infiquetra-install.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text("{not json\n", encoding="utf-8")
+        company_skill = self._plant_retired_skill(
+            company / "gemini/skills",
+            company / "gemini/.infiquetra-skills.json",
+            installer.GEMINI_SCHEMA,
+        )
+        self.assertTrue(company_skill.is_symlink())
+        self.assertTrue(os.path.lexists(company_skill))
+
+        code, out, err = self.invoke(*self._company_argv(company, "--execute"))
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("not valid JSON", out + err)
+        self.assertIn("agy: remove:", out)
+        self.assertFalse(company_skill.is_symlink())
+        self.assertFalse(os.path.lexists(company_skill))
+        self.assertEqual(manifest.read_text(encoding="utf-8"), "{not json\n")
+        self.assertEqual((personal / "keep").read_text(encoding="utf-8"), "personal\n")
