@@ -1,5 +1,32 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-20
+
+### Host builder_record.py under plugins/reviews
+
+**Decision.** `plugins/reviews/scripts/builder_record.py` is the post-Saga home of the
+builder-record checker. `check --record --revision --repo` judges one file against this
+package's policy list and the named proving tests, and it does not open an issue file.
+`write --issue --unit --record --store-root` validates, merges declarations by question id
+and reasons by `(kind, finding_id)`, and stores the merge on that unit inside
+`issue-<N>.json`. Omitting `--store-root` exits 2. The script loads its siblings through
+`reviews_loader` and does not import a retired package. `plugins/reviews/scripts/review_formula.py`
+and `plugins/reviews/references/review-records.schema.json` stay byte-identical to `5550acf`.
+The implementer prompts still carry the `builder_record` handoff field and do not name this
+script. The saga-review-corpus migration that points the pin at
+`plugins/reviews/scripts/builder_record.py` is the companion pull request.
+
+**Rationale.** #332 removed the saga package and left the checker with no reviews path. The
+corpus calls `check` through the pinned checkout. Restoring the script under reviews gives
+that call a canonical entrypoint without moving the formula or the schema.
+
+**Revisit when.** The corpus pin no longer calls this script, or a builder-record write needs
+a store other than an explicit issue-file directory.
+
+**Supersedes.** The builder-record half of the revisit condition on
+[Retire the saga-family catalog](#retire-the-saga-family-catalog). The corpus pin move stays
+with the companion pull request.
+
 ## 2026-11-19
 
 ### Tier harness installs and prune retired placements

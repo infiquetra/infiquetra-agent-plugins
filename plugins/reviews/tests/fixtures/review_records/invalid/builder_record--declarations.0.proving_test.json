@@ -1,0 +1,33 @@
+{
+  "kind": "builder_record",
+  "schema": "review_records.v1",
+  "unit": "U1",
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "text": "A retry charges once.",
+      "checks": [
+        "charge-retry-check"
+      ]
+    }
+  ],
+  "declarations": [
+    {
+      "question": "correctness.q-retry-safe",
+      "applies": true,
+      "proving_test": null
+    },
+    {
+      "question": "security.q-file-permissions",
+      "applies": false,
+      "proving_test": null
+    }
+  ],
+  "reasons": [
+    {
+      "kind": "coverage-gap",
+      "finding_id": "rf:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "text": "The fallback branch is unreachable on supported platforms."
+    }
+  ]
+}
