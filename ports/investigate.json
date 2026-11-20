@@ -1,8 +1,14 @@
 {
-  "schema_version": "4",
+  "schema_version": "5",
   "package": "investigate",
   "package_root": "plugins/investigate",
   "package_manifest": "plugin.json",
+  "installation": {
+    "tiers": [
+      "full",
+      "lean"
+    ]
+  },
   "assessment": {
     "credential_prefixes": [],
     "package_scripts": [],

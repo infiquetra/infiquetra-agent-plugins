@@ -283,6 +283,21 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(len(record["clients"]), 9)
         self.assertEqual(check(record), [])
 
+    def test_a_fresh_eight_client_record_passes_schema_and_coverage(self) -> None:
+        """Qwen left the roster on 2026-10-17. A new record is eight clients."""
+        record = valid_record(assessed_on="2026-10-17")
+        record["clients"] = [valid_client(name) for name in ccm.CURRENT_ASSESSMENT_CLIENTS]
+        self.assertEqual(len(record["clients"]), 8)
+        self.assertNotIn("Qwen", {client["name"] for client in record["clients"]})
+        self.assertNotIn("Gemini CLI", {client["name"] for client in record["clients"]})
+        schema = ccm.load_schema()
+        self.assertEqual(ccm.validate_against_schema(record, schema, schema), [])
+        self.assertEqual(check(record), [])
+        nine = valid_record(assessed_on="2026-10-17")
+        nine["clients"] = [valid_client(name) for name in ccm.CANONICAL_CLIENTS]
+        problems = check(nine)
+        self.assertTrue(any("'Qwen'" in problem and "is not one of the 8" in problem for problem in problems))
+
     def test_a_record_dated_from_2026_10_04_that_still_has_gemini_cli_fails(self) -> None:
         """Agy replaced Gemini CLI; a new record carrying its row is not the roster."""
         record = valid_record(assessed_on="2026-10-05")
@@ -304,8 +319,17 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(
             ccm.required_clients({"assessed_on": "2026-10-04"}), ccm.CANONICAL_CLIENTS
         )
-        self.assertEqual(ccm.required_clients({}), ccm.CANONICAL_CLIENTS)
-        self.assertEqual(ccm.required_clients({"assessed_on": None}), ccm.CANONICAL_CLIENTS)
+        self.assertEqual(
+            ccm.required_clients({"assessed_on": "2026-10-16"}), ccm.CANONICAL_CLIENTS
+        )
+        self.assertEqual(ccm.required_clients({}), ccm.CURRENT_ASSESSMENT_CLIENTS)
+        self.assertEqual(
+            ccm.required_clients({"assessed_on": None}), ccm.CURRENT_ASSESSMENT_CLIENTS
+        )
+        self.assertEqual(
+            ccm.required_clients({"assessed_on": "2026-10-17"}),
+            ccm.CURRENT_ASSESSMENT_CLIENTS,
+        )
 
     def test_a_record_dated_before_2026_10_04_with_the_ten_clients_passes(self) -> None:
         record = valid_record(assessed_on="2026-10-03")
@@ -776,10 +800,10 @@ class SchemaContractTest(unittest.TestCase):
         self.assertTrue(any("notes" in problem for problem in problems))
 
     def test_the_schema_pins_exactly_ten_client_rows(self) -> None:
-        """Nine rows from 2026-10-04, ten before; the checker picks which by date."""
+        """Eight rows from 2026-10-17, nine from 2026-10-04, ten before."""
         schema = ccm.load_schema()
         clients = schema["properties"]["clients"]
-        self.assertEqual(clients.get("minItems"), len(ccm.CANONICAL_CLIENTS))
+        self.assertEqual(clients.get("minItems"), len(ccm.CURRENT_ASSESSMENT_CLIENTS))
         self.assertEqual(
             clients.get("maxItems"), len(ccm.CANONICAL_CLIENTS_BEFORE_2026_10_04)
         )
@@ -2342,7 +2366,9 @@ class ClientAssessmentInventoryTest(unittest.TestCase):
     def test_current_inventory_includes_muse_as_a_marketplace_client(self) -> None:
         self.assertEqual(ccm.check_client_assessment(), [])
         self.assertIn("muse", ccm.EXPECTED_ASSESSMENT_CLIENTS)
-        self.assertEqual(len(ccm.EXPECTED_ASSESSMENT_CLIENTS), 9)
+        self.assertNotIn("qwen", ccm.EXPECTED_ASSESSMENT_CLIENTS)
+        self.assertNotIn("gemini", ccm.EXPECTED_ASSESSMENT_CLIENTS)
+        self.assertEqual(len(ccm.EXPECTED_ASSESSMENT_CLIENTS), 8)
         muse = next(row for row in self.document["clients"] if row["id"] == "muse")
         self.assertEqual(muse["placement"], "plugin-marketplace")
         self.assertIs(muse["skill_scoped"], False)

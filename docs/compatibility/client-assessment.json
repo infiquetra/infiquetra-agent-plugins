@@ -21,12 +21,6 @@
       "skill_scoped": false
     },
     {
-      "id": "qwen",
-      "name": "Qwen",
-      "placement": "plugin",
-      "skill_scoped": false
-    },
-    {
       "id": "grok",
       "name": "Grok",
       "placement": "plugin",

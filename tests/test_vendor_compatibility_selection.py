@@ -30,6 +30,16 @@ def successful_needs():
 
 
 class VendorSelectionTests(unittest.TestCase):
+    def test_required_check_names_stay_and_retired_clients_are_not_targets(self):
+        """Branch-protection checks are the four child jobs. Qwen and Gemini are not among them."""
+        self.assertEqual(
+            SELECTOR.CHILDREN,
+            ("vendor-selection", "validate", "plugin-tests", "claude-mods"),
+        )
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("qwen", source)
+        self.assertNotIn("gemini", source)
+
     def test_each_path_class_remains_full_without_an_exemption_proof(self):
         paths = [
             "docs/public-safe-summary.md", "README.md", "AGENTS.md",

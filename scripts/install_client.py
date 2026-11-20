@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """Place this catalog where each harness on the machine actually looks.
 
-The ten placements are the ones the compatibility matrices and
-``scripts/assess_clients.py`` already recorded. This script does not invent a
-second method. Gemini CLI's placement comes from the matrices made before
-2026-10-04; the assessment has covered nine clients since then, because Agy
-replaced Gemini CLI, but the placement stays for a machine that still has it.
-It also does not run anything unless ``--execute`` is passed; the default
-prints every command and file operation and stops.
+The eight placements follow the harness installation map in
+``schemas/harness-installation.json``. Full-tier seats (Claude, Agy, Codex,
+OpenCode, Hermes) install every active package. Lean-tier seats (Cursor, Muse,
+Grok) install ``reviews``, ``plan``, and ``investigate`` unless ``--package``
+or ``--profile full`` says otherwise. Qwen CLI and Gemini CLI are retired
+targets. Cursor registers the whole GitHub repository marketplace; this script
+does not invent a per-package Cursor flag.
+
+It does not run anything unless ``--execute`` is passed; the default prints
+every command and file operation and stops. ``--prune-retired`` is the same:
+it prints the cleanup unless ``--execute`` is passed, and it unlinks only
+placements whose provenance resolves to this catalog or to
+``infiquetra/infiquetra-claude-plugins``.
 
 Muse is a full plugin-marketplace client: a deterministic projection under
 ``build/muse-marketplace`` excludes competing manifests. Its optional legacy
@@ -47,16 +53,15 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import muse_cli  # noqa: E402
+import port_config  # noqa: E402
 import sync_marketplace  # noqa: E402
 
 CLIENTS = (
     "claude",
     "codex",
     "cursor",
-    "qwen",
     "grok",
     "opencode",
-    "gemini",
     "muse",
     "agy",
     "hermes",
@@ -68,17 +73,57 @@ CLIENT_BINARIES = {
     "claude": "claude",
     "codex": "codex",
     "cursor": "cursor-agent",
-    "qwen": "qwen",
     "grok": "grok",
     "opencode": "opencode",
-    "gemini": "gemini",
     "muse": "muse",
     "agy": "agy",
     "hermes": "hermes",
 }
 
 CLIENT_CHOICES = (*CLIENTS, "all")
-SKILL_CLIENTS = frozenset({"opencode", "gemini", "hermes"})
+SKILL_CLIENTS = frozenset({"opencode", "hermes"})
+
+#: Packages removed from the installable catalog. ``--prune-retired`` may
+#: unlink a placement of one of these only when its provenance resolves to
+#: this catalog or to the legacy Claude plugins repository.
+RETIRED_PACKAGES = (
+    "saga",
+    "orchestrate",
+    "agy",
+    "codex",
+    "house-style",
+    "hermes-profile-evolution",
+    "voice",
+    "redis-channel",
+)
+
+#: Skill directory names ``plugins/saga/skills/`` used to install. The package
+#: is gone, so a symlink at one of these names is retired only when its target
+#: still resolves under that deleted tree. The same names now exist on the
+#: standalone packages and are left in place.
+SAGA_SKILL_NAMES = (
+    "brainstorm",
+    "code-review",
+    "doc-review",
+    "founder-review",
+    "ideate",
+    "investigate",
+    "office-hours",
+    "plan",
+    "qa",
+    "retro",
+    "security-scan",
+    "setup",
+    "spec",
+    "strategy",
+    "work",
+)
+
+CURSOR_MARKETPLACE_NOTE = (
+    "cursor-agent registers the whole GitHub repository as one marketplace; "
+    "there is no per-package Cursor install flag, so the lean tier changes "
+    "which packages --check requires and does not split that registration"
+)
 
 CATALOG_GIT_URL = "https://github.com/infiquetra/infiquetra-agent-plugins"
 LEGACY_GIT_URL = "https://github.com/infiquetra/infiquetra-claude-plugins"
@@ -144,6 +189,7 @@ class InstallOptions:
     uninstall_legacy: bool = False
     allow_inapplicable: bool = False
     agy_gemini_dir: Path | None = None
+    profile: str = "tier"
 
 
 @dataclass
@@ -189,8 +235,15 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--client",
         required=True,
-        choices=CLIENT_CHOICES,
-        help="Harness name, or all ten",
+        help="Harness name, or all eight. qwen and gemini are retired targets",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=("full",),
+        help=(
+            "Install every active package. On a lean harness this overrides the "
+            "default of reviews, plan, and investigate"
+        ),
     )
     parser.add_argument(
         "--package",
@@ -259,7 +312,24 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
             "An unsourced copy is left in place. Dedicated repositories are never touched"
         ),
     )
+    parser.add_argument(
+        "--prune-retired",
+        action="store_true",
+        help=(
+            "Unlink catalog-owned placements of the retired packages and the former "
+            "saga skill symlinks. Foreign and unsourced entries are left in place. "
+            "The default prints the plan; --execute performs it"
+        ),
+    )
     args = parser.parse_args(argv)
+    installation = port_config.load_harness_installation(default_catalog())
+    retired = installation["retired_clients"]
+    if args.client in retired:
+        parser.error(retired[args.client])
+    if args.client not in CLIENT_CHOICES:
+        parser.error(
+            f"invalid choice: {args.client!r} (choose from {', '.join(CLIENT_CHOICES)})"
+        )
     if args.client in ("muse", "all") and args.scope != "user":
         parser.error(
             "Muse marketplace installation supports only user scope; project scope is refused"
@@ -270,6 +340,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         parser.error("--check reads state and does not install")
     if args.check and args.uninstall_legacy:
         parser.error("--check and --uninstall-legacy are separate runs")
+    if args.prune_retired and args.check:
+        parser.error("--prune-retired and --check are separate runs")
+    if args.prune_retired and args.uninstall_legacy:
+        parser.error("--prune-retired and --uninstall-legacy are separate runs")
     if args.check and args.dry_run:
         # --check is already read-only. Accept the flag so a plan that adds it is not an error.
         pass
@@ -441,14 +515,104 @@ def is_dedicated_source(value: str) -> bool:
     return any(part in DEDICATED_REPOS for part in Path(value).parts)
 
 
+def _git_config_origin(config: Path) -> str | None:
+    """The ``origin`` URL in a git config, or None when that remote is absent."""
+    if not config.is_file():
+        return None
+    in_origin = False
+    for raw in config.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if line.startswith("[") and line.endswith("]"):
+            in_origin = line == '[remote "origin"]'
+            continue
+        if in_origin and line.startswith("url") and "=" in line:
+            return line.split("=", 1)[1].strip()
+    return None
+
+
+def _enclosing_git(path: Path) -> tuple[Path, str] | None:
+    """``(checkout root, origin slug)`` for the nearest git checkout around ``path``.
+
+    A checkout with no GitHub origin yields an empty slug. No enclosing checkout
+    yields None. A worktree ``.git`` file is followed to its gitdir.
+    """
+    for candidate in (path, *path.parents):
+        git = candidate / ".git"
+        if not git.exists() and not git.is_symlink():
+            continue
+        config: Path | None = None
+        if git.is_file():
+            text = git.read_text(encoding="utf-8", errors="replace")
+            marker, _, gitdir = text.partition(":")
+            if marker.strip() != "gitdir":
+                return candidate, ""
+            resolved = Path(gitdir.strip())
+            if not resolved.is_absolute():
+                resolved = (candidate / resolved).resolve()
+            config = resolved / "config"
+        elif git.is_dir():
+            config = git / "config"
+        slug = github_repo(_git_config_origin(config) or "") if config is not None else None
+        return candidate, slug or ""
+    return None
+
+
+def _structural_legacy_path(path: Path) -> bool:
+    """A path that uses the legacy repository's own layout under its directory name.
+
+    The directory name alone, followed by an arbitrary suffix, is not ownership.
+    The accepted suffixes are the checkout root, ``plugins/<name>``, and
+    ``skills/<name>``. A git checkout with a different origin is rejected before
+    this fallback runs.
+    """
+    parts = path.parts
+    if LEGACY_DIR not in parts:
+        return False
+    rest = parts[parts.index(LEGACY_DIR) + 1 :]
+    if not rest:
+        return True
+    if rest[0] not in {"plugins", "skills"} or len(rest) < 2:
+        return False
+    name = rest[1]
+    return name not in {"", ".", ".."} and name == Path(name).name
+
+
 def is_legacy_source(value: str) -> bool:
-    """True only when the value records infiquetra-claude-plugins, and not a dedicated repo."""
+    """True only for the legacy Claude plugins repository, not a lookalike path.
+
+    A GitHub URL must be that repository. A filesystem path must sit inside a
+    checkout whose ``origin`` is that repository, or, when no git checkout
+    encloses it, must use the ``infiquetra-claude-plugins/plugins/<name>``
+    layout. A foreign checkout whose directory happens to be named
+    ``infiquetra-claude-plugins`` is not this repository.
+    """
     if not value or is_dedicated_source(value):
         return False
     slug = github_repo(value)
     if slug == LEGACY_SLUG:
         return True
-    return LEGACY_DIR in Path(value).parts
+    if slug is not None:
+        return False
+    raw = Path(value)
+    if not raw.is_absolute():
+        return False
+    try:
+        resolved = raw.resolve(strict=False)
+    except OSError:
+        return False
+    enclosed = _enclosing_git(resolved)
+    if enclosed is not None:
+        root, origin = enclosed
+        if origin != LEGACY_SLUG:
+            return False
+        try:
+            relative = resolved.relative_to(root)
+        except ValueError:
+            return False
+        return relative == Path(".") or (
+            len(relative.parts) >= 2 and relative.parts[0] in {"plugins", "skills"}
+        )
+    return _structural_legacy_path(resolved)
 
 
 def is_catalog_url(value: str) -> bool:
@@ -518,6 +682,80 @@ def package_applicability(client: str, package: Package) -> str | None:
         if not sync_marketplace.is_muse_applicable(package.root):
             return "no Muse capabilities"
     return None
+
+
+def harness_installation() -> dict:
+    """The committed harness map. Tiers belong to this tool, not to ``--catalog``."""
+    return port_config.load_harness_installation(default_catalog())
+
+
+def client_tier(client: str) -> str:
+    """``full`` or ``lean`` for an active harness."""
+    for tier, body in harness_installation()["tiers"].items():
+        if client in body["clients"]:
+            return tier
+    raise InstallError(f"{client} has no installation tier")
+
+
+def tier_exclusion_reason(
+    client: str, package: Package, catalog: Path, options: InstallOptions
+) -> str | None:
+    """``tier`` when a lean harness is not installing this package by default.
+
+    ``--package`` and ``--profile full`` both override that default. A catalog
+    with no port descriptor for the package is not tier-filtered, so a fixture
+    catalog keeps its current packages.
+    """
+    if options.profile == "full" or options.filtered:
+        return None
+    if client_tier(client) != "lean":
+        return None
+    tiers = port_config.package_installation_tiers(catalog, package.name)
+    if tiers is None or "lean" in tiers:
+        return None
+    return "tier"
+
+
+def _lean_default(client: str, options: InstallOptions) -> bool:
+    return client_tier(client) == "lean" and options.profile != "full" and not options.filtered
+
+
+def partition_packages(
+    client: str, packages: list[Package], catalog: Path, options: InstallOptions
+) -> tuple[list[Package], list[Action]]:
+    """Install set plus the not-applicable lines for what the tier leaves out.
+
+    A lean default also skips packages the harness cannot install (a library,
+    a skill-less package on a skill seat) so those are reported rather than
+    handed to the client command. Full seats keep the previous planner, which
+    says for itself when a package is not in that client's marketplace.
+    """
+    selected: list[Package] = []
+    notices: list[Action] = []
+    lean_default = _lean_default(client, options)
+    for package in packages:
+        reason = tier_exclusion_reason(client, package, catalog, options)
+        if reason is None and lean_default:
+            reason = package_applicability(client, package)
+        if reason is None:
+            selected.append(package)
+            continue
+        notices.append(
+            Action(
+                "not-applicable",
+                client,
+                payload={"package": package.name, "reason": reason},
+            )
+        )
+    return selected, notices
+
+
+def selected_packages(
+    client: str, packages: list[Package], catalog: Path, options: InstallOptions
+) -> list[Package]:
+    """Packages this harness installs. Tier-excluded packages are omitted."""
+    selected, _notices = partition_packages(client, packages, catalog, options)
+    return selected
 
 
 def resolve_executable(client: str, overrides: dict[str, str], *, required: bool) -> str:
@@ -627,7 +865,10 @@ def run_command(action: Action) -> str:
 
 def format_action(action: Action) -> str:
     if action.kind == "not-applicable":
-        return f"muse {action.payload['package']} not-applicable ({action.payload['reason']})"
+        return (
+            f"{action.client} {action.payload['package']} "
+            f"not-applicable ({action.payload['reason']})"
+        )
     if action.kind == "stage-muse":
         sweep = "; remove stale owned Infiquetra entries" if not action.payload["filtered"] else ""
         return (
@@ -655,8 +896,6 @@ def format_action(action: Action) -> str:
         return f"{action.client}: write: {action.path}"
     if action.kind == "merge-link":
         return f"{action.client}: write: {action.path} target={action.target} link={action.message}"
-    if action.kind == "merge-qwen":
-        return f"{action.client}: write: {action.path} source={action.target} type=local"
     if action.kind == "merge-agy":
         return (
             f"{action.client}: write: {action.path} package={action.message} source={action.target}"
@@ -1185,66 +1424,25 @@ def plan_cursor(
     required: bool,
 ) -> list[Action]:
     cache = cursor_cache(home, "infiquetra-agent-plugins")
+    note = Action("note", "cursor", message=CURSOR_MARKETPLACE_NOTE)
     if cursor_has_manifest(cache):
         return [
+            note,
             Action(
                 "skip",
                 "cursor",
                 message=f"marketplace cache already has a manifest under {cache}",
-            )
+            ),
         ]
     return [
+        note,
         command_action(
             "cursor",
             ("plugin", "marketplace", "add", CATALOG_GIT_URL),
             overrides,
             required=required,
-        )
+        ),
     ]
-
-
-def plan_qwen(
-    packages: list[Package],
-    catalog: Path,
-    home: Path,
-    overrides: dict[str, str],
-    *,
-    required: bool,
-) -> list[Action]:
-    """``extensions install`` refuses a name that is already installed.
-
-    Before running it, the same readback ``--check`` uses says whether this
-    package is already placed. ``extensions install`` asks on stdin and, with
-    no answer, exits without installing.
-    """
-    actions: list[Action] = []
-    readbacks = {row.package: row for row in check_qwen(packages, home, catalog)} if packages else {}
-    for package in packages:
-        row = readbacks[package.name]
-        if row.status == "installed-from-catalog":
-            actions.append(
-                Action("skip", "qwen", message=f"{package.name} already installed from this catalog")
-            )
-            continue
-        if row.status == "installed-from-elsewhere":
-            actions.append(
-                Action("skip", "qwen", message=elsewhere_skip_message(package.name, row.source))
-            )
-            continue
-        actions.append(
-            command_action(
-                "qwen",
-                ("extensions", "install", str(package.root)),
-                overrides,
-                required=required,
-                stdin="y\n",
-            )
-        )
-        record = home / ".qwen" / "extensions" / package.name / ".qwen-extension-install.json"
-        actions.append(
-            Action("merge-qwen", "qwen", path=str(record), target=str(package.root), message=package.name)
-        )
-    return actions
 
 
 def plan_grok(
@@ -1355,9 +1553,6 @@ def skill_destinations(client: str, home: Path) -> tuple[Path, Path, str]:
     if client == "muse":
         root = home / ".config" / "muse"
         return root / "skills", root / ".infiquetra-skills.json", MUSE_SCHEMA
-    if client == "gemini":
-        root = home / ".gemini"
-        return root / "skills", root / ".infiquetra-skills.json", GEMINI_SCHEMA
     raise InstallError(f"{client} is not skill-scoped")  # pragma: no cover
 
 
@@ -1440,92 +1635,11 @@ def plan_agy_company_skills(
     )
 
 
-def plan_command_skills(
-    client: str,
-    argv_for_skill,
-    packages: list[Package],
-    home: Path,
-    overrides: dict[str, str],
-    *,
-    required: bool,
-    stdin: str | None = None,
-) -> list[Action]:
-    skills_root, manifest_path, schema = skill_destinations(client, home)
-    document = link_manifest(manifest_path, schema)
-    actions: list[Action] = []
-    for package in packages:
-        if not package.skills:
-            actions.append(Action("skip", client, message=f"{package.name} has no skill units"))
-            continue
-        for skill in package.skills:
-            dest = skills_root / skill.name
-            target = skill.resolve()
-            recorded = find_link(document, str(dest))
-            if recorded is not None and recorded.get("target") != str(target):
-                actions.append(
-                    Action(
-                        "skip",
-                        client,
-                        message=f"manifest already records {dest} -> {recorded.get('target')}",
-                    )
-                )
-                continue
-            if recorded is not None and recorded.get("target") == str(target) and dest.exists():
-                actions.append(Action("skip", client, message=f"{skill.name} already placed at {dest}"))
-                continue
-            # A directory left by an earlier install, or a link to somewhere else, is
-            # not replaced. The client's command would copy over it.
-            if dest.exists() and not _resolves_to(dest, target):
-                actions.append(
-                    Action(
-                        "skip",
-                        client,
-                        message=f"{dest} exists without a manifest entry for {target}",
-                    )
-                )
-                continue
-            actions.append(
-                command_action(
-                    client,
-                    argv_for_skill(str(target)),
-                    overrides,
-                    required=required,
-                    stdin=stdin,
-                )
-            )
-            state = record_link(document, str(target), str(dest))
-            if state == "added":
-                actions.append(
-                    Action(
-                        "merge-link",
-                        client,
-                        path=str(manifest_path),
-                        target=str(target),
-                        message=str(dest),
-                        schema=schema,
-                    )
-                )
-    return actions
-
-
 def _resolves_to(dest: Path, target: Path) -> bool:
     try:
         return dest.resolve() == target.resolve()
     except OSError:
         return False
-
-
-def plan_gemini(packages, home, overrides, *, required: bool) -> list[Action]:
-    # The matrix supplied ``y`` on stdin. Closed stdin hangs this command instead of declining.
-    return plan_command_skills(
-        "gemini",
-        lambda target: ("skills", "link", target),
-        packages,
-        home,
-        overrides,
-        required=required,
-        stdin="y\n",
-    )
 
 
 def muse_packages(catalog: Path, packages: list[Package], *, filtered: bool) -> list[Package]:
@@ -1651,6 +1765,20 @@ def muse_remove_action(
     )
 
 
+def _muse_selection_is_narrow(catalog: Path, applicable: list[Package]) -> bool:
+    """True when this run is not staging every Muse-applicable package.
+
+    A lean seat passes reviews, plan, and investigate. Staging must record
+    that narrower set so a later full stage is not what this run writes, and
+    so unselected active packages already installed are left alone.
+    """
+    try:
+        everything = {path.name for path in sync_marketplace.muse_applicable_packages(catalog)}
+    except sync_marketplace.MarketplaceError as error:
+        raise InstallError(f"muse: {error}") from error
+    return {package.name for package in applicable} != everything
+
+
 def plan_muse(
     packages: list[Package],
     catalog: Path,
@@ -1688,7 +1816,7 @@ def plan_muse(
             payload={
                 "catalog": str(catalog),
                 "packages": [p.name for p in applicable],
-                "filtered": options.filtered,
+                "filtered": options.filtered or _muse_selection_is_narrow(catalog, applicable),
             },
         )
     )
@@ -1817,31 +1945,30 @@ def plan_install(
     options: InstallOptions | None = None,
 ) -> list[Action]:
     options = options or InstallOptions()
+    selected, notices = partition_packages(client, packages, catalog, options)
     if options.uninstall_legacy and client != "muse":
         return plan_uninstall(
-            client, packages, catalog, home, overrides, required=required, options=options
+            client, selected, catalog, home, overrides, required=required, options=options
         )
     if client == "claude":
-        return plan_claude(packages, catalog, home, overrides, required=required)
+        return notices + plan_claude(selected, catalog, home, overrides, required=required)
     if client == "codex":
-        return plan_codex_install(packages, catalog, home, overrides, required=required)
+        return notices + plan_codex_install(selected, catalog, home, overrides, required=required)
     if client == "cursor":
-        return plan_cursor(home, overrides, required=required)
-    if client == "qwen":
-        return plan_qwen(packages, catalog, home, overrides, required=required)
+        return notices + plan_cursor(home, overrides, required=required)
     if client == "grok":
-        return plan_grok(packages, catalog, home, overrides, required=required)
+        return notices + plan_grok(selected, catalog, home, overrides, required=required)
     if client == "opencode":
-        return plan_symlink_client("opencode", packages, home)
+        return notices + plan_symlink_client("opencode", selected, home)
     if client == "hermes":
-        return plan_symlink_client("hermes", packages, home)
-    if client == "gemini":
-        return plan_gemini(packages, home, overrides, required=required)
+        return notices + plan_symlink_client("hermes", selected, home)
     if client == "muse":
-        return plan_muse(packages, catalog, home, overrides, required=required, options=options)
+        return notices + plan_muse(
+            selected, catalog, home, overrides, required=required, options=options
+        )
     if client == "agy":
         actions = plan_agy(
-            packages,
+            selected,
             catalog,
             home,
             overrides,
@@ -1849,8 +1976,8 @@ def plan_install(
             company_gemini_dir=options.agy_gemini_dir,
         )
         if options.agy_gemini_dir is not None:
-            actions.extend(plan_agy_company_skills(packages, options.agy_gemini_dir, home))
-        return actions
+            actions.extend(plan_agy_company_skills(selected, options.agy_gemini_dir, home))
+        return notices + actions
     raise InstallError(f"unknown client {client}")  # pragma: no cover
 
 
@@ -2000,53 +2127,6 @@ def plan_cursor_uninstall(home: Path, overrides: dict[str, str], *, required: bo
             required=required,
         )
     ]
-
-
-def plan_qwen_uninstall(
-    packages: list[Package],
-    home: Path,
-    overrides: dict[str, str],
-    *,
-    required: bool,
-) -> list[Action]:
-    actions: list[Action] = []
-    extensions = home / ".qwen" / "extensions"
-    seen = False
-    names = {package.name for package in packages}
-    candidates: list[Path] = []
-    if extensions.is_dir():
-        for child in sorted(path for path in extensions.iterdir() if path.is_dir()):
-            record = child / ".qwen-extension-install.json"
-            document = load_object(record) if record.is_file() else None
-            source = ""
-            if isinstance(document, dict) and isinstance(document.get("source"), str):
-                source = document["source"]
-            if is_legacy_source(source):
-                candidates.append(child)
-                continue
-            if child.name in names and child.exists() and not source:
-                actions.append(
-                    Action(
-                        "refuse",
-                        "qwen",
-                        message=f"{child} has no install record; not deleting an unsourced copy",
-                    )
-                )
-    for child in candidates:
-        seen = True
-        record = load_object(child / ".qwen-extension-install.json") or {}
-        plugin_name = record.get("pluginName") if isinstance(record.get("pluginName"), str) else child.name
-        actions.append(
-            command_action(
-                "qwen",
-                ("extensions", "uninstall", str(plugin_name)),
-                overrides,
-                required=required,
-            )
-        )
-    if not seen and not any(action.kind == "refuse" for action in actions):
-        actions.append(Action("none", "qwen"))
-    return actions
 
 
 def grok_entries(home: Path) -> list[tuple[str, str, list[str], str]]:
@@ -2305,8 +2385,6 @@ def plan_uninstall(
         return plan_codex_uninstall(home, overrides, required=required)
     if client == "cursor":
         return plan_cursor_uninstall(home, overrides, required=required)
-    if client == "qwen":
-        return plan_qwen_uninstall(packages, home, overrides, required=required)
     if client == "grok":
         return plan_grok_uninstall(home, catalog, overrides, required=required)
     if client == "agy":
@@ -2320,15 +2398,6 @@ def plan_uninstall(
     if client == "hermes":
         return plan_skill_uninstall(
             "hermes", packages, home, overrides, required=required, uninstall_argv=None
-        )
-    if client == "gemini":
-        return plan_skill_uninstall(
-            "gemini",
-            packages,
-            home,
-            overrides,
-            required=required,
-            uninstall_argv=lambda name: ("skills", "uninstall", name),
         )
     if client == "muse":
         entries = muse_registrations(home)
@@ -2492,26 +2561,6 @@ def check_cursor(packages: list[Package], home: Path) -> list[Readback]:
     return rows
 
 
-def check_qwen(packages: list[Package], home: Path, catalog: Path) -> list[Readback]:
-    rows = []
-    for package in packages:
-        record = home / ".qwen" / "extensions" / package.name / ".qwen-extension-install.json"
-        directory = record.parent
-        document = load_object(record) if record.is_file() else None
-        source = ""
-        if isinstance(document, dict) and isinstance(document.get("source"), str):
-            source = document["source"]
-        if source and is_catalog_source(source, catalog):
-            rows.append(Readback("qwen", package.name, "installed-from-catalog"))
-        elif source:
-            rows.append(Readback("qwen", package.name, "installed-from-elsewhere", source))
-        elif directory.is_dir():
-            rows.append(Readback("qwen", package.name, "installed-from-elsewhere", "unsourced"))
-        else:
-            rows.append(Readback("qwen", package.name, "absent"))
-    return rows
-
-
 def check_grok(packages: list[Package], home: Path, catalog: Path) -> list[Readback]:
     rows = []
     entries = grok_entries(home)
@@ -2625,10 +2674,13 @@ def check_client(
     the client-specific reader, which has nothing to read for it and would
     otherwise report a false ``absent``.
     """
+    options = options or InstallOptions()
     rows_by_name: dict[str, Readback] = {}
     applicable: list[Package] = []
     for package in packages:
         reason = package_applicability(client, package)
+        if reason is None:
+            reason = tier_exclusion_reason(client, package, catalog, options)
         if reason is not None:
             rows_by_name[package.name] = Readback(client, package.name, "not-applicable", reason)
         else:
@@ -2640,8 +2692,6 @@ def check_client(
             checked = check_claude(applicable, catalog, home)
         elif client == "cursor":
             checked = check_cursor(applicable, home)
-        elif client == "qwen":
-            checked = check_qwen(applicable, home, catalog)
         elif client == "grok":
             checked = check_grok(applicable, home, catalog)
         elif client == "agy":
@@ -2667,17 +2717,6 @@ def check_client(
 
 
 # --- perform ------------------------------------------------------------------
-
-
-def merge_qwen(action: Action) -> None:
-    path = Path(action.path)
-    document = load_object(path) if path.is_file() else None
-    if document is None:
-        document = {}
-    document["source"] = action.target
-    document["type"] = "local"
-    document["pluginName"] = action.message
-    write_json(path, document)
 
 
 def merge_agy(action: Action) -> None:
@@ -2834,9 +2873,6 @@ def perform(action: Action) -> None:
             raise InstallError(f"refusing to replace {dest}", code=1)
         os.symlink(str(target), str(dest))
         return
-    if action.kind == "merge-qwen":
-        merge_qwen(action)
-        return
     if action.kind == "merge-agy":
         merge_agy(action)
         return
@@ -2855,6 +2891,466 @@ def perform(action: Action) -> None:
     if action.kind in {"skip", "note", "refuse", "unsupported", "none", "write-json"}:
         return
     raise InstallError(f"unknown action {action.kind}", code=1)  # pragma: no cover
+
+
+def cursor_check_line() -> str:
+    """Truthful Cursor readback: the client registers one repository marketplace."""
+    return f"cursor marketplace whole-repository ({CURSOR_MARKETPLACE_NOTE})"
+
+
+def _owned_source(value: str, catalog: Path) -> bool:
+    """True when a recorded source is this catalog or the legacy Claude plugins repo."""
+    return bool(value) and (is_catalog_source(value, catalog) or is_legacy_source(value))
+
+
+def _resolved_path(value: str, base: Path | None = None) -> Path | None:
+    if not value:
+        return None
+    raw = Path(value)
+    if not raw.is_absolute():
+        if base is None:
+            return None
+        raw = base / raw
+    try:
+        return raw.resolve(strict=False)
+    except OSError:
+        return None
+
+
+def _retired_relative(parts: tuple[str, ...]) -> bool:
+    """True when ``parts`` is a retired package tree or a former saga skill."""
+    if len(parts) >= 2 and parts[0] == "plugins" and parts[1] in RETIRED_PACKAGES:
+        return True
+    if (
+        len(parts) >= 4
+        and parts[:3] == ("plugins", "saga", "skills")
+        and parts[3] in SAGA_SKILL_NAMES
+    ):
+        return True
+    return len(parts) >= 2 and parts[0] == "skills" and parts[1] in SAGA_SKILL_NAMES
+
+
+def _retired_catalog_path(path: Path, catalog: Path) -> bool:
+    """True when `path` lands in a retired package tree inside this checkout.
+
+    A dangling symlink still counts: ``resolve(strict=False)`` keeps the
+    missing ``plugins/saga/skills/<name>`` suffix, which is how a deleted
+    saga skill is recognized after the package directory is gone.
+    """
+    try:
+        relative = path.resolve(strict=False).relative_to(catalog.resolve())
+    except (OSError, ValueError):
+        return False
+    return _retired_relative(relative.parts)
+
+
+def _retired_legacy_path(path: Path) -> bool:
+    """True when `path` is a retired plugin inside the legacy Claude plugins repo."""
+    if not is_legacy_source(str(path)):
+        return False
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError:
+        return False
+    enclosed = _enclosing_git(resolved)
+    if enclosed is not None and enclosed[1] == LEGACY_SLUG:
+        try:
+            return _retired_relative(resolved.relative_to(enclosed[0]).parts)
+        except ValueError:
+            return False
+    parts = resolved.parts
+    if LEGACY_DIR not in parts:
+        return False
+    return _retired_relative(parts[parts.index(LEGACY_DIR) + 1 :])
+
+
+def _retired_owned_target(path: Path, catalog: Path) -> bool:
+    """True when a live symlink target is a retired catalog or legacy-repo path."""
+    return _retired_catalog_path(path, catalog) or _retired_legacy_path(path)
+
+
+def _symlink_target(link: Path) -> Path | None:
+    if not link.is_symlink():
+        return None
+    try:
+        raw = os.readlink(link)
+    except OSError:
+        return None
+    return _resolved_path(raw, link.parent)
+
+
+def plan_prune_skill_tree(
+    client: str,
+    skills_root: Path,
+    manifest_path: Path,
+    schema: str,
+    catalog: Path,
+) -> list[Action]:
+    """Unlink catalog-owned retired skill symlinks. Foreign and unsourced entries stay."""
+    actions: list[Action] = []
+    try:
+        document = link_manifest(manifest_path, schema) if manifest_path.is_file() else {"links": []}
+    except InstallError as exc:
+        return [Action("note", client, message=str(exc))]
+    removed: set[str] = set()
+    for item in document.get("links", []):
+        if not isinstance(item, dict):
+            continue
+        target = item.get("target") if isinstance(item.get("target"), str) else ""
+        link = item.get("link") if isinstance(item.get("link"), str) else ""
+        base = Path(link).parent if link else None
+        recorded = _resolved_path(target, base)
+        recorded_owned = recorded is not None and _retired_owned_target(recorded, catalog)
+        if link:
+            dest = Path(link)
+            if dest.is_symlink():
+                # The sidecar can still name a retired target after the operator
+                # retargets the symlink. The live target decides.
+                live = _symlink_target(dest)
+                if live is None or not _retired_owned_target(live, catalog):
+                    if recorded_owned:
+                        actions.append(
+                            Action(
+                                "skip",
+                                client,
+                                message=(
+                                    f"{dest} points outside catalog ownership; not unlinking"
+                                ),
+                            )
+                        )
+                    continue
+                if direct_child(dest, skills_root):
+                    actions.append(
+                        Action("remove", client, path=str(dest), target=str(skills_root))
+                    )
+                removed.add(str(dest))
+                actions.append(
+                    Action(
+                        "drop-link", client, path=str(manifest_path), message=link, schema=schema
+                    )
+                )
+                continue
+        if recorded_owned and link:
+            actions.append(
+                Action("drop-link", client, path=str(manifest_path), message=link, schema=schema)
+            )
+    if skills_root.is_dir():
+        for child in sorted(skills_root.iterdir(), key=lambda path: path.name):
+            if str(child) in removed or not child.is_symlink():
+                continue
+            if not direct_child(child, skills_root):
+                continue
+            resolved = _symlink_target(child)
+            if resolved is not None and _retired_owned_target(resolved, catalog):
+                actions.append(Action("remove", client, path=str(child), target=str(skills_root)))
+    return actions
+
+
+def plan_prune_claude(
+    catalog: Path, home: Path, overrides: dict[str, str], *, required: bool
+) -> list[Action]:
+    actions: list[Action] = []
+    try:
+        known = load_object(home / ".claude" / "plugins" / "known_marketplaces.json") or {}
+        installed = load_object(home / ".claude" / "plugins" / "installed_plugins.json") or {}
+    except InstallError as exc:
+        return [Action("note", "claude", message=str(exc))]
+    plugins = installed.get("plugins") if isinstance(installed.get("plugins"), dict) else {}
+    for plugin_id in sorted(key for key in plugins if isinstance(key, str)):
+        name, separator, marketplace = plugin_id.partition("@")
+        if not separator or name not in RETIRED_PACKAGES:
+            continue
+        entry = known.get(marketplace)
+        source = claude_source_url(entry) if isinstance(entry, dict) else ""
+        if not _owned_source(source, catalog):
+            continue
+        actions.append(
+            command_action(
+                "claude",
+                ("plugin", "uninstall", plugin_id),
+                overrides,
+                required=required,
+            )
+        )
+    return actions
+
+
+def plan_prune_codex(
+    catalog: Path, home: Path, overrides: dict[str, str], *, required: bool
+) -> list[Action]:
+    try:
+        marketplaces, enabled = read_codex_config(home / ".codex" / "config.toml")
+    except OSError as exc:
+        return [Action("note", "codex", message=str(exc))]
+    actions: list[Action] = []
+    for plugin_id in sorted(enabled):
+        name, separator, marketplace = plugin_id.partition("@")
+        if not separator or name not in RETIRED_PACKAGES:
+            continue
+        source = marketplaces.get(marketplace, "")
+        if not _owned_source(source, catalog):
+            continue
+        actions.append(
+            command_action(
+                "codex", ("plugin", "remove", plugin_id), overrides, required=required
+            )
+        )
+    return actions
+
+
+def plan_prune_grok(
+    catalog: Path, home: Path, overrides: dict[str, str], *, required: bool
+) -> list[Action]:
+    try:
+        entries = grok_entries(home)
+    except InstallError as exc:
+        return [Action("note", "grok", message=str(exc))]
+    by_name: dict[str, list[tuple[str, str, list[str], str]]] = {}
+    for entry in entries:
+        for name in entry[2]:
+            if name in RETIRED_PACKAGES:
+                by_name.setdefault(name, []).append(entry)
+    actions: list[Action] = []
+    for name, owners in sorted(by_name.items()):
+        # ``grok plugin uninstall <name>`` resolves a bare name to whichever
+        # registry entry lists it first, so a foreign plugin of the same name
+        # would be the one removed. Skip the name entirely when any copy is
+        # unowned.
+        if any(not _owned_source(source, catalog) for _repo, source, _names, _market in owners):
+            actions.append(
+                Action(
+                    "skip",
+                    "grok",
+                    message=(
+                        f"{name} is installed from an unowned source; "
+                        "not uninstalling by bare name"
+                    ),
+                )
+            )
+            continue
+        if not any(_owned_source(source, catalog) for _repo, source, _names, _market in owners):
+            continue
+        actions.append(
+            command_action(
+                "grok",
+                ("plugin", "uninstall", name, "--confirm"),
+                overrides,
+                required=required,
+            )
+        )
+    return actions
+
+
+def plan_prune_agy(catalog: Path, home: Path) -> list[Action]:
+    plugins_root = home / ".gemini" / "config" / "plugins"
+    manifest_path = plugins_root / ".infiquetra-install.json"
+    try:
+        document = agy_manifest(manifest_path) if manifest_path.is_file() else {"packages": {}}
+    except InstallError as exc:
+        return [Action("note", "agy", message=str(exc))]
+    recorded = document.get("packages") if isinstance(document.get("packages"), dict) else {}
+    actions: list[Action] = []
+    for name in RETIRED_PACKAGES:
+        entry = recorded.get(name)
+        source = entry.get("source") if isinstance(entry, dict) else ""
+        if not isinstance(source, str) or not _owned_source(source, catalog):
+            continue
+        directory = plugins_root / name
+        if (directory.exists() or directory.is_symlink()) and direct_child(directory, plugins_root):
+            actions.append(Action("remove", "agy", path=str(directory), target=str(plugins_root)))
+        if name in recorded:
+            actions.append(Action("drop-agy", "agy", path=str(manifest_path), message=name))
+    return actions
+
+
+def plan_prune_muse_staging(catalog: Path) -> list[Action]:
+    """Remove retired bundles only when the staging marker names this catalog."""
+    staging = catalog / sync_marketplace.MUSE_STAGING_DEFAULT
+    plugins = staging / "plugins"
+    if not plugins.is_dir():
+        return []
+    try:
+        owned = sync_marketplace.muse_staging_ownership(catalog, staging)
+    except sync_marketplace.MarketplaceError as exc:
+        return [
+            Action(
+                "note",
+                "muse",
+                message=f"staging is not catalog-owned; not removing bundles ({exc})",
+            )
+        ]
+    actions: list[Action] = []
+    for name in RETIRED_PACKAGES:
+        if name not in owned:
+            continue
+        directory = plugins / name
+        if (directory.exists() or directory.is_symlink()) and direct_child(directory, plugins):
+            actions.append(Action("remove", "muse", path=str(directory), target=str(plugins)))
+    return actions
+
+
+def plan_prune_muse_installations(
+    catalog: Path,
+    home: Path,
+    overrides: dict[str, str],
+    *,
+    required: bool,
+) -> list[Action]:
+    """Uninstall retired Muse plugins whose marketplace source is owned.
+
+    A marketplace registered from this catalog keeps its registration, because
+    that same marketplace still hosts the active packages. A marketplace whose
+    source is the legacy repository is removed after its retired plugins are
+    uninstalled. A foreign marketplace is left alone, including a retired name
+    installed from it.
+    """
+    try:
+        entries = muse_registrations(home)
+    except (InstallError, muse_cli.MuseCLIError) as exc:
+        return [Action("note", "muse", message=str(exc))]
+    actions: list[Action] = []
+    for alias, entry in sorted(entries.items()):
+        source = muse_cli.registration_source(entry)
+        if not _owned_source(source, catalog):
+            continue
+        for name in RETIRED_PACKAGES:
+            actions.append(
+                command_action(
+                    "muse",
+                    ("plugins", "uninstall", f"{name}@{alias}", "--scope", "user"),
+                    overrides,
+                    required=required,
+                )
+            )
+        if is_legacy_source(source) and not is_catalog_source(source, catalog):
+            actions.append(
+                command_action(
+                    "muse",
+                    ("plugins", "marketplace", "remove", alias),
+                    overrides,
+                    required=required,
+                )
+            )
+    return actions
+
+
+def plan_prune_qwen_extensions(catalog: Path, home: Path) -> list[Action]:
+    extensions = home / ".qwen" / "extensions"
+    if not extensions.is_dir():
+        return []
+    actions: list[Action] = []
+    for name in RETIRED_PACKAGES:
+        directory = extensions / name
+        record = directory / ".qwen-extension-install.json"
+        try:
+            document = load_object(record) if record.is_file() else None
+        except InstallError as exc:
+            actions.append(Action("note", "qwen", message=str(exc)))
+            continue
+        source = document.get("source") if isinstance(document, dict) else ""
+        if not isinstance(source, str) or not _owned_source(source, catalog):
+            continue
+        if direct_child(directory, extensions):
+            actions.append(Action("remove", "qwen", path=str(directory), target=str(extensions)))
+    return actions
+
+
+def plan_prune_client(
+    client: str,
+    catalog: Path,
+    home: Path,
+    overrides: dict[str, str],
+    *,
+    required: bool,
+) -> list[Action]:
+    if client == "claude":
+        return plan_prune_claude(catalog, home, overrides, required=required)
+    if client == "codex":
+        return plan_prune_codex(catalog, home, overrides, required=required)
+    if client == "cursor":
+        return [
+            Action(
+                "note",
+                "cursor",
+                message="prune-retired leaves the marketplace cache in place; " + CURSOR_MARKETPLACE_NOTE,
+            )
+        ]
+    if client == "grok":
+        return plan_prune_grok(catalog, home, overrides, required=required)
+    if client == "opencode":
+        skills, manifest, schema = skill_destinations("opencode", home)
+        return plan_prune_skill_tree("opencode", skills, manifest, schema, catalog)
+    if client == "hermes":
+        skills, manifest, schema = skill_destinations("hermes", home)
+        return plan_prune_skill_tree("hermes", skills, manifest, schema, catalog)
+    if client == "agy":
+        return plan_prune_agy(catalog, home)
+    if client == "muse":
+        skills, manifest, schema = skill_destinations("muse", home)
+        return (
+            plan_prune_muse_staging(catalog)
+            + plan_prune_muse_installations(catalog, home, overrides, required=required)
+            + plan_prune_skill_tree("muse", skills, manifest, schema, catalog)
+        )
+    raise InstallError(f"unknown client {client}")  # pragma: no cover
+
+
+def plan_prune_retired(
+    clients: tuple[str, ...],
+    catalog: Path,
+    home: Path,
+    overrides: dict[str, str],
+    *,
+    required: bool,
+) -> list[Action]:
+    actions: list[Action] = []
+    for client in clients:
+        actions.extend(
+            plan_prune_client(client, catalog, home, overrides, required=required)
+        )
+    if set(clients) == set(CLIENTS):
+        actions.extend(plan_prune_qwen_extensions(catalog, home))
+        actions.extend(
+            plan_prune_skill_tree(
+                "gemini",
+                home / ".gemini" / "skills",
+                home / ".gemini" / ".infiquetra-skills.json",
+                GEMINI_SCHEMA,
+                catalog,
+            )
+        )
+    return [action for action in actions if action.kind != "note" or action.message]
+
+
+def _run_prune(
+    clients: tuple[str, ...],
+    catalog: Path,
+    home: Path,
+    overrides: dict[str, str],
+    *,
+    required: bool,
+    continue_on_error: bool,
+) -> int:
+    actions = plan_prune_retired(clients, catalog, home, overrides, required=required)
+    if not actions:
+        print("prune-retired: nothing to remove")
+        return 0
+    failures: list[str] = []
+    for action in actions:
+        print(format_action(action))
+        if not required:
+            continue
+        try:
+            perform(action)
+        except (InstallError, muse_cli.MuseCLIError) as exc:
+            failures.append(f"{action.client}: {exc}")
+            if not continue_on_error:
+                _print_failures(failures)
+                return exc.code if isinstance(exc, InstallError) else 1
+    if failures:
+        _print_failures(failures)
+        return 1
+    return 0
 
 
 def _print_failures(failures: list[str]) -> None:
@@ -2892,21 +3388,28 @@ def run(argv: list[str] | None = None) -> int:
         args.uninstall_legacy,
         allow_inapplicable=args.client == "all",
         agy_gemini_dir=company_gemini_dir,
+        profile=args.profile or "tier",
     )
-    if clients == ("muse",):
-        muse_packages(catalog, packages, filtered=options.filtered)
-    if any(client in SKILL_CLIENTS for client in clients) or company_gemini_dir is not None:
-        require_unique_skills(packages)
     overrides = parse_binaries(args.binary)
     home = Path.home()
     required = bool(args.execute) and not args.check
     is_all = args.client == "all"
+    if args.prune_retired:
+        return _run_prune(
+            clients, catalog, home, overrides, required=bool(args.execute), continue_on_error=is_all
+        )
+    if clients == ("muse",):
+        muse_packages(catalog, packages, filtered=options.filtered)
+    if any(client in SKILL_CLIENTS for client in clients) or company_gemini_dir is not None:
+        require_unique_skills(packages)
 
     if args.check:
         lines: list[str] = []
         failed = False
         if not is_all:
             for client in clients:
+                if client == "cursor":
+                    lines.append(cursor_check_line())
                 result = check_client(client, packages, catalog, home, overrides, options)
                 lines.extend(result)
                 failed = failed or result.failed
@@ -2917,6 +3420,8 @@ def run(argv: list[str] | None = None) -> int:
         failures: list[str] = []
         for client in clients:
             try:
+                if client == "cursor":
+                    lines.append(cursor_check_line())
                 result = check_client(client, packages, catalog, home, overrides, options)
                 lines.extend(result)
                 failed = failed or result.failed

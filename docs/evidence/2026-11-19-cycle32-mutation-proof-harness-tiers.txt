@@ -1,0 +1,104 @@
+# Cycle-32 mutation proof - harness installation tiers and the current roster
+# Cycle 31 is the preceding proof:
+# [Cycle 31](2026-11-19-cycle31-mutation-proof-catalog-cutover.txt).
+# Cycle 32 re-grades the guards changed by issue #334.
+# scripts/port_config.py schema version 5 adds optional installation.tiers,
+# requires full when that object is present, refuses an unknown tier, and
+# validates schemas/harness-installation.json (a client in both tiers, a
+# retired message that does not say retired, a missing descriptor left
+# unfiltered). scripts/check_compatibility_matrix.py drops qwen from the
+# current assessment inventory and keeps Qwen on the historical nine-client
+# matrix roster. scripts/assess_clients.py no longer carries a Qwen plan.
+# The other two graded files are unchanged and their cycle-31 digests are carried.
+# Older guards inside the three changed files were not re-mutated.
+#
+# Runner: one unique exact replacement per mutation, then the pristine file is restored.
+# PYTHONDONTWRITEBYTECODE=1. A kill requires an actual test failure. The binding test
+# is not part of this command. Scratch fixtures only.
+#
+Test command: python3 -m unittest tests.test_port_config.InstallationTierTest tests.test_check_compatibility_matrix.ClientAssessmentInventoryTest.test_current_inventory_includes_muse_as_a_marketplace_client tests.test_assess_clients.RosterTest.test_every_current_assessment_client_has_a_plan tests.test_assess_clients.RosterTest.test_qwen_and_gemini_cli_are_not_assessed
+Baseline: 9 tests, OK
+
+## 10 mutations
+
+## MUTATION 1: Schema version 5 is read as schema version 4
+File: scripts/port_config.py
+Replace: 'SCHEMA_VERSION = "5"'
+With: 'SCHEMA_VERSION = "4"'
+Killed by: tests.test_port_config.InstallationTierTest.test_shipped_reviews_is_lean_and_strategy_stays_full
+ERROR (errors=1)
+
+## MUTATION 2: A package may omit the full tier
+File: scripts/port_config.py
+Replace: the _require that "full" is in installation.tiers
+With: ''
+Killed by: tests.test_port_config.InstallationTierTest.test_installation_is_optional_and_full_is_required_when_present
+FAILED (failures=1)
+
+## MUTATION 3: Any string is an installation tier
+File: scripts/port_config.py
+Replace: 'isinstance(tier, str) and tier in INSTALLATION_TIER_NAMES'
+With: 'isinstance(tier, str)'
+Killed by: tests.test_port_config.InstallationTierTest.test_an_unknown_installation_tier_is_refused
+FAILED (failures=1)
+
+## MUTATION 4: A client may sit in both harness tiers
+File: scripts/port_config.py
+Replace: '_require(len(seen) == len(set(seen)), f"{path.name}: a client is listed in both tiers")'
+With: '_require(True, f"{path.name}: a client is listed in both tiers")'
+Killed by: tests.test_port_config.InstallationTierTest.test_a_client_in_both_harness_tiers_is_refused
+FAILED (failures=1)
+
+## MUTATION 5: A retired-client message need not say retired
+File: scripts/port_config.py
+Replace: 'isinstance(message, str) and "retired" in message.lower(),'
+With: 'isinstance(message, str),'
+Killed by: tests.test_port_config.InstallationTierTest.test_a_retired_client_message_must_say_retired
+FAILED (failures=1)
+
+## MUTATION 6: A missing port descriptor is tier-filtered as undeclared
+File: scripts/port_config.py
+Replace: 'return None' after descriptor_path is_file check
+With: 'return ()'
+Killed by: tests.test_port_config.InstallationTierTest.test_a_missing_descriptor_is_not_tier_filtered
+FAILED (failures=1)
+
+## MUTATION 7: installation becomes a required descriptor field
+File: scripts/port_config.py
+Replace: REQUIRED_TOP_LEVEL ending at "assessment"
+With: the same tuple plus "installation"
+Killed by: tests.test_port_config.InstallationTierTest.test_installation_is_optional_and_full_is_required_when_present
+ERROR (errors=1)
+
+## MUTATION 8: qwen returns to the current assessment inventory
+File: scripts/check_compatibility_matrix.py
+Replace: '    "grok": "Grok",\n'
+With: '    "grok": "Grok",\n    "qwen": "Qwen",\n'
+Killed by: tests.test_check_compatibility_matrix.ClientAssessmentInventoryTest.test_current_inventory_includes_muse_as_a_marketplace_client
+FAILED (failures=1)
+
+## MUTATION 9: Qwen leaves the historical nine-client matrix roster
+File: scripts/check_compatibility_matrix.py
+Replace: the CANONICAL_CLIENTS tail that names "Qwen" between "Cursor Agent" and "Grok"
+With: the same tail without "Qwen"
+Killed by: tests.test_assess_clients.RosterTest.test_every_current_assessment_client_has_a_plan
+FAILED (failures=1)
+
+## MUTATION 10: The Hermes plan is renamed Qwen
+File: scripts/assess_clients.py
+Replace: 'ClientPlan(\n            "Hermes",\n            binary="hermes",'
+With: 'ClientPlan(\n            "Qwen",\n            binary="hermes",'
+Killed by: tests.test_assess_clients.RosterTest.test_every_current_assessment_client_has_a_plan
+FAILED (failures=1)
+
+Restored baseline: 9 tests, OK
+Mutations: 10; killed: 10; survivors: 0
+
+## RESTORED
+scripts/port_config.py sha256: 91e90a69894f5e1edb2be95efa21f60917d1b4be3360a6040ddc469b53911691
+scripts/check_compatibility_matrix.py sha256: 349aea997b7506fc1b68b780964bad7d16bd9880451d74fd309b559f238d3ac7
+scripts/assess_clients.py sha256: bcce2be9ef4512733ff97a32ce473ab7a8a71a3e3f87c4d259b4c6c0864ec69d
+# Carried unchanged from Cycle 31, not re-graded:
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+scripts/check_repo.py sha256: 9722fca738f59ef224e8cd7bd92e03d3851bca62405aacc6d34f0723af6e9b1d
+byte-identical to pristine: YES

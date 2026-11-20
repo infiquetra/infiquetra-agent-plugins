@@ -44,6 +44,41 @@ def write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _private(path: Path) -> None:
+    """Staging custody refuses a path group or others can write."""
+    path.chmod(0o755 if path.is_dir() else 0o644)
+
+
+def _write_owned_muse_staging(staging: Path, catalog: Path, packages: list[str]) -> None:
+    """A Muse projection whose marker and marketplace both name this catalog."""
+    plugins = staging / "plugins"
+    manifest_dir = staging / ".claude-plugin"
+    plugins.mkdir(parents=True, exist_ok=True)
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    write_json(
+        manifest_dir / "marketplace.json",
+        {"plugins": [{"name": name, "source": f"./plugins/{name}"} for name in packages]},
+    )
+    write_json(
+        staging / ".infiquetra-muse-staging",
+        {"version": 1, "catalog": str(catalog.resolve()), "packages": packages},
+    )
+    for path in (
+        staging,
+        plugins,
+        manifest_dir,
+        staging / ".infiquetra-muse-staging",
+        manifest_dir / "marketplace.json",
+    ):
+        _private(path)
+
+
+def _write_git_origin(root: Path, url: str) -> None:
+    git = root / ".git"
+    git.mkdir(parents=True)
+    (git / "config").write_text(f'[remote "origin"]\n\turl = {url}\n', encoding="utf-8")
+
+
 class InstallFixture(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
@@ -668,84 +703,6 @@ class CursorTest(InstallFixture):
         self.assertNotIn(installer.CATALOG_GIT_URL, self.logged())
 
 
-class QwenTest(InstallFixture):
-    def test_execute_installs_and_records_this_checkout_as_the_source(self) -> None:
-        code, out, err = self.invoke("--client", "qwen", "--package", "voice", "--execute")
-        self.assertEqual(code, 0, err)
-        voice = str((self.catalog / "plugins" / "voice").resolve())
-        self.assertIn(self.command("qwen", "extensions", "install", voice, stdin="y\n"), out)
-        self.assertIn("STDIN:y\n", self.logged())
-        record = self.home / ".qwen/extensions/voice/.qwen-extension-install.json"
-        payload = json.loads(record.read_text(encoding="utf-8"))
-        self.assertEqual(payload["source"], str((self.catalog / "plugins" / "voice").resolve()))
-        self.assertEqual(payload["type"], "local")
-        self.assertEqual(payload["pluginName"], "voice")
-
-    def test_merge_preserves_keys_the_client_already_wrote(self) -> None:
-        record = self.home / ".qwen/extensions/voice/.qwen-extension-install.json"
-        write_json(record, {"source": LEGACY_URL, "type": "git", "marketplaceConfig": {"name": "kept"}})
-        target = self.catalog / "plugins" / "voice"
-        installer.merge_qwen(
-            installer.Action("merge-qwen", "qwen", path=str(record), target=str(target), message="voice")
-        )
-        payload = json.loads(record.read_text(encoding="utf-8"))
-        self.assertEqual(payload["marketplaceConfig"], {"name": "kept"})
-        self.assertEqual(payload["type"], "local")
-        self.assertEqual(payload["source"], str(target))
-
-    def test_execute_is_idempotent_after_a_partial_run(self) -> None:
-        record = self.home / ".qwen/extensions/voice/.qwen-extension-install.json"
-        write_json(record, {"source": str((self.catalog / "plugins" / "voice").resolve()), "type": "local"})
-        code, out, err = self.invoke("--client", "qwen", "--package", "voice", "--execute")
-        self.assertEqual(code, 0, err)
-        self.assertIn("voice already installed from this catalog", out)
-        self.assertEqual(self.logged(), "")
-
-    def test_execute_skips_a_legacy_installed_package_without_the_uninstall_flag(self) -> None:
-        record = self.home / ".qwen/extensions/voice/.qwen-extension-install.json"
-        write_json(record, {"source": LEGACY_URL, "type": "git"})
-        code, out, err = self.invoke("--client", "qwen", "--package", "voice", "--execute")
-        self.assertEqual(code, 0, err)
-        self.assertIn(f"voice already installed from {LEGACY_URL}; not replacing", out)
-        self.assertIn("--uninstall-legacy --execute", out)
-        self.assertEqual(self.logged(), "")
-        payload = json.loads(record.read_text(encoding="utf-8"))
-        self.assertEqual(payload["source"], LEGACY_URL)
-
-    def test_check_classifies_the_install_record(self) -> None:
-        write_json(
-            self.home / ".qwen/extensions/voice/.qwen-extension-install.json",
-            {"source": str((self.catalog / "plugins" / "voice").resolve()), "type": "local"},
-        )
-        write_json(
-            self.home / ".qwen/extensions/unifi/.qwen-extension-install.json",
-            {"source": LEGACY_URL, "type": "git"},
-        )
-        (self.home / ".qwen/extensions/fleet-core").mkdir(parents=True)
-        code, out, err = self.invoke("--client", "qwen", "--check")
-        self.assertEqual(err, "")
-        self.assertIn("qwen voice installed-from-catalog", out)
-        self.assertIn(f"qwen unifi installed-from-elsewhere ({LEGACY_URL})", out)
-        self.assertIn("qwen fleet-core not-applicable (library)", out)
-        self.assertEqual(code, 0)
-
-    def test_uninstall_calls_the_client_for_a_legacy_record_and_refuses_an_unsourced_directory(self) -> None:
-        legacy = self.home / ".qwen/extensions/unifi"
-        write_json(
-            legacy / ".qwen-extension-install.json",
-            {"source": LEGACY_URL, "type": "git", "pluginName": "unifi"},
-        )
-        unsourced = self.home / ".qwen/extensions/voice"
-        unsourced.mkdir(parents=True)
-        (unsourced / "SKILL.md").write_text("keep", encoding="utf-8")
-        code, out, err = self.invoke("--client", "qwen", "--uninstall-legacy", "--execute")
-        self.assertEqual(code, 0, err)
-        self.assertIn(self.command("qwen", "extensions", "uninstall", "unifi"), out)
-        self.assertIn("no install record", out)
-        self.assertTrue((unsourced / "SKILL.md").is_file())
-        self.assertTrue((legacy / ".qwen-extension-install.json").is_file())
-
-
 class GrokTest(InstallFixture):
     def test_install_passes_trust(self) -> None:
         code, out, err = self.invoke("--client", "grok", "--package", "voice", "--dry-run")
@@ -1035,24 +992,6 @@ class OpenCodeTest(InstallFixture):
 
 
 class GeminiMuseHermesTest(InstallFixture):
-    def test_gemini_link_supplies_the_confirmation_the_matrix_used(self) -> None:
-        code, out, err = self.invoke("--client", "gemini", "--package", "voice", "--dry-run")
-        self.assertEqual(code, 0, err)
-        target = str((self.catalog / "plugins/voice/skills/voice").resolve())
-        self.assertIn(self.command("gemini", "skills", "link", target, stdin="y\n"), out)
-
-    def test_gemini_check_treats_a_recorded_copy_as_this_catalog(self) -> None:
-        dest = self.home / ".gemini/skills/voice"
-        dest.mkdir(parents=True)
-        target = str((self.catalog / "plugins/voice/skills/voice").resolve())
-        write_json(
-            self.home / ".gemini/.infiquetra-skills.json",
-            {"schema": installer.GEMINI_SCHEMA, "links": [{"target": target, "link": str(dest)}]},
-        )
-        code, out, err = self.invoke("--client", "gemini", "--package", "voice", "--check")
-        self.assertEqual(code, 0, err)
-        self.assertIn("gemini voice installed-from-catalog", out)
-
     def test_hermes_symlinks_because_its_installer_rejects_a_local_path(self) -> None:
         code, out, err = self.invoke("--client", "hermes", "--package", "voice", "--execute")
         self.assertEqual(code, 0, err)
@@ -1421,7 +1360,7 @@ class InvocationTest(InstallFixture):
         self.assertIn("grok", err)
         log = self.logged()
         self.assertIn("plugin install voice@infiquetra-agent-plugins", log)
-        self.assertIn("extensions install", log)
+        self.assertIn("agy plugin install", log)
 
     def test_client_all_execute_continues_past_a_planning_failure(self) -> None:
         (self.catalog / ".agents" / "plugins" / "marketplace.json").unlink()
@@ -1431,7 +1370,7 @@ class InvocationTest(InstallFixture):
         self.assertIn("codex", err)
         log = self.logged()
         self.assertIn("plugin install voice@infiquetra-agent-plugins", log)
-        self.assertIn("extensions install", log)
+        self.assertIn("agy plugin install", log)
 
 
 class MuseMarketplaceTest(InstallFixture):
@@ -2210,4 +2149,407 @@ elif args[:2] == ['plugins', 'list']:
                 ["plugins", "marketplace", "remove", muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS]
             ),
             1,
+        )
+
+
+FULL_PACKAGES = (
+    "agent-launcher",
+    "brainstorm",
+    "deploy",
+    "home-lab-ops",
+    "ideate",
+    "investigate",
+    "mission-control",
+    "plan",
+    "reviews",
+    "strategy",
+    "unifi",
+)
+LEAN_PACKAGES = ("investigate", "plan", "reviews")
+
+
+class HarnessTierTest(InstallFixture):
+    """Tiers and retirement run against a temporary home. The real catalog is only read."""
+
+    def invoke_root(self, *args: str) -> tuple[int, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = installer.main(["--catalog", str(ROOT), *args])
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_full_tier_clients_include_opencode_hermes_claude_agy_codex(self) -> None:
+        packages = installer.discover_packages(ROOT)
+        options = installer.InstallOptions()
+        full = installer.harness_installation()["tiers"]["full"]["clients"]
+        self.assertEqual(full, ["claude", "agy", "codex", "opencode", "hermes"])
+        for client in full:
+            names = [
+                package.name
+                for package in installer.selected_packages(client, packages, ROOT, options)
+                if not installer.is_library_package(package)
+            ]
+            self.assertEqual(names, list(FULL_PACKAGES), client)
+        for client in ("opencode", "hermes", "agy", "claude", "codex"):
+            code, out, err = self.invoke_root("--client", client, "--dry-run")
+            self.assertEqual(code, 0, err)
+            self.assertIn("strategy", out, client)
+            if client in {"opencode", "hermes", "agy"}:
+                self.assertIn(str(ROOT / "plugins" / "strategy"), out, client)
+
+    def test_lean_tier_clients_select_reviews_plan_investigate_by_default_and_pass_check(self) -> None:
+        packages = installer.discover_packages(ROOT)
+        options = installer.InstallOptions()
+        lean = installer.harness_installation()["tiers"]["lean"]["clients"]
+        self.assertEqual(lean, ["cursor", "muse", "grok"])
+        for client in lean:
+            names = [
+                package.name
+                for package in installer.selected_packages(client, packages, ROOT, options)
+                if not installer.is_library_package(package)
+            ]
+            self.assertEqual(names, list(LEAN_PACKAGES), client)
+        code, out, err = self.invoke_root("--client", "grok", "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn(str(ROOT / "plugins" / "reviews"), out)
+        self.assertNotIn(str(ROOT / "plugins" / "strategy"), out)
+        self.assertIn("grok strategy not-applicable (tier)", out)
+
+        write_json(
+            self.home / ".grok/installed-plugins/registry.json",
+            {
+                "repos": {
+                    "catalog": {
+                        "kind": {"source_path": str(ROOT)},
+                        "plugins": {name: {} for name in LEAN_PACKAGES},
+                    }
+                }
+            },
+        )
+        code, out, err = self.invoke_root("--client", "grok", "--check")
+        self.assertEqual(code, 0, err + out)
+        self.assertIn("grok reviews installed-from-catalog", out)
+        self.assertIn("grok plan installed-from-catalog", out)
+        self.assertIn("grok investigate installed-from-catalog", out)
+        self.assertIn("grok strategy not-applicable (tier)", out)
+
+        write_json(
+            self.home
+            / ".cursor/plugins/marketplaces/github.com/infiquetra/infiquetra-agent-plugins/checkout/.claude-plugin/marketplace.json",
+            {"plugins": [{"name": name} for name in (*LEAN_PACKAGES, "strategy")]},
+        )
+        code, out, err = self.invoke_root("--client", "cursor", "--check")
+        self.assertEqual(code, 0, err + out)
+        self.assertIn("whole-repository", out)
+        self.assertIn("cursor reviews installed-from-catalog", out)
+        self.assertIn("cursor strategy not-applicable (tier)", out)
+
+        staging = self.base / "muse-stage"
+        rows = []
+        for name in LEAN_PACKAGES:
+            source = staging / "plugins" / name
+            source.mkdir(parents=True)
+            rows.append(
+                {
+                    "record": {
+                        "id": name,
+                        "enabled": True,
+                        "source": {
+                            "marketplace": muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS,
+                            "path": str(source.resolve()),
+                            "provenance": "marketplace-user-added",
+                        },
+                    },
+                    "valid": True,
+                    "diagnostics": [],
+                }
+            )
+        write_json(
+            self.home / muse_cli.MUSE_REGISTRY_RELATIVE,
+            {
+                "marketplaces": {
+                    muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS: {
+                        "source": {"path": str(staging.resolve())}
+                    }
+                }
+            },
+        )
+        installed = json.dumps({"plugins": rows})
+        offered = json.dumps(
+            {
+                "available": [
+                    {"name": name, "marketplace": muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS}
+                    for name in LEAN_PACKAGES
+                ],
+                "skipped": [],
+            }
+        )
+        write_executable(
+            self.bin,
+            "muse",
+            'printf "%s\\n" "$*" >> "$ARGV_LOG"\n'
+            'case "$*" in\n'
+            '  "plugins list --available --json") printf "%s\\n" ' + shlex.quote(offered) + " ;;\n"
+            '  "plugins list --json") printf "%s\\n" ' + shlex.quote(installed) + " ;;\n"
+            "  *) exit 0 ;;\n"
+            "esac\n",
+        )
+        code, out, err = self.invoke_root(
+            "--client", "muse", "--staging-dir", str(staging), "--check"
+        )
+        self.assertEqual(code, 0, err + out)
+        self.assertIn("muse reviews installed-from-catalog", out)
+        self.assertIn("muse strategy not-applicable (tier)", out)
+
+    def test_explicit_package_or_full_profile_overrides_lean_default(self) -> None:
+        code, out, err = self.invoke_root("--client", "grok", "--package", "strategy", "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn(str(ROOT / "plugins" / "strategy"), out)
+        self.assertNotIn("not-applicable (tier)", out)
+        code, out, err = self.invoke_root("--client", "cursor", "--profile", "full", "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("cursor strategy not-applicable (tier)", out)
+        self.assertIn("whole GitHub repository", out)
+        code, out, err = self.invoke_root("--client", "grok", "--profile", "full", "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn(str(ROOT / "plugins" / "strategy"), out)
+        self.assertIn(str(ROOT / "plugins" / "reviews"), out)
+
+    def test_qwen_and_gemini_clients_are_rejected_as_retired(self) -> None:
+        for client in ("qwen", "gemini"):
+            with self.subTest(client=client):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                    installer.main(["--catalog", str(self.catalog), "--client", client, "--dry-run"])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("retired", stderr.getvalue())
+
+    def test_prune_retired_removes_catalog_owned_retired_packages_and_former_saga_skills(self) -> None:
+        self.assertEqual(len(installer.RETIRED_PACKAGES), 8)
+        self.assertEqual(len(installer.SAGA_SKILL_NAMES), 15)
+        skills = self.home / ".config" / "opencode" / "skills"
+        skills.mkdir(parents=True)
+        saga_work = self.catalog / "plugins" / "saga" / "skills" / "work"
+        dangling = skills / "work"
+        dangling.symlink_to(saga_work)
+        active = self.catalog / "plugins" / "plan" / "skills" / "plan"
+        active.mkdir(parents=True)
+        (active / "SKILL.md").write_text("plan\n", encoding="utf-8")
+        plan_link = skills / "plan"
+        plan_link.symlink_to(active)
+        foreign_target = self.base / "foreign" / "skills" / "custom"
+        foreign_target.mkdir(parents=True)
+        (foreign_target / "SKILL.md").write_text("foreign\n", encoding="utf-8")
+        foreign = skills / "custom"
+        foreign.symlink_to(foreign_target)
+        unsourced = skills / "voice"
+        unsourced.mkdir()
+        (unsourced / "keep").write_text("keep\n", encoding="utf-8")
+        hermes_skills = self.home / ".hermes" / "skills"
+        hermes_skills.mkdir(parents=True)
+        hermes_dangling = hermes_skills / "qa"
+        hermes_dangling.symlink_to(self.catalog / "plugins" / "saga" / "skills" / "qa")
+        write_json(
+            self.home / ".config/opencode/.infiquetra-plugins.json",
+            {
+                "schema": installer.OPENCODE_SCHEMA,
+                "links": [
+                    {"target": str(saga_work), "link": str(dangling)},
+                    {"target": str(active), "link": str(plan_link)},
+                    {"target": str(foreign_target), "link": str(foreign)},
+                ],
+            },
+        )
+        voice = self.home / ".gemini/config/plugins/voice"
+        voice.mkdir(parents=True)
+        (voice / "owned").write_text("owned\n", encoding="utf-8")
+        foreign_plugin = self.home / ".gemini/config/plugins/house-style"
+        foreign_plugin.mkdir()
+        (foreign_plugin / "keep").write_text("keep\n", encoding="utf-8")
+        write_json(
+            self.home / ".gemini/config/plugins/.infiquetra-install.json",
+            {
+                "schema": installer.AGY_SCHEMA,
+                "packages": {
+                    "voice": {"source": str((self.catalog / "plugins" / "voice").resolve())},
+                    "house-style": {"source": "https://github.com/example/other"},
+                },
+            },
+        )
+        write_json(
+            self.home / ".grok/installed-plugins/registry.json",
+            {
+                "repos": {
+                    "owned": {
+                        "kind": {"source_path": str(self.catalog.resolve())},
+                        "plugins": {"voice": {}},
+                    },
+                    "foreign": {
+                        "marketplace": {"source_url_or_path": "https://github.com/example/other"},
+                        "plugins": {"my-notes": {}},
+                    },
+                },
+            },
+        )
+        staging = self.catalog / "build" / "muse-marketplace"
+        (staging / "plugins" / "saga").mkdir(parents=True)
+        (staging / "plugins" / "reviews").mkdir()
+        (staging / "plugins" / "reviews" / "keep").write_text("keep\n", encoding="utf-8")
+        _write_owned_muse_staging(staging, self.catalog, ["saga", "reviews"])
+
+        code, out, err = self.invoke("--client", "all", "--prune-retired")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(dangling.is_symlink())
+        self.assertIn(str(dangling), out)
+        self.assertIn("plugin uninstall voice", out)
+        self.assertNotIn("my-notes", out)
+
+        code, out, err = self.invoke("--client", "all", "--prune-retired", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertFalse(dangling.exists())
+        self.assertFalse(hermes_dangling.exists())
+        self.assertTrue(plan_link.is_symlink())
+        self.assertTrue(foreign.is_symlink())
+        self.assertEqual((unsourced / "keep").read_text(), "keep\n")
+        self.assertFalse(voice.exists())
+        self.assertTrue((foreign_plugin / "keep").is_file())
+        self.assertFalse((staging / "plugins" / "saga").exists())
+        self.assertEqual((staging / "plugins" / "reviews" / "keep").read_text(), "keep\n")
+        document = json.loads(
+            (self.home / ".config/opencode/.infiquetra-plugins.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            sorted(item["link"] for item in document["links"]),
+            sorted([str(plan_link), str(foreign)]),
+        )
+        agy = json.loads(
+            (self.home / ".gemini/config/plugins/.infiquetra-install.json").read_text(encoding="utf-8")
+        )
+        self.assertNotIn("voice", agy["packages"])
+        self.assertIn("house-style", agy["packages"])
+
+    def test_prune_does_not_unlink_a_symlink_repointed_from_a_stale_sidecar(self) -> None:
+        skills = self.home / ".config" / "opencode" / "skills"
+        skills.mkdir(parents=True)
+        foreign = self.base / "foreign-skill"
+        foreign.mkdir()
+        (foreign / "SKILL.md").write_text("foreign\n", encoding="utf-8")
+        link = skills / "work"
+        link.symlink_to(foreign)
+        recorded = self.catalog / "plugins" / "saga" / "skills" / "work"
+        write_json(
+            self.home / ".config/opencode/.infiquetra-plugins.json",
+            {
+                "schema": installer.OPENCODE_SCHEMA,
+                "links": [{"target": str(recorded), "link": str(link)}],
+            },
+        )
+        code, out, err = self.invoke("--client", "opencode", "--prune-retired")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(link.is_symlink())
+        self.assertIn("points outside catalog ownership", out)
+        self.assertNotIn(f"opencode: remove: {link}", out)
+        code, out, err = self.invoke("--client", "opencode", "--prune-retired", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), foreign.resolve())
+        self.assertEqual((foreign / "SKILL.md").read_text(), "foreign\n")
+
+    def test_foreign_legacy_basename_is_rejected_and_real_legacy_skills_are_pruned(self) -> None:
+        skills = self.home / ".hermes" / "skills"
+        skills.mkdir(parents=True)
+        foreign_root = self.base / "mirror" / "infiquetra-claude-plugins"
+        foreign_skill = foreign_root / "plugins" / "saga" / "skills" / "qa"
+        foreign_skill.mkdir(parents=True)
+        _write_git_origin(foreign_root, "https://github.com/example/other.git")
+        foreign_link = skills / "qa"
+        foreign_link.symlink_to(foreign_skill)
+        legacy_root = self.base / "legacy-checkout"
+        legacy_skill = legacy_root / "plugins" / "saga" / "skills" / "work"
+        legacy_skill.mkdir(parents=True)
+        _write_git_origin(legacy_root, "https://github.com/infiquetra/infiquetra-claude-plugins.git")
+        legacy_link = skills / "work"
+        legacy_link.symlink_to(legacy_skill)
+        self.assertFalse(installer.is_legacy_source(str(foreign_skill)))
+        self.assertTrue(installer.is_legacy_source(str(legacy_skill)))
+        code, out, err = self.invoke("--client", "hermes", "--prune-retired", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(foreign_link.is_symlink())
+        self.assertFalse(legacy_link.exists())
+        self.assertIn(str(legacy_link), out)
+        self.assertNotIn(f"hermes: remove: {foreign_link}", out)
+
+    def test_grok_does_not_uninstall_a_foreign_plugin_that_reuses_a_retired_name(self) -> None:
+        foreign_root = self.base / "grok-foreign" / "infiquetra-claude-plugins"
+        foreign_root.mkdir(parents=True)
+        _write_git_origin(foreign_root, "https://github.com/example/other.git")
+        write_json(
+            self.home / ".grok/installed-plugins/registry.json",
+            {
+                "repos": {
+                    "owned": {
+                        "kind": {"source_path": str(self.catalog.resolve())},
+                        "plugins": {"voice": {}, "saga": {}},
+                    },
+                    "foreign": {
+                        "marketplace": {
+                            "source_url_or_path": str(foreign_root / "plugins" / "saga")
+                        },
+                        "plugins": {"saga": {}},
+                    },
+                },
+            },
+        )
+        code, out, err = self.invoke("--client", "grok", "--prune-retired", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertIn("plugin uninstall voice", out)
+        self.assertNotIn("plugin uninstall saga", out)
+        self.assertIn("saga is installed from an unowned source", out)
+
+    def test_muse_prune_keeps_unowned_bundles_and_cleans_owned_installations(self) -> None:
+        staging = self.catalog / "build" / "muse-marketplace"
+        kept = staging / "plugins" / "saga" / "keep"
+        kept.parent.mkdir(parents=True)
+        kept.write_text("foreign\n", encoding="utf-8")
+        (staging / "plugins" / "reviews").mkdir()
+        write_json(
+            staging / ".infiquetra-muse-staging",
+            {"version": 1, "catalog": str((self.base / "other-catalog").resolve()), "packages": ["saga"]},
+        )
+        _private(staging)
+        _private(staging / "plugins")
+        _private(staging / ".infiquetra-muse-staging")
+        code, out, err = self.invoke("--client", "muse", "--prune-retired")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(kept.is_file())
+        self.assertIn("not catalog-owned", out)
+        self.assertNotIn(f"muse: remove: {kept.parent}", out)
+
+        _write_owned_muse_staging(staging, self.catalog, ["saga", "reviews"])
+        write_json(
+            self.home / muse_cli.MUSE_REGISTRY_RELATIVE,
+            {
+                "marketplaces": {
+                    muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS: {
+                        "source": {"path": str(staging.resolve())}
+                    },
+                    "old-claude": {
+                        "source": "https://github.com/infiquetra/infiquetra-claude-plugins.git"
+                    },
+                    "foreign": {"source": "https://github.com/example/other"},
+                }
+            },
+        )
+        code, out, err = self.invoke("--client", "muse", "--prune-retired", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertFalse((staging / "plugins" / "saga").exists())
+        self.assertTrue((staging / "plugins" / "reviews").is_dir())
+        self.assertIn(
+            f"plugins uninstall saga@{muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS}", out
+        )
+        self.assertIn("plugins uninstall saga@old-claude", out)
+        self.assertIn("marketplace remove old-claude", out)
+        self.assertNotIn("plugins uninstall saga@foreign", out)
+        self.assertNotIn(
+            f"marketplace remove {muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS}", out
         )

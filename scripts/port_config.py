@@ -87,7 +87,15 @@ CONFIG_SUFFIX = ".json"
 #: stated. Custody moving here changes where a package's bytes come from; it
 #: does not change what an assessment must strip, scope, or invoke, and a
 #: safety field that fails open fails open just as hard for authored source.
-SCHEMA_VERSION = "4"
+#:
+#: Version 5 adds optional `installation.tiers`. A package names the harness
+#: tiers that install it (`full`, and `lean` when a focused seat should get it).
+#: The harness-to-tier map itself lives in `schemas/harness-installation.json`,
+#: not in this descriptor: a tier is a property of the seat, and repeating the
+#: client list in every package is how the two copies drift. Absence of
+#: `installation` is "no tier declared", which the installer treats as outside
+#: the lean default. It is not a silent full-and-lean default.
+SCHEMA_VERSION = "5"
 
 #: Package roots live under this directory. Enforced rather than assumed: the
 #: descriptor is the input that decides which tree a synchronization overwrites
@@ -110,7 +118,22 @@ DERIVATION_FIELDS = ("source", "custody")
 #: Every key the top level may carry. Closed, like every other object here: an
 #: unknown key is a typo, and a typo in a descriptor is a setting that silently
 #: did not take effect.
-TOP_LEVEL_FIELDS = REQUIRED_TOP_LEVEL + DERIVATION_FIELDS + ("package_manifest", "provenance")
+TOP_LEVEL_FIELDS = REQUIRED_TOP_LEVEL + DERIVATION_FIELDS + (
+    "package_manifest",
+    "provenance",
+    "installation",
+)
+
+#: Closed names a package may list under `installation.tiers`. `full` is the
+#: whole active catalog. `lean` is the focused seat (reviews, plan, investigate
+#: on the clients the harness map assigns to that tier).
+INSTALLATION_TIER_NAMES = ("full", "lean")
+
+INSTALLATION_FIELDS = ("tiers",)
+
+#: The declarative harness map. Client names live here, not as a second list
+#: inside `scripts/install_client.py`.
+HARNESS_INSTALLATION_FILE = Path("schemas") / "harness-installation.json"
 
 REQUIRED_SOURCE_FIELDS = ("repository", "package_path")
 
@@ -404,6 +427,7 @@ class PortConfig:
         "assessment",
         "notes",
         "dropped_reason",
+        "installation_tiers",
         "root",
         "path",
     )
@@ -419,6 +443,7 @@ class PortConfig:
         assessment: AssessmentConfig,
         notes: tuple[str, ...],
         dropped_reason: str,
+        installation_tiers: tuple[str, ...],
         root: Path,
         path: Path,
     ) -> None:
@@ -430,6 +455,7 @@ class PortConfig:
         self.assessment = assessment
         self.notes = notes
         self.dropped_reason = dropped_reason
+        self.installation_tiers = installation_tiers
         self.root = root
         self.path = path
 
@@ -562,6 +588,7 @@ def _authored(
     name: str,
     package_root: str,
     manifest: str,
+    installation_tiers: tuple[str, ...],
     root: Path,
     path: Path,
 ) -> PortConfig:
@@ -582,9 +609,47 @@ def _authored(
         assessment=_assessment_config(document, where),
         notes=_provenance_fields(document, where, drops_paths=False)[0],
         dropped_reason="",
+        installation_tiers=installation_tiers,
         root=root,
         path=path,
     )
+
+
+def _installation_tiers(document: dict[str, Any], where: str) -> tuple[str, ...]:
+    """`installation.tiers`, or empty when the descriptor does not declare one.
+
+    Empty is not the lean tier. The installer treats an undeclared package as
+    outside the lean default, and a missing descriptor file (no call here) as
+    not tier-filtered at all, so a fixture catalog keeps installing what it has.
+    """
+    if "installation" not in document:
+        return ()
+    raw = document["installation"]
+    _require(isinstance(raw, dict), f"{where}.installation must be an object")
+    assert isinstance(raw, dict)
+    _closed(raw, INSTALLATION_FIELDS, f"{where}.installation")
+    tiers = raw.get("tiers")
+    _require(
+        isinstance(tiers, list) and bool(tiers),
+        f"{where}.installation.tiers must be a non-empty list",
+    )
+    assert isinstance(tiers, list)
+    _require(
+        len(tiers) == len(set(tiers)),
+        f"{where}.installation.tiers repeats a tier",
+    )
+    for tier in tiers:
+        _require(
+            isinstance(tier, str) and tier in INSTALLATION_TIER_NAMES,
+            f"{where}.installation.tiers has {tier!r}; the tiers are "
+            + ", ".join(INSTALLATION_TIER_NAMES),
+        )
+    _require(
+        "full" in tiers,
+        f"{where}.installation.tiers must include 'full'; the full tier is the "
+        "whole active catalog and a package cannot leave it by omission",
+    )
+    return tuple(tiers)
 
 
 def parse(document: object, *, root: Path, path: Path) -> PortConfig:
@@ -670,6 +735,7 @@ def parse(document: object, *, root: Path, path: Path) -> PortConfig:
             name=name,
             package_root=package_root,
             manifest=manifest,
+            installation_tiers=_installation_tiers(document, where),
             root=root,
             path=path,
         )
@@ -778,6 +844,7 @@ def parse(document: object, *, root: Path, path: Path) -> PortConfig:
         assessment=assessment,
         notes=notes,
         dropped_reason=dropped_reason,
+        installation_tiers=_installation_tiers(document, where),
         root=root,
         path=path,
     )
@@ -828,3 +895,76 @@ def load_all(root: Path | None = None) -> list[PortConfig]:
     """Every descriptor, validated. Raises on the first one that is not."""
     resolved = root or repository_root()
     return [load(name, resolved) for name in available(resolved)]
+
+
+def package_installation_tiers(root: Path, name: str) -> tuple[str, ...] | None:
+    """Tiers declared for `name`, or None when this catalog has no descriptor.
+
+    None is the fixture case: a catalog with no `ports/<name>.json` is not
+    tier-filtered. A descriptor that omits `installation` returns an empty
+    tuple, which is outside the lean tier.
+    """
+    if not descriptor_path(name, root).is_file():
+        return None
+    return load(name, root).installation_tiers
+
+
+def load_harness_installation(root: Path | None = None) -> dict[str, Any]:
+    """The harness-to-tier map, validated.
+
+    This file is the only client list. `scripts/install_client.py` reads it
+    instead of compiling the seats into a second constant.
+    """
+    resolved = root or repository_root()
+    path = resolved / HARNESS_INSTALLATION_FILE
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise PortConfigError(f"{path}: harness installation map is unreadable: {error}") from error
+    _require(isinstance(document, dict), f"{path.name}: harness installation map must be an object")
+    assert isinstance(document, dict)
+    _require(
+        document.get("schema_version") == "1",
+        f"{path.name}: schema_version must be '1'",
+    )
+    tiers = document.get("tiers")
+    _require(isinstance(tiers, dict), f"{path.name}: tiers must be an object")
+    assert isinstance(tiers, dict)
+    _require(
+        set(tiers) == set(INSTALLATION_TIER_NAMES),
+        f"{path.name}: tiers must be exactly {', '.join(INSTALLATION_TIER_NAMES)}",
+    )
+    seen: list[str] = []
+    for tier in INSTALLATION_TIER_NAMES:
+        body = tiers[tier]
+        _require(isinstance(body, dict), f"{path.name}: tiers.{tier} must be an object")
+        assert isinstance(body, dict)
+        _closed(body, ("clients",), f"{path.name}:tiers.{tier}")
+        clients = body.get("clients")
+        _require(
+            isinstance(clients, list) and bool(clients),
+            f"{path.name}: tiers.{tier}.clients must be a non-empty list",
+        )
+        assert isinstance(clients, list)
+        for client in clients:
+            _require(
+                isinstance(client, str) and client.strip() != "",
+                f"{path.name}: tiers.{tier}.clients has a blank name",
+            )
+        _require(
+            len(clients) == len(set(clients)),
+            f"{path.name}: tiers.{tier}.clients repeats a client",
+        )
+        seen.extend(clients)
+    _require(len(seen) == len(set(seen)), f"{path.name}: a client is listed in both tiers")
+    retired = document.get("retired_clients")
+    _require(isinstance(retired, dict) and bool(retired), f"{path.name}: retired_clients must be an object")
+    assert isinstance(retired, dict)
+    for name, message in retired.items():
+        _require(isinstance(name, str) and name.strip() != "", f"{path.name}: retired client name is blank")
+        _require(name not in seen, f"{path.name}: {name} is both active and retired")
+        _require(
+            isinstance(message, str) and "retired" in message.lower(),
+            f"{path.name}: retired message for {name} must say that the target is retired",
+        )
+    return document

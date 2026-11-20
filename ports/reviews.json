@@ -1,8 +1,14 @@
 {
-  "schema_version": "4",
+  "schema_version": "5",
   "package": "reviews",
   "package_root": "plugins/reviews",
   "package_manifest": "plugin.json",
+  "installation": {
+    "tiers": [
+      "full",
+      "lean"
+    ]
+  },
   "assessment": {
     "credential_prefixes": [
       "GH_",

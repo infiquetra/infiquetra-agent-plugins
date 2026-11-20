@@ -1,0 +1,45 @@
+# Cycle-33 mutation proof - eight-client roster and retired assessment clients
+# Cycle 32 is the preceding proof:
+# [Cycle 32](2026-11-19-cycle32-mutation-proof-harness-tiers.txt).
+# Cycle 33 re-grades the guards changed by the repair of issue #334.
+# scripts/check_compatibility_matrix.py holds a record assessed on or after
+# 2026-10-17, and a record with no usable assessed_on, to the eight current
+# clients. scripts/assess_clients.py rejects --client qwen and --client gemini
+# before a dry-run plan is printed. The other three graded files are unchanged
+# and their cycle-32 digests are carried. Older guards inside the two changed
+# files were not re-mutated.
+#
+# Runner: one unique exact replacement per mutation, then the pristine file is restored.
+# PYTHONDONTWRITEBYTECODE=1. A kill requires an actual test failure. The binding test
+# is not part of this command. Scratch fixtures only.
+#
+Test command: python3 -m unittest tests.test_check_compatibility_matrix.CoverageTest.test_a_fresh_eight_client_record_passes_schema_and_coverage tests.test_check_compatibility_matrix.CoverageTest.test_the_roster_is_chosen_by_the_assessment_date tests.test_assess_clients.CommandLineTest.test_qwen_and_gemini_are_rejected_on_a_dry_run
+Baseline: 3 tests, OK
+
+## 2 mutations
+
+## MUTATION 1: A record assessed on or after 2026-10-17 keeps the nine-client roster
+File: scripts/check_compatibility_matrix.py
+Replace: the final 'return CURRENT_ASSESSMENT_CLIENTS' in required_clients
+With: 'return CANONICAL_CLIENTS'
+Killed by: tests.test_check_compatibility_matrix.CoverageTest.test_a_fresh_eight_client_record_passes_schema_and_coverage
+FAILED (failures=2)
+
+## MUTATION 2: A dry-run accepts a retired assessment client
+File: scripts/assess_clients.py
+Replace: the retired-client rejection at the start of main
+With: ''
+Killed by: tests.test_assess_clients.CommandLineTest.test_qwen_and_gemini_are_rejected_on_a_dry_run
+FAILED (failures=2)
+
+Restored baseline: 2 tests, OK
+Mutations: 2; killed: 2; survivors: 0
+
+## RESTORED
+scripts/check_compatibility_matrix.py sha256: 6ecb965db77a89c3c7e7f1029326c665d18b0d69549a901299289ef8e2993389
+scripts/assess_clients.py sha256: 703d0bc6333de7db888b6b05d1db03fdf7ab2493c280b09dcf656019e0eab79b
+# Carried unchanged from Cycle 32, not re-graded:
+scripts/port_config.py sha256: 91e90a69894f5e1edb2be95efa21f60917d1b4be3360a6040ddc469b53911691
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+scripts/check_repo.py sha256: 9722fca738f59ef224e8cd7bd92e03d3851bca62405aacc6d34f0723af6e9b1d
+byte-identical to pristine: YES
