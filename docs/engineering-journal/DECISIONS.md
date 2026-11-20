@@ -37,6 +37,24 @@ home directory.
 **Revisit when.** A lean harness gains a per-package install flag, or a retired
 package comes back into the installable catalog.
 
+### An assessment from 2026-10-17 covers eight clients
+
+**Decision.** Qwen left the assessment roster on 2026-10-17. A compatibility
+matrix assessed on or after that date, and a record with no usable
+`assessed_on`, covers the eight current clients and omits Qwen and Gemini CLI.
+A record dated from 2026-10-04 through 2026-10-16 still covers nine clients,
+including Qwen. A record dated before 2026-10-04 still covers ten, including
+Gemini CLI. `--client qwen` and `--client gemini` on `scripts/assess_clients.py`
+exit non-zero, including a dry run. `--prune-retired` follows the live symlink
+and a verified legacy git origin; a path that only borrows the legacy directory
+name is not ownership. Cycle 33 of the mutation proof re-grades the
+eight-client date window and the retired-client rejection.
+
+**Rationale.** The schema's nine-row minimum rejected a current assessment, and
+the pruner treated a stale sidecar or a lookalike directory name as custody.
+
+**Revisit when.** Another harness leaves the assessment roster.
+
 ### Retire the saga-family catalog
 
 **Decision.** [Issue #332](https://github.com/infiquetra/infiquetra-agent-plugins/issues/332)

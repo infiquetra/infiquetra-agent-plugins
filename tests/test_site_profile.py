@@ -1101,7 +1101,14 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 32. Cycle 31 remains the proof of the bytes
+        The document is cycle 33. Cycle 32 remains the proof of the bytes
+        before the repair of issue #334 held a record assessed on or after
+        2026-10-17 to eight clients and made ``assess_clients`` reject a
+        retired client before printing a dry-run plan. Cycle 33 re-grades
+        those two guards (two mutations, two killed) and carries the other
+        three digests.
+
+        Cycle 32's account follows. Cycle 31 remains the proof of the bytes
         before issue #334 added installation tiers, dropped Qwen from the
         current assessment inventory, and removed the Qwen assessment plan.
         Cycle 32 re-grades those guards (ten mutations, ten killed) and carries
@@ -1194,7 +1201,7 @@ class MutationProofBindingTest(unittest.TestCase):
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-11-19-cycle32-mutation-proof-harness-tiers.txt"
+            "2026-11-19-cycle33-mutation-proof-eight-client-roster.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:

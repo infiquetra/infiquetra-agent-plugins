@@ -1982,6 +1982,26 @@ class CommandLineTest(unittest.TestCase):
                 self.assertIn(name, completed.stdout)
         self.assertNotIn("Gemini CLI", completed.stdout)
 
+    def test_qwen_and_gemini_are_rejected_on_a_dry_run(self) -> None:
+        for client in ("qwen", "gemini"):
+            with self.subTest(client=client):
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(ROOT / "scripts" / "assess_clients.py"),
+                        "--package",
+                        "unifi",
+                        "--client",
+                        client,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                self.assertEqual(completed.returncode, 2, completed.stdout)
+                self.assertIn("retired", completed.stderr)
+                self.assertNotIn("Nothing below has run", completed.stdout)
+
     def test_an_unported_package_is_refused(self) -> None:
         completed = subprocess.run(
             [

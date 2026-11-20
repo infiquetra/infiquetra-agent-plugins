@@ -114,7 +114,11 @@ on earlier records.
 `voice`, `redis-channel`) and the fifteen former `plugins/saga/skills/`
 symlinks. A placement is removed only when its recorded source is this catalog
 or `infiquetra/infiquetra-claude-plugins`, or when a symlink target resolves
-into this checkout's retired tree, including a dangling link. Sidecar entries
+into this checkout's retired tree, including a dangling link. The live symlink
+wins over a stale sidecar: a link the operator has retargeted outside that
+ownership is left in place. A directory named `infiquetra-claude-plugins` is
+the legacy repository only when its git origin is that repository, or when no
+git checkout encloses it and the path continues `plugins/<name>`. Sidecar entries
 in `~/.config/opencode/.infiquetra-plugins.json` and
 `~/.hermes/.infiquetra-skills.json` follow the same rule. Foreign and
 unsourced entries stay. The default is a dry-run. Pass `--execute` to unlink.

@@ -1963,8 +1963,33 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: CLI names that are no longer assessed. Display names and the short ids both
+#: count, so ``--client qwen`` and ``--client Qwen`` fail the same way.
+RETIRED_ASSESSMENT_CLIENTS = {
+    "qwen": "qwen is a retired client target (retired 2026-10-17 in favor of claude-qwen)",
+    "gemini": (
+        "gemini is a retired client target (retired when agy replaced Gemini CLI on 2026-10-04)"
+    ),
+}
+
+
+def retired_client_message(name: str) -> str | None:
+    """The rejection text for a retired assessment client, or None when it is current."""
+    token = name.strip()
+    key = token.lower()
+    if key in RETIRED_ASSESSMENT_CLIENTS or token == "Gemini CLI":
+        return RETIRED_ASSESSMENT_CLIENTS["gemini" if "gemini" in key else key]
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = build_argument_parser().parse_args(argv)
+    retired = [retired_client_message(name) for name in arguments.client]
+    retired = [message for message in retired if message]
+    if retired:
+        for message in retired:
+            print(f"ERROR: {message}", file=sys.stderr)
+        return 2
     try:
         config = port_config.load(arguments.package)
     except PortConfigError as error:

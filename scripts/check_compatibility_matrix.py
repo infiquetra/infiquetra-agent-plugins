@@ -135,13 +135,15 @@ FINGERPRINT_EXCLUDED_NAMES = frozenset({".DS_Store"})
 #: roster in force is the coverage assertion; a count is not, because a renamed
 #: or substituted client keeps the count intact while losing the coverage.
 #:
-#: There are two rosters because the machine changed. Agy replaced Gemini CLI,
+#: There are three rosters because the machine changed. Agy replaced Gemini CLI,
 #: so assessments made from 2026-10-04 cover nine clients, while records made
 #: earlier honestly assessed ten and stay valid against the roster in force
-#: when they were made. Which roster a record answers to is read from its own
-#: required ``assessed_on`` date (see ``required_clients``). An earlier record
-#: stops being current when its package's version moves, which forces a fresh
-#: nine-client record, so the older roster retires on its own.
+#: when they were made. Qwen was retired on 2026-10-17, so a record from that
+#: day on covers eight clients and omits Qwen. Which roster a record answers to
+#: is read from its own required ``assessed_on`` date (see ``required_clients``).
+#: A record with no usable date is held to the eight-client roster. An earlier
+#: record stops being current when its package's version moves, which forces a
+#: fresh eight-client record, so the older rosters retire on their own.
 CANONICAL_CLIENTS = (
     "Claude Code",
     "OpenAI Codex",
@@ -167,6 +169,8 @@ ASSESSMENT_CLIENT_NAMES = {
     "hermes": "Hermes",
 }
 EXPECTED_ASSESSMENT_CLIENTS = tuple(ASSESSMENT_CLIENT_NAMES)
+#: Display names of the roster assessed from 2026-10-17. Qwen and Gemini CLI are absent.
+CURRENT_ASSESSMENT_CLIENTS = tuple(ASSESSMENT_CLIENT_NAMES.values())
 CLIENT_ASSESSMENT_PATH = ROOT / "docs/compatibility/client-assessment.json"
 
 
@@ -224,18 +228,25 @@ CANONICAL_CLIENTS_BEFORE_2026_10_04 = (
 
 #: The first ``assessed_on`` date checked against ``CANONICAL_CLIENTS``.
 NINE_CLIENT_ROSTER_FROM = "2026-10-04"
+#: The first ``assessed_on`` date checked against ``CURRENT_ASSESSMENT_CLIENTS``.
+EIGHT_CLIENT_ROSTER_FROM = "2026-10-17"
 
 
 def required_clients(record: dict[str, Any]) -> tuple[str, ...]:
     """The client roster a record must cover, chosen by its own assessment date.
 
     ISO-8601 dates compare correctly as strings. A record with no usable date
-    is held to the current roster; the schema already fails the missing date.
+    is held to the current eight-client roster; the schema already fails a
+    missing date on a published matrix.
     """
     assessed_on = record.get("assessed_on")
-    if isinstance(assessed_on, str) and assessed_on < NINE_CLIENT_ROSTER_FROM:
+    if not isinstance(assessed_on, str) or not assessed_on:
+        return CURRENT_ASSESSMENT_CLIENTS
+    if assessed_on < NINE_CLIENT_ROSTER_FROM:
         return CANONICAL_CLIENTS_BEFORE_2026_10_04
-    return CANONICAL_CLIENTS
+    if assessed_on < EIGHT_CLIENT_ROSTER_FROM:
+        return CANONICAL_CLIENTS
+    return CURRENT_ASSESSMENT_CLIENTS
 
 
 STAGES = ("placement", "discovery", "load", "invocation")

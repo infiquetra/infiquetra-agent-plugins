@@ -515,14 +515,104 @@ def is_dedicated_source(value: str) -> bool:
     return any(part in DEDICATED_REPOS for part in Path(value).parts)
 
 
+def _git_config_origin(config: Path) -> str | None:
+    """The ``origin`` URL in a git config, or None when that remote is absent."""
+    if not config.is_file():
+        return None
+    in_origin = False
+    for raw in config.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if line.startswith("[") and line.endswith("]"):
+            in_origin = line == '[remote "origin"]'
+            continue
+        if in_origin and line.startswith("url") and "=" in line:
+            return line.split("=", 1)[1].strip()
+    return None
+
+
+def _enclosing_git(path: Path) -> tuple[Path, str] | None:
+    """``(checkout root, origin slug)`` for the nearest git checkout around ``path``.
+
+    A checkout with no GitHub origin yields an empty slug. No enclosing checkout
+    yields None. A worktree ``.git`` file is followed to its gitdir.
+    """
+    for candidate in (path, *path.parents):
+        git = candidate / ".git"
+        if not git.exists() and not git.is_symlink():
+            continue
+        config: Path | None = None
+        if git.is_file():
+            text = git.read_text(encoding="utf-8", errors="replace")
+            marker, _, gitdir = text.partition(":")
+            if marker.strip() != "gitdir":
+                return candidate, ""
+            resolved = Path(gitdir.strip())
+            if not resolved.is_absolute():
+                resolved = (candidate / resolved).resolve()
+            config = resolved / "config"
+        elif git.is_dir():
+            config = git / "config"
+        slug = github_repo(_git_config_origin(config) or "") if config is not None else None
+        return candidate, slug or ""
+    return None
+
+
+def _structural_legacy_path(path: Path) -> bool:
+    """A path that uses the legacy repository's own layout under its directory name.
+
+    The directory name alone, followed by an arbitrary suffix, is not ownership.
+    The accepted suffixes are the checkout root, ``plugins/<name>``, and
+    ``skills/<name>``. A git checkout with a different origin is rejected before
+    this fallback runs.
+    """
+    parts = path.parts
+    if LEGACY_DIR not in parts:
+        return False
+    rest = parts[parts.index(LEGACY_DIR) + 1 :]
+    if not rest:
+        return True
+    if rest[0] not in {"plugins", "skills"} or len(rest) < 2:
+        return False
+    name = rest[1]
+    return name not in {"", ".", ".."} and name == Path(name).name
+
+
 def is_legacy_source(value: str) -> bool:
-    """True only when the value records infiquetra-claude-plugins, and not a dedicated repo."""
+    """True only for the legacy Claude plugins repository, not a lookalike path.
+
+    A GitHub URL must be that repository. A filesystem path must sit inside a
+    checkout whose ``origin`` is that repository, or, when no git checkout
+    encloses it, must use the ``infiquetra-claude-plugins/plugins/<name>``
+    layout. A foreign checkout whose directory happens to be named
+    ``infiquetra-claude-plugins`` is not this repository.
+    """
     if not value or is_dedicated_source(value):
         return False
     slug = github_repo(value)
     if slug == LEGACY_SLUG:
         return True
-    return LEGACY_DIR in Path(value).parts
+    if slug is not None:
+        return False
+    raw = Path(value)
+    if not raw.is_absolute():
+        return False
+    try:
+        resolved = raw.resolve(strict=False)
+    except OSError:
+        return False
+    enclosed = _enclosing_git(resolved)
+    if enclosed is not None:
+        root, origin = enclosed
+        if origin != LEGACY_SLUG:
+            return False
+        try:
+            relative = resolved.relative_to(root)
+        except ValueError:
+            return False
+        return relative == Path(".") or (
+            len(relative.parts) >= 2 and relative.parts[0] in {"plugins", "skills"}
+        )
+    return _structural_legacy_path(resolved)
 
 
 def is_catalog_url(value: str) -> bool:
@@ -2827,6 +2917,19 @@ def _resolved_path(value: str, base: Path | None = None) -> Path | None:
         return None
 
 
+def _retired_relative(parts: tuple[str, ...]) -> bool:
+    """True when ``parts`` is a retired package tree or a former saga skill."""
+    if len(parts) >= 2 and parts[0] == "plugins" and parts[1] in RETIRED_PACKAGES:
+        return True
+    if (
+        len(parts) >= 4
+        and parts[:3] == ("plugins", "saga", "skills")
+        and parts[3] in SAGA_SKILL_NAMES
+    ):
+        return True
+    return len(parts) >= 2 and parts[0] == "skills" and parts[1] in SAGA_SKILL_NAMES
+
+
 def _retired_catalog_path(path: Path, catalog: Path) -> bool:
     """True when `path` lands in a retired package tree inside this checkout.
 
@@ -2838,14 +2941,32 @@ def _retired_catalog_path(path: Path, catalog: Path) -> bool:
         relative = path.resolve(strict=False).relative_to(catalog.resolve())
     except (OSError, ValueError):
         return False
-    parts = relative.parts
-    if len(parts) >= 2 and parts[0] == "plugins" and parts[1] in RETIRED_PACKAGES:
-        return True
-    return (
-        len(parts) >= 4
-        and parts[:3] == ("plugins", "saga", "skills")
-        and parts[3] in SAGA_SKILL_NAMES
-    )
+    return _retired_relative(relative.parts)
+
+
+def _retired_legacy_path(path: Path) -> bool:
+    """True when `path` is a retired plugin inside the legacy Claude plugins repo."""
+    if not is_legacy_source(str(path)):
+        return False
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError:
+        return False
+    enclosed = _enclosing_git(resolved)
+    if enclosed is not None and enclosed[1] == LEGACY_SLUG:
+        try:
+            return _retired_relative(resolved.relative_to(enclosed[0]).parts)
+        except ValueError:
+            return False
+    parts = resolved.parts
+    if LEGACY_DIR not in parts:
+        return False
+    return _retired_relative(parts[parts.index(LEGACY_DIR) + 1 :])
+
+
+def _retired_owned_target(path: Path, catalog: Path) -> bool:
+    """True when a live symlink target is a retired catalog or legacy-repo path."""
+    return _retired_catalog_path(path, catalog) or _retired_legacy_path(path)
 
 
 def _symlink_target(link: Path) -> Path | None:
@@ -2878,14 +2999,38 @@ def plan_prune_skill_tree(
         target = item.get("target") if isinstance(item.get("target"), str) else ""
         link = item.get("link") if isinstance(item.get("link"), str) else ""
         base = Path(link).parent if link else None
-        resolved = _resolved_path(target, base)
-        if resolved is None or not _retired_catalog_path(resolved, catalog):
-            continue
+        recorded = _resolved_path(target, base)
+        recorded_owned = recorded is not None and _retired_owned_target(recorded, catalog)
         if link:
             dest = Path(link)
-            if dest.is_symlink() and direct_child(dest, skills_root):
-                actions.append(Action("remove", client, path=str(dest), target=str(skills_root)))
-            removed.add(str(dest))
+            if dest.is_symlink():
+                # The sidecar can still name a retired target after the operator
+                # retargets the symlink. The live target decides.
+                live = _symlink_target(dest)
+                if live is None or not _retired_owned_target(live, catalog):
+                    if recorded_owned:
+                        actions.append(
+                            Action(
+                                "skip",
+                                client,
+                                message=(
+                                    f"{dest} points outside catalog ownership; not unlinking"
+                                ),
+                            )
+                        )
+                    continue
+                if direct_child(dest, skills_root):
+                    actions.append(
+                        Action("remove", client, path=str(dest), target=str(skills_root))
+                    )
+                removed.add(str(dest))
+                actions.append(
+                    Action(
+                        "drop-link", client, path=str(manifest_path), message=link, schema=schema
+                    )
+                )
+                continue
+        if recorded_owned and link:
             actions.append(
                 Action("drop-link", client, path=str(manifest_path), message=link, schema=schema)
             )
@@ -2896,7 +3041,7 @@ def plan_prune_skill_tree(
             if not direct_child(child, skills_root):
                 continue
             resolved = _symlink_target(child)
-            if resolved is not None and _retired_catalog_path(resolved, catalog):
+            if resolved is not None and _retired_owned_target(resolved, catalog):
                 actions.append(Action("remove", client, path=str(child), target=str(skills_root)))
     return actions
 
@@ -2960,20 +3105,39 @@ def plan_prune_grok(
         entries = grok_entries(home)
     except InstallError as exc:
         return [Action("note", "grok", message=str(exc))]
-    actions: list[Action] = []
-    for _repo_id, source, names, _marketplace_name in entries:
-        if not _owned_source(source, catalog):
-            continue
-        for name in sorted(names):
+    by_name: dict[str, list[tuple[str, str, list[str], str]]] = {}
+    for entry in entries:
+        for name in entry[2]:
             if name in RETIRED_PACKAGES:
-                actions.append(
-                    command_action(
-                        "grok",
-                        ("plugin", "uninstall", name, "--confirm"),
-                        overrides,
-                        required=required,
-                    )
+                by_name.setdefault(name, []).append(entry)
+    actions: list[Action] = []
+    for name, owners in sorted(by_name.items()):
+        # ``grok plugin uninstall <name>`` resolves a bare name to whichever
+        # registry entry lists it first, so a foreign plugin of the same name
+        # would be the one removed. Skip the name entirely when any copy is
+        # unowned.
+        if any(not _owned_source(source, catalog) for _repo, source, _names, _market in owners):
+            actions.append(
+                Action(
+                    "skip",
+                    "grok",
+                    message=(
+                        f"{name} is installed from an unowned source; "
+                        "not uninstalling by bare name"
+                    ),
                 )
+            )
+            continue
+        if not any(_owned_source(source, catalog) for _repo, source, _names, _market in owners):
+            continue
+        actions.append(
+            command_action(
+                "grok",
+                ("plugin", "uninstall", name, "--confirm"),
+                overrides,
+                required=required,
+            )
+        )
     return actions
 
 
@@ -3000,16 +3164,73 @@ def plan_prune_agy(catalog: Path, home: Path) -> list[Action]:
 
 
 def plan_prune_muse_staging(catalog: Path) -> list[Action]:
+    """Remove retired bundles only when the staging marker names this catalog."""
     staging = catalog / sync_marketplace.MUSE_STAGING_DEFAULT
-    marker = staging / sync_marketplace.MUSE_STAGING_MARKER
     plugins = staging / "plugins"
-    if not marker.is_file() or not plugins.is_dir():
+    if not plugins.is_dir():
         return []
+    try:
+        owned = sync_marketplace.muse_staging_ownership(catalog, staging)
+    except sync_marketplace.MarketplaceError as exc:
+        return [
+            Action(
+                "note",
+                "muse",
+                message=f"staging is not catalog-owned; not removing bundles ({exc})",
+            )
+        ]
     actions: list[Action] = []
     for name in RETIRED_PACKAGES:
+        if name not in owned:
+            continue
         directory = plugins / name
         if (directory.exists() or directory.is_symlink()) and direct_child(directory, plugins):
             actions.append(Action("remove", "muse", path=str(directory), target=str(plugins)))
+    return actions
+
+
+def plan_prune_muse_installations(
+    catalog: Path,
+    home: Path,
+    overrides: dict[str, str],
+    *,
+    required: bool,
+) -> list[Action]:
+    """Uninstall retired Muse plugins whose marketplace source is owned.
+
+    A marketplace registered from this catalog keeps its registration, because
+    that same marketplace still hosts the active packages. A marketplace whose
+    source is the legacy repository is removed after its retired plugins are
+    uninstalled. A foreign marketplace is left alone, including a retired name
+    installed from it.
+    """
+    try:
+        entries = muse_registrations(home)
+    except (InstallError, muse_cli.MuseCLIError) as exc:
+        return [Action("note", "muse", message=str(exc))]
+    actions: list[Action] = []
+    for alias, entry in sorted(entries.items()):
+        source = muse_cli.registration_source(entry)
+        if not _owned_source(source, catalog):
+            continue
+        for name in RETIRED_PACKAGES:
+            actions.append(
+                command_action(
+                    "muse",
+                    ("plugins", "uninstall", f"{name}@{alias}", "--scope", "user"),
+                    overrides,
+                    required=required,
+                )
+            )
+        if is_legacy_source(source) and not is_catalog_source(source, catalog):
+            actions.append(
+                command_action(
+                    "muse",
+                    ("plugins", "marketplace", "remove", alias),
+                    overrides,
+                    required=required,
+                )
+            )
     return actions
 
 
@@ -3066,8 +3287,10 @@ def plan_prune_client(
         return plan_prune_agy(catalog, home)
     if client == "muse":
         skills, manifest, schema = skill_destinations("muse", home)
-        return plan_prune_muse_staging(catalog) + plan_prune_skill_tree(
-            "muse", skills, manifest, schema, catalog
+        return (
+            plan_prune_muse_staging(catalog)
+            + plan_prune_muse_installations(catalog, home, overrides, required=required)
+            + plan_prune_skill_tree("muse", skills, manifest, schema, catalog)
         )
     raise InstallError(f"unknown client {client}")  # pragma: no cover
 

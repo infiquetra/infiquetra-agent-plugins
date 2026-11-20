@@ -44,6 +44,41 @@ def write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _private(path: Path) -> None:
+    """Staging custody refuses a path group or others can write."""
+    path.chmod(0o755 if path.is_dir() else 0o644)
+
+
+def _write_owned_muse_staging(staging: Path, catalog: Path, packages: list[str]) -> None:
+    """A Muse projection whose marker and marketplace both name this catalog."""
+    plugins = staging / "plugins"
+    manifest_dir = staging / ".claude-plugin"
+    plugins.mkdir(parents=True, exist_ok=True)
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    write_json(
+        manifest_dir / "marketplace.json",
+        {"plugins": [{"name": name, "source": f"./plugins/{name}"} for name in packages]},
+    )
+    write_json(
+        staging / ".infiquetra-muse-staging",
+        {"version": 1, "catalog": str(catalog.resolve()), "packages": packages},
+    )
+    for path in (
+        staging,
+        plugins,
+        manifest_dir,
+        staging / ".infiquetra-muse-staging",
+        manifest_dir / "marketplace.json",
+    ):
+        _private(path)
+
+
+def _write_git_origin(root: Path, url: str) -> None:
+    git = root / ".git"
+    git.mkdir(parents=True)
+    (git / "config").write_text(f'[remote "origin"]\n\turl = {url}\n', encoding="utf-8")
+
+
 class InstallFixture(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
@@ -2360,7 +2395,7 @@ class HarnessTierTest(InstallFixture):
         (staging / "plugins" / "saga").mkdir(parents=True)
         (staging / "plugins" / "reviews").mkdir()
         (staging / "plugins" / "reviews" / "keep").write_text("keep\n", encoding="utf-8")
-        (staging / ".infiquetra-muse-staging").write_text("{}\n", encoding="utf-8")
+        _write_owned_muse_staging(staging, self.catalog, ["saga", "reviews"])
 
         code, out, err = self.invoke("--client", "all", "--prune-retired")
         self.assertEqual(code, 0, err)
@@ -2392,3 +2427,129 @@ class HarnessTierTest(InstallFixture):
         )
         self.assertNotIn("voice", agy["packages"])
         self.assertIn("house-style", agy["packages"])
+
+    def test_prune_does_not_unlink_a_symlink_repointed_from_a_stale_sidecar(self) -> None:
+        skills = self.home / ".config" / "opencode" / "skills"
+        skills.mkdir(parents=True)
+        foreign = self.base / "foreign-skill"
+        foreign.mkdir()
+        (foreign / "SKILL.md").write_text("foreign\n", encoding="utf-8")
+        link = skills / "work"
+        link.symlink_to(foreign)
+        recorded = self.catalog / "plugins" / "saga" / "skills" / "work"
+        write_json(
+            self.home / ".config/opencode/.infiquetra-plugins.json",
+            {
+                "schema": installer.OPENCODE_SCHEMA,
+                "links": [{"target": str(recorded), "link": str(link)}],
+            },
+        )
+        code, out, err = self.invoke("--client", "opencode", "--prune-retired")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(link.is_symlink())
+        self.assertIn("points outside catalog ownership", out)
+        self.assertNotIn(f"opencode: remove: {link}", out)
+        code, out, err = self.invoke("--client", "opencode", "--prune-retired", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), foreign.resolve())
+        self.assertEqual((foreign / "SKILL.md").read_text(), "foreign\n")
+
+    def test_foreign_legacy_basename_is_rejected_and_real_legacy_skills_are_pruned(self) -> None:
+        skills = self.home / ".hermes" / "skills"
+        skills.mkdir(parents=True)
+        foreign_root = self.base / "mirror" / "infiquetra-claude-plugins"
+        foreign_skill = foreign_root / "plugins" / "saga" / "skills" / "qa"
+        foreign_skill.mkdir(parents=True)
+        _write_git_origin(foreign_root, "https://github.com/example/other.git")
+        foreign_link = skills / "qa"
+        foreign_link.symlink_to(foreign_skill)
+        legacy_root = self.base / "legacy-checkout"
+        legacy_skill = legacy_root / "plugins" / "saga" / "skills" / "work"
+        legacy_skill.mkdir(parents=True)
+        _write_git_origin(legacy_root, "https://github.com/infiquetra/infiquetra-claude-plugins.git")
+        legacy_link = skills / "work"
+        legacy_link.symlink_to(legacy_skill)
+        self.assertFalse(installer.is_legacy_source(str(foreign_skill)))
+        self.assertTrue(installer.is_legacy_source(str(legacy_skill)))
+        code, out, err = self.invoke("--client", "hermes", "--prune-retired", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(foreign_link.is_symlink())
+        self.assertFalse(legacy_link.exists())
+        self.assertIn(str(legacy_link), out)
+        self.assertNotIn(f"hermes: remove: {foreign_link}", out)
+
+    def test_grok_does_not_uninstall_a_foreign_plugin_that_reuses_a_retired_name(self) -> None:
+        foreign_root = self.base / "grok-foreign" / "infiquetra-claude-plugins"
+        foreign_root.mkdir(parents=True)
+        _write_git_origin(foreign_root, "https://github.com/example/other.git")
+        write_json(
+            self.home / ".grok/installed-plugins/registry.json",
+            {
+                "repos": {
+                    "owned": {
+                        "kind": {"source_path": str(self.catalog.resolve())},
+                        "plugins": {"voice": {}, "saga": {}},
+                    },
+                    "foreign": {
+                        "marketplace": {
+                            "source_url_or_path": str(foreign_root / "plugins" / "saga")
+                        },
+                        "plugins": {"saga": {}},
+                    },
+                },
+            },
+        )
+        code, out, err = self.invoke("--client", "grok", "--prune-retired", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertIn("plugin uninstall voice", out)
+        self.assertNotIn("plugin uninstall saga", out)
+        self.assertIn("saga is installed from an unowned source", out)
+
+    def test_muse_prune_keeps_unowned_bundles_and_cleans_owned_installations(self) -> None:
+        staging = self.catalog / "build" / "muse-marketplace"
+        kept = staging / "plugins" / "saga" / "keep"
+        kept.parent.mkdir(parents=True)
+        kept.write_text("foreign\n", encoding="utf-8")
+        (staging / "plugins" / "reviews").mkdir()
+        write_json(
+            staging / ".infiquetra-muse-staging",
+            {"version": 1, "catalog": str((self.base / "other-catalog").resolve()), "packages": ["saga"]},
+        )
+        _private(staging)
+        _private(staging / "plugins")
+        _private(staging / ".infiquetra-muse-staging")
+        code, out, err = self.invoke("--client", "muse", "--prune-retired")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(kept.is_file())
+        self.assertIn("not catalog-owned", out)
+        self.assertNotIn(f"muse: remove: {kept.parent}", out)
+
+        _write_owned_muse_staging(staging, self.catalog, ["saga", "reviews"])
+        write_json(
+            self.home / muse_cli.MUSE_REGISTRY_RELATIVE,
+            {
+                "marketplaces": {
+                    muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS: {
+                        "source": {"path": str(staging.resolve())}
+                    },
+                    "old-claude": {
+                        "source": "https://github.com/infiquetra/infiquetra-claude-plugins.git"
+                    },
+                    "foreign": {"source": "https://github.com/example/other"},
+                }
+            },
+        )
+        code, out, err = self.invoke("--client", "muse", "--prune-retired", "--execute")
+        self.assertEqual(code, 0, err)
+        self.assertFalse((staging / "plugins" / "saga").exists())
+        self.assertTrue((staging / "plugins" / "reviews").is_dir())
+        self.assertIn(
+            f"plugins uninstall saga@{muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS}", out
+        )
+        self.assertIn("plugins uninstall saga@old-claude", out)
+        self.assertIn("marketplace remove old-claude", out)
+        self.assertNotIn("plugins uninstall saga@foreign", out)
+        self.assertNotIn(
+            f"marketplace remove {muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS}", out
+        )
