@@ -390,6 +390,57 @@ def test_offline_npm_audit_uses_local_snapshot_and_never_hits_registry(tmp_path:
     assert any(hit.row == "security.dependency-high" for hit in parsed.hits)
 
 
+def test_offline_repository_scan_of_node_project_only_in_subfolder_does_not_crash(
+    tmp_path: Path,
+) -> None:
+    """The scan base is an empty tree, so a project folder found in head is absent from it.
+
+    Before the fix the base scan ran git inside that missing folder and the row ended in the
+    vague "execution-error" instead of the honest advisory gap.
+    """
+    repo = tmp_path / "repo"
+    web = repo / "web"
+    web.mkdir(parents=True)
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "r6-offline@example.com")
+    _git(repo, "config", "user.name", "r6-offline")
+    (repo / "README.md").write_text("fixture\n", encoding="utf-8")
+    (web / "package.json").write_text(
+        json.dumps({"name": "demo", "version": "1.0.0", "dependencies": {"lodash": "4.17.21"}}),
+        encoding="utf-8",
+    )
+    (web / "package-lock.json").write_text(
+        json.dumps({
+            "name": "demo", "version": "1.0.0", "lockfileVersion": 3,
+            "packages": {
+                "": {"name": "demo", "version": "1.0.0"},
+                "node_modules/lodash": {"version": "4.17.21"},
+            },
+        }),
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "node project in a subfolder only")
+
+    home = tmp_path / "home"
+    home.mkdir()
+    output = tmp_path / "scan-out"
+    # A separate process: the scan's own module graph must not mix with the copies other
+    # tests in this session reload under the same names.
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPTS / "security_scan.py"), "--repo", str(repo),
+         "--output", str(output)],
+        capture_output=True, text=True, check=False, timeout=180,
+        env={**os.environ, "HOME": str(home)},
+    )
+    assert completed.returncode == 2, completed.stderr
+    summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+    row = next(item for item in summary["rows"] if item["id"] == "npm-audit")
+    assert row["status"] == "degraded"
+    assert "execution-error" not in row["reason"], row
+    assert "missing-advisory-snapshot" in row["reason"], row
+
+
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(repo), *args],

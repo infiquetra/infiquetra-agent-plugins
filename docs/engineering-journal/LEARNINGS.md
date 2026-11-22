@@ -1,5 +1,30 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-22
+
+### A repository scan compares against an empty base, so a project folder is always new there
+
+**Evidence.** `security_scan.py --repo <home-lab> --commit HEAD` ended the
+`npm-audit` row in `execution-error` although the only Node project, `forge/web`,
+is healthy. `plugins/reviews/tests/test_r6_245_offline_snapshots.py::test_offline_repository_scan_of_node_project_only_in_subfolder_does_not_crash`
+builds a repository whose only `package.json` and `package-lock.json` sit under
+`web/` and now ends with the advisory gap `missing-advisory-snapshot`.
+
+**Mechanism.** `security_scan._snapshot` builds the base commit from an empty
+tree. `review_tools._run_adapter` lists Node project folders from the head tree
+and runs the adapter once per folder, and `_base_and_head` then scanned
+`base_root/<folder>`. That folder does not exist in the empty base, so git was
+started with a missing working directory and raised `FileNotFoundError`, which
+the scan reports as the vague `execution-error`. `_base_and_head` now treats a
+project folder that is absent from the base checkout as a base with no
+findings that read no lockfile, and scans only the head. The same rule is right
+for a diff review, where a folder added by the change has no base findings. It
+is not npm-specific: every adapter that runs per project folder takes this path.
+
+**Generalizable rule.** When a scan derives its work list from the head tree,
+every path in that list must be checked for existence in the base before the
+base is scanned, because "new in head" is a normal state and not an error.
+
 ## 2026-11-20
 
 ### A staged rollout has to name every harness it is allowed to touch

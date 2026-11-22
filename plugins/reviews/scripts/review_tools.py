@@ -2292,23 +2292,29 @@ def _base_and_head(
             with _worktree(repo, base_sha) as base_root:
                 _strip_settings(base_root, only=_C4C_SETTINGS_NAMES)
                 _link_env(adapter, repo, base_root, base_sha, head_sha)
-                if context.project != ".":
-                    prefix = context.project + "/"
-                    scoped_adapter = replace(adapter,
-                        env_dirs=tuple(prefix + p for p in adapter.env_dirs),
-                        lockfiles=tuple(prefix + p for p in adapter.lockfiles))
-                    _link_env(scoped_adapter, repo, base_root, base_sha, head_sha)
-                # Use the same packet packages for base and head scans.
-                modules = context.root / "node_modules"
-                target = base_root / context.project
-                if modules.is_symlink() and target.is_dir():
-                    review_dependencies_node = _reviews_load('review_dependencies_node')
-                    review_dependencies_node.link_into(target, modules.resolve())
-                base_hits, base_digest, base_problem, base_ran = _scan_root(
-                    adapter, replace(context, repo=base_root, root=base_root / context.project, scan="base"),
-                    process, env,
-                    timeout, "base", degraded, items,
-                )
+                if context.project != "." and not (base_root / context.project).is_dir():
+                    # The project folder is new in head. A repository scan compares against an
+                    # empty base, so every folder is new there. Nothing existed to scan: the
+                    # base has no findings and read no lockfile, and only the head is scanned.
+                    base_hits, base_digest, base_problem, base_ran = (), "", None, False
+                else:
+                    if context.project != ".":
+                        prefix = context.project + "/"
+                        scoped_adapter = replace(adapter,
+                            env_dirs=tuple(prefix + p for p in adapter.env_dirs),
+                            lockfiles=tuple(prefix + p for p in adapter.lockfiles))
+                        _link_env(scoped_adapter, repo, base_root, base_sha, head_sha)
+                    # Use the same packet packages for base and head scans.
+                    modules = context.root / "node_modules"
+                    target = base_root / context.project
+                    if modules.is_symlink() and target.is_dir():
+                        review_dependencies_node = _reviews_load('review_dependencies_node')
+                        review_dependencies_node.link_into(target, modules.resolve())
+                    base_hits, base_digest, base_problem, base_ran = _scan_root(
+                        adapter, replace(context, repo=base_root, root=base_root / context.project, scan="base"),
+                        process, env,
+                        timeout, "base", degraded, items,
+                    )
         except ToolGap as exc:
             # The base tree declined. Head is still compared against no earlier findings,
             # except a missing snapshot: caching that empty result makes the next prepare,
