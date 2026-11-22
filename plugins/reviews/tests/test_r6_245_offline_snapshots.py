@@ -387,6 +387,52 @@ def test_offline_pip_audit_matches_a_hash_locked_pin_against_the_snapshot(
     }
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        pytest.param("pkg==1.0\t# pinned for a reason\n", id="tab-before-comment"),
+        pytest.param(
+            "pkg==1.0 --config-settings=editable_mode=compat\n", id="per-requirement-option",
+        ),
+        pytest.param(
+            f"pkg==1.0 \\\n    --hash={_HASH_A} \\\n", id="hash-locked-dangling-backslash",
+        ),
+    ],
+)
+def test_offline_pip_audit_diff_review_reads_pins_the_acceptance_rule_would_refuse(
+    tmp_path: Path, line: str
+) -> None:
+    # A diff review hands the evaluator every requirements file with no acceptance rule,
+    # and has no degraded row for a line it cannot read. pip installs each of these
+    # lines, and the older line-by-line reader reported them, so the evaluator must too.
+    adapter = _find_adapter(PY.ADAPTERS, "pip-audit")
+    home = tmp_path / "home"
+    _seed_advisory_snapshots(home)
+    folder = home / ".config" / "infiquetra" / "reviews" / "advisories" / "pip-audit"
+    (folder / "advisories.json").write_text(
+        json.dumps({
+            "advisories": [{"package": "pkg", "version": "1.0", "id": "PYSEC-2099-0009"}],
+        }),
+        encoding="utf-8",
+    )
+    ctx = _context(tmp_path / "scan", files={"requirements.txt": line}, home=home)
+    assert not ctx.repository_scan
+    argv = adapter.invoke(ctx)
+    completed = subprocess.run(argv, check=True, capture_output=True, text=True)
+    found = {
+        (dep["name"], dep["version"], vuln["id"])
+        for dep in json.loads(completed.stdout)["dependencies"]
+        for vuln in dep["vulns"]
+    }
+    assert found == {("pkg", "1.0", "PYSEC-2099-0009")}
+
+
+def test_offline_pip_audit_accepts_a_comment_after_a_tab(tmp_path: Path) -> None:
+    # pip ends a requirement at "#" after any whitespace, not only after a space.
+    root = _requirements_repo(tmp_path, "requests==2.31.0\t# pinned for a reason\n")
+    assert PY.pip_audit_scan_inputs(root) == (["requirements.txt"], [])
+
+
 def test_offline_uv_invocations_in_python_adapter_pass_offline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -52,6 +52,31 @@ apart.
 the tool's own parser on exactly the text the policy accepted, ideally from one
 shared definition, so "accepted" never means "accepted but read differently".
 
+### Tightening a shared reader also tightens every caller that has no gate
+
+**Evidence.** A review of the hash-locked change found that a diff review
+(`repository_scan=False`) hands the same `audit.py` evaluator every
+`requirements*.txt` with no acceptance rule and no degraded row. Three lines pip
+installs, `pkg==1.0<TAB># note`, `pkg==1.0 --config-settings=editable_mode=compat`
+and a hash-locked pin whose last `--hash` line ends in `\` at the end of the
+file, were reported by the evaluator on `origin/main` and silently dropped by the
+stricter one. `test_offline_pip_audit_diff_review_reads_pins_the_acceptance_rule_would_refuse`
+in `plugins/reviews/tests/test_r6_245_offline_snapshots.py` covers each line.
+
+**Mechanism.** The evaluator kept a pin only when the whole logical line passed
+`_exact_pin`, the acceptance rule's test. That is right for a repository scan,
+whose acceptance rule already refused such files and said so, but in a diff
+review the evaluator is the only reader. It now reads each file two ways: the
+older line-by-line `name==version` prefix match, and the logical exact pins,
+including the requirement a file ends on mid-continuation (`_logical_requirements`
+returns it as `tail` instead of a bare flag). The logical reading wins where both
+read the same name. Comments now follow pip's rule, `#` after any whitespace, so
+a tab before a comment no longer makes the repository scan refuse the file.
+
+**Generalizable rule.** When one reader serves both a gated path and an ungated
+path, a stricter reading belongs in the gate, not in the shared reader; check
+every caller for one that lacks the gate before tightening.
+
 ## 2026-11-20
 
 ### A staged rollout has to name every harness it is allowed to touch

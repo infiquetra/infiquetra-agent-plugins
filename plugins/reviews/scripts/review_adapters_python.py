@@ -708,17 +708,19 @@ def _parse_bandit(text: str) -> ParseResult:
 def _logical_requirements(text):
     """Requirement lines with comments dropped and backslash continuations joined.
 
-    Returns ``(lines, dangling)``. ``dangling`` is true when the text ends on a
-    continuation, so a file cannot hide a half-read requirement. This function is
-    self-contained: the offline pip-audit evaluator embeds its source, so the
+    Returns ``(lines, tail)``. ``tail`` is None when every continuation closed. When the
+    text ends on a continuation, ``tail`` is that half-joined requirement: pip still reads
+    it, so the evaluator does too, while the acceptance rule refuses the file. Comments
+    follow pip's rule: ``#`` at the start of a line or after any whitespace. This function
+    is self-contained: the offline pip-audit evaluator embeds its source, so the
     acceptance rule and the evaluator read requirement files identically.
     """
+    import re
+
     lines = []
     pending = []
     for raw in text.splitlines():
-        line = raw.split(" #", 1)[0].strip()
-        if line.startswith("#"):
-            line = ""
+        line = re.sub(r"(^|\s+)#.*$", "", raw).strip()
         if line.endswith("\\"):
             pending.append(line[:-1].strip())
             continue
@@ -727,7 +729,8 @@ def _logical_requirements(text):
         pending = []
         if joined:
             lines.append(joined)
-    return lines, bool(pending)
+    tail = " ".join(part for part in pending if part) if pending else None
+    return lines, tail
 
 
 def _exact_pin(line):
@@ -752,7 +755,7 @@ def _evaluator_source() -> str:
     import inspect
 
     return (
-        "import json\nimport sys\nfrom pathlib import Path\n\n"
+        "import json\nimport re\nimport sys\nfrom pathlib import Path\n\n"
         + inspect.getsource(_logical_requirements) + "\n\n"
         + inspect.getsource(_exact_pin) + "\n\n"
         + _EVALUATOR_BODY
@@ -762,14 +765,25 @@ def _evaluator_source() -> str:
 _EVALUATOR_BODY = r"""
 snapshot = Path(sys.argv[1])
 wanted = {}
+# A diff review hands this script every requirements file with no acceptance rule, so
+# it reads each file two ways and keeps both. Logical lines give exact pins, including
+# hash-locked ones and the requirement a file ends on mid-continuation. The older
+# line-by-line prefix match keeps every pin it ever read, such as a pin followed by an
+# installer option; the logical reading wins where both read the same name.
+prefix = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^\]]+\])?==([^\s#;]+)")
 for name in sys.argv[2:]:
-    lines, _dangling = _logical_requirements(
-        Path(name).read_text(encoding="utf-8", errors="replace")
-    )
-    for line in lines:
+    text = Path(name).read_text(encoding="utf-8", errors="replace")
+    found = {}
+    for line in text.splitlines():
+        match = prefix.match(line)
+        if match:
+            found[match.group(1).lower()] = (match.group(1), match.group(2))
+    lines, tail = _logical_requirements(text)
+    for line in lines + ([tail] if tail else []):
         pin = _exact_pin(line)
         if pin:
-            wanted[pin[0].lower()] = pin
+            found[pin[0].lower()] = pin
+    wanted.update(found)
 payload = json.loads((snapshot / "advisories.json").read_text(encoding="utf-8"))
 items = payload.get("advisories") if isinstance(payload, dict) else []
 dependencies = []
@@ -830,8 +844,8 @@ def pip_audit_scan_inputs(root: Path) -> tuple[list[str], list[str]]:
         try:
             if path.is_symlink() or not path.is_file():
                 raise ValueError("not a regular file")
-            entries, dangling = _logical_requirements(path.read_text())
-            valid = bool(entries) and not dangling and all(_exact_pin(line) for line in entries)
+            entries, tail = _logical_requirements(path.read_text())
+            valid = bool(entries) and tail is None and all(_exact_pin(line) for line in entries)
         except (OSError, UnicodeError, ValueError):
             valid = False
         (accepted if valid else unsupported).append(name)
