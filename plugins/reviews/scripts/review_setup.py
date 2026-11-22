@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Survey pinned review tools and record this machine's rule-pack digests."""
+"""Survey pinned review tools, record rule-pack digests, and build advisory snapshots."""
 
 from __future__ import annotations
 
@@ -324,8 +324,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="review_setup.py",
         description=(
-            "Survey pinned review tools and record Semgrep rule-pack digests. "
-            "This command does not install a tool."
+            "Survey pinned review tools and record Semgrep rule-pack digests, or build "
+            "the pip-audit and npm-audit advisory snapshots from local OSV databases. "
+            "This command does not install a tool or use the network."
         ),
     )
     commands = parser.add_subparsers(dest="command", required=True)
@@ -340,12 +341,26 @@ def build_parser() -> argparse.ArgumentParser:
             type=Path,
             help="Home directory for the machine record. May follow --repo.",
         )
+    advisories = commands.add_parser(
+        "advisories",
+        help=(
+            "Build the pip-audit and npm-audit advisory snapshots from the OSV "
+            "databases osv-scanner already downloaded. No network."
+        ),
+    )
+    advisories.add_argument(
+        "--home",
+        type=Path,
+        help="Home directory that holds .config/infiquetra/reviews/advisories.",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     home = Path(args.home) if args.home is not None else Path.home()
+    if args.command == "advisories":
+        return _reviews_load("review_advisories").build(home)
     if not Path(args.repo).is_dir():
         print(f"review_setup: repository does not exist: {args.repo}", file=sys.stderr)
         return 2

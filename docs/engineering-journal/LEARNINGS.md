@@ -2,6 +2,59 @@
 
 ## 2026-11-22
 
+### osv-scanner reads only the versions list of a PyPI package that also has a GIT range
+
+**Evidence.** A probe requirements file run through osv-scanner 2.6.0 offline against
+the 2026-11-22 PyPI database: `plane==99.0.0` and `vyper==99.0.0`, whose records pair a
+`versions` list with an ECOSYSTEM range of only `{"introduced": "0"}`, were reported;
+`horizon==99.0.0` and `nova==99.0.0` (`PYSEC-2012-18`, `PYSEC-2012-21`), whose records add
+a GIT range beside the same ECOSYSTEM range, were not, and neither were `beaker==0.0.1`
+(`PYSEC-2012-1`) and `pycrypto==2.0.99` (`PYSEC-2012-16`), which sit below the
+ECOSYSTEM `fixed` bound of a record that also has a GIT range. The first snapshot build
+read every `{"introduced": "0"}` range as "every version" and so reported
+`keystone==2012.2` for `PYSEC-2012-19`, which osv-scanner did not.
+`test_offline_advisories_command_builds_both_snapshots_from_osv_zips` in
+`plugins/reviews/tests/test_review_advisories.py` covers the rule.
+
+**Mechanism.** PYSEC records converted from commit data carry a GIT range plus a rough
+ECOSYSTEM range, and the enumerated `versions` list is the precise answer. The builder
+(`plugins/reviews/scripts/review_advisories.py`, `convert`) now ignores a PyPI package's
+ECOSYSTEM ranges when it also has a GIT range and uses its `versions` list alone. The
+mechanism inside osv-scanner was observed, not read from its source.
+
+**Generalizable rule.** When re-implementing an oracle's matching, probe each data shape
+the oracle might special-case (here: a range type that appears beside another) before
+assuming the specification's union semantics.
+
+### A differential run against osv-scanner found three silent drops in the offline evaluators
+
+**Evidence.** A scratch `package-lock.json` (51 pins, chosen from the npm database on
+introduced, fixed and last_affected bounds, pre-releases either side of a bound, `MAL-`
+packages and clean releases) and two scratch requirements files were run through
+osv-scanner 2.6.0 and the new evaluators. npm agreed on all 444 (package, version,
+advisory) triples. Of 1,271 PyPI triples, 43 were osv-scanner only: 13 from records with
+a range but no `versions` list (skipped and counted by the builder), 30 from pins of
+versions absent from OSV's enumerated list (for example `ansible==2.11.0a1`,
+`pcre2==10.45`), which osv-scanner reaches through its own PEP 440 range ordering. One
+was evaluator only: `mako==0.1` against `PYSEC-2022-260`, whose list has `0.1.0`; PEP 440
+`==` pads zeros, so pip installs `0.1.0` for that pin and osv-scanner compares the list
+as exact strings. A real scan of `home-lab` with the built snapshots ran both rows and
+reported the same triples osv-scanner reports for its lock files.
+
+**Mechanism.** Writing the comparison exposed three pre-existing drops: the npm evaluator
+kept one version per package name (`installed[name] = version`), so a nested older copy
+was never checked; it keyed its output by package and overwrote earlier advisories, so
+only the last matching advisory survived; and the pip evaluator merged every requirements
+file into one dict by name, so the last file's pin hid the others. Each now keeps every
+copy, advisory and pin. The npm parser also took identifiers only from URLs and
+upper-cased them, so a `MAL-` id fell back to the package name and a GHSA id did not
+equal osv-scanner's lower-case spelling, which `review_formula.merge_advisories` compares
+exactly; the evaluator now passes each OSV id through as `via[].id`.
+
+**Generalizable rule.** When a tool is replaced by a local evaluator, run both on one
+fixture built from the real data's boundary cases and compare sets; every difference is
+either a defect or a documented scope limit, never noise.
+
 ### A repository scan compares against an empty base, so a project folder is always new there
 
 **Evidence.** `security_scan.py --repo <home-lab> --commit HEAD` ended the

@@ -295,18 +295,35 @@ def _runner_choice(context: ScanContext) -> str | None:
 
 # npm 12.0.2 treats --offline as "do not ask the registry" and returns no
 # advisories. This evaluator prints the JSON `_parse_npm_audit` already accepts.
-_NPM_AUDIT_OFFLINE = r"""
-import json
-import sys
-from pathlib import Path
+def _npm_evaluator_source() -> str:
+    """The evaluator script: the snapshot matchers shared with the builder, then the match."""
+    import inspect
 
+    advisories = _reviews_load("review_advisories")
+    return (
+        "import json\nimport sys\nfrom pathlib import Path\n\n"
+        + "".join(
+            inspect.getsource(function) + "\n\n"
+            for function in (
+                advisories._semver_key,
+                advisories._unbounded_from_zero,
+                advisories._semver_in_interval,
+                advisories._npm_entry_matches,
+            )
+        )
+        + _NPM_EVALUATOR_BODY
+    )
+
+
+_NPM_EVALUATOR_BODY = r"""
 snapshot = Path(sys.argv[1])
 lock = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+# Every installed copy counts: a package can sit at several versions in one tree.
 installed = {}
 packages = lock.get("packages") if isinstance(lock, dict) else None
 if isinstance(packages, dict):
     for key, meta in packages.items():
-        if not isinstance(meta, dict):
+        if not isinstance(meta, dict) or key == "":
             continue
         name = meta.get("name")
         if not isinstance(name, str) or not name:
@@ -316,31 +333,41 @@ if isinstance(packages, dict):
                 continue
         version = meta.get("version")
         if isinstance(version, str):
-            installed[name] = version
+            installed.setdefault(name, set()).add(version)
 payload = json.loads((snapshot / "advisories.json").read_text(encoding="utf-8"))
+ranks = {"info": 0, "low": 1, "moderate": 2, "high": 3, "critical": 4}
 vulnerabilities = {}
 for item in (payload.get("advisories") if isinstance(payload, dict) else []) or []:
     if not isinstance(item, dict):
         continue
     name = str(item.get("package") or item.get("name") or "")
-    version = str(item.get("version") or "")
     ident = str(item.get("id") or "")
-    if not ident or installed.get(name) != version:
+    if not ident or name not in installed:
+        continue
+    hit = sorted(version for version in installed[name] if _npm_entry_matches(item, version))
+    if not hit:
         continue
     url = item.get("url") if isinstance(item.get("url"), str) else (
-        "https://github.com/advisories/" + ident
+        ("https://github.com/advisories/" if ident.startswith("GHSA-")
+         else "https://osv.dev/vulnerability/") + ident
     )
-    via = {"url": url}
+    via = {"url": url, "id": ident, "versions": hit}
+    aliases = [str(alias) for alias in (item.get("aliases") or []) if alias]
+    if aliases:
+        via["aliases"] = aliases
     cvss = item.get("cvss")
     if isinstance(cvss, (int, float)) and not isinstance(cvss, bool):
         via["cvss"] = {"score": cvss}
-    vulnerabilities[name] = {
-        "name": name,
-        "severity": item.get("severity") or "high",
-        "via": [via],
-    }
-json.dump({"vulnerabilities": vulnerabilities}, sys.stdout)
+    severity = str(item.get("severity") or "high")
+    entry = vulnerabilities.setdefault(name, {"name": name, "severity": severity, "via": []})
+    if ranks.get(severity.lower(), 3) > ranks.get(str(entry["severity"]).lower(), 3):
+        entry["severity"] = severity
+    entry["via"].append(via)
+for entry in vulnerabilities.values():
+    entry["via"].sort(key=lambda via: via["id"])
+json.dump({"vulnerabilities": vulnerabilities}, sys.stdout, sort_keys=True)
 """
+_NPM_AUDIT_OFFLINE = _npm_evaluator_source()
 
 
 def _invoke_npm_audit(context: ScanContext) -> list[str]:
@@ -389,13 +416,21 @@ def _parse_npm_audit(text: str) -> ParseResult:
         via = entry.get("via") or []
         items = via if isinstance(via, list) else []
         for item in items:
+            # The offline evaluator names each advisory: an OSV id such as MAL-... is not
+            # in any URL pattern. A real npm audit via entry has no "id" key.
+            ident = item.get("id") if isinstance(item, dict) else None
+            if isinstance(ident, str) and ident and ident not in identifiers:
+                identifiers.append(ident)
             url = item.get("url") if isinstance(item, dict) else None
             if isinstance(url, str):
                 for match in _ADVISORY_ID.findall(url):
                     ident = match.upper()
-                    if ident not in identifiers:
+                    if ident.upper() not in {known.upper() for known in identifiers}:
                         identifiers.append(ident)
             if isinstance(item, dict):
+                for alias in item.get("aliases") or []:
+                    if isinstance(alias, str) and alias and alias not in identifiers:
+                        identifiers.append(alias)
                 cvss = item.get("cvss")
                 if isinstance(cvss, dict):
                     value = cvss.get("score")

@@ -1,5 +1,52 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-22
+
+### Build the pip-audit and npm-audit snapshots from the OSV databases already on disk
+
+**Decision.** `plugins/reviews/scripts/review_setup.py advisories --home <home>` builds
+`advisories/pip-audit/advisories.json` and `advisories/npm-audit/advisories.json`, each
+with a `metadata.json`, from the OSV zips osv-scanner keeps at
+`advisories/osv-scanner/osv-scalibr/<PyPI|npm>/all.zip` (reviews folder first, legacy
+`.saga` folder second). It uses no network; a missing zip exits non-zero and prints the
+osv-scanner download command. The code lives in `plugins/reviews/scripts/review_advisories.py`.
+The entry format grows without breaking the old one: an entry is still one advisory for
+one package, and besides the single exact `version` it may carry a `versions` list and
+`ranges` intervals (`introduced` inclusive, `fixed` exclusive or `last_affected`
+inclusive). The npm evaluator orders bounds by SemVer 2.0.0 precedence in standard-library
+Python. The pip evaluator compares PEP 503 names and PEP 440 normal forms and honours
+only the unbounded interval from `"0"`; it never orders PEP 440 versions, so it relies on
+OSV's enumerated `versions` list and the builder counts the records that have none. Both
+evaluators embed the matching functions with `inspect.getsource`, so the builder, the
+tests and the scripts written at scan time share one definition. Output is sorted and
+carries no timestamp of its own; metadata dates come from the newest OSV `modified` value.
+
+**Rationale.** Nothing created `advisories.json`, so both rows were degraded with
+`missing-advisory-snapshot` on every machine, while osv-scanner's databases already sat
+on disk. On 2026-11-22 the real databases gave a 16.2 MB pip file (26,989 entries) and a
+24.5 MB npm file (232,814 entries, 96% of them `MAL-` malicious-package records) in about
+9 seconds; each evaluator loads and matches in under one second. A differential run
+against osv-scanner 2.6.0 on the same databases agreed on all 444 npm findings and on
+1,228 of 1,271 PyPI findings, every difference explained (see LEARNINGS 2026-11-22).
+
+**Rejected.** Fetching inside `prepare`: a registry timeout would change the degraded
+entries of two runs of one commit, which the 2026-11-19 decision already refused.
+Exact-version-only entries: most npm records state SemVer ranges and no version list, so
+one entry per version would either miss them or multiply the file. Dropping the two rows
+and relying on osv-scanner alone: they are the per-ecosystem rows the formula and the
+profiles already name, and dropping them would change the record shape of every review.
+A home-made PEP 440 ordering for PyPI ranges without a versions list: a near miss there
+is a silent false negative, and the 562 records it would cover are counted instead.
+
+**Revisit when.** pip-audit or npm gains a stable offline database flag, OSV stops
+publishing enumerated PyPI `versions` lists, an evaluator's load time passes a few
+seconds or a file passes about 30 MB (index entries by package then), or the counted
+`pypi-range-without-versions` records grow enough to justify a vetted PEP 440 ordering.
+
+**Supersedes.** The "a snapshot refresh command is accepted" condition on
+[Prepare reads advisory snapshots and does not fetch them](#prepare-reads-advisory-snapshots-and-does-not-fetch-them).
+`prepare` still never fetches; the command reads only what is already on disk.
+
 ## 2026-11-20
 
 ### Host builder_record.py under plugins/reviews
