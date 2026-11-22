@@ -756,13 +756,31 @@ def _exact_pin(line):
 # pip-audit 2.10.1 has no --offline flag. This evaluator prints the JSON
 # `_parse_pip_audit` already accepts, matched against the local snapshot.
 def _evaluator_source() -> str:
-    """The evaluator script: the two shared requirement readers, then the snapshot match."""
+    """The evaluator script: the shared requirement readers and snapshot matchers, then the match.
+
+    The matchers come from ``review_advisories``, the module that builds the snapshot,
+    so the builder and this evaluator read one entry format from one definition.
+    """
     import inspect
 
+    advisories = _reviews_load("review_advisories")
     return (
         "import json\nimport re\nimport sys\nfrom pathlib import Path\n\n"
         + inspect.getsource(_logical_requirements) + "\n\n"
         + inspect.getsource(_exact_pin) + "\n\n"
+        + "".join(
+            inspect.getsource(function) + "\n\n"
+            for function in (
+                advisories._pep503_name,
+                advisories._pep440_parts,
+                advisories._pep440_canonical,
+                advisories._pep440_key,
+                advisories._unbounded_from_zero,
+                advisories._key_in_interval,
+                advisories._pep440_in_interval,
+                advisories._pip_entry_matches,
+            )
+        )
         + _EVALUATOR_BODY
     )
 
@@ -782,13 +800,15 @@ for name in sys.argv[2:]:
     for line in text.splitlines():
         match = prefix.match(line)
         if match:
-            found[match.group(1).lower()] = (match.group(1), match.group(2))
+            found[_pep503_name(match.group(1))] = (match.group(1), match.group(2))
     lines, tail = _logical_requirements(text)
     for line in lines + ([tail] if tail else []):
         pin = _exact_pin(line)
         if pin:
-            found[pin[0].lower()] = pin
-    wanted.update(found)
+            found[_pep503_name(pin[0])] = pin
+    # Two files may pin one package at different versions; each pin is checked.
+    for key, pin in found.items():
+        wanted.setdefault(key, {})[pin] = None
 payload = json.loads((snapshot / "advisories.json").read_text(encoding="utf-8"))
 items = payload.get("advisories") if isinstance(payload, dict) else []
 dependencies = []
@@ -796,17 +816,18 @@ for item in items or []:
     if not isinstance(item, dict):
         continue
     package = str(item.get("package") or item.get("name") or "")
-    version = str(item.get("version") or "")
     ident = str(item.get("id") or "")
-    pinned = wanted.get(package.lower())
-    if not ident or pinned is None or pinned[1] != version:
+    if not ident:
         continue
-    aliases = [str(alias) for alias in (item.get("aliases") or []) if alias]
-    dependencies.append({
-        "name": pinned[0],
-        "version": version,
-        "vulns": [{"id": ident, "aliases": aliases}],
-    })
+    for pinned in wanted.get(_pep503_name(package), ()):
+        if not _pip_entry_matches(item, pinned[1]):
+            continue
+        aliases = [str(alias) for alias in (item.get("aliases") or []) if alias]
+        dependencies.append({
+            "name": pinned[0],
+            "version": pinned[1],
+            "vulns": [{"id": ident, "aliases": aliases}],
+        })
 json.dump({"dependencies": dependencies}, sys.stdout)
 """
 _PIP_AUDIT_OFFLINE = _evaluator_source()

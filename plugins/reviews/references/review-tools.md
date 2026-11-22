@@ -22,11 +22,65 @@ pins/rules come from the catalogue or an external operator profile; resolved
 `not-recorded` versions are reported as unpinned without degrading them solely for
 that absence. Real mismatches and unreadable versions remain degraded.
 
-pip-audit's scan arguments live beside its ordinary invocation in
-`review_adapters_python.py`: `--disable-pip --no-deps` permits only fully exact-pinned
-requirement files, while other files are named as degraded. It audits only listed
-packages, not resolved transitive dependencies. CDK synthesis rows are excluded
-unless named explicitly with `--include-synthesized`.
+The pip-audit row does not start pip-audit. pip-audit 2.10.1 has no offline flag, so
+`_invoke_pip_audit` in `review_adapters_python.py` writes an evaluator script and runs
+it with the current Python against the local snapshot (see "Offline advisory snapshots"
+below). In a scan, `pip_audit_scan_inputs`, beside that invocation, accepts a
+`requirements*.txt` only when every logical line (backslash continuations joined,
+comments dropped) is an exact `name==version` pin, optionally followed by
+`--hash=<algorithm>:<hex>` options. Any other file is named in the row's degraded reason
+`requirements-not-exactly-pinned`. The evaluator checks only the listed pins, not
+resolved transitive dependencies, and never invokes pip. CDK synthesis rows are
+excluded unless named explicitly with `--include-synthesized`.
+
+## Offline advisory snapshots
+
+The pip-audit and npm-audit rows match pins against
+`~/.config/infiquetra/reviews/advisories/<pip-audit|npm-audit>/advisories.json` (legacy
+`~/.saga/advisories/`), and a missing file is the gap `missing-advisory-snapshot`.
+`review_setup.py advisories --home <home>` builds both files, with a `metadata.json`
+beside each, from the OSV databases osv-scanner already keeps at
+`advisories/osv-scanner/osv-scalibr/<PyPI|npm>/all.zip`. It uses no network. Download
+the databases with
+`env OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=<home>/.config/infiquetra/reviews/advisories/osv-scanner osv-scanner scan source --offline-vulnerabilities --download-offline-databases --lockfile <a lock file>`.
+
+An entry is one advisory for one package: `package`, `id`, and optionally `aliases`,
+`version` (one exact version, the original format), `versions` (exact versions),
+`ranges` (intervals), and for npm `severity` and `url`. An interval holds `introduced`
+(inclusive; `"0"` is the first version) and at most one of `fixed` (exclusive) or
+`last_affected` (inclusive); with neither it has no upper bound.
+
+- npm compares interval bounds by SemVer 2.0.0 precedence: pre-releases sort before
+  their release and build metadata is ignored. `versions` and `version` compare exact
+  strings. An installed version with a leading `v` or a missing minor or patch number is
+  read as osv-scanner 2.6.0 reads it (`v1.2.3` is `1.2.3`, `1.2` is `1.2.0`); any other
+  version that is not SemVer matches only an exact string or the interval from `"0"`
+  with no upper bound. Every installed copy in `package-lock.json`
+  counts, the root project does not, and every matching advisory is reported.
+  `database_specific.severity` maps to `low`, `moderate`, `high` or `critical`; an
+  unrated advisory stays `high`.
+- pip compares names by PEP 503 (case and runs of `-`, `_`, `.`). A `versions` entry
+  matches the same string or the same PEP 440 normal form, which drops trailing zero
+  release components because PEP 440 `==` pads with zeros (`==1.0` matches the published
+  `1.0.0`) and keeps a local label exact. A single `version` still compares exact
+  strings (a JSON number there is compared as its text). Interval bounds compare by PEP
+  440 ordering, the order of `packaging.version.Version` written in the standard
+  library, so a published version inside an OSV range matches even when the record's
+  `versions` list leaves it out (OSV lists often omit pre-releases). A pin that is not
+  PEP 440, such as a commit hash, matches only a listed string or the interval from
+  `"0"` with no upper bound.
+
+The builder skips withdrawn records and reads each zip member in memory as JSON only,
+with a size cap, counting unparseable and oversized members; a field of the wrong type
+is ignored rather than stopping the build. It keeps both a record's `versions` list and
+its ranges, and reports what it could not express: a range of the wrong type (npm wants
+SEMVER, PyPI ECOSYSTEM), a range whose bounds do not parse (for example PyPI bounds such
+as `2.6.0-NA`), and an affected package with neither versions nor a usable range. A
+record counted there may still have an entry built from its other data. A PyPI package
+that also carries a GIT range uses only its `versions` list, as osv-scanner 2.6.0 does.
+Output is sorted and has no timestamp of its own; `metadata.json` takes `version`,
+`date` and `updated_at` from the newest OSV `modified` value and `sha256` from the
+written file.
 
 Unlike the review runner's exit `0` for written records, the scan returns `0` for
 complete/no findings, `1` for complete/findings, and `2` for incomplete or invalid
