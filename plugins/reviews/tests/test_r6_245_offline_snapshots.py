@@ -16,6 +16,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 import urllib.request
 import zipfile
 from contextlib import redirect_stderr
@@ -431,6 +432,22 @@ def test_offline_pip_audit_accepts_a_comment_after_a_tab(tmp_path: Path) -> None
     # pip ends a requirement at "#" after any whitespace, not only after a space.
     root = _requirements_repo(tmp_path, "requests==2.31.0\t# pinned for a reason\n")
     assert PY.pip_audit_scan_inputs(root) == (["requirements.txt"], [])
+
+
+def test_offline_pip_audit_reads_a_long_run_of_spaces_in_one_pass() -> None:
+    # Both readers once used patterns that re-read a run of spaces from every start
+    # position: 20,000 spaces took 1.5 seconds and the cost grew with the square of the
+    # length. A scanned repository is not trusted, so one line must not stall the scan.
+    spaces = " " * 200_000
+    started = time.perf_counter()
+    lines, tail = PY._logical_requirements(
+        f"requests==2.31.0{spaces}x\nurllib3==2.0.7{spaces}# note\n"
+    )
+    assert tail is None
+    assert lines == [f"requests==2.31.0{spaces}x", "urllib3==2.0.7"]
+    assert PY._exact_pin(lines[0]) is None
+    assert PY._exact_pin(f"requests==2.31.0{spaces}--hash={_HASH_A}") == ("requests", "2.31.0")
+    assert time.perf_counter() - started < 5
 
 
 def test_offline_uv_invocations_in_python_adapter_pass_offline(

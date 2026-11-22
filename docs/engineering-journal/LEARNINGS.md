@@ -79,6 +79,31 @@ every caller for one that lacks the gate before tightening.
 
 ## 2026-11-20
 
+### A pattern that starts with a repeated space class is quadratic on a long run of spaces
+
+**Evidence.** The first version of `_logical_requirements` in
+`plugins/reviews/scripts/review_adapters_python.py` stripped comments with
+`re.sub(r"(^|\s+)#.*$", "", raw)`, and `_exact_pin` split a line with one lazy
+pattern for "pin, then `--hash` options". On a line holding 20,000 spaces and no
+`#`, the first took 1.5 seconds and the second 0.6 seconds, and each doubling of
+the run took four times as long. An automated security review of the commit
+flagged the first. `test_offline_pip_audit_reads_a_long_run_of_spaces_in_one_pass`
+runs both readers on 200,000 spaces; against the earlier code it did not finish
+in 60 seconds.
+
+**Mechanism.** `re.sub` and `re.search` try the pattern at every start position.
+A pattern that opens with `\s+` reads the rest of the run from each position
+before it fails, so the work is the square of the run's length. The requirements
+file comes from the repository being scanned, which is not trusted, so one line
+could stall a scan. The comment is now found with a lookbehind,
+`(?:^|(?<=\s))#`, and the `--hash` options are dropped token by token from the
+end of the line.
+
+**Generalizable rule.** When a pattern reads untrusted text, do not let it start
+with a repeated class that the rest of the pattern can fail after. Anchor it
+with a lookbehind or split into tokens first, and time it on a long run of the
+repeated character before shipping.
+
 ### A staged rollout has to name every harness it is allowed to touch
 
 **Evidence.** `scripts/install_client.py --client grok,opencode,muse` and the

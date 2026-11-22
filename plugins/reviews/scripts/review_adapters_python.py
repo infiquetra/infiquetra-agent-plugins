@@ -720,7 +720,10 @@ def _logical_requirements(text):
     lines = []
     pending = []
     for raw in text.splitlines():
-        line = re.sub(r"(^|\s+)#.*$", "", raw).strip()
+        # A lookbehind finds the comment in one pass. `(^|\s+)#.*$` re-reads a long run
+        # of spaces from every start position, which is quadratic on a hostile line.
+        comment = re.search(r"(?:^|(?<=\s))#", raw)
+        line = (raw[:comment.start()] if comment else raw).strip()
         if line.endswith("\\"):
             pending.append(line[:-1].strip())
             continue
@@ -737,14 +740,16 @@ def _exact_pin(line):
     """``(name, version)`` for an exact pin followed only by ``--hash`` options, else None."""
     import re
 
-    match = re.fullmatch(
-        r"(?P<pin>.*?)(?P<hashes>(?:\s+--hash=[A-Za-z0-9_]+:[0-9A-Fa-f]+)*)", line,
-    )
+    # Drop the trailing run of `--hash` options token by token, in one pass. A single
+    # lazy pattern for "pin, then hashes" backtracks quadratically on a long run of spaces.
+    tokens = list(re.finditer(r"\S+", line))
+    while tokens and re.fullmatch(r"--hash=[A-Za-z0-9_]+:[0-9A-Fa-f]+", tokens[-1].group()):
+        tokens.pop()
     pin = re.fullmatch(
         r"(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[A-Za-z0-9_,. -]+\])?"
         r"\s*==\s*(?P<version>[A-Za-z0-9][A-Za-z0-9_.+!-]*)(?:\s*;[^\r\n]+)?",
-        match.group("pin"),
-    ) if match else None
+        line[:tokens[-1].end()] if tokens else "",
+    )
     return (pin.group("name"), pin.group("version")) if pin else None
 
 
