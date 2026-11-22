@@ -705,24 +705,71 @@ def _parse_bandit(text: str) -> ParseResult:
     return ParseResult(tuple(hits))
 
 
+def _logical_requirements(text):
+    """Requirement lines with comments dropped and backslash continuations joined.
+
+    Returns ``(lines, dangling)``. ``dangling`` is true when the text ends on a
+    continuation, so a file cannot hide a half-read requirement. This function is
+    self-contained: the offline pip-audit evaluator embeds its source, so the
+    acceptance rule and the evaluator read requirement files identically.
+    """
+    lines = []
+    pending = []
+    for raw in text.splitlines():
+        line = raw.split(" #", 1)[0].strip()
+        if line.startswith("#"):
+            line = ""
+        if line.endswith("\\"):
+            pending.append(line[:-1].strip())
+            continue
+        pending.append(line)
+        joined = " ".join(part for part in pending if part)
+        pending = []
+        if joined:
+            lines.append(joined)
+    return lines, bool(pending)
+
+
+def _exact_pin(line):
+    """``(name, version)`` for an exact pin followed only by ``--hash`` options, else None."""
+    import re
+
+    match = re.fullmatch(
+        r"(?P<pin>.*?)(?P<hashes>(?:\s+--hash=[A-Za-z0-9_]+:[0-9A-Fa-f]+)*)", line,
+    )
+    pin = re.fullmatch(
+        r"(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[A-Za-z0-9_,. -]+\])?"
+        r"\s*==\s*(?P<version>[A-Za-z0-9][A-Za-z0-9_.+!-]*)(?:\s*;[^\r\n]+)?",
+        match.group("pin"),
+    ) if match else None
+    return (pin.group("name"), pin.group("version")) if pin else None
+
+
 # pip-audit 2.10.1 has no --offline flag. This evaluator prints the JSON
 # `_parse_pip_audit` already accepts, matched against the local snapshot.
-_PIP_AUDIT_OFFLINE = r"""
-import json
-import re
-import sys
-from pathlib import Path
+def _evaluator_source() -> str:
+    """The evaluator script: the two shared requirement readers, then the snapshot match."""
+    import inspect
 
+    return (
+        "import json\nimport sys\nfrom pathlib import Path\n\n"
+        + inspect.getsource(_logical_requirements) + "\n\n"
+        + inspect.getsource(_exact_pin) + "\n\n"
+        + _EVALUATOR_BODY
+    )
+
+
+_EVALUATOR_BODY = r"""
 snapshot = Path(sys.argv[1])
-pattern = re.compile(
-    r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^\]]+\])?==([^\s#;]+)"
-)
 wanted = {}
 for name in sys.argv[2:]:
-    for line in Path(name).read_text(encoding="utf-8", errors="replace").splitlines():
-        match = pattern.match(line)
-        if match:
-            wanted[match.group(1).lower()] = (match.group(1), match.group(2).strip())
+    lines, _dangling = _logical_requirements(
+        Path(name).read_text(encoding="utf-8", errors="replace")
+    )
+    for line in lines:
+        pin = _exact_pin(line)
+        if pin:
+            wanted[pin[0].lower()] = pin
 payload = json.loads((snapshot / "advisories.json").read_text(encoding="utf-8"))
 items = payload.get("advisories") if isinstance(payload, dict) else []
 dependencies = []
@@ -743,6 +790,7 @@ for item in items or []:
     })
 json.dump({"dependencies": dependencies}, sys.stdout)
 """
+_PIP_AUDIT_OFFLINE = _evaluator_source()
 
 
 def _invoke_pip_audit(context: ScanContext) -> list[str]:
@@ -773,10 +821,6 @@ def pip_audit_scan_inputs(root: Path) -> tuple[list[str], list[str]]:
     Includes, local paths, URLs, wildcards and installer options are unsupported input,
     not an invitation to invoke pip. Keep this policy beside the invocation it governs.
     """
-    exact = re.compile(
-        r"^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\[[A-Za-z0-9_,. -]+\])?"
-        r"\s*==\s*[A-Za-z0-9][A-Za-z0-9_.+!-]*(?:\s*;[^\r\n]+)?$"
-    )
     accepted: list[str] = []
     unsupported: list[str] = []
     for path in review_tools.scan_files(root):
@@ -786,9 +830,8 @@ def pip_audit_scan_inputs(root: Path) -> tuple[list[str], list[str]]:
         try:
             if path.is_symlink() or not path.is_file():
                 raise ValueError("not a regular file")
-            lines = [line.split(" #", 1)[0].strip() for line in path.read_text().splitlines()]
-            entries = [line for line in lines if line and not line.startswith("#")]
-            valid = bool(entries) and all(exact.fullmatch(line) for line in entries)
+            entries, dangling = _logical_requirements(path.read_text())
+            valid = bool(entries) and not dangling and all(_exact_pin(line) for line in entries)
         except (OSError, UnicodeError, ValueError):
             valid = False
         (accepted if valid else unsupported).append(name)

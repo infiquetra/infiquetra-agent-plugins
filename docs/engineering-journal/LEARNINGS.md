@@ -25,6 +25,33 @@ is not npm-specific: every adapter that runs per project folder takes this path.
 every path in that list must be checked for existence in the base before the
 base is scanned, because "new in head" is a normal state and not an error.
 
+### A hash-locked requirements file is exact pins on continuation lines, not an unpinned file
+
+**Evidence.** `ansible/roles/ebay_compliance/files/requirements.txt` in
+`home-lab` is compiled with `uv pip compile --generate-hashes`: 21 exact
+`name==version` pins (448 physical lines), each ending in ` \` and followed by
+indented `--hash=sha256:<hex>` lines. A repository scan marked the `pip-audit`
+row degraded with `requirements-not-exactly-pinned` for it.
+`plugins/reviews/tests/test_r6_245_offline_snapshots.py` now covers one
+accepted hash-locked file, fifteen rejected shapes, and an evaluator run that
+matches a hash-locked pin against an `advisories.json` entry.
+
+**Mechanism.** `pip_audit_scan_inputs` required every physical line to be a
+complete pin, so the pin line was accepted only after a continuation it could
+not see and every `--hash` line failed on its own. The file is now read as
+logical lines: backslash continuations are joined, then a logical line passes
+only if it is an exact pin followed by zero or more `--hash=<algorithm>:<hex>`
+options. Ranges, URLs, `-r`, `-e`, any other option, an unpinned name, a
+`--hash` line with no pin, and a continuation left open at the end of the file
+stay rejected. The offline evaluator that `_invoke_pip_audit` writes as
+`audit.py` embeds the source of the same two functions (`inspect.getsource`), so
+the rule that accepts a file and the code that reads its pins cannot drift
+apart.
+
+**Generalizable rule.** When a policy decides which files a tool may read, run
+the tool's own parser on exactly the text the policy accepted, ideally from one
+shared definition, so "accepted" never means "accepted but read differently".
+
 ## 2026-11-20
 
 ### A staged rollout has to name every harness it is allowed to touch
