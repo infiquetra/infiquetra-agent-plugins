@@ -2,6 +2,32 @@
 
 ## 2026-11-22
 
+### OSV's PyPI versions lists leave out published versions that the range covers
+
+**Evidence.** An independent review ran osv-scanner 2.6.0 and the pip evaluator on
+`tensorflow==2.4.0rc0`, `tensorflow-cpu==2.7.0rc0`, `asyncua==0.9.13` and `plone==4.1rc1`:
+437, 238, 6 and 147 advisories against 35, 34, 2 and 1. `GHSA-2475-53vw-vp25` has the
+range introduced `0`, fixed `2.7.2` for `tensorflow-cpu`, but its 32-entry versions list
+leaves out `2.7.0rc0`, which other records list. Across the PyPI database the review
+counted 94,541 such (record, version) pairs from 2,977 records, half of them
+pre-releases. After the fix the same pins agree exactly, and the review's mined
+differential (373 PyPI pins) went from 1,396 range misses plus 76 skipped-record misses
+to one miss, a record whose bound `4.1.0-NA` does not parse and is counted.
+
+**Mechanism.** The first version matched PyPI pins only against the enumerated
+`versions` list and treated it as complete. osv-scanner evaluates the ECOSYSTEM range
+with PEP 440 ordering as well, and the list is a convenience that is often stale for
+pre-releases. `_pep440_key` in `plugins/reviews/scripts/review_advisories.py` now gives
+the `packaging.version.Version` order in the standard library, the builder keeps ranges
+beside the list, and `_pip_entry_matches` honours both.
+`test_offline_pip_evaluator_honours_ranges_beyond_the_versions_list` and
+`test_offline_pep440_order_agrees_with_packaging` in
+`plugins/reviews/tests/test_review_advisories.py` cover it.
+
+**Generalizable rule.** An enumerated list in a vulnerability record is a hint, not the
+definition; the range is the definition, so a matcher that skips the range must prove
+the list complete first.
+
 ### osv-scanner reads only the versions list of a PyPI package that also has a GIT range
 
 **Evidence.** A probe requirements file run through osv-scanner 2.6.0 offline against
@@ -35,7 +61,8 @@ osv-scanner 2.6.0 and the new evaluators. npm agreed on all 444 (package, versio
 advisory) triples. Of 1,271 PyPI triples, 43 were osv-scanner only: 13 from records with
 a range but no `versions` list (skipped and counted by the builder), 30 from pins of
 versions absent from OSV's enumerated list (for example `ansible==2.11.0a1`,
-`pcre2==10.45`), which osv-scanner reaches through its own PEP 440 range ordering. One
+`pcre2==10.45`), which osv-scanner reaches through its own PEP 440 range ordering (the
+evaluator gained that ordering later the same day; see the entry above). One
 was evaluator only: `mako==0.1` against `PYSEC-2022-260`, whose list has `0.1.0`; PEP 440
 `==` pads zeros, so pip installs `0.1.0` for that pin and osv-scanner compares the list
 as exact strings. A real scan of `home-lab` with the built snapshots ran both rows and

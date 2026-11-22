@@ -22,8 +22,8 @@ is optional)::
 ``ranges`` holds intervals. ``introduced`` is the inclusive lower bound, ``"0"`` meaning
 the first version. ``fixed`` is an exclusive upper bound and ``last_affected`` an
 inclusive one; an interval with neither has no upper bound. npm compares bounds with
-SemVer 2.0.0 precedence. pip honours only the unbounded interval from ``"0"``, which
-needs no version ordering; it does not order PEP 440 versions.
+SemVer 2.0.0 precedence and pip with PEP 440 ordering (the order of
+``packaging.version.Version``), both written here in the standard library.
 """
 
 from __future__ import annotations
@@ -74,15 +74,14 @@ def _pep503_name(name):
     return "".join(out)
 
 
-def _pep440_canonical(version):
-    """The PEP 440 normal form of *version* for an equality test, or None when it is not PEP 440.
+def _pep440_parts(version):
+    """``(epoch, release, pre, post, dev, local)`` of a PEP 440 version, or None when it is not one.
 
-    The normal form follows PEP 440's normalisation rules: case, a leading ``v``, the
-    spellings ``alpha``/``beta``/``c``/``pre``/``preview``/``rev``/``r``, implicit
-    numbers, separators and leading zeros. Trailing zero release components are dropped
-    because PEP 440 version matching pads the shorter release segment with zeros, so
-    ``==1.0`` matches the published ``1.0.0``. A local label is kept: PEP 440 matches a
-    local label only exactly. Nothing here orders two versions.
+    Parsing follows PEP 440's normalisation rules: case, a leading ``v``, the spellings
+    ``alpha``/``beta``/``c``/``pre``/``preview``/``rev``/``r``, implicit numbers,
+    separators and leading zeros. ``pre`` is ``(letter, number)`` with the letter one of
+    ``a``, ``b``, ``rc``; ``post`` and ``dev`` are numbers; ``local`` is a tuple of numbers
+    and lower-case strings. Absent parts are None.
     """
     import re
 
@@ -99,25 +98,80 @@ def _pep440_canonical(version):
     )
     if match is None:
         return None
-    release = [int(part) for part in match.group("release").split(".")]
-    while len(release) > 1 and release[-1] == 0:
-        release.pop()
-    out = ""
-    if match.group("epoch") and int(match.group("epoch")):
-        out += str(int(match.group("epoch"))) + "!"
-    out += ".".join(str(part) for part in release)
+    release = tuple(int(part) for part in match.group("release").split("."))
+    pre = None
     if match.group("pre_l"):
         letter = {"alpha": "a", "beta": "b", "c": "rc", "pre": "rc", "preview": "rc"}.get(
             match.group("pre_l"), match.group("pre_l"))
-        out += letter + str(int(match.group("pre_n") or 0))
+        pre = (letter, int(match.group("pre_n") or 0))
+    post = None
     if match.group("post_n1") is not None or match.group("post_l"):
-        out += ".post" + str(int(match.group("post_n1") or match.group("post_n2") or 0))
-    if match.group("dev_l"):
-        out += ".dev" + str(int(match.group("dev_n") or 0))
+        post = int(match.group("post_n1") or match.group("post_n2") or 0)
+    dev = int(match.group("dev_n") or 0) if match.group("dev_l") else None
+    local = None
     if match.group("local"):
-        parts = re.split(r"[-_.]", match.group("local"))
-        out += "+" + ".".join(str(int(part)) if part.isdigit() else part for part in parts)
+        local = tuple(
+            int(part) if part.isdigit() else part
+            for part in re.split(r"[-_.]", match.group("local"))
+        )
+    return int(match.group("epoch") or 0), release, pre, post, dev, local
+
+
+def _pep440_canonical(version):
+    """The PEP 440 normal form of *version* for an equality test, or None when it is not PEP 440.
+
+    Trailing zero release components are dropped because PEP 440 version matching pads
+    the shorter release segment with zeros, so ``==1.0`` matches the published ``1.0.0``.
+    A local label is kept: PEP 440 matches a local label only exactly.
+    """
+    parts = _pep440_parts(version)
+    if parts is None:
+        return None
+    epoch, release, pre, post, dev, local = parts
+    release = list(release)
+    while len(release) > 1 and release[-1] == 0:
+        release.pop()
+    out = str(epoch) + "!" if epoch else ""
+    out += ".".join(str(part) for part in release)
+    if pre is not None:
+        out += pre[0] + str(pre[1])
+    if post is not None:
+        out += ".post" + str(post)
+    if dev is not None:
+        out += ".dev" + str(dev)
+    if local is not None:
+        out += "+" + ".".join(str(part) for part in local)
     return out
+
+
+def _pep440_key(version):
+    """A sort key that orders versions as PEP 440 does, or None when *version* is not PEP 440.
+
+    It is the order of ``packaging.version.Version``: epoch, then the release with
+    trailing zeros ignored, then a ``.devN`` of a plain release below its pre-releases,
+    pre-releases (``a`` < ``b`` < ``rc``) below the release, post-releases above it, a
+    ``.devN`` below the version it is attached to, and a local label above the same
+    version without one (its numeric parts above its string parts).
+    """
+    parts = _pep440_parts(version)
+    if parts is None:
+        return None
+    epoch, release, pre, post, dev, local = parts
+    release = list(release)
+    while release and release[-1] == 0:
+        release.pop()
+    if pre is None and post is None and dev is not None:
+        pre_key = (0,)
+    elif pre is None:
+        pre_key = (2,)
+    else:
+        pre_key = (1, pre[0], pre[1])
+    post_key = (0,) if post is None else (1, post)
+    dev_key = (1,) if dev is None else (0, dev)
+    local_key = (0,) if local is None else (1, tuple(
+        (1, part, "") if isinstance(part, int) else (0, 0, part) for part in local
+    ))
+    return (epoch, tuple(release), pre_key, post_key, dev_key, local_key)
 
 
 def _semver_key(version):
@@ -171,38 +225,49 @@ def _unbounded_from_zero(interval):
     )
 
 
-def _semver_in_interval(version, interval):
-    """True when *version* lies in one SemVer interval. Unparseable bounds never match."""
+def _key_in_interval(key, interval, bound_key):
+    """True when the version sort *key* lies in one interval whose bounds *bound_key* reads.
+
+    A None *key* (a version that does not parse) and an unparseable bound never match,
+    except that the unbounded interval from ``"0"`` holds every version.
+    """
     if _unbounded_from_zero(interval):
         return True
-    if not isinstance(interval, dict):
-        return False
-    key = _semver_key(version)
-    if key is None:
+    if key is None or not isinstance(interval, dict):
         return False
     introduced = str(interval.get("introduced", "0"))
     if introduced != "0":
-        low = _semver_key(introduced)
+        low = bound_key(introduced)
         if low is None or key < low:
             return False
     fixed = interval.get("fixed")
     last = interval.get("last_affected")
     if fixed is not None:
-        high = _semver_key(fixed)
+        high = bound_key(str(fixed))
         return high is not None and key < high
     if last is not None:
-        high = _semver_key(last)
+        high = bound_key(str(last))
         return high is not None and key <= high
     return True
+
+
+def _semver_in_interval(version, interval):
+    """True when the installed *version* lies in one SemVer interval."""
+    return _key_in_interval(_semver_key(version), interval, _semver_key)
+
+
+def _pep440_in_interval(version, interval):
+    """True when the pinned *version* lies in one interval ordered by PEP 440."""
+    return _key_in_interval(_pep440_key(version), interval, _pep440_key)
 
 
 def _pip_entry_matches(item, version):
     """True when the pinned *version* is affected by one pip snapshot entry.
 
     A single ``version`` is compared as an exact string, as it always was. A
-    ``versions`` list matches the same string or the same PEP 440 normal form. Of the
-    ``ranges``, only the unbounded interval from ``"0"`` is honoured: PEP 440 versions
-    are never ordered here.
+    ``versions`` list matches the same string or the same PEP 440 normal form.
+    ``ranges`` compare with PEP 440 ordering; a pin that is not PEP 440 matches only a
+    listed string or the unbounded interval from ``"0"``.
     """
     single = item.get("version")
     if isinstance(single, str) and single and single == version:
@@ -218,7 +283,7 @@ def _pip_entry_matches(item, version):
             if canonical is not None and _pep440_canonical(candidate) == canonical:
                 return True
     ranges = item.get("ranges")
-    return isinstance(ranges, list) and any(_unbounded_from_zero(r) for r in ranges)
+    return isinstance(ranges, list) and any(_pep440_in_interval(version, r) for r in ranges)
 
 
 def _npm_entry_matches(item, version):
@@ -325,15 +390,19 @@ def _records(path: Path, stats: dict[str, int]) -> Iterator[dict[str, Any]]:
             yield record
 
 
-def _event_key(version: str) -> tuple[int, Any] | None:
+#: OSV ecosystem to the sort key its range bounds are ordered by.
+_BOUND_KEYS = {"npm": _semver_key, "PyPI": _pep440_key}
+
+
+def _event_key(version: str, bound_key: Any) -> tuple[int, Any] | None:
     if version == "0":
         return (0, ())
-    key = _semver_key(version)
+    key = bound_key(version)
     return None if key is None else (1, key)
 
 
-def _semver_intervals(events: object) -> list[dict[str, str]] | None:
-    """OSV SEMVER events as intervals, walked in version order. None when unreadable."""
+def _range_intervals(events: object, bound_key: Any) -> list[dict[str, str]] | None:
+    """OSV range events as intervals, walked in version order. None when unreadable."""
     if not isinstance(events, list) or not events:
         return None
     parsed = []
@@ -345,7 +414,7 @@ def _semver_intervals(events: object) -> list[dict[str, str]] | None:
             return None
         if value == "0" and kind != "introduced":
             return None
-        key = _event_key(value)
+        key = _event_key(value, bound_key)
         if key is None:
             return None
         parsed.append((key, position, kind, value))
@@ -364,8 +433,9 @@ def _semver_intervals(events: object) -> list[dict[str, str]] | None:
     return intervals
 
 
-def _interval_sort_key(interval: dict[str, str]) -> tuple[Any, str]:
-    return (_event_key(interval["introduced"]) or (2, ()), json.dumps(interval, sort_keys=True))
+def _interval_sort_key(interval: dict[str, str], bound_key: Any) -> tuple[Any, str]:
+    return (_event_key(interval["introduced"], bound_key) or (2, ()),
+            json.dumps(interval, sort_keys=True))
 
 
 def _advisory_url(record: dict[str, Any]) -> str | None:
@@ -402,9 +472,11 @@ def convert(path: Path, ecosystem: str) -> tuple[list[dict[str, Any]], dict[str,
     """Snapshot entries for *ecosystem* from one OSV zip, and what was read and skipped.
 
     ``skipped`` counts records (by id) with an affected package of this ecosystem that
-    could not be expressed: a PyPI range with no ``versions`` list (other than every
-    version), an npm range that is not SEMVER or does not parse, or an affected package
-    with neither versions nor a usable range (a GIT-only range is one).
+    could not be expressed in full: a range of the wrong type (npm wants SEMVER, PyPI
+    ECOSYSTEM) or one whose bounds do not parse, a PyPI package with a GIT range and no
+    ``versions`` list, or an affected package with neither versions nor a usable range
+    (a GIT-only range is one). A record counted here may still have an entry built from
+    the rest of its data.
     """
     stats = _empty_stats()
     skipped: dict[str, set[str]] = {}
@@ -457,6 +529,10 @@ def convert(path: Path, ecosystem: str) -> tuple[list[dict[str, Any]], dict[str,
             # carries a GIT range: PYSEC records pair the commit range with a rough
             # ECOSYSTEM range such as {"introduced": "0"}, which would match every version.
             git = any(entry.get("type") == "GIT" for entry in ranges)
+            # npm ranges are SEMVER and PyPI ranges ECOSYSTEM; each is ordered by its own
+            # ecosystem's rules. A range that does not parse is counted, never guessed.
+            wanted_kind = "SEMVER" if ecosystem == "npm" else "ECOSYSTEM"
+            prefix = "npm" if ecosystem == "npm" else "pypi"
             for entry in ranges:
                 kind = entry.get("type")
                 if kind == "GIT":
@@ -465,16 +541,14 @@ def convert(path: Path, ecosystem: str) -> tuple[list[dict[str, Any]], dict[str,
                     if not versions:
                         unexpressed = "pypi-git-range-without-versions"
                     continue
-                if ecosystem == "npm":
-                    found = _semver_intervals(entry.get("events")) if kind == "SEMVER" else None
-                    if found is None:
-                        unexpressed = "npm-range-not-semver" if kind != "SEMVER" else "npm-range-unparseable"
-                    else:
-                        intervals.extend(found)
-                elif kind == "ECOSYSTEM" and entry.get("events") == [{"introduced": "0"}]:
-                    intervals.append({"introduced": "0"})
-                elif not versions:
-                    unexpressed = "pypi-range-without-versions"
+                if kind != wanted_kind:
+                    unexpressed = f"{prefix}-range-not-{wanted_kind.lower()}"
+                    continue
+                found = _range_intervals(entry.get("events"), _BOUND_KEYS[ecosystem])
+                if found is None:
+                    unexpressed = f"{prefix}-range-unparseable"
+                else:
+                    intervals.extend(found)
             if unexpressed is not None:
                 skip(unexpressed, ident)
             if not versions and not intervals:
@@ -493,7 +567,8 @@ def convert(path: Path, ecosystem: str) -> tuple[list[dict[str, Any]], dict[str,
             merged.update(json.dumps(interval, sort_keys=True) for interval in intervals)
             if merged:
                 item["ranges"] = sorted(
-                    (json.loads(text) for text in merged), key=_interval_sort_key)
+                    (json.loads(text) for text in merged),
+                    key=lambda interval: _interval_sort_key(interval, _BOUND_KEYS[ecosystem]))
             if versions:
                 item["versions"] = sorted(set(item.get("versions", [])) | versions)
     out = []

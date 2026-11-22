@@ -61,16 +61,23 @@ An entry is one advisory for one package: `package`, `id`, and optionally `alias
   matches the same string or the same PEP 440 normal form, which drops trailing zero
   release components because PEP 440 `==` pads with zeros (`==1.0` matches the published
   `1.0.0`) and keeps a local label exact. A single `version` still compares exact
-  strings. pip does not order PEP 440 versions: only the interval from `"0"` with no
-  upper bound is honoured, so the builder uses OSV's `versions` list.
+  strings. Interval bounds compare by PEP
+  440 ordering, the order of `packaging.version.Version` written in the standard
+  library, so a published version inside an OSV range matches even when the record's
+  `versions` list leaves it out (OSV lists often omit pre-releases). A pin that is not
+  PEP 440, such as a commit hash, matches only a listed string or the interval from
+  `"0"` with no upper bound.
 
 The builder skips withdrawn records and reads each zip member in memory as JSON only,
-with a size cap, counting unparseable and oversized members. It reports what it could
-not express: a PyPI range with no `versions` list, an npm range that is not SEMVER or
-does not parse, and an affected package with neither. A PyPI package that also carries a
-GIT range uses only its `versions` list, as osv-scanner 2.6.0 does. Output is sorted
-and has no timestamp of its own; `metadata.json` takes `version`, `date` and
-`updated_at` from the newest OSV `modified` value and `sha256` from the written file.
+with a size cap, counting unparseable and oversized members. It keeps both a record's `versions` list and
+its ranges, and reports what it could not express: a range of the wrong type (npm wants
+SEMVER, PyPI ECOSYSTEM), a range whose bounds do not parse (for example PyPI bounds such
+as `2.6.0-NA`), and an affected package with neither versions nor a usable range. A
+record counted there may still have an entry built from its other data. A PyPI package
+that also carries a GIT range uses only its `versions` list, as osv-scanner 2.6.0 does.
+Output is sorted and has no timestamp of its own; `metadata.json` takes `version`,
+`date` and `updated_at` from the newest OSV `modified` value and `sha256` from the
+written file.
 
 Unlike the review runner's exit `0` for written records, the scan returns `0` for
 complete/no findings, `1` for complete/findings, and `2` for incomplete or invalid

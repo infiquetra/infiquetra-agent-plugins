@@ -107,6 +107,15 @@ PYPI_RECORDS = {
     "PYSEC-2099-5.json": _record(
         "PYSEC-2099-5", _pkg("PyPI", "gone-pkg", versions=["1.0"]), withdrawn="2026-01-01T00:00:00Z",
     ),
+    "PYSEC-2099-11.json": _record(
+        "PYSEC-2099-11",
+        _pkg("PyPI", "na-pkg", versions=["2.5.0"],
+             ranges=[_ecosystem({"introduced": "0"}, {"fixed": "2.6.0-NA"})]),
+    ),
+    "PYSEC-2099-12.json": _record(
+        "PYSEC-2099-12", _pkg("PyPI", "semver-pkg", ranges=[_semver({"introduced": "0"},
+                                                                     {"fixed": "1.0.0"})]),
+    ),
     "broken.json": "{not json",
     "list.json": [1, 2, 3],
 }
@@ -197,11 +206,22 @@ def test_offline_advisories_command_builds_both_snapshots_from_osv_zips(
 
     pip = _entries(home, "pip-audit")
     assert set(pip) == {
-        ("example-pkg", "PYSEC-2099-1"), ("evil-pkg", "MAL-2099-3"), ("commit-pkg", "PYSEC-2099-4"),
+        ("example-pkg", "PYSEC-2099-1"), ("example-pkg", "PYSEC-2099-2"),
+        ("evil-pkg", "MAL-2099-3"), ("commit-pkg", "PYSEC-2099-4"), ("na-pkg", "PYSEC-2099-11"),
     }
+    # The versions list and the ECOSYSTEM range are both kept: OSV's list can leave out
+    # published versions (mostly pre-releases) that the range still covers.
     assert pip[("example-pkg", "PYSEC-2099-1")] == {
         "package": "example-pkg", "id": "PYSEC-2099-1", "aliases": ["CVE-2099-0001"],
-        "versions": ["1.0.0", "1.1.0"],
+        "versions": ["1.0.0", "1.1.0"], "ranges": [{"introduced": "1.0.0", "fixed": "1.2.0"}],
+    }
+    assert pip[("example-pkg", "PYSEC-2099-2")] == {
+        "package": "example-pkg", "id": "PYSEC-2099-2",
+        "ranges": [{"introduced": "2.0", "fixed": "2.5"}],
+    }
+    # A range whose bound is not PEP 440 is counted and left out; the list still counts.
+    assert pip[("na-pkg", "PYSEC-2099-11")] == {
+        "package": "na-pkg", "id": "PYSEC-2099-11", "versions": ["2.5.0"],
     }
     assert pip[("evil-pkg", "MAL-2099-3")]["ranges"] == [{"introduced": "0"}]
     # A GIT range makes osv-scanner read only the versions list, so the rough
@@ -229,11 +249,13 @@ def test_offline_advisories_command_builds_both_snapshots_from_osv_zips(
     for name in ("pip-audit", "npm-audit"):
         listed = [(item["package"], item["id"]) for item in _snapshot(home, name)["advisories"]]
         assert listed == sorted(listed)
-    assert "pip-audit: wrote" in out and "3 advisories, 3 packages" in out
+    assert "pip-audit: wrote" in out and "5 advisories, 4 packages" in out
     assert "npm-audit: wrote" in out
     assert "withdrawn 1, unparseable 2, oversized 0" in out
     assert "withdrawn 1, unparseable 0, oversized 1" in out
-    assert "pypi-range-without-versions 1" in out
+    assert "pypi-range-unparseable 1" in out
+    assert "pypi-range-not-ecosystem 1" in out
+    assert "pypi-range-without-versions" not in out
     assert "npm-range-not-semver 1" in out
     assert "npm-range-unparseable 1" in out
     assert "no-versions-or-ranges 1" in out
@@ -422,9 +444,84 @@ def test_offline_pip_versions_list_compares_pep440_normal_forms(
 def test_offline_pip_single_version_entries_keep_exact_string_matching() -> None:
     assert ADV._pip_entry_matches({"version": "2.31.0"}, "2.31.0")
     assert not ADV._pip_entry_matches({"version": "2.31.0"}, "2.31")
-    # pip has no PEP 440 ordering here: only the unbounded interval from "0" matches.
     assert ADV._pip_entry_matches({"ranges": [{"introduced": "0"}]}, "0.0.1")
-    assert not ADV._pip_entry_matches({"ranges": [{"introduced": "0", "fixed": "9"}]}, "1.0")
+
+
+# PEP 440's own ordering example, lowest first.
+PEP440_ORDER = [
+    "1.0.dev456", "1.0a1", "1.0a2.dev456", "1.0a12.dev456", "1.0a12", "1.0b1.dev456",
+    "1.0b2", "1.0b2.post345.dev456", "1.0b2.post345", "1.0rc1.dev456", "1.0rc1", "1.0",
+    "1.0+abc.5", "1.0+abc.7", "1.0+5", "1.0.post456.dev34", "1.0.post456", "1.0.15",
+    "1.1.dev1", "2.0", "1!0.1",
+]
+
+
+def test_offline_pep440_order_follows_the_specification_example() -> None:
+    keys = [ADV._pep440_key(version) for version in PEP440_ORDER]
+    assert all(key is not None for key in keys)
+    for lower, higher in zip(keys, keys[1:]):
+        assert lower < higher
+    assert ADV._pep440_key("1.0") == ADV._pep440_key("1.0.0") == ADV._pep440_key("v1.0.0.0")
+    assert ADV._pep440_key("1.0a1") == ADV._pep440_key("1.0-ALPHA.1")
+    assert ADV._pep440_key("1.0.post1") == ADV._pep440_key("1.0-1") == ADV._pep440_key("1.0r1")
+    assert ADV._pep440_key("1.0rc1") == ADV._pep440_key("1.0c1") == ADV._pep440_key("1.0pre1")
+    assert ADV._pep440_key("0") == ADV._pep440_key("0.0")
+    for text in ("", "not-pep440", "1.0-NA", "2be7ce80df05", "1.0+", "1..0"):
+        assert ADV._pep440_key(text) is None
+
+
+def test_offline_pep440_order_agrees_with_packaging() -> None:
+    packaging_version = pytest.importorskip("packaging.version")
+    samples = [
+        "0", "0.0.1", "0.1", "0.9.13", "1", "1.0", "1.0.0", "1.0.0.0.1", "1.0.dev0", "1.0a1.dev0",
+        "1.0a1", "1.0a1.post1.dev0", "1.0a1.post1", "1.0b1", "1.0rc1", "1.0+abc", "1.0+abc.1",
+        "1.0+1", "1.0+1.abc", "1.0+a-b_c.d", "1.0.post0.dev0", "1.0.post0", "1.0.post1", "1!0.1",
+        "v1.0", "1.0-1", "1.0_rc_2", "1.0.c1", "1.0preview3", "1.0rev2", "1.0r", "1.0dev",
+        "1.0-dev-3", "2.4.0rc0", "2.7.0rc0", "2.7.2", "4.1rc1", "11.2.0", "2012.2", "1.0.0b0",
+    ]
+    parsed = sorted((packaging_version.Version(text), text) for text in samples)
+    for (left, left_text), (right, right_text) in zip(parsed, parsed[1:]):
+        ours_left, ours_right = ADV._pep440_key(left_text), ADV._pep440_key(right_text)
+        assert ours_left <= ours_right, (left_text, right_text)
+        assert (ours_left == ours_right) == (left == right), (left_text, right_text)
+
+
+@pytest.mark.parametrize(("pin", "expected"), [
+    ("1.9.9", False),
+    ("2.0a1", False),  # a pre-release of the introduced version sorts below it
+    ("2.0", True),  # introduced is inclusive
+    ("2.0.0", True),
+    ("2.7.0rc0", True),  # a pre-release OSV's versions list leaves out
+    ("2.7.1.post1", True),
+    ("2.7.2rc1", True),  # a pre-release of the fixed version sorts below it
+    ("2.7.2.dev0", True),
+    ("2.7.2", False),  # fixed is exclusive
+    ("2.7.2.post1", False),
+    ("3.0.dev1", False),
+    ("3.0", True),
+    ("3.0.0", True),  # last_affected is inclusive, and == pads with zeros
+    ("3.0.post1", False),
+    ("1!2.5", False),  # a later epoch sorts above every bound
+    ("2be7ce80df05", False),  # not PEP 440: no ordering is guessed
+])
+def test_offline_pip_intervals_match_at_each_bound(pin: str, expected: bool) -> None:
+    item = {"package": "p", "id": "GHSA-x", "versions": ["2.7.1"], "ranges": [
+        {"introduced": "2.0", "fixed": "2.7.2"},
+        {"introduced": "3.0.dev2", "last_affected": "3.0"},
+    ]}
+    assert ADV._pip_entry_matches(item, pin) is expected
+
+
+def test_offline_pip_interval_from_zero_and_unparseable_bounds() -> None:
+    assert ADV._pip_entry_matches({"ranges": [{"introduced": "0", "fixed": "9"}]}, "1.0")
+    assert not ADV._pip_entry_matches({"ranges": [{"introduced": "0", "fixed": "9"}]}, "9.0")
+    assert ADV._pip_entry_matches({"ranges": [{"introduced": "3"}]}, "99.0")
+    assert not ADV._pip_entry_matches({"ranges": [{"introduced": "3"}]}, "2.9")
+    # Every version: even a pin that is not PEP 440, since no comparison is needed.
+    assert ADV._pip_entry_matches({"ranges": [{"introduced": "0"}]}, "2be7ce80df05")
+    # A bound that is not PEP 440 never matches.
+    assert not ADV._pip_entry_matches({"ranges": [{"introduced": "0", "fixed": "2.6.0-NA"}]},
+                                      "1.0")
 
 
 def test_offline_pep503_names_compare_the_way_pip_does() -> None:
@@ -476,6 +573,28 @@ def test_offline_pip_evaluator_matches_lists_pep503_names_and_every_pinned_file(
         ("Example_Pkg", "1.0", "PYSEC-2099-1"),
         ("evil.pkg", "4.2", "MAL-2099-3"),
         ("old-style", "3.1", "PYSEC-2099-7"),
+        ("Example_Pkg", "1.0", "PYSEC-2099-8"),
+        ("example-pkg", "1.2.0", "PYSEC-2099-8"),
+    }
+
+
+def test_offline_pip_evaluator_honours_ranges_beyond_the_versions_list(tmp_path: Path) -> None:
+    # GHSA-2475-53vw-vp25's versions list leaves out tensorflow-cpu 2.7.0rc0, a published
+    # version inside its range; osv-scanner reports it and so must the evaluator.
+    entries = [
+        {"package": "tensorflow-cpu", "id": "GHSA-2475-53vw-vp25", "versions": ["2.6.0", "2.7.0"],
+         "ranges": [{"introduced": "0", "fixed": "2.7.2"}]},
+        {"package": "plone", "id": "PYSEC-2099-9", "ranges": [
+            {"introduced": "4.0", "last_affected": "4.1"}]},
+    ]
+    found = _pip_evaluate(
+        tmp_path, entries,
+        "tensorflow-cpu==2.7.0rc0\nplone==4.1rc1\n",
+        "tensorflow-cpu==2.7.2\nplone==4.1.post1\n",
+    )
+    assert found == {
+        ("tensorflow-cpu", "2.7.0rc0", "GHSA-2475-53vw-vp25"),
+        ("plone", "4.1rc1", "PYSEC-2099-9"),
     }
 
 
@@ -599,5 +718,6 @@ def test_offline_version_readers_finish_quickly_on_hostile_input() -> None:
     assert ADV._pep440_canonical("1." * 200_000 + "x") is None
     assert ADV._pep440_canonical("1" + "-" * 100 + "a") is None
     assert ADV._semver_key("1.0.0-" + "a." * 200_000) is None
+    assert ADV._pep440_key("1." * 200_000 + "x") is None
     assert ADV._pep503_name("a" + "-_." * 200_000 + "b") == "a-b"
     assert time.perf_counter() - started < 2.0

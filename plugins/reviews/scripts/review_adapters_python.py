@@ -772,8 +772,12 @@ def _evaluator_source() -> str:
             inspect.getsource(function) + "\n\n"
             for function in (
                 advisories._pep503_name,
+                advisories._pep440_parts,
                 advisories._pep440_canonical,
+                advisories._pep440_key,
                 advisories._unbounded_from_zero,
+                advisories._key_in_interval,
+                advisories._pep440_in_interval,
                 advisories._pip_entry_matches,
             )
         )
