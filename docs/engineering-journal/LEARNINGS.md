@@ -1,6 +1,108 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-22
+
+### A repository scan compares against an empty base, so a project folder is always new there
+
+**Evidence.** `security_scan.py --repo <home-lab> --commit HEAD` ended the
+`npm-audit` row in `execution-error` although the only Node project, `forge/web`,
+is healthy. `plugins/reviews/tests/test_r6_245_offline_snapshots.py::test_offline_repository_scan_of_node_project_only_in_subfolder_does_not_crash`
+builds a repository whose only `package.json` and `package-lock.json` sit under
+`web/` and now ends with the advisory gap `missing-advisory-snapshot`.
+
+**Mechanism.** `security_scan._snapshot` builds the base commit from an empty
+tree. `review_tools._run_adapter` lists Node project folders from the head tree
+and runs the adapter once per folder, and `_base_and_head` then scanned
+`base_root/<folder>`. That folder does not exist in the empty base, so git was
+started with a missing working directory and raised `FileNotFoundError`, which
+the scan reports as the vague `execution-error`. `_base_and_head` now treats a
+project folder that is absent from the base checkout as a base with no
+findings that read no lockfile, and scans only the head. The same rule is right
+for a diff review, where a folder added by the change has no base findings. It
+is not npm-specific: every adapter that runs per project folder takes this path.
+
+**Generalizable rule.** When a scan derives its work list from the head tree,
+every path in that list must be checked for existence in the base before the
+base is scanned, because "new in head" is a normal state and not an error.
+
+### A hash-locked requirements file is exact pins on continuation lines, not an unpinned file
+
+**Evidence.** `ansible/roles/ebay_compliance/files/requirements.txt` in
+`home-lab` is compiled with `uv pip compile --generate-hashes`: 21 exact
+`name==version` pins (448 physical lines), each ending in ` \` and followed by
+indented `--hash=sha256:<hex>` lines. A repository scan marked the `pip-audit`
+row degraded with `requirements-not-exactly-pinned` for it.
+`plugins/reviews/tests/test_r6_245_offline_snapshots.py` now covers one
+accepted hash-locked file, fifteen rejected shapes, and an evaluator run that
+matches a hash-locked pin against an `advisories.json` entry.
+
+**Mechanism.** `pip_audit_scan_inputs` required every physical line to be a
+complete pin, so the pin line was accepted only after a continuation it could
+not see and every `--hash` line failed on its own. The file is now read as
+logical lines: backslash continuations are joined, then a logical line passes
+only if it is an exact pin followed by zero or more `--hash=<algorithm>:<hex>`
+options. Ranges, URLs, `-r`, `-e`, any other option, an unpinned name, a
+`--hash` line with no pin, and a continuation left open at the end of the file
+stay rejected. The offline evaluator that `_invoke_pip_audit` writes as
+`audit.py` embeds the source of the same two functions (`inspect.getsource`), so
+the rule that accepts a file and the code that reads its pins cannot drift
+apart.
+
+**Generalizable rule.** When a policy decides which files a tool may read, run
+the tool's own parser on exactly the text the policy accepted, ideally from one
+shared definition, so "accepted" never means "accepted but read differently".
+
+### Tightening a shared reader also tightens every caller that has no gate
+
+**Evidence.** A review of the hash-locked change found that a diff review
+(`repository_scan=False`) hands the same `audit.py` evaluator every
+`requirements*.txt` with no acceptance rule and no degraded row. Three lines pip
+installs, `pkg==1.0<TAB># note`, `pkg==1.0 --config-settings=editable_mode=compat`
+and a hash-locked pin whose last `--hash` line ends in `\` at the end of the
+file, were reported by the evaluator on `origin/main` and silently dropped by the
+stricter one. `test_offline_pip_audit_diff_review_reads_pins_the_acceptance_rule_would_refuse`
+in `plugins/reviews/tests/test_r6_245_offline_snapshots.py` covers each line.
+
+**Mechanism.** The evaluator kept a pin only when the whole logical line passed
+`_exact_pin`, the acceptance rule's test. That is right for a repository scan,
+whose acceptance rule already refused such files and said so, but in a diff
+review the evaluator is the only reader. It now reads each file two ways: the
+older line-by-line `name==version` prefix match, and the logical exact pins,
+including the requirement a file ends on mid-continuation (`_logical_requirements`
+returns it as `tail` instead of a bare flag). The logical reading wins where both
+read the same name. Comments now follow pip's rule, `#` after any whitespace, so
+a tab before a comment no longer makes the repository scan refuse the file.
+
+**Generalizable rule.** When one reader serves both a gated path and an ungated
+path, a stricter reading belongs in the gate, not in the shared reader; check
+every caller for one that lacks the gate before tightening.
+
 ## 2026-11-20
+
+### A pattern that starts with a repeated space class is quadratic on a long run of spaces
+
+**Evidence.** The first version of `_logical_requirements` in
+`plugins/reviews/scripts/review_adapters_python.py` stripped comments with
+`re.sub(r"(^|\s+)#.*$", "", raw)`, and `_exact_pin` split a line with one lazy
+pattern for "pin, then `--hash` options". On a line holding 20,000 spaces and no
+`#`, the first took 1.5 seconds and the second 0.6 seconds, and each doubling of
+the run took four times as long. An automated security review of the commit
+flagged the first. `test_offline_pip_audit_reads_a_long_run_of_spaces_in_one_pass`
+runs both readers on 200,000 spaces; against the earlier code it did not finish
+in 60 seconds.
+
+**Mechanism.** `re.sub` and `re.search` try the pattern at every start position.
+A pattern that opens with `\s+` reads the rest of the run from each position
+before it fails, so the work is the square of the run's length. The requirements
+file comes from the repository being scanned, which is not trusted, so one line
+could stall a scan. The comment is now found with a lookbehind,
+`(?:^|(?<=\s))#`, and the `--hash` options are dropped token by token from the
+end of the line.
+
+**Generalizable rule.** When a pattern reads untrusted text, do not let it start
+with a repeated class that the rest of the pattern can fail after. Anchor it
+with a lookbehind or split into tokens first, and time it on a long run of the
+repeated character before shipping.
 
 ### A staged rollout has to name every harness it is allowed to touch
 

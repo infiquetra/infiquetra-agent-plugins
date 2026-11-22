@@ -705,24 +705,90 @@ def _parse_bandit(text: str) -> ParseResult:
     return ParseResult(tuple(hits))
 
 
+def _logical_requirements(text):
+    """Requirement lines with comments dropped and backslash continuations joined.
+
+    Returns ``(lines, tail)``. ``tail`` is None when every continuation closed. When the
+    text ends on a continuation, ``tail`` is that half-joined requirement: pip still reads
+    it, so the evaluator does too, while the acceptance rule refuses the file. Comments
+    follow pip's rule: ``#`` at the start of a line or after any whitespace. This function
+    is self-contained: the offline pip-audit evaluator embeds its source, so the
+    acceptance rule and the evaluator read requirement files identically.
+    """
+    import re
+
+    lines = []
+    pending = []
+    for raw in text.splitlines():
+        # A lookbehind finds the comment in one pass. `(^|\s+)#.*$` re-reads a long run
+        # of spaces from every start position, which is quadratic on a hostile line.
+        comment = re.search(r"(?:^|(?<=\s))#", raw)
+        line = (raw[:comment.start()] if comment else raw).strip()
+        if line.endswith("\\"):
+            pending.append(line[:-1].strip())
+            continue
+        pending.append(line)
+        joined = " ".join(part for part in pending if part)
+        pending = []
+        if joined:
+            lines.append(joined)
+    tail = " ".join(part for part in pending if part) if pending else None
+    return lines, tail
+
+
+def _exact_pin(line):
+    """``(name, version)`` for an exact pin followed only by ``--hash`` options, else None."""
+    import re
+
+    # Drop the trailing run of `--hash` options token by token, in one pass. A single
+    # lazy pattern for "pin, then hashes" backtracks quadratically on a long run of spaces.
+    tokens = list(re.finditer(r"\S+", line))
+    while tokens and re.fullmatch(r"--hash=[A-Za-z0-9_]+:[0-9A-Fa-f]+", tokens[-1].group()):
+        tokens.pop()
+    pin = re.fullmatch(
+        r"(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[A-Za-z0-9_,. -]+\])?"
+        r"\s*==\s*(?P<version>[A-Za-z0-9][A-Za-z0-9_.+!-]*)(?:\s*;[^\r\n]+)?",
+        line[:tokens[-1].end()] if tokens else "",
+    )
+    return (pin.group("name"), pin.group("version")) if pin else None
+
+
 # pip-audit 2.10.1 has no --offline flag. This evaluator prints the JSON
 # `_parse_pip_audit` already accepts, matched against the local snapshot.
-_PIP_AUDIT_OFFLINE = r"""
-import json
-import re
-import sys
-from pathlib import Path
+def _evaluator_source() -> str:
+    """The evaluator script: the two shared requirement readers, then the snapshot match."""
+    import inspect
 
+    return (
+        "import json\nimport re\nimport sys\nfrom pathlib import Path\n\n"
+        + inspect.getsource(_logical_requirements) + "\n\n"
+        + inspect.getsource(_exact_pin) + "\n\n"
+        + _EVALUATOR_BODY
+    )
+
+
+_EVALUATOR_BODY = r"""
 snapshot = Path(sys.argv[1])
-pattern = re.compile(
-    r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^\]]+\])?==([^\s#;]+)"
-)
 wanted = {}
+# A diff review hands this script every requirements file with no acceptance rule, so
+# it reads each file two ways and keeps both. Logical lines give exact pins, including
+# hash-locked ones and the requirement a file ends on mid-continuation. The older
+# line-by-line prefix match keeps every pin it ever read, such as a pin followed by an
+# installer option; the logical reading wins where both read the same name.
+prefix = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^\]]+\])?==([^\s#;]+)")
 for name in sys.argv[2:]:
-    for line in Path(name).read_text(encoding="utf-8", errors="replace").splitlines():
-        match = pattern.match(line)
+    text = Path(name).read_text(encoding="utf-8", errors="replace")
+    found = {}
+    for line in text.splitlines():
+        match = prefix.match(line)
         if match:
-            wanted[match.group(1).lower()] = (match.group(1), match.group(2).strip())
+            found[match.group(1).lower()] = (match.group(1), match.group(2))
+    lines, tail = _logical_requirements(text)
+    for line in lines + ([tail] if tail else []):
+        pin = _exact_pin(line)
+        if pin:
+            found[pin[0].lower()] = pin
+    wanted.update(found)
 payload = json.loads((snapshot / "advisories.json").read_text(encoding="utf-8"))
 items = payload.get("advisories") if isinstance(payload, dict) else []
 dependencies = []
@@ -743,6 +809,7 @@ for item in items or []:
     })
 json.dump({"dependencies": dependencies}, sys.stdout)
 """
+_PIP_AUDIT_OFFLINE = _evaluator_source()
 
 
 def _invoke_pip_audit(context: ScanContext) -> list[str]:
@@ -773,10 +840,6 @@ def pip_audit_scan_inputs(root: Path) -> tuple[list[str], list[str]]:
     Includes, local paths, URLs, wildcards and installer options are unsupported input,
     not an invitation to invoke pip. Keep this policy beside the invocation it governs.
     """
-    exact = re.compile(
-        r"^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\[[A-Za-z0-9_,. -]+\])?"
-        r"\s*==\s*[A-Za-z0-9][A-Za-z0-9_.+!-]*(?:\s*;[^\r\n]+)?$"
-    )
     accepted: list[str] = []
     unsupported: list[str] = []
     for path in review_tools.scan_files(root):
@@ -786,9 +849,8 @@ def pip_audit_scan_inputs(root: Path) -> tuple[list[str], list[str]]:
         try:
             if path.is_symlink() or not path.is_file():
                 raise ValueError("not a regular file")
-            lines = [line.split(" #", 1)[0].strip() for line in path.read_text().splitlines()]
-            entries = [line for line in lines if line and not line.startswith("#")]
-            valid = bool(entries) and all(exact.fullmatch(line) for line in entries)
+            entries, tail = _logical_requirements(path.read_text())
+            valid = bool(entries) and tail is None and all(_exact_pin(line) for line in entries)
         except (OSError, UnicodeError, ValueError):
             valid = False
         (accepted if valid else unsupported).append(name)
