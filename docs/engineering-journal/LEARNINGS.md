@@ -2,6 +2,24 @@
 
 ## 2026-11-22
 
+### A scan test that asserts a row "ran" must bring its own tool, or it measures the machine
+
+**Evidence.** `test_offline_repository_scan_reports_a_vulnerable_pin_from_a_built_snapshot`
+in `plugins/reviews/tests/test_review_advisories.py` passed on the machine that wrote it
+and failed in CI on pull request 360: the `pip-audit` row came back `degraded` with reason
+`missing`, because the CI runner has no `pip-audit` installed. Run locally with a `PATH`
+of only `/usr/bin:/bin` plus git, the test failed the same way.
+
+**Mechanism.** The `pip-audit` and `npm-audit` rows never run the real tool for matching;
+the plugin's own evaluator reads `advisories.json`. They do ask the installed tool for
+`--version` first (`review_tools.py`, the version probe), and a missing tool ends the row
+before the evaluator starts. The test now puts stand-in `pip-audit` and `npm` executables
+first on `PATH`; each answers only `--version`, with the version the catalogue pins.
+
+**Generalizable rule.** A test that needs a scanner row to reach `ran` supplies a stand-in
+for the tool the row probes, or skips when it is absent. Check it with the tool hidden
+from `PATH` before pushing, because the author's machine has every scanner installed.
+
 ### osv-scanner reads a leading v and missing parts in npm versions, and little else
 
 **Evidence.** A scratch `package-lock.json` held 17 copies of `lodash` at odd version

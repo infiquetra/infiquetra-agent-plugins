@@ -714,10 +714,42 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True)
 
 
+def _pinned_version(row: str) -> str:
+    """The catalogue's ``default_version`` for *row*, so a stand-in tool reports the pin."""
+    import re
+
+    catalogue = (REPO_ROOT / "plugins" / "reviews" / "references" / "review-tools.yaml").read_text(
+        encoding="utf-8")
+    block = catalogue.split(f"  - id: {row}\n", 1)[1].split("\n  - id: ", 1)[0]
+    found = re.search(r'^    default_version: "([^"]+)"$', block, re.MULTILINE)
+    assert found, row
+    return found.group(1)
+
+
+def _stand_in_tools(folder: Path) -> Path:
+    """Executables named ``pip-audit`` and ``npm`` that only answer ``--version``.
+
+    The two rows ask the installed tool for its version and nothing else; the matching is
+    done by the plugin's own evaluator. A machine without pip-audit (the CI runner) would
+    otherwise report the row as missing and this test would measure the machine.
+    """
+    folder.mkdir()
+    for tool, row in (("pip-audit", "pip-audit"), ("npm", "npm-audit")):
+        script = folder / tool
+        script.write_text(
+            f'#!/bin/sh\n[ "$1" = "--version" ] && echo "{_pinned_version(row)}" && exit 0\n'
+            f'echo "stand-in {tool}: only --version is supported" >&2\nexit 64\n',
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+    return folder
+
+
 def test_offline_repository_scan_reports_a_vulnerable_pin_from_a_built_snapshot(
     tmp_path: Path,
 ) -> None:
     home = _osv_home(tmp_path / "home")
+    tools = _stand_in_tools(tmp_path / "tools")
     assert _run_command(home)[0] == 0
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -746,7 +778,8 @@ def test_offline_repository_scan_reports_a_vulnerable_pin_from_a_built_snapshot(
         [sys.executable, str(SCRIPTS / "security_scan.py"), "--repo", str(repo),
          "--output", str(output)],
         capture_output=True, text=True, check=False, timeout=300,
-        env={**os.environ, "HOME": str(home)},
+        env={**os.environ, "HOME": str(home),
+             "PATH": str(tools) + os.pathsep + os.environ.get("PATH", "")},
     )
     summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
     rows = {row["id"]: row for row in summary["rows"]}
