@@ -22,11 +22,16 @@ pins/rules come from the catalogue or an external operator profile; resolved
 `not-recorded` versions are reported as unpinned without degrading them solely for
 that absence. Real mismatches and unreadable versions remain degraded.
 
-pip-audit's scan arguments live beside its ordinary invocation in
-`review_adapters_python.py`: `--disable-pip --no-deps` permits only fully exact-pinned
-requirement files, while other files are named as degraded. It audits only listed
-packages, not resolved transitive dependencies. CDK synthesis rows are excluded
-unless named explicitly with `--include-synthesized`.
+The pip-audit row does not start pip-audit. pip-audit 2.10.1 has no offline flag, so
+`_invoke_pip_audit` in `review_adapters_python.py` writes an evaluator script and runs
+it with the current Python against the local snapshot (see "Offline advisory snapshots"
+below). In a scan, `pip_audit_scan_inputs`, beside that invocation, accepts a
+`requirements*.txt` only when every logical line (backslash continuations joined,
+comments dropped) is an exact `name==version` pin, optionally followed by
+`--hash=<algorithm>:<hex>` options. Any other file is named in the row's degraded reason
+`requirements-not-exactly-pinned`. The evaluator checks only the listed pins, not
+resolved transitive dependencies, and never invokes pip. CDK synthesis rows are
+excluded unless named explicitly with `--include-synthesized`.
 
 ## Offline advisory snapshots
 
