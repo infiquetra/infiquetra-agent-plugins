@@ -52,8 +52,10 @@ An entry is one advisory for one package: `package`, `id`, and optionally `alias
 
 - npm compares interval bounds by SemVer 2.0.0 precedence: pre-releases sort before
   their release and build metadata is ignored. `versions` and `version` compare exact
-  strings. An installed version that is not SemVer matches only an exact string or the
-  interval from `"0"` with no upper bound. Every installed copy in `package-lock.json`
+  strings. An installed version with a leading `v` or a missing minor or patch number is
+  read as osv-scanner 2.6.0 reads it (`v1.2.3` is `1.2.3`, `1.2` is `1.2.0`); any other
+  version that is not SemVer matches only an exact string or the interval from `"0"`
+  with no upper bound. Every installed copy in `package-lock.json`
   counts, the root project does not, and every matching advisory is reported.
   `database_specific.severity` maps to `low`, `moderate`, `high` or `critical`; an
   unrated advisory stays `high`.
@@ -61,7 +63,7 @@ An entry is one advisory for one package: `package`, `id`, and optionally `alias
   matches the same string or the same PEP 440 normal form, which drops trailing zero
   release components because PEP 440 `==` pads with zeros (`==1.0` matches the published
   `1.0.0`) and keeps a local label exact. A single `version` still compares exact
-  strings. Interval bounds compare by PEP
+  strings (a JSON number there is compared as its text). Interval bounds compare by PEP
   440 ordering, the order of `packaging.version.Version` written in the standard
   library, so a published version inside an OSV range matches even when the record's
   `versions` list leaves it out (OSV lists often omit pre-releases). A pin that is not
@@ -69,7 +71,8 @@ An entry is one advisory for one package: `package`, `id`, and optionally `alias
   `"0"` with no upper bound.
 
 The builder skips withdrawn records and reads each zip member in memory as JSON only,
-with a size cap, counting unparseable and oversized members. It keeps both a record's `versions` list and
+with a size cap, counting unparseable and oversized members; a field of the wrong type
+is ignored rather than stopping the build. It keeps both a record's `versions` list and
 its ranges, and reports what it could not express: a range of the wrong type (npm wants
 SEMVER, PyPI ECOSYSTEM), a range whose bounds do not parse (for example PyPI bounds such
 as `2.6.0-NA`), and an affected package with neither versions nor a usable range. A

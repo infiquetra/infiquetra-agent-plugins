@@ -251,9 +251,33 @@ def _key_in_interval(key, interval, bound_key):
     return True
 
 
+def _semver_installed_key(version):
+    """The SemVer key of an installed npm version, read the lenient way osv-scanner reads it.
+
+    Strict SemVer first. Otherwise one leading lower-case ``v`` is dropped and a missing
+    minor or patch number counts as zero, so ``v1.2.3`` is ``1.2.3`` and ``1.2`` is
+    ``1.2.0``; osv-scanner 2.6.0 reports the same advisories for both shapes. Other
+    spellings (a leading ``=``, ``V`` or space, leading zeros, a fourth number) stay
+    unread here although osv-scanner reads some of them its own way; npm does not write
+    them to a lock file. Interval bounds are never read this way.
+    """
+    key = _semver_key(version)
+    if key is not None or not isinstance(version, str):
+        return key
+    text = version[1:] if version[:1] == "v" else version
+    cut = len(text)
+    for mark in ("-", "+"):
+        if mark in text:
+            cut = min(cut, text.index(mark))
+    numbers = text[:cut].split(".")
+    if not 1 <= len(numbers) <= 3:
+        return None
+    return _semver_key(".".join(numbers + ["0"] * (3 - len(numbers))) + text[cut:])
+
+
 def _semver_in_interval(version, interval):
     """True when the installed *version* lies in one SemVer interval."""
-    return _key_in_interval(_semver_key(version), interval, _semver_key)
+    return _key_in_interval(_semver_installed_key(version), interval, _semver_key)
 
 
 def _pep440_in_interval(version, interval):
@@ -269,8 +293,8 @@ def _pip_entry_matches(item, version):
     ``ranges`` compare with PEP 440 ordering; a pin that is not PEP 440 matches only a
     listed string or the unbounded interval from ``"0"``.
     """
-    single = item.get("version")
-    if isinstance(single, str) and single and single == version:
+    single = str(item.get("version") or "")
+    if single and single == version:
         return True
     listed = item.get("versions")
     if isinstance(listed, list) and listed:
@@ -290,11 +314,11 @@ def _npm_entry_matches(item, version):
     """True when the installed *version* is affected by one npm snapshot entry.
 
     A single ``version`` and a ``versions`` list compare exact strings. ``ranges`` compare
-    with SemVer 2.0.0 precedence. An installed version that is not SemVer matches only an
-    exact string or the unbounded interval from ``"0"``.
+    with SemVer 2.0.0 precedence. An installed version that is not SemVer, even read
+    leniently, matches only an exact string or the unbounded interval from ``"0"``.
     """
-    single = item.get("version")
-    if isinstance(single, str) and single and single == version:
+    single = str(item.get("version") or "")
+    if single and single == version:
         return True
     listed = item.get("versions")
     if isinstance(listed, list) and version in listed:
@@ -439,7 +463,8 @@ def _interval_sort_key(interval: dict[str, str], bound_key: Any) -> tuple[Any, s
 
 
 def _advisory_url(record: dict[str, Any]) -> str | None:
-    for reference in record.get("references") or []:
+    references = record.get("references")
+    for reference in references if isinstance(references, list) else []:
         if not isinstance(reference, dict) or reference.get("type") != "ADVISORY":
             continue
         url = _text(reference.get("url"), 2048)
@@ -524,7 +549,11 @@ def convert(path: Path, ecosystem: str) -> tuple[list[dict[str, Any]], dict[str,
             } if isinstance(package.get("versions"), list) else set()
             intervals: list[dict[str, str]] = []
             unexpressed = None
-            ranges = [entry for entry in package.get("ranges") or [] if isinstance(entry, dict)]
+            raw_ranges = package.get("ranges")
+            ranges = [
+                entry for entry in (raw_ranges if isinstance(raw_ranges, list) else [])
+                if isinstance(entry, dict)
+            ]
             # osv-scanner 2.6.0 reads only the versions list of a PyPI package that also
             # carries a GIT range: PYSEC records pair the commit range with a rough
             # ECOSYSTEM range such as {"introduced": "0"}, which would match every version.

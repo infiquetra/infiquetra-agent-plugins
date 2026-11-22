@@ -342,6 +342,33 @@ def test_offline_advisories_command_reports_an_unreadable_zip_without_a_tracebac
     assert "npm-audit: wrote" in out
 
 
+@pytest.mark.parametrize("bad", [
+    {"affected": [_pkg("PyPI", "typed-pkg", versions=["1.0"]) | {"ranges": 5}]},
+    {"affected": [_pkg("PyPI", "typed-pkg", versions=["1.0"]) | {"ranges": True}]},
+    {"affected": [_pkg("PyPI", "typed-pkg", versions=["1.0"])], "references": 5},
+    {"affected": [_pkg("PyPI", "typed-pkg", versions=["1.0"],
+                       ranges=[{"type": "ECOSYSTEM", "events": 7}])]},
+    {"affected": [_pkg("PyPI", "typed-pkg", versions=["1.0"],
+                       ranges=[_ecosystem({"introduced": 5})])]},
+])
+def test_offline_advisories_command_survives_wrongly_typed_record_fields(
+    tmp_path: Path, bad: dict[str, Any],
+) -> None:
+    # One malformed record must not stop either snapshot from being written.
+    home = _osv_home(tmp_path / "home")
+    members = dict(PYPI_RECORDS)
+    members["PYSEC-2099-20.json"] = {"id": "PYSEC-2099-20",
+                                     "modified": "2026-01-02T03:04:05Z", **bad}
+    _write_zip(home / ADVISORIES / "osv-scanner" / "osv-scalibr" / "PyPI" / "all.zip", members)
+    code, out, err = _run_command(home)
+    assert code == 0, err
+    assert "Traceback" not in err
+    pip = _entries(home, "pip-audit")
+    assert ("evil-pkg", "MAL-2099-3") in pip
+    assert pip[("typed-pkg", "PYSEC-2099-20")]["versions"] == ["1.0"]
+    assert ("left-thing", "GHSA-aaaa-bbbb-cccc") in _entries(home, "npm-audit")
+
+
 # --- SemVer 2.0.0 precedence, straight from the specification's examples. ---
 
 SPEC_ORDER = [
@@ -392,7 +419,20 @@ def _npm(item: dict[str, Any], version: str) -> bool:
     ("2.1.1-alpha", False),
     ("2.1.1", False),
     ("not-a-version", False),
-    ("1.2", False),
+    # osv-scanner 2.6.0 reads an installed version with a leading v or a missing part.
+    ("1.2", True),
+    ("1.4", True),
+    ("1", True),  # 1.0.0
+    ("2", True),  # 2.0.0, above 2.0.0-beta.1
+    ("3", False),
+    ("v1.2.0", True),
+    ("v1.4.2", False),
+    ("v2.1", True),
+    ("1.2-beta.1", True),
+    ("=1.2.0", False),
+    ("V1.2.0", False),
+    ("vv1.2.0", False),
+    ("01.2.0", False),
 ])
 def test_offline_npm_intervals_match_at_each_bound(version: str, expected: bool) -> None:
     item = {"package": "p", "id": "GHSA-x", "ranges": [
@@ -445,6 +485,15 @@ def test_offline_pip_single_version_entries_keep_exact_string_matching() -> None
     assert ADV._pip_entry_matches({"version": "2.31.0"}, "2.31.0")
     assert not ADV._pip_entry_matches({"version": "2.31.0"}, "2.31")
     assert ADV._pip_entry_matches({"ranges": [{"introduced": "0"}]}, "0.0.1")
+
+
+def test_offline_single_version_written_as_a_json_number_still_matches() -> None:
+    # Older snapshots compared str(item["version"]); a number there kept matching.
+    assert ADV._pip_entry_matches({"version": 1.0}, "1.0")
+    assert not ADV._pip_entry_matches({"version": 1.0}, "1.1")
+    assert ADV._npm_entry_matches({"version": 1}, "1")
+    assert not ADV._pip_entry_matches({"version": None}, "None")
+    assert not ADV._npm_entry_matches({"version": ""}, "")
 
 
 # PEP 440's own ordering example, lowest first.
@@ -586,15 +635,17 @@ def test_offline_pip_evaluator_honours_ranges_beyond_the_versions_list(tmp_path:
          "ranges": [{"introduced": "0", "fixed": "2.7.2"}]},
         {"package": "plone", "id": "PYSEC-2099-9", "ranges": [
             {"introduced": "4.0", "last_affected": "4.1"}]},
+        {"package": "num-pkg", "id": "PYSEC-2099-10", "version": 1.0},
     ]
     found = _pip_evaluate(
         tmp_path, entries,
-        "tensorflow-cpu==2.7.0rc0\nplone==4.1rc1\n",
+        "tensorflow-cpu==2.7.0rc0\nplone==4.1rc1\nnum-pkg==1.0\n",
         "tensorflow-cpu==2.7.2\nplone==4.1.post1\n",
     )
     assert found == {
         ("tensorflow-cpu", "2.7.0rc0", "GHSA-2475-53vw-vp25"),
         ("plone", "4.1rc1", "PYSEC-2099-9"),
+        ("num-pkg", "1.0", "PYSEC-2099-10"),
     }
 
 
@@ -718,6 +769,7 @@ def test_offline_version_readers_finish_quickly_on_hostile_input() -> None:
     assert ADV._pep440_canonical("1." * 200_000 + "x") is None
     assert ADV._pep440_canonical("1" + "-" * 100 + "a") is None
     assert ADV._semver_key("1.0.0-" + "a." * 200_000) is None
+    assert ADV._semver_installed_key("v" + "1." * 200_000) is None
     assert ADV._pep440_key("1." * 200_000 + "x") is None
     assert ADV._pep503_name("a" + "-_." * 200_000 + "b") == "a-b"
     assert time.perf_counter() - started < 2.0

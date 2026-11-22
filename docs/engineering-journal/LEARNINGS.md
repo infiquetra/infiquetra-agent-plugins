@@ -2,6 +2,26 @@
 
 ## 2026-11-22
 
+### osv-scanner reads a leading v and missing parts in npm versions, and little else
+
+**Evidence.** A scratch `package-lock.json` held 17 copies of `lodash` at odd version
+strings and ran through osv-scanner 2.6.0 offline. `v4.17.11` got the same advisories as
+`4.17.11`; `4.17`, `v4.17` and `4.17-beta.1` got the advisories of `4.17.0`, and `4` those
+of `4.0.0`. `=4.17.11`, `V4.17.11`, `vv4.17.11` and ` 4.17.11` got only the
+every-version advisories, while `04.17.11`, `4.017.11`, `4.17.11.0` and `4.17.x` were read
+in other ways of osv-scanner's own. The independent review's mined lock file had 3,419
+misses, all from the first two shapes; after the fix it agrees on all 21,518 findings.
+
+**Mechanism.** `_semver_installed_key` in `plugins/reviews/scripts/review_advisories.py`
+drops one leading lower-case `v` and pads a missing minor or patch number with zero
+before the strict SemVer parse, for installed versions only; interval bounds stay
+strict. The other shapes are left unread because npm does not write them to a lock file.
+`test_offline_npm_intervals_match_at_each_bound` covers both sides.
+
+**Generalizable rule.** When mirroring an oracle's lenient parsing, probe a spread of
+malformed inputs and copy only the shapes real producers emit; record the rest as known
+differences.
+
 ### OSV's PyPI versions lists leave out published versions that the range covers
 
 **Evidence.** An independent review ran osv-scanner 2.6.0 and the pip evaluator on

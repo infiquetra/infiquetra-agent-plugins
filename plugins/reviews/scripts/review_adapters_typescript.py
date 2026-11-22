@@ -308,6 +308,7 @@ def _npm_evaluator_source() -> str:
                 advisories._semver_key,
                 advisories._unbounded_from_zero,
                 advisories._key_in_interval,
+                advisories._semver_installed_key,
                 advisories._semver_in_interval,
                 advisories._npm_entry_matches,
             )
