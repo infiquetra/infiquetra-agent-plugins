@@ -57,7 +57,8 @@ worked examples:
 
 Not in the spec — author it directly and validate with
 `team-scaffold validate-profiles`. Full optional per-profile schema seen across
-the fleet: `model`, `reasoning_effort`, `max_turns`, `worker_pool`, `provider`,
+the fleet: `model`, `reasoning_effort`, `max_turns` (leave it out so Hermes
+runs with no step cap; set it only as a deliberate limit), `worker_pool`, `provider`,
 `base_url`, `fallback_providers` (list of `{provider, model}`), `skills` (list),
 `bot_user_id`, `headless`, and voice fields (`voice_auto_join`,
 `voice_channel_id`, `elevenlabs_voice_id`, `tts_provider`, `piper_voice`,
