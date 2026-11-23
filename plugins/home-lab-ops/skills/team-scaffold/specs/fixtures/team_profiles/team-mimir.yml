@@ -7,7 +7,6 @@ hermes_team_profiles:
   role: engineering_council
   model: gpt-5.5
   reasoning_effort: xhigh
-  max_turns: 180
   worker_pool: 1
   discord_token_var: vault_discord_bot_token_mimir  # variable name only
   bot_user_id: '1486896133660868758'
@@ -32,7 +31,6 @@ hermes_team_profiles:
   role: engineering_council
   model: gpt-5.5
   reasoning_effort: xhigh
-  max_turns: 180
   worker_pool: 1
   discord_token_var: vault_discord_bot_token_brokkr  # variable name only
   bot_user_id: '1509676443972534403'
@@ -55,7 +53,6 @@ hermes_team_profiles:
   role: engineering_council
   model: gpt-5.5
   reasoning_effort: xhigh
-  max_turns: 180
   worker_pool: 1
   discord_token_var: vault_discord_bot_token_eitri  # variable name only
   bot_user_id: '1509677506976809100'
