@@ -1864,7 +1864,7 @@ class MuseMarketplaceTest(InstallFixture):
         )
         code, out, err = self.invoke("--client", "muse", "--package", "voice", "--execute")
         self.assertEqual(code, 0, err)
-        self.assertIn("marketplace add infiquetra-claude-plugins", self.logged())
+        self.assertIn("marketplace add infiquetra-agent-plugins", self.logged())
         self.assertIn("plugins install voice@", self.logged())
 
     def stateful_muse(self):
@@ -1948,6 +1948,116 @@ elif args[:2] == ['plugins', 'list']:
         )
         self.assertLess(removed, retarget)
         self.assertNotIn(["plugins", "remove", "unifi"], commands)
+
+    def retired_registration(self, source: Path, *, installed: tuple[str, ...] = ()) -> None:
+        """Muse state as earlier installers left it: the projection under the retired name."""
+        retired = muse_cli.MUSE_RETIRED_MARKETPLACE_ALIAS
+        write_json(
+            self.home / muse_cli.MUSE_REGISTRY_RELATIVE,
+            {"marketplaces": {retired: {"source": {"path": str(source)}}}},
+        )
+        rows = []
+        for name in installed:
+            row = self.row(name)
+            row["record"]["source"] = {
+                "provenance": "marketplace-user-added",
+                "path": str((source / "plugins" / name).resolve()),
+            }
+            rows.append(row)
+        write_json(self.home / "fake-muse-installed.json", rows)
+
+    def test_retired_marketplace_name_is_migrated_to_the_catalog_name(self) -> None:
+        self.stateful_muse()
+        stage = self.base / "stage"
+        installer.sync_marketplace.stage_muse_marketplace(self.catalog, stage)
+        self.retired_registration(stage, installed=("voice", "unifi"))
+        retired = muse_cli.MUSE_RETIRED_MARKETPLACE_ALIAS
+        alias = muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS
+        code, out, err = self.invoke(
+            "--client", "muse", "--package", "voice", "--staging-dir", str(stage), "--execute"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"uninstall every installed plugin from {retired}", out)
+        entries = json.loads((self.home / muse_cli.MUSE_REGISTRY_RELATIVE).read_text())[
+            "marketplaces"
+        ]
+        self.assertEqual(list(entries), [alias])
+        rows = json.loads((self.home / "fake-muse-installed.json").read_text())
+        self.assertEqual([row["record"]["id"] for row in rows], ["voice"])
+        commands = [json.loads(line) for line in self.logged().splitlines()]
+        removals = [commands.index(["plugins", "remove", name]) for name in ("voice", "unifi")]
+        unregister = commands.index(["plugins", "marketplace", "remove", retired])
+        register = commands.index(["plugins", "marketplace", "add", alias, str(stage.absolute())])
+        install = commands.index(["plugins", "install", f"voice@{alias}"])
+        self.assertLess(max(removals), unregister)
+        self.assertLess(unregister, register)
+        self.assertLess(register, install)
+        code, out, err = self.invoke(
+            "--client", "muse", "--package", "voice", "--staging-dir", str(stage), "--check"
+        )
+        self.assertEqual(code, 0, err)
+
+    def test_retired_marketplace_name_from_another_source_is_reported_not_touched(self) -> None:
+        self.stateful_muse()
+        foreign = self.base / "somebody-elses-marketplace"
+        (foreign / "plugins" / "voice").mkdir(parents=True)
+        self.retired_registration(foreign, installed=("voice",))
+        retired = muse_cli.MUSE_RETIRED_MARKETPLACE_ALIAS
+        stage = self.base / "stage"
+        code, out, err = self.invoke(
+            "--client", "muse", "--package", "unifi", "--staging-dir", str(stage), "--execute"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"marketplace {retired} is registered from {foreign}", out)
+        entries = json.loads((self.home / muse_cli.MUSE_REGISTRY_RELATIVE).read_text())[
+            "marketplaces"
+        ]
+        self.assertEqual(entries[retired]["source"]["path"], str(foreign))
+        self.assertIn(muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS, entries)
+        commands = [json.loads(line) for line in self.logged().splitlines()]
+        self.assertNotIn(["plugins", "marketplace", "remove", retired], commands)
+        self.assertNotIn(["plugins", "remove", "voice"], commands)
+        self.assertIn(
+            ["plugins", "install", f"unifi@{muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS}"], commands
+        )
+
+    def test_retired_marketplace_name_is_found_by_the_staging_custody_marker(self) -> None:
+        self.stateful_muse()
+        recorded = self.base / "recorded-stage"
+        installer.sync_marketplace.stage_muse_marketplace(self.catalog, recorded)
+        self.retired_registration(recorded)
+        _, out, err = self.invoke(
+            "--client", "muse", "--package", "voice", "--staging-dir", str(self.base / "other"),
+            "--dry-run",
+        )
+        self.assertEqual(err, "")
+        self.assertIn("uninstall every installed plugin from", out)
+        self.assertNotIn("left untouched", out)
+
+    def test_check_names_the_migration_when_the_retired_name_is_still_registered(self) -> None:
+        stage = self.base / "stage"
+        installer.sync_marketplace.stage_muse_marketplace(self.catalog, stage)
+        self.retired_registration(stage)
+        code, _, err = self.invoke(
+            "--client", "muse", "--package", "voice", "--staging-dir", str(stage), "--check"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn(
+            f"still registered as {muse_cli.MUSE_RETIRED_MARKETPLACE_ALIAS}", err
+        )
+
+    def test_same_registration_is_refreshed_after_staging_so_new_bundles_appear(self) -> None:
+        self.stateful_muse()
+        stage = self.base / "stage"
+        for _ in range(2):
+            code, _, err = self.invoke(
+                "--client", "muse", "--package", "voice", "--staging-dir", str(stage), "--execute"
+            )
+            self.assertEqual(code, 0, err)
+        alias = muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS
+        commands = [json.loads(line) for line in self.logged().splitlines()]
+        update = commands.index(["plugins", "marketplace", "update", alias])
+        self.assertLess(update, commands.index(["plugins", "install", f"voice@{alias}"], update))
 
     def test_legacy_git_registration_under_infiquetra_is_migrated_by_source(self) -> None:
         self.stateful_muse()

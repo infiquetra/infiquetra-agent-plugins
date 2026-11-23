@@ -2167,7 +2167,7 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
         self.assertIn("plugins validate", text)
         self.assertIn("plugins marketplace add <client-home>/build/muse-marketplace", text)
         self.assertIn(
-            f"plugins install {CONFIG.name}@infiquetra-claude-plugins",
+            f"plugins install {CONFIG.name}@infiquetra-agent-plugins",
             text,
         )
         self.assertIn("plugins list --available --json", text)
@@ -2443,7 +2443,7 @@ class MuseMarketplaceAssessmentTest(FakeClientFixture):
         self.assertEqual(len(commands), 4)
         self.assertEqual(commands[1]["exit_status"], 2)
         self.assertIn(
-            "marketplace add infiquetra-claude-plugins <client-home>",
+            "marketplace add infiquetra-agent-plugins <client-home>",
             commands[2]["command"],
         )
 

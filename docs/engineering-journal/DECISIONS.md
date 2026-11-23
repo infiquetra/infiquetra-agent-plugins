@@ -1,5 +1,35 @@
 # Decisions - infiquetra-agent-plugins
 
+## 2026-11-23
+
+### Muse registers this catalog as infiquetra-agent-plugins and migrates the retired name
+
+**Decision.** `scripts/muse_cli.py` names the Muse marketplace `infiquetra-agent-plugins`
+(`MUSE_CATALOG_MARKETPLACE_ALIAS`). The old name, `infiquetra-claude-plugins`, survives only
+as `MUSE_RETIRED_MARKETPLACE_ALIAS`, used to find and migrate registrations. Every
+`install_client.py --client muse --execute` (`plan_muse_retired_alias`) checks for a
+registration of the old name. When its source is this catalog's staging directory (the
+requested or default one, or one whose `.infiquetra-muse-staging` marker names this
+catalog), the installer uninstalls every plugin Muse attributes to it, runs
+`muse plugins marketplace remove`, then registers and installs under the new name. A
+registration of the old name from any other source is printed as a note and left alone.
+`--check` fails and names the migration while the old registration remains.
+
+**Rationale.** Jeff retired `infiquetra-claude-plugins` on 2026-11-23 and wants no machine
+to carry the name. Muse stores installed plugins by bare id with a source path, so an
+installed record never carries the marketplace name; the registration is the only place
+the old name lives, and migration is remove, register, reinstall.
+
+**Rejected alternatives.** Keeping the old name as a compatibility alias, which leaves the
+retired name on every Muse account. Renaming the registration in place: Muse has no rename
+command, only add, update and remove. Removing only the selected plugins during migration:
+that strands the unselected ones with no marketplace to update from, so migration removes
+everything attributed to the old registration and the operator repeats the earlier
+`--package` selection to restore a wider install.
+
+**Revisit when.** Muse gains a marketplace rename command, or the migration code has run on
+every account and can be deleted.
+
 ## 2026-11-22
 
 ### Root CLAUDE.md is a one-line import of AGENTS.md; GEMINI.md is retired
