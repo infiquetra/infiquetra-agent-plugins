@@ -1,5 +1,28 @@
 # Learnings - infiquetra-agent-plugins
 
+## 2026-11-23
+
+### Restaging a Muse marketplace does not change what Muse offers until the snapshot is refreshed
+
+**Evidence.** In a scratch `HOME` with Muse 1.4.25, registering a staged marketplace holding
+`plan`, then staging `investigate` into the same directory, left
+`muse plugins list --available --json` at `['plan']`. After
+`muse plugins marketplace update <name>` it listed `['investigate', 'plan']`. On the dev-1
+agent account the file times told the same story from the other side: the staging
+directory, the marketplace snapshot (`snapshot.json`) and `marketplaces.json` were last
+written on 2026-10-27 and `installed.json` on 2026-11-18, and the staging directory held no
+`investigate`, `plan` or `reviews`, which is why `--check` said they were unavailable.
+
+**Mechanism.** Muse copies a marketplace into its own snapshot when it is added or updated
+and reads availability from that copy. `plan_muse` already runs `marketplace update` after
+staging when the registration is unchanged, so a correct `--execute` cannot leave the
+snapshot stale. A `--check` failure with an untouched staging directory points to an execute that
+never wrote to that account (a hypothesis here: the exit-0 run itself was not observed).
+
+**Generalizable rule.** Before blaming the installer for a failed `--check` after an exit
+code 0, compare the modification times of the staging directory, `snapshot.json` and
+`installed.json` with the time of the run. If none moved, the run did not touch that account.
+
 ## 2026-11-22
 
 ### A scan test that asserts a row "ran" must bring its own tool, or it measures the machine

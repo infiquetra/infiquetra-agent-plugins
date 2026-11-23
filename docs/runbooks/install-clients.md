@@ -1,6 +1,6 @@
 # Runbook: place this catalog on each harness
 
-**Version 1.4.0** · Adopted 2026-09-22
+**Version 1.4.1** · Adopted 2026-09-22
 
 Amendments:
 
@@ -14,6 +14,9 @@ Amendments:
   (issue #336).
 - 1.4.0, 2026-11-20: reusable multi-client selection and scoped retired pruning
   for staged rollouts.
+- 1.4.1, 2026-11-23: Muse registers this catalog under its own name,
+  `infiquetra-agent-plugins`, and migrates a registration of the retired name
+  `infiquetra-claude-plugins` that points at this catalog's staging directory.
 
 
 This is the operator checklist for
@@ -383,18 +386,17 @@ The source packages remain unchanged. A full-tier run selects every package
 
 Planning invokes no Muse command and performs no staging. Execution stages at
 `<catalog>/build/muse-marketplace` (or `--staging-dir`) and registers it as
-`infiquetra-claude-plugins`. This compatibility alias points to this repository's
-projection; it does not select the retired repository. The raw multi-manifest
+`infiquetra-agent-plugins`, this repository's own name. The raw multi-manifest
 checkout cannot substitute for the projection.
 
 ```text
 muse plugins marketplace add <staging directory>
-muse plugins install <name>@infiquetra-claude-plugins
+muse plugins install <name>@infiquetra-agent-plugins
 ```
 
 Muse 1.4.7 requires a name on marketplace add. A **compatibility retry** means
 retrying that specific parser refusal with
-`muse plugins marketplace add infiquetra-claude-plugins <staging directory>`.
+`muse plugins marketplace add infiquetra-agent-plugins <staging directory>`.
 This version has one installed user-plugin registry keyed by bare plugin id;
 marketplace installs cannot select project scope. `--scope project` is refused
 before planning or mutation. Installs omit `--scope`; user-plugin removal starts
@@ -421,7 +423,30 @@ registration, then removes and adds the registration and reinstalls the selected
 bundles. Muse retains installed records when a registration is removed, so
 uninstalling first is necessary. Unselected installed plugins remain untouched.
 A registration already pointing to the requested stage is refreshed with
-`muse plugins marketplace update infiquetra-claude-plugins`.
+`muse plugins marketplace update infiquetra-agent-plugins` after staging. Muse
+keeps a snapshot of a marketplace and does not re-read the staging directory on
+its own, so restaging alone leaves new bundles unavailable until that refresh.
+
+**Moving off the retired marketplace name.** Earlier installers registered the
+same projection as `infiquetra-claude-plugins`, the name of the archived
+repository. Every `--client muse --execute` migrates it: when a registration with
+that name has this catalog's staging directory as its source (the requested or
+default staging directory, or one whose `.infiquetra-muse-staging` marker names
+this catalog), the installer uninstalls every plugin Muse attributes to it, removes
+the registration with `muse plugins marketplace remove`, registers
+`infiquetra-agent-plugins` and installs the selected bundles. Plugins outside the
+selection are removed too, so repeat the earlier `--package` or `--profile full`
+selection to restore a wider install. A registration with the retired name from any
+other source is printed as a note and left alone; if it points at the archived
+repository, `--uninstall-legacy` removes it. `--check` fails with a pointer to this
+migration while the retired name is still registered. Run each account as a dry run
+first, then execute, then check:
+
+```bash
+python3 scripts/install_client.py --client muse --staging-dir <staging directory> --dry-run
+python3 scripts/install_client.py --client muse --staging-dir <staging directory> --execute
+python3 scripts/install_client.py --client muse --staging-dir <staging directory> --check
+```
 
 ```bash
 python3 scripts/install_client.py --client muse --dry-run

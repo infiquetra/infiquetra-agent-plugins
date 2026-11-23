@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# Compatibility alias for this repository's Muse projection, not the legacy source.
-MUSE_CATALOG_MARKETPLACE_ALIAS = "infiquetra-claude-plugins"
+# The marketplace name this repository's Muse projection is registered under.
+MUSE_CATALOG_MARKETPLACE_ALIAS = "infiquetra-agent-plugins"
+# The name earlier installers registered the same projection under. It is kept only
+# so the installer can find and migrate that registration; nothing registers it.
+MUSE_RETIRED_MARKETPLACE_ALIAS = "infiquetra-claude-plugins"
 MUSE_REGISTRY_RELATIVE = Path(".local/share/muse/plugins/marketplaces.json")
 
 

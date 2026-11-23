@@ -37,7 +37,7 @@
       "name": "Muse",
       "placement": "plugin-marketplace",
       "skill_scoped": false,
-      "marketplace": "infiquetra-claude-plugins",
+      "marketplace": "infiquetra-agent-plugins",
       "staging_directory": "<catalog>/build/muse-marketplace",
       "excluded_packages": [
         "fleet-core"
@@ -46,10 +46,10 @@
         "installed": "muse plugins list --json",
         "available": "muse plugins list --available --json",
         "requirements": [
-          "installed and enabled from infiquetra-claude-plugins",
+          "installed and enabled from infiquetra-agent-plugins",
           "valid == true",
           "diagnostics == []",
-          "skipped == [] for infiquetra-claude-plugins"
+          "skipped == [] for infiquetra-agent-plugins"
         ]
       },
       "live_acceptance": "pending; performed by the parent #234 cutover"

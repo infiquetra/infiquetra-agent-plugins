@@ -26,7 +26,10 @@ harness keeps its own tier. Qwen and Gemini are accepted only with
 Muse is a full plugin-marketplace client: a deterministic projection under
 ``build/muse-marketplace`` excludes competing manifests. Its optional legacy
 migration removes source-proven standalone skill copies and selected legacy
-marketplace plugins before installing the selected bundles.
+marketplace plugins before installing the selected bundles. The projection is
+registered as ``infiquetra-agent-plugins``; a registration of the retired name
+``infiquetra-claude-plugins`` whose source is this catalog's staging directory is
+migrated by the ordinary install, and any other source is reported and left alone.
 
 Two calls that are not obvious from the command list:
 
@@ -936,10 +939,14 @@ def format_action(action: Action) -> str:
             f"packages={', '.join(action.payload['packages'])}{sweep}"
         )
     if action.kind == "muse-remove-plugins":
+        if action.payload.get("every_package"):
+            which = "every installed plugin"
+        else:
+            which = f"selected plugins: {', '.join(action.payload['packages'])}"
         return (
-            f"muse: inspect: {shlex.join(action.argv)}; uninstall selected plugins "
+            f"muse: inspect: {shlex.join(action.argv)}; uninstall {which} "
             f"from {', '.join(action.payload['marketplaces'])} "
-            f"--scope {action.payload['scope']}: {', '.join(action.payload['packages'])}"
+            f"--scope {action.payload['scope']}"
         )
     if action.kind == "drop-muse-lock":
         return f"muse: write: {action.path} drop={action.payload['skill']}"
@@ -1809,7 +1816,9 @@ def muse_remove_action(
     *,
     required: bool,
     remove_empty: bool,
+    every_package: bool = False,
 ) -> Action:
+    """Uninstall plugins attributed to ``aliases``: the selected ones, or all with ``every_package``."""
     inspect = command_action("muse", ("plugins", "list", "--json"), overrides, required=required)
     return Action(
         "muse-remove-plugins",
@@ -1823,6 +1832,7 @@ def muse_remove_action(
             "marketplaces": aliases,
             "home": str(home),
             "remove_empty": remove_empty,
+            "every_package": every_package,
         },
     )
 
@@ -1839,6 +1849,83 @@ def _muse_selection_is_narrow(catalog: Path, applicable: list[Package]) -> bool:
     except sync_marketplace.MarketplaceError as error:
         raise InstallError(f"muse: {error}") from error
     return {package.name for package in applicable} != everything
+
+
+def _is_catalog_staging(source: str, catalog: Path, staging_dir: Path) -> bool:
+    """True when a registered source is this catalog's own Muse staging directory.
+
+    Either it is the requested or default staging directory, or the custody
+    marker the installer writes names this catalog. A path that merely looks
+    similar is not proof.
+    """
+    if not source or not Path(source).is_absolute():
+        return False
+    resolved = Path(source).resolve()
+    ours = {staging_dir.resolve(), (catalog / sync_marketplace.MUSE_STAGING_DEFAULT).resolve()}
+    if resolved in ours:
+        return True
+    try:
+        marker = load_object(resolved / sync_marketplace.MUSE_STAGING_MARKER)
+    except InstallError:
+        return False
+    return (
+        isinstance(marker, dict)
+        and marker.get("version") == 1
+        and marker.get("catalog") == str(catalog.resolve())
+    )
+
+
+def plan_muse_retired_alias(
+    entries: dict[str, dict],
+    catalog: Path,
+    home: Path,
+    staging_dir: Path,
+    overrides: dict[str, str],
+    *,
+    required: bool,
+) -> list[Action]:
+    """Migrate this catalog's projection off the retired marketplace name.
+
+    Earlier installers registered the staging directory as
+    ``infiquetra-claude-plugins``. When that registration's source is this
+    catalog's staging directory, its installed bundles and the registration go
+    through Muse's own commands, and the caller registers the new name next. A
+    registration with that name from any other source is reported and left alone.
+    """
+    alias = muse_cli.MUSE_RETIRED_MARKETPLACE_ALIAS
+    entry = entries.get(alias)
+    if entry is None:
+        return []
+    source = muse_cli.registration_source(entry)
+    if not _is_catalog_staging(source, catalog, staging_dir):
+        return [
+            Action(
+                "note",
+                "muse",
+                message=(
+                    f"marketplace {alias} is registered from {source or 'an unknown source'}, "
+                    "which is not this catalog's staging directory; left untouched. "
+                    "If it points at the retired repository, --uninstall-legacy removes it"
+                ),
+            )
+        ]
+    remove = command_action(
+        "muse", ("plugins", "marketplace", "remove", alias), overrides, required=required
+    )
+    remove.fatal = True
+    return [
+        muse_remove_action(
+            [],
+            home,
+            {alias: entry},
+            [alias],
+            overrides,
+            required=required,
+            remove_empty=False,
+            every_package=True,
+        ),
+        remove,
+    ]
 
 
 def plan_muse(
@@ -1883,6 +1970,11 @@ def plan_muse(
         )
     )
     entries = muse_registrations(home)
+    actions.extend(
+        plan_muse_retired_alias(
+            entries, catalog, home, staging_dir, overrides, required=required
+        )
+    )
     alias = muse_cli.MUSE_CATALOG_MARKETPLACE_ALIAS
     entry = entries.get(alias)
     recorded = muse_cli.registration_source(entry or {})
@@ -1949,6 +2041,14 @@ def check_muse(
         )
     )
     problems = muse_cli.available_problems(available, [p.name for p in packages])
+    retired = muse_cli.MUSE_RETIRED_MARKETPLACE_ALIAS
+    if retired in entries and _is_catalog_staging(
+        muse_cli.registration_source(entries[retired]), catalog, staging
+    ):
+        problems.append(
+            f"muse: this catalog's staging directory is still registered as {retired}; "
+            "run install_client.py --client muse --execute to migrate it"
+        )
     rows = muse_cli.plugin_rows(installed)
     checked: list[Readback] = []
     for package in packages:
@@ -2853,7 +2953,8 @@ def perform_muse_removals(action: Action) -> None:
     removed: set[str] = set()
     for record, alias in attributed:
         name = record["id"].partition("@")[0]
-        if name in payload["packages"] and name not in removed and alias in payload["marketplaces"]:
+        selected = payload.get("every_package") or name in payload["packages"]
+        if selected and name not in removed and alias in payload["marketplaces"]:
             run_command(
                 Action(
                     "command",
