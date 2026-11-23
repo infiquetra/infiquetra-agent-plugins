@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The team scaffold's `stamp` writes `AGENTS.md` as the canonical instruction file and a
+  regular `CLAUDE.md` holding `@AGENTS.md` and a newline, which Claude Code expands into
+  `AGENTS.md`. It no longer creates `CLAUDE.md` or `GEMINI.md` symlinks. Antigravity reads
+  `AGENTS.md` natively and Gemini CLI is retired.
+
 ## [1.2.3] - 2026-10-14
 
 ### Changed

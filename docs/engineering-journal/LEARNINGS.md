@@ -2439,6 +2439,19 @@ misclassify a successful local install as coming from elsewhere.
 
 ### Claude Code reads AGENTS.md when a repository has no CLAUDE.md
 
+**Corrected 2026-11-22.** The conclusion below holds only for the personal Claude account. The
+probe ran in throwaway directories, so it could not see an ancestor effect: on a second Claude
+account whose `CLAUDE_CONFIG_DIR` is relocated, `~/.claude/CLAUDE.md` counts as a
+`.claude/CLAUDE.md` in the ancestor folder `~`, and the `AGENTS.md` fallback then never fires
+for any folder under the home folder, this repository included. Sessions on that second
+account loaded `AGENTS.md` in 0 of 15 tries in one repository, while personal-account
+sessions here loaded it 3 of 3. See
+[the evidence note](../evidence/2026-11-22-claude-code-agents-md-loading.md). The repository
+now has a one-line `CLAUDE.md` that imports `AGENTS.md`; see the 2026-11-22 decision "Root
+CLAUDE.md is a one-line import of AGENTS.md; GEMINI.md is retired". Corrected generalizable
+rule: a probe of a tool's loading rules must run in a folder under the real home folder, on
+every account that uses the tool, not only in a throwaway directory.
+
 **Evidence.** Checked on 2026-10-13 with Claude Code 2.1.299. Two throwaway directories each
 held one instruction file with a unique marker line: one held `AGENTS.md` and no `CLAUDE.md`,
 and the other held a `CLAUDE.md` as a control. Each was run in print mode with an instruction

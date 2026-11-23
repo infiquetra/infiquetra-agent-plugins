@@ -25,8 +25,8 @@ from urllib.parse import unquote
 REQUIRED_PATHS = (
     "README.md",
     "AGENTS.md",
+    "CLAUDE.md",
     ".gitignore",
-    "GEMINI.md",
     "llms.txt",
     ".github/CODEOWNERS",
     ".github/PULL_REQUEST_TEMPLATE.md",
@@ -50,10 +50,18 @@ REQUIRED_PATHS = (
     "docs/engineering-journal/audits/_template.md",
 )
 
-# Root files this repository must not carry. AGENTS.md is the one repository instruction
-# file, and a root CLAUDE.md would be a second copy of it that drifts. A reintroduced file
-# is reported with a pointer to AGENTS.md, not as a missing-file gap.
-FORBIDDEN_ROOT_PATHS = ("CLAUDE.md",)
+# Root files this repository must not carry. AGENTS.md is the one authored repository
+# instruction file. GEMINI.md is retired: Antigravity reads AGENTS.md natively and Gemini CLI
+# is no longer in the fleet. A reintroduced file is reported with a pointer to AGENTS.md, not
+# as a missing-file gap.
+FORBIDDEN_ROOT_PATHS = ("GEMINI.md",)
+
+# The root CLAUDE.md is the one allowed second file, and only as an import stub. Its first line
+# is exactly this, which Claude Code expands into the contents of AGENTS.md. That keeps
+# AGENTS.md reachable on every account and machine without a Claude Code setting.
+CLAUDE_MD_IMPORT_LINE = "@AGENTS.md"
+# An optional section for notes that are true only of Claude Code may follow the import line.
+CLAUDE_MD_ONLY_HEADING = "## Claude Code only"
 
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "tel:")
@@ -391,6 +399,35 @@ def check_forbidden_root_paths(root: Path) -> list[str]:
         for path in FORBIDDEN_ROOT_PATHS
         if (root / path).exists() or (root / path).is_symlink()
     ]
+
+
+def check_root_claude_md(root: Path) -> list[str]:
+    """Allow a root CLAUDE.md only as a regular file that imports AGENTS.md.
+
+    The first line must be exactly ``@AGENTS.md``. It may be followed by a blank line and a
+    ``## Claude Code only`` section; nothing else may follow the import line. A symlink, a
+    different first line, or any other trailing content is refused.
+    """
+    path = root / "CLAUDE.md"
+    if not (path.exists() or path.is_symlink()):
+        return []
+    advice = (
+        f"CLAUDE.md at the repository root must be a regular file whose first line is exactly "
+        f"{CLAUDE_MD_IMPORT_LINE!r}, optionally followed by a {CLAUDE_MD_ONLY_HEADING!r} "
+        "section: put repository instructions in AGENTS.md"
+    )
+    if path.is_symlink() or not path.is_file():
+        return [advice]
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return [advice]
+    if not lines or lines[0] != CLAUDE_MD_IMPORT_LINE:
+        return [advice]
+    rest = [line for line in lines[1:] if line.strip()]
+    if rest and rest[0] != CLAUDE_MD_ONLY_HEADING:
+        return [advice]
+    return []
 
 
 def _link_target(raw_target: str) -> str:
@@ -1378,6 +1415,7 @@ def check_repo(root: Path) -> list[str]:
     return [
         *check_required_paths(root),
         *check_forbidden_root_paths(root),
+        *check_root_claude_md(root),
         *check_port_descriptors(root),
         *check_marketplace_manifest(root),
         *check_codex_packaging_manifest(root),

@@ -1,0 +1,79 @@
+# Cycle-34 mutation proof - root CLAUDE.md import stub and retired GEMINI.md
+# Cycle 33 is the preceding proof:
+# [Cycle 33](2026-11-19-cycle33-mutation-proof-eight-client-roster.txt).
+# Cycle 34 re-grades the guards added by the 2026-11-22 decision "Root CLAUDE.md is a
+# one-line import of AGENTS.md; GEMINI.md is retired". scripts/check_repo.py now requires a
+# root CLAUDE.md, accepts it only as a regular file whose first line is exactly
+# "@AGENTS.md" (optionally followed by a "## Claude Code only" section), and refuses a root
+# GEMINI.md. The other four graded files are unchanged and their cycle-33 digests are
+# carried. Older guards inside scripts/check_repo.py were not re-mutated.
+#
+# Runner: one unique exact replacement per mutation, then the pristine file is restored.
+# PYTHONDONTWRITEBYTECODE=1. A kill requires an actual test failure. The binding test
+# is not part of this command. Scratch fixtures only.
+#
+Test command: python3 -m unittest tests.test_check_repo.RepositoryValidationTests.test_a_repository_without_the_claude_md_import_stub_is_missing_a_required_path tests.test_check_repo.RepositoryValidationTests.test_root_gemini_md_is_rejected_with_a_pointer_to_agents_md tests.test_check_repo.RepositoryValidationTests.test_a_root_gemini_md_symlink_is_rejected_too tests.test_check_repo.RepositoryValidationTests.test_root_claude_md_import_stub_is_allowed tests.test_check_repo.RepositoryValidationTests.test_root_claude_md_with_other_content_is_rejected tests.test_check_repo.RepositoryValidationTests.test_a_root_claude_md_symlink_is_rejected_even_when_it_resolves_to_the_stub tests.test_check_repo.GateWiringTests.test_the_gate_reports_a_root_claude_md_that_is_not_the_import_stub tests.test_check_repo.GateWiringTests.test_the_gate_reports_a_root_gemini_md
+Baseline: 8 tests, OK
+
+## 7 mutations
+
+## MUTATION 1: A missing root CLAUDE.md is no longer a missing required path
+File: scripts/check_repo.py
+Replace: the '    "CLAUDE.md",\n' entry of REQUIRED_PATHS
+With: ''
+Killed by: tests.test_check_repo.RepositoryValidationTests.test_a_repository_without_the_claude_md_import_stub_is_missing_a_required_path
+FAILED (failures=1)
+
+## MUTATION 2: A root GEMINI.md is no longer refused
+File: scripts/check_repo.py
+Replace: FORBIDDEN_ROOT_PATHS = ("GEMINI.md",)
+With: FORBIDDEN_ROOT_PATHS = ()
+Killed by: tests.test_check_repo.RepositoryValidationTests.test_root_gemini_md_is_rejected_with_a_pointer_to_agents_md
+FAILED (failures=3)
+
+## MUTATION 3: A root CLAUDE.md symlink that resolves to a regular file is accepted
+File: scripts/check_repo.py
+Replace: 'path.is_symlink() or not path.is_file()' in check_root_claude_md
+With: 'not path.is_file()'
+Killed by: tests.test_check_repo.RepositoryValidationTests.test_a_root_claude_md_symlink_is_rejected_even_when_it_resolves_to_the_stub
+FAILED (failures=1)
+
+## MUTATION 4: A root CLAUDE.md whose first line is not the import line is accepted
+File: scripts/check_repo.py
+Replace: 'not lines or lines[0] != CLAUDE_MD_IMPORT_LINE' in check_root_claude_md
+With: 'not lines'
+Killed by: tests.test_check_repo.RepositoryValidationTests.test_root_claude_md_with_other_content_is_rejected
+FAILED (failures=3)
+
+## MUTATION 5: Arbitrary content after the import line is accepted
+File: scripts/check_repo.py
+Replace: 'rest and rest[0] != CLAUDE_MD_ONLY_HEADING' in check_root_claude_md
+With: 'False'
+Killed by: tests.test_check_repo.RepositoryValidationTests.test_root_claude_md_with_other_content_is_rejected
+FAILED (failures=2)
+
+## MUTATION 6: The gate stops running the root CLAUDE.md check
+File: scripts/check_repo.py
+Replace: '*check_root_claude_md(root),' in check_repo
+With: ''
+Killed by: tests.test_check_repo.GateWiringTests.test_the_gate_reports_a_root_claude_md_that_is_not_the_import_stub
+FAILED (failures=1)
+
+## MUTATION 7: The gate stops running the forbidden root path check
+File: scripts/check_repo.py
+Replace: '*check_forbidden_root_paths(root),' in check_repo
+With: ''
+Killed by: tests.test_check_repo.GateWiringTests.test_the_gate_reports_a_root_gemini_md
+FAILED (failures=1)
+
+Restored baseline: 8 tests, OK
+Mutations: 7; killed: 7; survivors: 0
+
+## RESTORED
+scripts/check_repo.py sha256: 8d31e6645b1ff84799d9c9c78ac193b51da69a4f41ae2d6ec7984377e01de7a7
+# Carried unchanged from Cycle 33, not re-graded:
+scripts/check_compatibility_matrix.py sha256: 6ecb965db77a89c3c7e7f1029326c665d18b0d69549a901299289ef8e2993389
+scripts/assess_clients.py sha256: 703d0bc6333de7db888b6b05d1db03fdf7ab2493c280b09dcf656019e0eab79b
+scripts/port_config.py sha256: 91e90a69894f5e1edb2be95efa21f60917d1b4be3360a6040ddc469b53911691
+plugins/unifi/scripts/site_profile.py sha256: 31c9695fbc2ebdbe3401c7a06b9d40b284991ece5f380f1b0c4413d3427e5b09
+byte-identical to pristine: YES

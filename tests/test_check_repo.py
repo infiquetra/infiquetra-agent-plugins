@@ -124,37 +124,87 @@ class RepositoryValidationTests(unittest.TestCase):
     def test_live_repository_has_required_baseline(self) -> None:
         self.assertEqual(check_repo.check_required_paths(ROOT), [])
 
+    def test_a_repository_without_the_claude_md_import_stub_is_missing_a_required_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIn(
+                "missing required path: CLAUDE.md",
+                check_repo.check_required_paths(Path(directory)),
+            )
+            self.assertNotIn("GEMINI.md", check_repo.REQUIRED_PATHS)
+
     def test_live_repository_passes_every_check(self) -> None:
         self.assertEqual(check_repo.check_repo(ROOT), [])
 
-    def test_root_claude_md_is_rejected_with_a_pointer_to_agents_md(self) -> None:
+    def test_root_gemini_md_is_rejected_with_a_pointer_to_agents_md(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.assertEqual(check_repo.check_forbidden_root_paths(root), [])
 
-            write(root / "CLAUDE.md", "Repository rules.\n")
+            write(root / "GEMINI.md", "Repository rules.\n")
 
             self.assertEqual(
                 check_repo.check_forbidden_root_paths(root),
                 [
-                    "CLAUDE.md must not exist at the repository root: "
+                    "GEMINI.md must not exist at the repository root: "
                     "put repository instructions in AGENTS.md"
                 ],
             )
 
-    def test_a_root_claude_md_symlink_is_rejected_too(self) -> None:
+    def test_a_root_gemini_md_symlink_is_rejected_too(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             # A dangling link: exists() reads False for it, so only the link check catches it.
-            (root / "CLAUDE.md").symlink_to("AGENTS.md")
+            (root / "GEMINI.md").symlink_to("AGENTS.md")
 
             self.assertEqual(
                 check_repo.check_forbidden_root_paths(root),
                 [
-                    "CLAUDE.md must not exist at the repository root: "
+                    "GEMINI.md must not exist at the repository root: "
                     "put repository instructions in AGENTS.md"
                 ],
             )
+
+    def test_root_claude_md_import_stub_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(check_repo.check_root_claude_md(root), [])
+
+            write(root / "CLAUDE.md", "@AGENTS.md\n")
+            self.assertEqual(check_repo.check_root_claude_md(root), [])
+
+            write(root / "CLAUDE.md", "@AGENTS.md\n\n## Claude Code only\n\nUse /memory.\n")
+            self.assertEqual(check_repo.check_root_claude_md(root), [])
+
+    def test_root_claude_md_with_other_content_is_rejected(self) -> None:
+        bad_contents = (
+            "Repository rules.\n",
+            "",
+            "# Notes\n@AGENTS.md\n",
+            "@AGENTS.md extra\n",
+            "@AGENTS.md\n\nMore repository rules.\n",
+            "@AGENTS.md\n\n## Something else\n",
+        )
+        for content in bad_contents:
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                write(root / "CLAUDE.md", content)
+
+                errors = check_repo.check_root_claude_md(root)
+
+                self.assertEqual(len(errors), 1)
+                self.assertIn("first line is exactly '@AGENTS.md'", errors[0])
+
+    def test_a_root_claude_md_symlink_is_rejected_even_when_it_resolves_to_the_stub(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write(root / "AGENTS.md", "@AGENTS.md\n")
+            (root / "CLAUDE.md").symlink_to("AGENTS.md")
+
+            self.assertEqual(len(check_repo.check_root_claude_md(root)), 1)
+
+            (root / "CLAUDE.md").unlink()
+            (root / "CLAUDE.md").symlink_to("missing.md")
+            self.assertEqual(len(check_repo.check_root_claude_md(root)), 1)
 
     def test_broken_local_markdown_link_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -501,17 +551,23 @@ class GateWiringTests(unittest.TestCase):
             self.misplaced_module(root)
             self.assertTrue(check_repo.check_claude_module_sources(root))
 
-    @staticmethod
-    def root_claude_md(root: Path) -> None:
-        write(root / "CLAUDE.md", "Repository rules.\n")
-
-    def test_the_gate_reports_a_root_claude_md(self) -> None:
+    def test_the_gate_reports_a_root_claude_md_that_is_not_the_import_stub(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            self.root_claude_md(root)
+            write(root / "CLAUDE.md", "Repository rules.\n")
             problems = check_repo.check_repo(root)
         self.assertTrue(
-            any("CLAUDE.md must not exist" in problem for problem in problems),
+            any("first line is exactly '@AGENTS.md'" in problem for problem in problems),
+            f"check_repo did not run the root CLAUDE.md check; it reported {problems}",
+        )
+
+    def test_the_gate_reports_a_root_gemini_md(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write(root / "GEMINI.md", "Repository rules.\n")
+            problems = check_repo.check_repo(root)
+        self.assertTrue(
+            any("GEMINI.md must not exist" in problem for problem in problems),
             f"check_repo did not run the forbidden root path check; it reported {problems}",
         )
 

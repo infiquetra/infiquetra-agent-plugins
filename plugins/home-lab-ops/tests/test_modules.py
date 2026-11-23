@@ -257,7 +257,7 @@ def test_stamp_is_idempotent(tmp_path: pathlib.Path):
     not _CONTEXT_LIBRARY or not CL.exists(),
     reason="INFIQUETRA_CONTEXT_LIBRARY is unset or is not a directory",
 )
-def test_stamp_claude_gemini_are_symlinks_to_agents(tmp_path: pathlib.Path):
+def test_stamp_claude_md_imports_agents_md_and_no_gemini_md(tmp_path: pathlib.Path):
     spec = from_dict(
         {
             "team": {
@@ -282,11 +282,61 @@ def test_stamp_claude_gemini_are_symlinks_to_agents(tmp_path: pathlib.Path):
     repo_stamp.stamp(spec, tmp_path, CL)
     agents = tmp_path / "AGENTS.md"
     claude = tmp_path / "CLAUDE.md"
-    gemini = tmp_path / "GEMINI.md"
-    # AGENTS.md is the canonical real file; CLAUDE/GEMINI are relative symlinks to it
+    # AGENTS.md is the canonical real file; CLAUDE.md is a regular one-line import of it.
     assert agents.is_file() and not agents.is_symlink()
-    assert claude.is_symlink() and claude.readlink() == pathlib.Path("AGENTS.md")
-    assert gemini.is_symlink() and gemini.readlink() == pathlib.Path("AGENTS.md")
-    # reading through the symlink yields the canonical content (one source of truth)
-    assert claude.read_text() == agents.read_text()
-    assert gemini.read_text() == agents.read_text()
+    assert claude.is_file() and not claude.is_symlink()
+    assert claude.read_text() == "@AGENTS.md\n"
+    # Antigravity reads AGENTS.md natively and Gemini CLI is retired: no GEMINI.md.
+    assert not (tmp_path / "GEMINI.md").exists()
+    assert not (tmp_path / "GEMINI.md").is_symlink()
+
+
+def _nyx_spec():
+    return from_dict(
+        {
+            "team": {
+                "name": "nyx",
+                "display": "Nyx",
+                "host_group": "agent_vms",
+                "limit_host": "nyx.infiquetra.com",
+                "roles": [{"role": "hermes", "tags": "hermes,nyx"}],
+            },
+            "profiles": [
+                {
+                    "name": "nyx",
+                    "persona": "nyx",
+                    "discord_token_var": "vault_discord_bot_token_nyx",
+                }
+            ],
+        }
+    )
+
+
+def _minimal_context_library(root: pathlib.Path) -> pathlib.Path:
+    """A throwaway context library holding only the AGENTS.md template."""
+    ai = root / "context-library" / "templates" / "ai-instructions"
+    ai.mkdir(parents=True)
+    (ai / "AGENTS.template.md").write_text("# AGENTS.md\n\nPurpose.\n")
+    return root / "context-library"
+
+
+def test_stamp_writes_regular_claude_md_import_and_no_gemini_md(tmp_path: pathlib.Path):
+    """Ungated: runs in CI without the real context library."""
+    out = tmp_path / "out"
+    out.mkdir()
+    repo_stamp.stamp(_nyx_spec(), out, _minimal_context_library(tmp_path))
+    claude = out / "CLAUDE.md"
+    assert claude.is_file() and not claude.is_symlink()
+    assert claude.read_text() == "@AGENTS.md\n"
+    assert not (out / "GEMINI.md").exists()
+    assert not (out / "GEMINI.md").is_symlink()
+
+
+def test_stamp_leaves_an_existing_claude_md_symlink_alone(tmp_path: pathlib.Path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "elsewhere.md").write_text("kept\n")
+    (out / "CLAUDE.md").symlink_to("elsewhere.md")
+    repo_stamp.stamp(_nyx_spec(), out, _minimal_context_library(tmp_path))
+    assert (out / "CLAUDE.md").is_symlink()
+    assert (out / "elsewhere.md").read_text() == "kept\n"

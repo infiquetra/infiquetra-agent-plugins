@@ -2,13 +2,16 @@
 
 ## Repository purpose
 
-This repository owns the proposed portable source catalog for Infiquetra Agent
+This repository owns the portable source catalog for Infiquetra Agent
 Skills, Agent Plugins, shared workflow contracts, and the source inputs used to
 build vendor adapters.
 
-It does not yet replace an existing vendor plugin repository. It does not own
-Herdr runtime implementation, vendor client code, credentials, installed plugin
-copies, or Team Mimir profile definitions.
+It is the only plugin source. The earlier vendor repositories
+(`infiquetra-claude-plugins`, `infiquetra-codex-plugins`,
+`infiquetra-opencode-plugins`, `infiquetra-antigravity-plugins`,
+`infiquetra-hermes-plugins`, and `mimir-pilot-claude-plugins`) are being archived
+(2026-11-22). It does not own Herdr runtime implementation, vendor client code,
+credentials, installed plugin copies, or Team Mimir profile definitions.
 
 ## Source of truth
 
@@ -68,14 +71,20 @@ git diff --check
   package root; the client extension keeps the behaviour" in
   [`docs/engineering-journal/DECISIONS.md`](docs/engineering-journal/DECISIONS.md), and
   `tests/test_claude_plugin_packaging.py` enforces both halves.
-- Do not add a root `CLAUDE.md`; `scripts/check_repo.py` rejects it. `AGENTS.md` is the
-  single repository instruction file. The 2026-10-13 decision "Root CLAUDE.md is removed"
-  in [`docs/engineering-journal/DECISIONS.md`](docs/engineering-journal/DECISIONS.md)
-  records why.
+- `AGENTS.md` is the only authored repository instruction file. The root `CLAUDE.md` is
+  a regular file whose first line is exactly `@AGENTS.md`, which Claude Code expands into
+  this file; it may be followed by a `## Claude Code only` section for notes that are true
+  only of Claude Code. `scripts/check_repo.py` refuses a `CLAUDE.md` that is a symlink or
+  carries any other content, and refuses a root `GEMINI.md`. Antigravity reads `AGENTS.md`
+  natively, and Gemini CLI is retired, so neither needs its own file. Adapter-specific
+  Gemini or Antigravity packaging still belongs in an explicit adapter. The 2026-11-22
+  decision "Root CLAUDE.md is a one-line import of AGENTS.md" in
+  [`docs/engineering-journal/DECISIONS.md`](docs/engineering-journal/DECISIONS.md) records
+  why, and supersedes the 2026-10-13 decision "Root CLAUDE.md is removed".
 - Do not claim a vendor package is generated or portable until the relevant
   build and live compatibility checks prove it.
-- Treat existing vendor repositories as authoritative until a recorded custody
-  decision moves that authority here.
+- Do not treat the archived vendor repositories as authoritative. Custody moved here on
+  2026-09-22.
 - Do not edit installed plugin copies as maintained source.
 - Keep changes scoped and add tests for changed script or packaging behavior.
 - A portable package must be runnable, not merely present. When a package ships an
