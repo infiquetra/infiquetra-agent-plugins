@@ -1101,7 +1101,13 @@ class MutationProofBindingTest(unittest.TestCase):
         changes a graded file's bytes. Counting that as a kill made every
         mutation a kill by construction -- see the cycle-12 proof's header.
 
-        The document is cycle 33. Cycle 32 remains the proof of the bytes
+        The document is cycle 34. Cycle 33 remains the proof of the bytes
+        before the root ``CLAUDE.md`` became a required one-line import of
+        ``AGENTS.md`` and a root ``GEMINI.md`` became refused. Cycle 34
+        re-grades those guards in ``scripts/check_repo.py`` (seven mutations,
+        seven killed) and carries the other four digests.
+
+        Cycle 33's account follows. Cycle 32 remains the proof of the bytes
         before the repair of issue #334 held a record assessed on or after
         2026-10-17 to eight clients and made ``assess_clients`` reject a
         retired client before printing a dry-run plan. Cycle 33 re-grades
@@ -1201,7 +1207,7 @@ class MutationProofBindingTest(unittest.TestCase):
         """
         root = self.EVIDENCE.parent.parent
         recorded = self._recorded(
-            "2026-11-19-cycle33-mutation-proof-eight-client-roster.txt"
+            "2026-11-22-cycle34-mutation-proof-root-claude-md-import.txt"
         )
         self.assertEqual(set(recorded), set(self.GRADED), recorded)
         for relative in self.GRADED:
