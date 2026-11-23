@@ -1,5 +1,7 @@
 # Claude Code and AGENTS.md: why an import line is needed
 
+<!-- matrix-status: notice -->
+
 Recorded 2026-11-22. This note holds the evidence behind the decision "Root CLAUDE.md is a
 one-line import of AGENTS.md; GEMINI.md is retired" in
 `docs/engineering-journal/DECISIONS.md`, so that the decision does not cite a temporary file.
