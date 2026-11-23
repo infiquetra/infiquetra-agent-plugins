@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import sdlc_manager  # noqa: E402, I001
 
 
-REPO = "mimir-pilot-claude-plugins"
+REPO = "infiquetra-agent-plugins"
 ISSUE = {
     "state": "open",
     "html_url": f"https://github.com/infiquetra/{REPO}/issues/10",
@@ -24,7 +24,7 @@ TRIGGERED_ISSUE = {**ISSUE, "labels": [{"name": "intake:mimir"}]}
 COVERAGE = {
     "policy_version": "repository-coverage/v1",
     "repository": f"infiquetra/{REPO}",
-    "route": "pilot",
+    "route": "asgard",
 }
 
 
@@ -42,7 +42,7 @@ def _coverage_document(
   repositories:
     - repository: {repository}
       state: {state}
-      route: pilot
+      route: asgard
       events: {events}
 """
     return base64.b64encode(text.encode()).decode()
@@ -60,6 +60,25 @@ def _assign_rest_reads(*, initial: dict = ISSUE, readback: dict = TRIGGERED_ISSU
 def test_live_coverage_requires_one_active_exact_issue_route() -> None:
     with patch.object(sdlc_manager, "_gh", return_value=_coverage_document()):
         assert sdlc_manager._load_live_mimir_coverage(REPO) == COVERAGE
+
+
+@pytest.mark.parametrize(
+    "retired_repo",
+    [
+        "mimir-pilot-claude-plugins",
+        "infiquetra-claude-plugins",
+        "infiquetra-codex-plugins",
+        "infiquetra-antigravity-plugins",
+        "infiquetra-opencode-plugins",
+        "infiquetra-hermes-plugins",
+    ],
+)
+def test_live_coverage_refuses_retired_plugin_repositories(retired_repo: str) -> None:
+    """Team Mimir coverage no longer lists the retired plugin repositories, so the
+    command fails closed for them instead of reading a stale admission."""
+    with patch.object(sdlc_manager, "_gh", return_value=_coverage_document()):
+        with pytest.raises(RuntimeError, match="not uniquely covered"):
+            sdlc_manager._load_live_mimir_coverage(retired_repo)
 
 
 @pytest.mark.parametrize(
@@ -102,7 +121,7 @@ def test_assign_mimir_applies_trigger_once_and_reports_live_state() -> None:
     assert result["issue_url"] == ISSUE["html_url"]
     assert result["trigger"] == {"label": "intake:mimir", "state": "applied"}
     assert result["objective_fields"] == objectives
-    assert result["expected_team_mimir_route"] == "pilot"
+    assert result["expected_team_mimir_route"] == "asgard"
     assert result["authority"] == "admin"
 
 

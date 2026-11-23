@@ -125,7 +125,7 @@ Safe to run multiple times (idempotent).
 python3 sdlc_manager.py rollout deploy-templates --repo infiquetra-core
 
 # Tier 3 repos get minimal templates (defect + enhancement only)
-python3 sdlc_manager.py rollout deploy-templates --repo infiquetra-claude-plugins
+python3 sdlc_manager.py rollout deploy-templates --repo infiquetra-agent-plugins
 ```
 
 Copies templates from `infiquetra-sdlc` checkout into `.github/ISSUE_TEMPLATE/` in the

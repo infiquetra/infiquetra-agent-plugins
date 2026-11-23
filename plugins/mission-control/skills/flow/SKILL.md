@@ -27,7 +27,7 @@ metadata:
 
     Assign an issue to Team Mimir intake:
     - "Assign this issue to Mimir"
-    - "Send infiquetra/mimir-pilot-claude-plugins#42 through Mimir intake"
+    - "Send infiquetra/infiquetra-agent-plugins#42 through Mimir intake"
 
     Link a child issue as a sub-issue of a parent:
     - "Link #43 as a sub-issue of #42"
@@ -86,12 +86,12 @@ sdlc_manager.py flow set-field \
 
 # Set the same single-select field on multiple cards in one discovery pass
 sdlc_manager.py flow set-field \
-  --project operations --repo infiquetra-claude-plugins --numbers 101,102,103 \
+  --project operations --repo infiquetra-agent-plugins --numbers 101,102,103 \
   --field Status --option Capturing
 
 # Set multiple fields on multiple cards in one discovery pass
 sdlc_manager.py flow set-field \
-  --project operations --repo infiquetra-claude-plugins --numbers 101,102,103 \
+  --project operations --repo infiquetra-agent-plugins --numbers 101,102,103 \
   --field Status --option Capturing \
   --field Objective --option defects-claude-plugins
 
@@ -104,7 +104,7 @@ sdlc_manager.py flow discover-project --repo athena-service
 
 # Apply the live-covered repository's existing Mimir intake trigger
 sdlc_manager.py flow assign-mimir \
-  --repo mimir-pilot-claude-plugins --number 42
+  --repo infiquetra-agent-plugins --number 42
 
 # Link child as native sub-issue of parent (cross-repo OK; idempotent)
 sdlc_manager.py flow link-sub-issue \

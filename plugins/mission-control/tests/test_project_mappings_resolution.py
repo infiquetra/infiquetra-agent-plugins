@@ -339,3 +339,23 @@ class TestVendoredMappingsDoNotOverrideTheBoardWorkflow:
             assert "Ready to close" in order, f"{name}: terminal status missing from order"
             for retired in ("Idea", "Ready", "Active", "Done", "Committed", "Parked"):
                 assert retired not in order, f"{name}: retired status {retired!r} still ordered"
+
+
+RETIRED_PLUGIN_REPOSITORIES = (
+    "infiquetra-claude-plugins",
+    "infiquetra-antigravity-plugins",
+    "infiquetra-codex-plugins",
+    "infiquetra-opencode-plugins",
+    "infiquetra-hermes-plugins",
+    "mimir-pilot-claude-plugins",
+)
+
+
+def test_vendored_project_mappings_excludes_retired_plugin_repositories() -> None:
+    """The six retired plugin repositories are excluded, not routed to any board,
+    matching infiquetra-sdlc's config/project-mappings.json."""
+    data = json.loads(sdlc_manager._VENDORED_PROJECT_MAPPINGS_PATH.read_text())
+    routed = {repo for proj in data["projects"].values() for repo in proj["repositories"]}
+    for retired in RETIRED_PLUGIN_REPOSITORIES:
+        assert retired not in routed
+        assert retired in data["excluded_repositories"]

@@ -6599,7 +6599,7 @@ def _mapping_update_target() -> tuple[Path, Path, str, str | None]:
         "mission-control mapping instead."
     )
     repo_root = Path(__file__).resolve().parents[3]
-    return _VENDORED_PROJECT_MAPPINGS_PATH, repo_root, "infiquetra-claude-plugins", warning
+    return _VENDORED_PROJECT_MAPPINGS_PATH, repo_root, "infiquetra-agent-plugins", warning
 
 
 def _write_mapping_update(mapping_path: Path, repo: str, project_name: str) -> None:

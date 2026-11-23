@@ -92,7 +92,7 @@ The record of the work, in the order a new reader should take it:
 | [`plugins/home-lab-ops/`](plugins/home-lab-ops/README.md) | `1.2.3` | Proxmox VE cluster operations, Ansible pre-flight validation, Ceph management,… | Claude, Codex, Muse, 6 skills |
 | [`plugins/ideate/`](plugins/ideate/README.md) | `0.1.0` | Generates and critically evaluates grounded product, architecture, and workflow ideas | Claude, Codex, Muse, 1 skill |
 | [`plugins/investigate/`](plugins/investigate/README.md) | `0.1.0` | Finds the root cause of a bug or failure before any fix | Claude, Codex, Muse, 1 skill |
-| [`plugins/mission-control/`](plugins/mission-control/README.md) | `2.21.7` | SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema… | Claude, Codex, Muse, 8 skills |
+| [`plugins/mission-control/`](plugins/mission-control/README.md) | `2.21.8` | SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema… | Claude, Codex, Muse, 8 skills |
 | [`plugins/plan/`](plugins/plan/README.md) | `0.1.0` | Lightweight planning package: guidelines for breaking work into verifiable units | Claude, Codex, Muse, 1 skill |
 | [`plugins/reviews/`](plugins/reviews/README.md) | `0.2.0` | Standalone code review, security review, document rubrics, and review-tool setup | Claude, Codex, Muse, 4 skills |
 | [`plugins/strategy/`](plugins/strategy/README.md) | `0.1.0` | Maintains the repository root STRATEGY.md | Claude, Codex, Muse, 1 skill |

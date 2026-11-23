@@ -1,6 +1,6 @@
 {
   "_comment": "Vendored canonical project-to-repository mapping for the Infiquetra org (fallback #2 in _resolve_project_mappings). External $INFIQUETRA_SDLC_PATH/config/project-mappings.json takes precedence when present. Workflow names are NOT pinned here (#1020 U5): sdlc-schema.json boards.<key>.workflow is the single workflow authority.",
-  "_provenance": "Updated 2026-11-10 for the 10-board per-project topology (CAMPPS #4 plus Projects #10-#18). Operations (#3) and Asgard (#2) retired and closed 2026-11-10 alongside Mount Olympus (#1, retired 2026-06-17).",
+  "_provenance": "Updated 2026-11-10 for the 10-board per-project topology (CAMPPS #4 plus Projects #10-#18). Operations (#3) and Asgard (#2) retired and closed 2026-11-10 alongside Mount Olympus (#1, retired 2026-06-17). On 2026-11-23, six retired plugin repositories (infiquetra-claude-plugins, infiquetra-antigravity-plugins, infiquetra-codex-plugins, infiquetra-opencode-plugins, infiquetra-hermes-plugins and mimir-pilot-claude-plugins) were removed from Agent Platform (Project #14), Home Lab (Project #15) and Infiquetra Company (Project #11) and added to excluded_repositories, matching infiquetra-sdlc, because infiquetra-agent-plugins is the only plugin source.",
   "organization": "infiquetra",
   "projects": {
     "campps": {
@@ -49,8 +49,7 @@
         "team-mimir",
         "team-njord",
         "team-heimdall",
-        "team-hermod",
-        "mimir-pilot-claude-plugins"
+        "team-hermod"
       ]
     },
     "argus": {
@@ -87,11 +86,7 @@
         "saga-review-corpus",
         "infiquetra-sdlc",
         "infiquetra-context-library",
-        "infiquetra-agent-operations",
-        "infiquetra-claude-plugins",
-        "infiquetra-codex-plugins",
-        "infiquetra-antigravity-plugins",
-        "infiquetra-opencode-plugins"
+        "infiquetra-agent-operations"
       ]
     },
     "home-lab": {
@@ -103,7 +98,6 @@
         "home-lab",
         "infiquetra-ansible-collections",
         "infiquetra-aws-infra",
-        "infiquetra-hermes-plugins",
         "infiquetra-hermes-overlay",
         "hermes-claude-code-router",
         "voice-forge"
@@ -175,6 +169,12 @@
   },
   "excluded_repositories": [
     "infiquetra-website",
-    "infiquetra-opmodel-explorer"
+    "infiquetra-opmodel-explorer",
+    "infiquetra-claude-plugins",
+    "infiquetra-antigravity-plugins",
+    "infiquetra-codex-plugins",
+    "infiquetra-opencode-plugins",
+    "infiquetra-hermes-plugins",
+    "mimir-pilot-claude-plugins"
   ]
 }
