@@ -8,6 +8,5 @@ hermes_team_profiles:
     role: olympian_agent
     model: gemini-3-flash-preview:cloud
     reasoning_effort: medium
-    max_turns: 90
     worker_pool: 1
     discord_token_var: vault_discord_bot_token_themis  # variable name only

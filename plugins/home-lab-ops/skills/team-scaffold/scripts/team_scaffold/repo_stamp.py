@@ -113,7 +113,6 @@ def _profiles_block(spec: TeamSpec) -> str:
             "    role: olympian_agent\n"
             "    model: gemini-3-flash-preview:cloud\n"
             "    reasoning_effort: medium\n"
-            "    max_turns: 90\n"
             "    worker_pool: 1\n"
             "    discord_token_var: vault_discord_bot_token_{n}  # variable name only\n"
         ).format(n=spec.name)
