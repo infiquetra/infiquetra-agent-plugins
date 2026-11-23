@@ -17,18 +17,16 @@ same pair in every repository it generates: `AGENTS.md`, plus a `CLAUDE.md` hold
 `@AGENTS.md` and a newline. It no longer creates `CLAUDE.md` or `GEMINI.md` symlinks.
 
 **Rationale.** Claude Code reads `AGENTS.md` only when no `CLAUDE.md`, `CLAUDE.local.md` or
-`.claude/CLAUDE.md` sits in the working directory or above it. For the company Claude
-account, `CLAUDE_CONFIG_DIR` points at `~/.claude-company` or `~/.claude-company-bootstrap`,
-so `~/.claude/CLAUDE.md` is no longer "the user file". Claude Code treats it as a
-`.claude/CLAUDE.md` in the ancestor folder `~`, the home folder. Every company session in a
-folder under the home folder therefore has a `CLAUDE.md` above it, and the `AGENTS.md`
-fallback never fires. On the Studio, the company account loaded `AGENTS.md` in 0 of about 857
-sessions, against 284 for the personal account, and company sessions in
-`infiquetra-company-rendering` loaded it 0 of 15 times. An import stub works on both accounts
-and every machine with no setting. Evidence: the refuted-claims section of the 2026-11-22
-verification report (`verify-report.json`, scratchpad of the home-lab session that ran the
-inventory), which cites the Claude Code 2.1.330 ancestor walk and the live transcripts on
-two development machines. It was not reproduced in a fresh live session.
+`.claude/CLAUDE.md` sits in the working directory or above it. On a second Claude account whose
+`CLAUDE_CONFIG_DIR` is relocated, `~/.claude/CLAUDE.md` is no longer "the user file". Claude
+Code treats it as a `.claude/CLAUDE.md` in the ancestor folder `~`, the home folder. Every
+session in a folder under the home folder therefore has a `CLAUDE.md` above it, and the
+`AGENTS.md` fallback never fires. In one repository under the home folder, sessions on that
+second account loaded `AGENTS.md` in 0 of 15 tries. An import stub works on both accounts and
+every machine with no setting. Evidence:
+[2026-11-22-claude-code-agents-md-loading.md](../evidence/2026-11-22-claude-code-agents-md-loading.md),
+which cites the Claude Code 2.1.330 ancestor walk and live transcripts. It was not reproduced
+in a fresh live session.
 
 **Rejected alternatives.** Keeping the root `CLAUDE.md` removed, which is the 2026-10-13
 state and leaves the company account blind to this file. A `CLAUDE.md` symlink to

@@ -2,7 +2,7 @@
 
 ## Repository purpose
 
-This repository owns the proposed portable source catalog for Infiquetra Agent
+This repository owns the portable source catalog for Infiquetra Agent
 Skills, Agent Plugins, shared workflow contracts, and the source inputs used to
 build vendor adapters.
 
