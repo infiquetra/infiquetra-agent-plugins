@@ -2,6 +2,49 @@
 
 ## 2026-11-22
 
+### Root CLAUDE.md is a one-line import of AGENTS.md; GEMINI.md is retired
+
+**Decision.** Supersedes the 2026-10-13 decision "Root CLAUDE.md is removed; AGENTS.md is
+the one repository instruction file". The repository root carries a `CLAUDE.md` whose first
+line is exactly `@AGENTS.md`, which Claude Code expands into the contents of `AGENTS.md`.
+It may be followed by a `## Claude Code only` section for notes that are true only of Claude
+Code. `AGENTS.md` stays the only authored instruction file. `scripts/check_repo.py` now
+requires the root `CLAUDE.md`, accepts it only as a regular file with that first line, and
+refuses a symlink or any other content (`check_root_claude_md`). It refuses a root
+`GEMINI.md` (`FORBIDDEN_ROOT_PATHS`), and the old `GEMINI.md` is deleted. The team scaffold
+(`plugins/home-lab-ops/skills/team-scaffold/scripts/team_scaffold/repo_stamp.py`) stamps the
+same pair in every repository it generates: `AGENTS.md`, plus a `CLAUDE.md` holding
+`@AGENTS.md` and a newline. It no longer creates `CLAUDE.md` or `GEMINI.md` symlinks.
+
+**Rationale.** Claude Code reads `AGENTS.md` only when no `CLAUDE.md`, `CLAUDE.local.md` or
+`.claude/CLAUDE.md` sits in the working directory or above it. For the company Claude
+account, `CLAUDE_CONFIG_DIR` points at `~/.claude-company` or `~/.claude-company-bootstrap`,
+so `~/.claude/CLAUDE.md` is no longer "the user file". Claude Code treats it as a
+`.claude/CLAUDE.md` in the ancestor folder `~`, the home folder. Every company session in a
+folder under the home folder therefore has a `CLAUDE.md` above it, and the `AGENTS.md`
+fallback never fires. On the Studio, the company account loaded `AGENTS.md` in 0 of about 857
+sessions, against 284 for the personal account, and company sessions in
+`infiquetra-company-rendering` loaded it 0 of 15 times. An import stub works on both accounts
+and every machine with no setting. Evidence: the refuted-claims section of the 2026-11-22
+verification report (`verify-report.json`, scratchpad of the home-lab session that ran the
+inventory), which cites the Claude Code 2.1.330 ancestor walk and the live transcripts on
+two development machines. It was not reproduced in a fresh live session.
+
+**Rejected alternatives.** Keeping the root `CLAUDE.md` removed, which is the 2026-10-13
+state and leaves the company account blind to this file. A `CLAUDE.md` symlink to
+`AGENTS.md`, which the scaffold used to stamp: the import stub reads the same on every
+platform and cannot dangle. A `GEMINI.md` stub: Antigravity reads `AGENTS.md` natively and
+Gemini CLI is retired in the fleet (`docs/runbooks/install-clients.md`, "Retired client
+targets").
+
+**Revisit when.** Claude Code reads `AGENTS.md` for every account without a `CLAUDE.md`
+sitting above the working directory, or stops expanding `@` imports in `CLAUDE.md`.
+
+**Refs.** The 2026-10-13 decision it supersedes, below; the correction to its LEARNINGS
+entry; Cycle 34 of the mutation proof, which re-grades the new guards in
+`scripts/check_repo.py`:
+[the evidence record](../evidence/2026-11-22-cycle34-mutation-proof-root-claude-md-import.txt).
+
 ### Build the pip-audit and npm-audit snapshots from the OSV databases already on disk
 
 **Decision.** `plugins/reviews/scripts/review_setup.py advisories --home <home>` builds
@@ -1732,6 +1775,9 @@ verified migration then. Also revisit when Muse's command or manifest contract c
 ## 2026-10-13
 
 ### Root CLAUDE.md is removed; AGENTS.md is the one repository instruction file
+
+**Superseded 2026-11-22** by "Root CLAUDE.md is a one-line import of AGENTS.md; GEMINI.md is
+retired", above. The rest of this entry is kept as the record of the 2026-10-13 reasoning.
 
 **Decision.** Issue #236. `CLAUDE.md` is removed from the repository root. `AGENTS.md` now
 carries the Claude packaging rule that only `CLAUDE.md` held: the manifest locations that

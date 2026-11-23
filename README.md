@@ -4,11 +4,12 @@ Portable Agent Skills, Agent Plugins, and vendor adapters for Infiquetra
 engineering workflows.
 
 This public repository is the design and source catalog for behavior that does
-not belong to one coding-agent vendor. It complements, and is intended to
-eventually generate parts of, the existing Claude Code, Codex, Antigravity,
-OpenCode, and Hermes plugin repositories. Those repositories remain the runtime
-sources of truth until a recorded custody decision moves that authority here, and
-no such decision has been made.
+not belong to one coding-agent vendor, and it is the only plugin source. The
+earlier vendor repositories (`infiquetra-claude-plugins`,
+`infiquetra-codex-plugins`, `infiquetra-opencode-plugins`,
+`infiquetra-antigravity-plugins`, `infiquetra-hermes-plugins`, and
+`mimir-pilot-claude-plugins`) are being archived on 2026-11-22 and are no longer
+sources of truth.
 
 ## Status
 
