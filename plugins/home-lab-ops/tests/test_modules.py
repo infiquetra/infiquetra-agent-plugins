@@ -257,7 +257,7 @@ def test_stamp_is_idempotent(tmp_path: pathlib.Path):
     not _CONTEXT_LIBRARY or not CL.exists(),
     reason="INFIQUETRA_CONTEXT_LIBRARY is unset or is not a directory",
 )
-def test_stamp_claude_gemini_are_symlinks_to_agents(tmp_path: pathlib.Path):
+def test_stamp_claude_md_imports_agents_md_and_no_gemini_md(tmp_path: pathlib.Path):
     spec = from_dict(
         {
             "team": {
@@ -282,11 +282,10 @@ def test_stamp_claude_gemini_are_symlinks_to_agents(tmp_path: pathlib.Path):
     repo_stamp.stamp(spec, tmp_path, CL)
     agents = tmp_path / "AGENTS.md"
     claude = tmp_path / "CLAUDE.md"
-    gemini = tmp_path / "GEMINI.md"
-    # AGENTS.md is the canonical real file; CLAUDE/GEMINI are relative symlinks to it
+    # AGENTS.md is the canonical real file; CLAUDE.md is a regular one-line import of it.
     assert agents.is_file() and not agents.is_symlink()
-    assert claude.is_symlink() and claude.readlink() == pathlib.Path("AGENTS.md")
-    assert gemini.is_symlink() and gemini.readlink() == pathlib.Path("AGENTS.md")
-    # reading through the symlink yields the canonical content (one source of truth)
-    assert claude.read_text() == agents.read_text()
-    assert gemini.read_text() == agents.read_text()
+    assert claude.is_file() and not claude.is_symlink()
+    assert claude.read_text() == "@AGENTS.md\n"
+    # Antigravity reads AGENTS.md natively and Gemini CLI is retired: no GEMINI.md.
+    assert not (tmp_path / "GEMINI.md").exists()
+    assert not (tmp_path / "GEMINI.md").is_symlink()
