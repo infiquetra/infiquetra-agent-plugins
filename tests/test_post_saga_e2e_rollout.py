@@ -76,8 +76,8 @@ import shutil
 import sys
 from pathlib import Path
 
-ALIAS = "infiquetra-claude-plugins"
 MARKET = "infiquetra-agent-plugins"
+ALIAS = MARKET
 
 
 def home() -> Path:
