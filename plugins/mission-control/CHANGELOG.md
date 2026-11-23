@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.21.8] - 2026-11-23
+
+### Changed
+
+- The six retired plugin repositories (`infiquetra-claude-plugins`, `infiquetra-antigravity-plugins`,
+  `infiquetra-codex-plugins`, `infiquetra-opencode-plugins`, `infiquetra-hermes-plugins`, and
+  `mimir-pilot-claude-plugins`) are removed from the vendored `config/project-mappings.json` boards and
+  listed under `excluded_repositories`, matching infiquetra-sdlc.
+- Flow, issues and rollout skill examples, the `/issue` command examples, and the vendored-mapping pull
+  request fallback now name `infiquetra-agent-plugins`, the only plugin source.
+- `flow assign-mimir` is unchanged: it reads Team Mimir's live coverage and refuses repositories it no
+  longer lists, including the retired pilot repository.
+
 ## [2.21.7] - 2026-11-19
 
 ### Changed

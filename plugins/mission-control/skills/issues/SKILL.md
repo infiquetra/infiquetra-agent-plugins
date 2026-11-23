@@ -372,7 +372,7 @@ Issue can be created in any Infiquetra repo. Common repos:
 
 - `infiquetra-core`, `infiquetra-auth`, `infiquetra-infra`
 - `infiquetra-blueprint` — for Context Updates and Explorations
-- `infiquetra-claude-plugins`
+- `infiquetra-agent-plugins`
 
 If the user doesn't specify, ask which repo the work belongs to.
 

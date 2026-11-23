@@ -5,7 +5,8 @@ active per-project GitHub boards (`campps`, `sovereign-circuit`, `company`,
 `argus`, `talaria`, `agent-platform`, `home-lab`, `eve-mimir`,
 `cognitive-ai-research`, and `ai-native-engine`) (upstream plugin version 2.21.0).
 This tree is authored in this repository from the import of
-`infiquetra-claude-plugins` at `acc99fe7`. The package version is 2.21.1.
+`infiquetra-claude-plugins` (a retired, archived repository; this one is the only
+plugin source) at `acc99fe7`. The package version is 2.21.1.
 It does not ship `PROVENANCE.json`; the pin is the changelog entry above
 the 2.21.0 history.
 

@@ -2,6 +2,34 @@
 
 ## 2026-11-23
 
+### Mission Control stops naming the six retired plugin repositories
+
+**Decision.** Jeff retired and archived `infiquetra-claude-plugins`,
+`infiquetra-antigravity-plugins`, `infiquetra-codex-plugins`,
+`infiquetra-opencode-plugins`, `infiquetra-hermes-plugins` and
+`mimir-pilot-claude-plugins` on 2026-11-23. In `plugins/mission-control`, the vendored
+`config/project-mappings.json` no longer routes them to any board and lists them under
+`excluded_repositories`, the same shape infiquetra-sdlc's copy now uses
+(infiquetra-sdlc#219). The flow, issues and rollout skills, the `/issue` command and the
+vendored-mapping pull request fallback in `scripts/sdlc_manager.py` now name
+`infiquetra-agent-plugins`. The package version moves to 2.21.8.
+
+**Rationale.** The vendored mapping is a fallback read after
+`$INFIQUETRA_SDLC_PATH/config/project-mappings.json` and GitHub `main`; no script or CI check
+keeps it equal to infiquetra-sdlc's copy, so the two are aligned by hand per change. `flow
+assign-mimir` reads Team Mimir's live `deploy/repository_coverage.yml` and fails closed on any
+repository it does not list, so the pilot repository's removal from coverage (team-mimir#372)
+needed no code change. `tests/test_assign_mimir.py` now uses an actively covered repository
+and asserts the six retired names are refused.
+
+**Rejected alternatives.** Copying all of infiquetra-sdlc's current mapping into the vendored
+file: it carries unrelated board changes (Infiquetra SDLC #22, Voice Platform #23) that are a
+separate sync. Leaving the retired names in tests that only use them as sample text: kept,
+since they assert nothing about the repositories being active.
+
+**Revisit when.** The vendored mapping is next synced wholesale from infiquetra-sdlc, or a
+sync check between the two copies is added.
+
 ### Muse registers this catalog as infiquetra-agent-plugins and migrates the retired name
 
 **Decision.** `scripts/muse_cli.py` names the Muse marketplace `infiquetra-agent-plugins`

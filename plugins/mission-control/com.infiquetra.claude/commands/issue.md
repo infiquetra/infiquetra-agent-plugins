@@ -38,7 +38,7 @@ issue command.
 ```
 /issue --prepare from the brainstorm for Asgard
 /issue --draft --from docs/plans/2026-05-30-002-feat-sdlc-handoff-flow-plan.md
-/issue capability --repo infiquetra-claude-plugins --from docs/brainstorms/example.md
+/issue capability --repo infiquetra-agent-plugins --from docs/brainstorms/example.md
 /issue --prepare --from branch:current --maturity resume-ready
 ```
 
@@ -48,7 +48,7 @@ Prepare from a source artifact:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/sdlc_manager.py" \
-  issue prepare --repo infiquetra-claude-plugins --type capability \
+  issue prepare --repo infiquetra-agent-plugins --type capability \
   --team campps --project campps --risk medium \
   --from docs/plans/example.md --maturity plan-ready
 ```
