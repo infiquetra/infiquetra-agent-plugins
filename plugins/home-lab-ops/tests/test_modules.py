@@ -340,3 +340,85 @@ def test_stamp_leaves_an_existing_claude_md_symlink_alone(tmp_path: pathlib.Path
     repo_stamp.stamp(_nyx_spec(), out, _minimal_context_library(tmp_path))
     assert (out / "CLAUDE.md").is_symlink()
     assert (out / "elsewhere.md").read_text() == "kept\n"
+
+
+# --- vault-helper and ai-keys skill contracts (infiquetra-agent-plugins #366) ---
+
+import json
+import re
+
+PLUGIN = pathlib.Path(__file__).resolve().parents[1]
+VAULT_DOCS = [
+    PLUGIN / "skills" / "vault-helper" / "SKILL.md",
+    PLUGIN / "skills" / "vault-helper" / "references" / "vault-patterns.md",
+]
+AI_KEYS = PLUGIN / "skills" / "ai-keys" / "SKILL.md"
+WHOLE_FILE = re.compile(r"ansible-vault\s+(edit|view|decrypt|encrypt|rekey)\b")
+
+
+def _fenced_code(text: str) -> str:
+    return "\n".join(re.findall(r"```.*?\n(.*?)```", text, re.S))
+
+
+@pytest.mark.parametrize("doc", VAULT_DOCS, ids=lambda p: p.name)
+def test_vault_docs_never_recommend_whole_file_commands(doc: pathlib.Path):
+    text = doc.read_text()
+    assert not WHOLE_FILE.search(_fenced_code(text)), "whole-file command inside a code block"
+    assert "plaintext YAML" in text and "!vault" in text
+    assert re.search(r"(forbidden|[Nn]ever run)", text)
+
+
+@pytest.mark.parametrize("doc", VAULT_DOCS, ids=lambda p: p.name)
+def test_vault_docs_require_stdin_name_and_no_secret_arguments(doc: pathlib.Path):
+    text = doc.read_text()
+    code = _fenced_code(text)
+    assert "--stdin-name" in code
+    assert not re.search(r"encrypt_string\s+['\"]", code), "secret passed as an argument"
+    assert "--name" not in code
+    assert re.search(r"[Nn]ever pass the secret as a positional or flag argument|"
+                     r"[Nn]ever pass a secret value as a positional or flag argument", text)
+
+
+def test_vault_docs_require_no_log_and_diff_false():
+    text = "\n".join(p.read_text() for p in VAULT_DOCS)
+    assert "no_log: true" in text and "diff: false" in text
+
+
+def test_ai_keys_skill_contract():
+    text = AI_KEYS.read_text()
+    front = text.split("---")[1]
+    assert re.search(r"^name: ai-keys$", front, re.M)
+    assert re.search(r"^description: .+", front, re.M)
+    for needle in (
+        "ai-keys list",
+        'eval "$(ai-keys emit <project>)"',
+        "ai-keys run <project> -- <command...>",
+        "ai-keys set <project> <VAR_NAME>",
+        "ai-keys rotate --provider",
+        "ai-keys create --account personal --providers",
+        "ai-keys create --account business --providers",
+        "mac-studio",
+    ):
+        assert needle in text, needle
+    assert "mac-studio only" in text
+    assert "~/workspace" not in text and "/Users/" not in text
+    assert not re.search(r"(sk-|AIza|ghp_|AKIA)[A-Za-z0-9_-]{8,}", text)
+
+
+def test_ai_keys_wired_into_metadata_and_docs():
+    manifest = json.loads((PLUGIN / "plugin.json").read_text())
+    versions = {
+        json.loads((PLUGIN / rel).read_text())["version"]
+        for rel in (
+            "plugin.json",
+            ".claude-plugin/plugin.json",
+            ".codex-plugin/plugin.json",
+            "com.infiquetra.claude/plugin.json",
+        )
+    }
+    assert versions == {manifest["version"]}
+    assert "skills/ai-keys/" in (PLUGIN / "README.md").read_text()
+    assert f"[{manifest['version']}]" in (PLUGIN / "CHANGELOG.md").read_text()
+    market = json.loads((PLUGIN.parents[1] / ".claude-plugin" / "marketplace.json").read_text())
+    entry = next(p for p in market["plugins"] if p["name"] == "home-lab-ops")
+    assert entry["version"] == manifest["version"]

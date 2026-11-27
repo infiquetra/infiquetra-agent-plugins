@@ -23,12 +23,13 @@ it are in [CHANGELOG.md](CHANGELOG.md).
 | [`skills/inventory-sync/`](skills/inventory-sync/SKILL.md) | File checklist for a hardware or address change. |
 | [`skills/monitoring-guard/`](skills/monitoring-guard/SKILL.md) | Exporter, dashboard, and scrape-target checks. |
 | [`skills/proxmox-operations/`](skills/proxmox-operations/SKILL.md) | Proxmox VE 9 and Ceph command patterns. |
-| [`skills/vault-helper/`](skills/vault-helper/SKILL.md) | Ansible Vault edit, add, and rotation steps. |
+| [`skills/vault-helper/`](skills/vault-helper/SKILL.md) | Inline `!vault` secrets: `--stdin-name` encryption, `no_log`, rotation. |
+| [`skills/ai-keys/`](skills/ai-keys/SKILL.md) | Per-project AI provider keys with the `ai-keys` command: list, emit, run, and the `mac-studio`-only create, set, and rotate. |
 | [`skills/team-scaffold/`](skills/team-scaffold/SKILL.md) | Generator and validators. The runnable command is here. |
 | [`com.infiquetra.claude/`](com.infiquetra.claude/plugin.json) | Claude adapter: manifest and the `homelab-sre` agent. |
 | [`tests/`](tests/) | Pytest suite for the generator, the validators, and the launcher. |
 
-The five knowledge skills have no script. `team-scaffold` does. Its
+The six knowledge skills have no script. `team-scaffold` does. Its
 dependencies and the two checkout variables are in
 [`skills/team-scaffold/README.md`](skills/team-scaffold/README.md).
 

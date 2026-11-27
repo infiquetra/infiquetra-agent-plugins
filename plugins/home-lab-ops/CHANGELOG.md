@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## [1.3.0] - 2026-11-27
+
+### Added
+
+- The `ai-keys` skill: list project keys, load them with `eval "$(ai-keys emit <project>)"`
+  or `ai-keys run <project> -- <command>`, and the `mac-studio`-only `create`, `set`, and
+  `rotate` commands (infiquetra-agent-plugins #366; command contract from
+  infiquetra/home-lab #564).
+
+### Fixed
+
+- `vault-helper` no longer tells agents to run `ansible-vault edit`, `view`, or `decrypt` on
+  `all.yml`. The `home-lab` vault files are plaintext YAML with inline `!vault` blocks. The
+  skill now requires `ansible-vault encrypt_string --stdin-name` with the secret on standard
+  input, and `no_log: true` plus `diff: false` on secret-bearing tasks.
 
 ### Changed
 

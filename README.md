@@ -89,7 +89,7 @@ The record of the work, in the order a new reader should take it:
 | [`plugins/brainstorm/`](plugins/brainstorm/README.md) | `0.1.0` | Pressure-tests one chosen idea into a right-sized requirements document | Claude, Codex, Muse, 1 skill |
 | [`plugins/deploy/`](plugins/deploy/README.md) | `0.2.5` | Tag-promotion deployment operations for Infiquetra repositories | Claude, Codex, Muse, 1 skill |
 | [`plugins/fleet-core/`](plugins/fleet-core/README.md) | `0.34.0` | Authored Fleet Core library: staffing (work shape, role, and lens to model and… | Codex |
-| [`plugins/home-lab-ops/`](plugins/home-lab-ops/README.md) | `1.2.3` | Proxmox VE cluster operations, Ansible pre-flight validation, Ceph management,… | Claude, Codex, Muse, 6 skills |
+| [`plugins/home-lab-ops/`](plugins/home-lab-ops/README.md) | `1.3.0` | Proxmox VE cluster operations, Ansible pre-flight validation, Ceph management,… | Claude, Codex, Muse, 7 skills |
 | [`plugins/ideate/`](plugins/ideate/README.md) | `0.1.0` | Generates and critically evaluates grounded product, architecture, and workflow ideas | Claude, Codex, Muse, 1 skill |
 | [`plugins/investigate/`](plugins/investigate/README.md) | `0.1.0` | Finds the root cause of a bug or failure before any fix | Claude, Codex, Muse, 1 skill |
 | [`plugins/mission-control/`](plugins/mission-control/README.md) | `2.21.8` | SDLC management for Operations, Asgard, and CAMPPS: prepared issue drafts, live schema… | Claude, Codex, Muse, 8 skills |
