@@ -422,3 +422,8 @@ def test_ai_keys_wired_into_metadata_and_docs():
     market = json.loads((PLUGIN.parents[1] / ".claude-plugin" / "marketplace.json").read_text())
     entry = next(p for p in market["plugins"] if p["name"] == "home-lab-ops")
     assert entry["version"] == manifest["version"]
+
+
+def test_port_descriptor_lists_ai_keys_skill_unit():
+    port = json.loads((PLUGIN.parents[1] / "ports" / "home-lab-ops.json").read_text())
+    assert "skills/ai-keys" in port["assessment"]["skill_units"]

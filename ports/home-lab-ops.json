@@ -25,6 +25,7 @@
       "skills/team-scaffold/scripts/team-scaffold"
     ],
     "skill_units": [
+      "skills/ai-keys",
       "skills/ansible-preflight",
       "skills/inventory-sync",
       "skills/monitoring-guard",
