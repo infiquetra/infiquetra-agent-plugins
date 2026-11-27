@@ -1,7 +1,9 @@
 # Vault Variables Reference — Olympus Cluster
 
-All variables prefixed with `vault_` must exist in:
-`ansible/inventory/group_vars/all/all.yml` (Ansible Vault encrypted)
+All variables prefixed with `vault_` must exist in a plaintext YAML file under
+`ansible/inventory/group_vars/all/` (`all.yml`, `vault_shared_infra.yml`,
+`vault_ai_keys.yml`, or a per-team split vault). Each secret is an inline `!vault`
+string block. None of these files is a whole-file encrypted vault.
 
 ## Proxmox & Infrastructure
 
@@ -38,51 +40,33 @@ One Discord bot token per agent VM:
 
 ## Vault File Structure
 
-The vault file uses YAML. Keep secrets grouped by service area:
+Plaintext YAML, one inline `!vault` block per secret, grouped by service area:
 
-```yaml
----
+```text
 # Proxmox infrastructure
-vault_proxmox_api_token_secret: <token_secret>
-vault_vm_password: <hashed_password_openssl_6>
-vault_ssh_public_key: |
-  ssh-ed25519 AAAA... user@host
+<variable_name>: !vault |
+  <ansible-vault ciphertext lines>
 
 # Service VMs
-vault_grafana_admin_password: <password>
-vault_pbs_api_token: monitoring-exporter@pbs!read-token=<secret>
-vault_idrac_password: <password>
-vault_unifi_api_key: <api_key>
-vault_discord_monitoring_webhook: https://discord.com/api/webhooks/...
-
-# OpenClaw agents
-vault_zeus_discord_token: change-me
-vault_athena_discord_token: change-me
-# ... (one per agent)
+<variable_name>: !vault |
+  <ansible-vault ciphertext lines>
 ```
 
 ## Vault Command Reference
 
+Whole-file `ansible-vault edit`, `view`, `decrypt`, `encrypt`, and `rekey` are
+forbidden on these files, because they are not whole-file vaults. The one command
+to use encrypts a single value from standard input:
+
 ```bash
-# Edit
-ansible-vault edit inventory/group_vars/all/all.yml \
-  --vault-password-file ~/.vault_pass.txt
-
-# View (read-only)
-ansible-vault view inventory/group_vars/all/all.yml \
-  --vault-password-file ~/.vault_pass.txt
-
-# Re-key (change vault password)
-ansible-vault rekey inventory/group_vars/all/all.yml \
-  --vault-password-file ~/.vault_pass.txt
-
-# Encrypt a new file
-ansible-vault encrypt <file> --vault-password-file ~/.vault_pass.txt
-
-# Encrypt a single value (for inline vault strings)
-ansible-vault encrypt_string '<value>' --name 'variable_name' \
-  --vault-password-file ~/.vault_pass.txt
+printf '%s' "$SECRET_VALUE" | ansible-vault encrypt_string \
+  --vault-password-file ~/.vault_pass.txt --stdin-name vault_<service>_<credential_type>
 ```
+
+Never pass the secret as a positional or flag argument. Paste the printed block
+over the variable's existing block.
+
+Every Ansible task that handles a secret sets `no_log: true` and `diff: false`.
 
 ## Security Notes
 
